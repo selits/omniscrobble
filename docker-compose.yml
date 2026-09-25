@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  plex-trakt-scrobbler:
+    build: .
+    container_name: plex-trakt-scrobbler
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - TRAKT_CLIENT_ID=${TRAKT_CLIENT_ID}
+      - TRAKT_CLIENT_SECRET=${TRAKT_CLIENT_SECRET}
+      - PLEX_ALLOWED_USERS=${PLEX_ALLOWED_USERS}
+      - SCROBBLE_MODE=scrobble
+      - SERVER_PORT=8080
+    volumes:
+      - ./trakt_tokens.json:/app/trakt_tokens.json
+      - ./.env:/app/.env
