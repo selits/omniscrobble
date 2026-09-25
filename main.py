@@ -113,9 +113,14 @@ async def plex_webhook(request: Request):
                 logger.info(f"Scrobble start: {parsed.title} ({parsed.progress:.1f}%)")
                 result = trakt.scrobble_start(scrobble_payload)
             elif event == "media.pause":
-                action_taken = "scrobble_pause"
-                logger.info(f"Scrobble pause: {parsed.title} ({parsed.progress:.1f}%)")
-                result = trakt.scrobble_pause(scrobble_payload)
+                if parsed.progress >= Config.SCROBBLE_THRESHOLD:
+                    action_taken = "scrobble_stop"
+                    logger.info(f"Scrobble stop (paused past threshold): {parsed.title} ({parsed.progress:.1f}%)")
+                    result = trakt.scrobble_stop(scrobble_payload)
+                else:
+                    action_taken = "scrobble_pause"
+                    logger.info(f"Scrobble pause: {parsed.title} ({parsed.progress:.1f}%)")
+                    result = trakt.scrobble_pause(scrobble_payload)
             elif event == "media.stop":
                 action_taken = "scrobble_stop"
                 logger.info(f"Scrobble stop: {parsed.title} ({parsed.progress:.1f}%)")
