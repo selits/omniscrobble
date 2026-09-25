@@ -23,9 +23,10 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 1. Log in to [Trakt.tv](https://trakt.tv) and go to **[API Applications](https://trakt.tv/oauth/applications)**.
 2. Click **"New Application"**.
 3. Fill in the fields:
-   - **Name**: `Plex Webhook Scrobbler` (or any name you like)
+   - **Name**: `Plex Trakt Webhook` (or any name you like)
+   - **Description**: (optional)
    - **Redirect uri**: `urn:ietf:wg:oauth:2.0:oob`
-   - **Permissions**: Check `/scrobble` and `/checkin` (or default permissions)
+   *(Note: Permissions checkboxes are no longer required on Trakt; standard scrobble access is included automatically)*
 4. Click **"Save App"**.
 5. Copy your **Client ID** and **Client Secret**.
 
