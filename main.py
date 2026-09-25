@@ -47,35 +47,34 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any]):
 
 
 @app.post("/webhook")
-async def plex_webhook(request: Request, payload: Optional[str] = Form(None)):
-    """Receives multipart/form-data webhook notifications from Plex Media Server."""
+async def plex_webhook(request: Request):
+    """Receives multipart/form-data or json webhook notifications from Plex Media Server."""
     raw_data: Optional[dict[str, Any]] = None
 
-    # Plex sends multipart/form-data with a "payload" field containing JSON string
-    if payload:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
         try:
-            raw_data = json.loads(payload)
+            raw_data = await request.json()
         except Exception as e:
-            logger.error(f"Failed to parse form field 'payload' as JSON: {e}")
-            raise HTTPException(status_code=400, detail="Invalid JSON in payload form field")
+            logger.error(f"Failed to parse raw JSON body: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
     else:
-        # Fallback in case raw JSON body is posted directly
-        content_type = request.headers.get("content-type", "")
-        if "application/json" in content_type:
-            try:
-                raw_data = await request.json()
-            except Exception as e:
-                logger.error(f"Failed to parse raw JSON body: {e}")
-                raise HTTPException(status_code=400, detail="Invalid JSON body")
-        else:
-            # Check form data directly
-            try:
-                form = await request.form()
-                payload_str = form.get("payload")
-                if payload_str and isinstance(payload_str, str):
-                    raw_data = json.loads(payload_str)
-            except Exception as e:
-                logger.error(f"Failed to parse multipart form data: {e}")
+        try:
+            form = await request.form()
+            payload_field = form.get("payload")
+            if payload_field is not None:
+                if hasattr(payload_field, "read"):
+                    content = await payload_field.read()
+                    if isinstance(content, bytes):
+                        content = content.decode("utf-8")
+                    raw_data = json.loads(content)
+                elif isinstance(payload_field, str):
+                    raw_data = json.loads(payload_field)
+                else:
+                    raw_data = json.loads(str(payload_field))
+        except Exception as e:
+            logger.error(f"Failed to parse multipart form data: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
     if not raw_data:
         raise HTTPException(status_code=400, detail="No payload found in request")
