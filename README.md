@@ -104,6 +104,49 @@ http://localhost:8080/
 
 ---
 
+
+---
+
+## 🌐 Deploying on a Remote Linux Server or VPS
+
+If your Plex Media Server runs on a remote mediaserver like **Remote Server**:
+You can run this scrobbler directly on the mediaserver so it stays active 24/7 without needing your home computer. Because Plex and the scrobbler run on the same server, Plex can communicate with it locally without needing any public reverse proxy!
+
+1. **SSH into your mediaserver**:
+   ```bash
+   ssh user@your-server.example.com
+   ```
+2. **Find an available port** assigned to your slot:
+   ```bash
+   app-ports show
+   ```
+3. **Clone and setup**:
+   ```bash
+   git clone https://github.com/selits/plex-trakt-webhook.git
+   cd plex-trakt-webhook
+   python3 -m venv .venv
+   .venv/bin/pip install -r requirements.txt
+   cp .env.example .env
+   ```
+4. **Configure `.env`**:
+   Set `SERVER_PORT=<your_assigned_port>`, `SERVER_HOST=127.0.0.1`, and your Trakt credentials.
+5. **Authenticate with Trakt**:
+   ```bash
+   .venv/bin/python auth.py
+   ```
+6. **Keep it running 24/7**:
+   Use `screen` or `tmux`:
+   ```bash
+   screen -S plex-trakt
+   .venv/bin/python main.py
+   ```
+   *(Press `Ctrl+A` then `D` to detach and leave it running in the background).*
+7. **Add Webhook in Plex Web**:
+   In **Plex Web &rarr; Settings &rarr; Webhooks**, add:
+   ```text
+   http://127.0.0.1:<YOUR_ASSIGNED_PORT>/webhook
+   ```
+
 ## 🧪 Testing
 
 To run the automated test suite:
