@@ -1,0 +1,15 @@
+[Unit]
+Description=Plex to Trakt Webhook Scrobbler
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/plex-trakt-webhook
+ExecStart=%h/plex-trakt-webhook/.venv/bin/python main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
