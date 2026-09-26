@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 class Config:
+    BASE_DIR: Path = BASE_DIR
     TRAKT_CLIENT_ID: str = os.getenv("TRAKT_CLIENT_ID", "")
     TRAKT_CLIENT_SECRET: str = os.getenv("TRAKT_CLIENT_SECRET", "")
     TRAKT_API_URL: str = os.getenv("TRAKT_API_URL", "https://api.trakt.tv").rstrip("/")
@@ -46,4 +47,17 @@ class Config:
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     NOTIFY_ON_SCROBBLE: bool = os.getenv("NOTIFY_ON_SCROBBLE", "true").lower() in ("true", "1", "yes")
     NOTIFY_ON_RATE: bool = os.getenv("NOTIFY_ON_RATE", "true").lower() in ("true", "1", "yes")
+
+    # Multi-User & Co-Watching ("Watch Together") Settings
+    CO_WATCH_USER: str = os.getenv("CO_WATCH_USER", "").strip()
+    _cowatch_shows_env = os.getenv("CO_WATCH_SHOWS", "")
+    CO_WATCH_SHOWS: list[str] = [
+        s.strip() for s in _cowatch_shows_env.split(",") if s.strip()
+    ]
+    _cowatch_players_env = os.getenv("CO_WATCH_PLAYERS", "")
+    CO_WATCH_PLAYERS: list[str] = [
+        p.strip() for p in _cowatch_players_env.split(",") if p.strip()
+    ]
+    CO_WATCH_MOVIES: bool = os.getenv("CO_WATCH_MOVIES", "false").lower() in ("true", "1", "yes")
+    CO_WATCH_DATA_FILE: Path = BASE_DIR / "data" / "cowatch_shows.json"
 
