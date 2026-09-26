@@ -15,6 +15,7 @@ import uvicorn
 
 from config import Config
 from notifier import notifier
+from playback_manager import playback_mgr
 from plex_parser import ParsedMedia, parse_plex_webhook
 from queue_manager import QueueManager, process_queue
 from trakt_client import TraktClient
@@ -227,6 +228,7 @@ async def plex_webhook(request: Request):
             # Plex determined the user watched the show/movie (>90%)
             action_taken = "mark_watched"
             logger.info(f"Marking as watched in Trakt: {parsed.title} for user {parsed.username}")
+            playback_mgr.stop_playback(parsed)
 
             # 1. Stop scrobble with 100% progress
             scrobble_payload["progress"] = 100.0
@@ -263,8 +265,10 @@ async def plex_webhook(request: Request):
             if event in ("media.play", "media.resume"):
                 action_taken = "scrobble_start"
                 logger.info(f"Scrobble start: {parsed.title} ({parsed.progress:.1f}%)")
+                playback_mgr.update_playback(parsed, state="playing")
                 result = await trakt.scrobble_start(scrobble_payload)
             elif event == "media.pause":
+                playback_mgr.update_playback(parsed, state="paused")
                 if parsed.progress >= Config.SCROBBLE_THRESHOLD:
                     action_taken = "scrobble_stop"
                     logger.info(f"Scrobble stop (paused past threshold): {parsed.title} ({parsed.progress:.1f}%)")
@@ -283,6 +287,7 @@ async def plex_webhook(request: Request):
             elif event == "media.stop":
                 action_taken = "scrobble_stop"
                 logger.info(f"Scrobble stop: {parsed.title} ({parsed.progress:.1f}%)")
+                playback_mgr.stop_playback(parsed)
                 result = await trakt.scrobble_stop(scrobble_payload)
                 if is_temporary_error(result):
                     queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")))
@@ -379,6 +384,101 @@ def trigger_queue_clear(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     queue_mgr.clear_queue()
     return {"status": "ok", "pending_count": 0}
+
+
+@app.get("/api/playback")
+def get_playback_status(request: Request):
+    is_admin = is_admin_request(request)
+    return {
+        "active_sessions": playback_mgr.get_active_sessions(is_admin=is_admin),
+        "recently_finished": playback_mgr.get_recently_finished(is_admin=is_admin),
+    }
+
+
+class ManualScrobbleRequest(BaseModel):
+    media_type: str  # "movie" or "episode" or "show"
+    title: str
+    year: Optional[int] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    ids: dict[str, Any] = {}
+
+
+@app.get("/api/search")
+async def search_media_endpoint(query: str, type: Optional[str] = None, request: Request = None):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not query.strip():
+        return {"results": []}
+    results = await trakt.search_media(query.strip(), media_type=type)
+    return {"results": results}
+
+
+@app.post("/api/scrobble/manual")
+async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not trakt.is_authenticated():
+        raise HTTPException(status_code=400, detail="Trakt is not authenticated")
+
+    if payload.media_type == "episode":
+        history_payload: dict[str, Any] = {
+            "shows": [
+                {
+                    "title": payload.title,
+                    "seasons": [
+                        {
+                            "number": payload.season if payload.season is not None else 1,
+                            "episodes": [
+                                {
+                                    "number": payload.episode if payload.episode is not None else 1
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        if payload.year:
+            history_payload["shows"][0]["year"] = payload.year
+        if payload.ids:
+            history_payload["shows"][0]["ids"] = payload.ids
+    else:
+        movie_item: dict[str, Any] = {"title": payload.title}
+        if payload.year:
+            movie_item["year"] = payload.year
+        if payload.ids:
+            movie_item["ids"] = payload.ids
+        history_payload = {"movies": [movie_item]}
+
+    res = await trakt.sync_history(history_payload)
+    if is_temporary_error(res):
+        queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")))
+
+    scrobble_stats["total"] += 1
+    if payload.media_type == "movie":
+        scrobble_stats["movies"] += 1
+    elif payload.media_type == "episode":
+        scrobble_stats["episodes"] += 1
+
+    profile = await get_cached_trakt_profile()
+    admin_user = (profile.get("username") if profile else None) or "admin"
+    media_obj = ParsedMedia(
+        event="manual.scrobble",
+        username=admin_user,
+        media_type=payload.media_type,
+        title=payload.title,
+        year=payload.year,
+        season=payload.season,
+        episode=payload.episode,
+        progress=100.0,
+        ids=payload.ids,
+    )
+    log_event(media_obj, "manual_scrobble", res)
+    asyncio.create_task(notifier.dispatch(media_obj, "mark_watched"))
+
+    return {"status": "success", "result": res}
+
 
 
 class AdminUnlockRequest(BaseModel):
@@ -710,6 +810,70 @@ async def dashboard(request: Request, response: Response):
     """
 
     clear_button_html = '<button onclick="clearHistory()" class="btn-sm" style="color:#f87171;">Clear</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="color:#64748b;" title="Admin unlock required to clear logs">🔒 Clear</button>'
+    manual_scrobble_btn_html = '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔍 Manual Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;color:#94a3b8;border:1px solid #334155;">🔍 Manual Scrobble</button>'
+
+    active_sessions = playback_mgr.get_active_sessions(is_admin=is_admin)
+    recently_finished = playback_mgr.get_recently_finished(is_admin=is_admin)
+
+    if active_sessions:
+        s = active_sessions[0]
+        card_display = "block"
+        card_border = "#10b981" if s["state"] == "playing" else "#f59e0b"
+        badge_text = "Currently Streaming" if s["state"] == "playing" else "Paused"
+        badge_color = card_border
+        user_dev = f"• {s['username']} on {s['player']}" + (f" ({s['device']})" if s['device'] else "")
+        stream_title = s['title']
+        stream_url = s['trakt_url']
+        stream_prog_text = f"{s['progress']:.1f}%"
+        stream_prog_width = f"{s['progress']}%"
+    elif recently_finished:
+        f = recently_finished
+        card_display = "block"
+        card_border = "#38bdf8"
+        badge_text = "Recently Finished"
+        badge_color = "#38bdf8"
+        user_dev = f"• {f['username']} on {f['player']}"
+        stream_title = f['title']
+        stream_url = f['trakt_url']
+        stream_prog_text = "100.0%"
+        stream_prog_width = "100%"
+    else:
+        card_display = "none"
+        card_border = "#10b981"
+        badge_text = "Currently Streaming"
+        badge_color = "#10b981"
+        user_dev = ""
+        stream_title = ""
+        stream_url = "https://trakt.tv"
+        stream_prog_text = "0.0%"
+        stream_prog_width = "0%"
+
+    active_playback_card_html = f"""
+        <div id="active-playback-card" class="card" style="border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                <div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                        <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
+                        <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
+                        <span style="font-size:12px; color:#94a3b8;" id="stream-user-device">{user_dev}</span>
+                    </div>
+                    <h2 style="margin:4px 0 8px 0; font-size:18px; color:#f8fafc;" id="stream-title">{stream_title}</h2>
+                </div>
+                <div id="stream-actions">
+                    <a id="stream-trakt-link" href="{stream_url}" target="_blank" rel="noopener" class="btn-sm" style="background:#334155; color:#38bdf8; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
+                </div>
+            </div>
+            <div style="margin-top:12px;">
+                <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:6px;">
+                    <span>Playback Progress</span>
+                    <span id="stream-progress-text" style="font-weight:600; color:#f8fafc;">{stream_prog_text}</span>
+                </div>
+                <div style="background:#0f172a; border-radius:9999px; height:8px; overflow:hidden; border:1px solid #334155;">
+                    <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
+                </div>
+            </div>
+        </div>
+    """
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -737,7 +901,9 @@ async def dashboard(request: Request, response: Response):
         .btn-sm:hover {{ opacity: 0.9; }}
         .btn-copy {{ background: #0284c7; color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }}
         .btn-copy:hover {{ opacity: 0.9; }}
-        #unlock-modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(2px); }}
+        .pulse-indicator {{ width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }}
+        @keyframes pulse {{ 0% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }} 70% {{ transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }} 100% {{ transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }} }}
+        #scrobble-modal, #unlock-modal {{ display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(2px); }}
     </style>
 </head>
 <body>
@@ -752,6 +918,8 @@ async def dashboard(request: Request, response: Response):
                 {admin_btn}
             </div>
         </div>
+
+        {active_playback_card_html}
 
         <div class="card">
             <h3>Server & Account Configuration</h3>
@@ -784,6 +952,7 @@ async def dashboard(request: Request, response: Response):
             <div style="padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <h3 style="margin: 0;">Live Activity & Scrobble History</h3>
                 <div style="display:flex;align-items:center;gap:12px;">
+                    {manual_scrobble_btn_html}
                     {f'<button onclick="retryQueue()" class="btn-sm" style="background:#d97706;color:#fff;font-weight:600;">🔄 Retry Queue ({pending_queue})</button>' if pending_queue > 0 else ''}
                     <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
                         <input type="checkbox" id="auto-refresh-toggle" checked onchange="toggleAutoRefresh(this)"> Auto-refresh (5s)
@@ -828,6 +997,33 @@ async def dashboard(request: Request, response: Response):
             <div style="display:flex;justify-content:flex-end;gap:8px;">
                 <button onclick="closeUnlockModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
                 <button onclick="submitUnlock()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Unlock</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Scrobble Modal -->
+    <div id="scrobble-modal">
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px;max-width:560px;width:92%;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);max-height:85vh;display:flex;flex-direction:column;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>🍿</span> Manual Scrobble to Trakt
+                </h3>
+                <button onclick="closeScrobbleModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Search Trakt's global database to quickly mark any movie or show as watched in your history.
+            </p>
+            <div style="display:flex;gap:8px;margin-bottom:16px;">
+                <input type="text" id="scrobble-search-input" placeholder="Search title (e.g. Severance, Dune, The Bear)..."
+                       style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:10px 12px;color:#f8fafc;font-size:14px;outline:none;"
+                       onkeydown="if(event.key==='Enter')executeTraktSearch()" />
+                <button onclick="executeTraktSearch()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:10px 16px;">Search</button>
+            </div>
+            <div id="scrobble-search-loading" style="display:none;color:#38bdf8;font-size:13px;text-align:center;padding:12px;">
+                Searching Trakt catalog...
+            </div>
+            <div id="scrobble-search-results" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px;max-height:360px;padding-right:4px;">
+                <div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>
             </div>
         </div>
     </div>
@@ -896,6 +1092,155 @@ async def dashboard(request: Request, response: Response):
             window.location.reload();
         }}
 
+        function openManualScrobbleModal() {{
+            if (!isAdmin) {{
+                openUnlockModal();
+                return;
+            }}
+            document.getElementById('scrobble-modal').style.display = 'flex';
+            const input = document.getElementById('scrobble-search-input');
+            input.value = '';
+            document.getElementById('scrobble-search-results').innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>';
+            setTimeout(() => input.focus(), 50);
+        }}
+
+        function closeScrobbleModal() {{
+            document.getElementById('scrobble-modal').style.display = 'none';
+        }}
+
+        async function executeTraktSearch() {{
+            const query = document.getElementById('scrobble-search-input').value.trim();
+            if (!query) return;
+            const loading = document.getElementById('scrobble-search-loading');
+            const resultsContainer = document.getElementById('scrobble-search-results');
+            loading.style.display = 'block';
+            resultsContainer.innerHTML = '';
+
+            try {{
+                const res = await fetch('/api/search?query=' + encodeURIComponent(query));
+                loading.style.display = 'none';
+                if (!res.ok) throw new Error('Search failed');
+                const data = await res.json();
+                renderSearchResults(data.results);
+            }} catch (err) {{
+                loading.style.display = 'none';
+                resultsContainer.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px;">' + err.message + '</div>';
+            }}
+        }}
+
+        function renderSearchResults(results) {{
+            const container = document.getElementById('scrobble-search-results');
+            if (!results || results.length === 0) {{
+                container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">No results found on Trakt.</div>';
+                return;
+            }}
+            let html = '';
+            for (const item of results) {{
+                const type = item.type || (item.movie ? 'movie' : 'show');
+                const media = item.movie || item.show || item;
+                const title = media.title;
+                const year = media.year ? `(${{media.year}})` : '';
+                const payloadData = {{
+                    media_type: type,
+                    title: media.title,
+                    year: media.year,
+                    ids: media.ids || {{}}
+                }};
+                const mediaJson = encodeURIComponent(JSON.stringify(payloadData));
+
+                html += `
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="background:#334155;color:#93c5fd;font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${{type}}</span>
+                            <span style="font-weight:600;color:#f8fafc;font-size:14px;">${{title}} ${{year}}</span>
+                        </div>
+                        ${{media.overview ? `<p style="color:#94a3b8;font-size:12px;margin:4px 0 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${{media.overview}}</p>` : ''}}
+                    </div>
+                    <button onclick="submitManualScrobble('${{mediaJson}}', this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;white-space:nowrap;padding:8px 12px;">
+                        ✓ Mark Watched
+                    </button>
+                </div>`;
+            }}
+            container.innerHTML = html;
+        }}
+
+        async function submitManualScrobble(mediaJsonEncoded, btn) {{
+            try {{
+                const payload = JSON.parse(decodeURIComponent(mediaJsonEncoded));
+                btn.disabled = true;
+                btn.innerHTML = 'Syncing...';
+                const res = await fetch('/api/scrobble/manual', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(payload)
+                }});
+                if (res.ok) {{
+                    btn.innerHTML = '✓ Watched!';
+                    btn.style.background = '#059669';
+                    fetchEvents();
+                    fetchPlayback();
+                    setTimeout(() => closeScrobbleModal(), 1200);
+                }} else {{
+                    const err = await res.json();
+                    btn.innerHTML = 'Error';
+                    btn.style.background = '#ef4444';
+                    alert('Failed to scrobble: ' + (err.detail || 'Unknown error'));
+                }}
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+            }}
+        }}
+
+        async function fetchPlayback() {{
+            try {{
+                const res = await fetch('/api/playback');
+                if (res.ok) {{
+                    const data = await res.json();
+                    renderPlayback(data);
+                }}
+            }} catch (e) {{
+                console.error('Error fetching playback:', e);
+            }}
+        }}
+
+        function renderPlayback(data) {{
+            const card = document.getElementById('active-playback-card');
+            if (!card) return;
+            const sessions = data.active_sessions || [];
+            if (sessions.length > 0) {{
+                const s = sessions[0];
+                card.style.display = 'block';
+                card.style.borderLeftColor = s.state === 'playing' ? '#10b981' : '#f59e0b';
+                document.getElementById('stream-state-badge').textContent = s.state === 'playing' ? 'Currently Streaming' : 'Paused';
+                document.getElementById('stream-state-badge').style.color = s.state === 'playing' ? '#10b981' : '#f59e0b';
+                const indicator = document.getElementById('stream-pulse-indicator');
+                if (indicator) indicator.style.background = s.state === 'playing' ? '#10b981' : '#f59e0b';
+                document.getElementById('stream-user-device').textContent = `• ${{s.username}} on ${{s.player || 'Plex'}}${{s.device ? ' (' + s.device + ')' : ''}}`;
+                document.getElementById('stream-title').textContent = s.title;
+                document.getElementById('stream-trakt-link').href = s.trakt_url || 'https://trakt.tv';
+                document.getElementById('stream-progress-text').textContent = `${{s.progress.toFixed(1)}}%`;
+                document.getElementById('stream-progress-bar').style.width = `${{s.progress}}%`;
+                document.getElementById('stream-progress-bar').style.background = s.state === 'playing' ? '#10b981' : '#f59e0b';
+            }} else if (data.recently_finished) {{
+                const f = data.recently_finished;
+                card.style.display = 'block';
+                card.style.borderLeftColor = '#38bdf8';
+                document.getElementById('stream-state-badge').textContent = 'Recently Finished';
+                document.getElementById('stream-state-badge').style.color = '#38bdf8';
+                const indicator = document.getElementById('stream-pulse-indicator');
+                if (indicator) indicator.style.background = '#38bdf8';
+                document.getElementById('stream-user-device').textContent = `• ${{f.username}} on ${{f.player || 'Plex'}}`;
+                document.getElementById('stream-title').textContent = f.title;
+                document.getElementById('stream-trakt-link').href = f.trakt_url || 'https://trakt.tv';
+                document.getElementById('stream-progress-text').textContent = '100.0%';
+                document.getElementById('stream-progress-bar').style.width = '100%';
+                document.getElementById('stream-progress-bar').style.background = '#38bdf8';
+            }} else {{
+                card.style.display = 'none';
+            }}
+        }}
+
         function renderRows(events) {{
             const tbody = document.getElementById('events-tbody');
             if (!events || events.length === 0) {{
@@ -928,6 +1273,7 @@ async def dashboard(request: Request, response: Response):
             }} catch (e) {{
                 console.error('Error fetching live events:', e);
             }}
+            fetchPlayback();
         }}
 
         async function retryQueue() {{
@@ -970,6 +1316,7 @@ async def dashboard(request: Request, response: Response):
 </html>
 """
     return HTMLResponse(content=html)
+
 
 
 if __name__ == "__main__":

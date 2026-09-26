@@ -17,6 +17,8 @@ class ParsedMedia(BaseModel):
     year: Optional[int] = None
     rating: Optional[int] = None
     progress: float = 0.0
+    player: Optional[str] = None
+    device: Optional[str] = None
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -250,6 +252,10 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
     legacy_guid = metadata.get("guid", "")
     ids = parse_plex_ids(guid_list, legacy_guid)
 
+    player_obj = payload.get("Player", {})
+    player_title = player_obj.get("title") if isinstance(player_obj, dict) else None
+    player_device = player_obj.get("device") if isinstance(player_obj, dict) else None
+
     if media_type == "episode":
         grandparent_year = metadata.get("grandparentYear")
         show_year = int(grandparent_year) if grandparent_year else None
@@ -265,6 +271,8 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
             year=metadata.get("year"),
             rating=rating,
             progress=progress,
+            player=player_title,
+            device=player_device,
             ids=ids,
             raw_payload=payload,
         )
@@ -277,6 +285,8 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
             year=metadata.get("year"),
             rating=rating,
             progress=progress,
+            player=player_title,
+            device=player_device,
             ids=ids,
             raw_payload=payload,
         )
@@ -289,6 +299,8 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
             year=metadata.get("year"),
             rating=rating,
             progress=progress,
+            player=player_title,
+            device=player_device,
             ids=ids,
             raw_payload=payload,
         )

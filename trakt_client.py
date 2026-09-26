@@ -282,6 +282,19 @@ class TraktClient:
                 return res.json()
         except Exception as e:
             logger.warning(f"Error searching movie '{title}': {e}")
+    async def search_media(self, query: str, media_type: Optional[str] = None) -> list[dict[str, Any]]:
+        """Search Trakt catalog for movies and/or shows."""
+        type_path = media_type if media_type in ("movie", "show", "episode") else "movie,show"
+        url = f"{self.api_url}/search/{type_path}"
+        params: dict[str, Any] = {"query": query, "limit": 10}
+        try:
+            client = self.get_client()
+            headers = await self._get_headers(authenticated=False)
+            res = await client.get(url, headers=headers, params=params)
+            if res.status_code == 200:
+                return res.json()
+        except Exception as e:
+            logger.warning(f"Error searching media '{query}': {e}")
         return []
 
     async def _post_authenticated(
