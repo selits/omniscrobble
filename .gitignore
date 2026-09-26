@@ -8,6 +8,8 @@ ENV/
 .env
 *.env
 trakt_tokens.json
+data/
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
