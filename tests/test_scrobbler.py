@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from config import Config
-from main import app, get_uptime_str, mask_username, recent_events, trakt
+from main import app, get_uptime_str, mask_username, recent_events, scrobble_stats, trakt
 from trakt_client import TraktClient
 
 from plex_parser import parse_plex_ids, parse_plex_webhook
@@ -497,6 +497,135 @@ def test_health_and_stats():
     assert "total" in data["stats"]
     assert "movies" in data["stats"]
     assert "episodes" in data["stats"]
+    assert "ratings" in data["stats"]
+
+
+def test_parse_movie_rating():
+    payload = {
+        "event": "media.rate",
+        "Account": {"title": "selits"},
+        "rating": 9.0,
+        "Metadata": {
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "Guid": [{"id": "imdb://tt15239678"}],
+        },
+    }
+    parsed = parse_plex_webhook(payload)
+    assert parsed is not None
+    assert parsed.event == "media.rate"
+    assert parsed.rating == 9
+    assert parsed.media_type == "movie"
+
+    rating_payload = parsed.to_trakt_rating_payload()
+    assert "movies" in rating_payload
+    assert rating_payload["movies"][0]["title"] == "Dune: Part Two"
+    assert rating_payload["movies"][0]["rating"] == 9
+    assert rating_payload["movies"][0]["ids"]["imdb"] == "tt15239678"
+
+
+def test_parse_episode_rating():
+    payload = {
+        "event": "media.rate",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "episode",
+            "title": "Face Off",
+            "grandparentTitle": "Breaking Bad",
+            "parentIndex": 4,
+            "index": 13,
+            "userRating": 10.0,
+            "Guid": [{"id": "imdb://tt2064145"}],
+        },
+    }
+    parsed = parse_plex_webhook(payload)
+    assert parsed is not None
+    assert parsed.rating == 10
+
+    rating_payload = parsed.to_trakt_rating_payload()
+    assert "episodes" in rating_payload
+    assert rating_payload["episodes"][0]["rating"] == 10
+    assert rating_payload["episodes"][0]["ids"]["imdb"] == "tt2064145"
+
+
+def test_parse_show_rating():
+    payload = {
+        "event": "media.rate",
+        "Account": {"title": "selits"},
+        "rating": 8,
+        "Metadata": {
+            "type": "show",
+            "title": "Succession",
+            "year": 2018,
+            "Guid": [{"id": "imdb://tt7660850"}],
+        },
+    }
+    parsed = parse_plex_webhook(payload)
+    assert parsed is not None
+    assert parsed.media_type == "show"
+    assert parsed.rating == 8
+
+    rating_payload = parsed.to_trakt_rating_payload()
+    assert "shows" in rating_payload
+    assert rating_payload["shows"][0]["title"] == "Succession"
+    assert rating_payload["shows"][0]["rating"] == 8
+    assert rating_payload["shows"][0]["year"] == 2018
+    assert rating_payload["shows"][0]["ids"]["imdb"] == "tt7660850"
+
+
+@pytest.mark.asyncio
+async def test_trakt_sync_ratings(tmp_path):
+    class FakeConfig:
+        TRAKT_CLIENT_ID = "cid"
+        TRAKT_CLIENT_SECRET = "csec"
+        TRAKT_API_URL = "https://api.trakt.tv"
+        TRAKT_TOKENS_FILE = tmp_path / "tokens.json"
+
+    client = TraktClient(FakeConfig)
+    client.save_tokens({"access_token": "valid_token", "created_at": 9999999999, "expires_in": 7200})
+
+    def mock_handler(request: httpx.Request):
+        if request.url.path == "/sync/ratings":
+            return httpx.Response(201, json={"added": {"movies": 1}})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(mock_handler)
+    client._http_client = httpx.AsyncClient(transport=transport)
+
+    res = await client.sync_ratings({"movies": [{"rating": 9, "title": "Test"}]})
+    assert res == {"added": {"movies": 1}}
+    await client.close()
+
+
+def test_webhook_rating_flow():
+    client = TestClient(app)
+    plex_rating_payload = {
+        "event": "media.rate",
+        "Account": {"title": "selits"},
+        "rating": 9.0,
+        "Metadata": {
+            "type": "movie",
+            "title": "Oppenheimer",
+            "year": 2023,
+            "Guid": [{"id": "imdb://tt15398776"}],
+        },
+    }
+
+    initial_ratings_count = scrobble_stats.get("ratings", 0)
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_ratings", new_callable=AsyncMock) as mock_sync:
+
+        mock_sync.return_value = {"added": {"movies": 1}}
+
+        res = client.post("/webhook", data={"payload": json.dumps(plex_rating_payload)})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["action"] == "rate"
+        assert scrobble_stats["ratings"] == initial_ratings_count + 1
+        assert "rate (9/10)" in recent_events[0]["action"]
 
 
 

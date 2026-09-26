@@ -31,6 +31,7 @@ scrobble_stats: dict[str, int] = {
     "total": 0,
     "movies": 0,
     "episodes": 0,
+    "ratings": 0,
 }
 
 
@@ -106,19 +107,22 @@ recent_events: deque[dict[str, Any]] = deque(maxlen=MAX_HISTORY)
 
 
 def log_event(media: ParsedMedia, action: str, result: dict[str, Any]):
-    title_str = (
-        f"{media.show_title} S{media.season:02d}E{media.episode:02d} - {media.title}"
-        if media.media_type == "episode"
-        else f"{media.title} ({media.year or 'N/A'})"
-    )
+    if media.media_type == "episode":
+        title_str = f"{media.show_title} S{media.season:02d}E{media.episode:02d} - {media.title}"
+    else:
+        title_str = f"{media.title} ({media.year or 'N/A'})"
+
+    action_str = f"{action} ({media.rating}/10)" if action == "rate" and media.rating else action
+    progress_str = f"{media.rating}/10" if action == "rate" and media.rating else f"{media.progress:.1f}%"
+
     entry = {
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user": media.username,
         "event": media.event,
-        "action": action,
+        "action": action_str,
         "title": title_str,
         "type": media.media_type,
-        "progress": f"{media.progress:.1f}%",
+        "progress": progress_str,
         "result_status": result.get("status") or ("ok" if not result.get("error") else "error"),
         "raw_result": result,
     }
@@ -195,6 +199,14 @@ async def plex_webhook(request: Request):
                 scrobble_stats["movies"] += 1
             elif parsed.media_type == "episode":
                 scrobble_stats["episodes"] += 1
+
+        elif event == "media.rate":
+            action_taken = "rate"
+            rating_val = parsed.rating or 10
+            logger.info(f"Syncing rating to Trakt: {parsed.title} -> {rating_val}/10 for user {parsed.username}")
+            rating_payload = parsed.to_trakt_rating_payload()
+            result = await trakt.sync_ratings(rating_payload)
+            scrobble_stats["ratings"] += 1
 
         elif Config.SCROBBLE_MODE == "scrobble":
             # Real-time scrobbling on play, pause, resume, stop
@@ -670,7 +682,7 @@ async def dashboard(request: Request, response: Response):
                 <div class="info-item">
                     <div class="info-label">Playback Activity</div>
                     <div class="info-value">🍿 {scrobble_stats['total']} Scrobble(s)</div>
-                    <div style="font-size:12px;color:#94a3b8;">🎬 {scrobble_stats['movies']} movies &bull; 📺 {scrobble_stats['episodes']} eps</div>
+                    <div style="font-size:12px;color:#94a3b8;">🎬 {scrobble_stats['movies']} &bull; 📺 {scrobble_stats['episodes']} &bull; ⭐ {scrobble_stats['ratings']} ratings</div>
                 </div>
             </div>
             {webhook_html_section}
