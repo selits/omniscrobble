@@ -1,8 +1,9 @@
+import asyncio
 import json
 import logging
 import time
 from typing import Any, Optional
-import requests
+import httpx
 from config import Config
 
 logger = logging.getLogger("trakt_client")
@@ -16,15 +17,25 @@ class TraktClient:
         self.api_url = config.TRAKT_API_URL
         self.tokens_file = config.TRAKT_TOKENS_FILE
         self._tokens: Optional[dict[str, Any]] = None
+        self._http_client: Optional[httpx.AsyncClient] = None
 
-    def _get_headers(self, authenticated: bool = True) -> dict[str, str]:
+    def get_client(self) -> httpx.AsyncClient:
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=15.0)
+        return self._http_client
+
+    async def close(self) -> None:
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+
+    async def _get_headers(self, authenticated: bool = True) -> dict[str, str]:
         headers = {
             "Content-Type": "application/json",
             "trakt-api-version": "2",
             "trakt-api-key": self.client_id,
         }
         if authenticated:
-            token = self.get_valid_token()
+            token = await self.get_valid_token()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
         return headers
@@ -52,7 +63,7 @@ class TraktClient:
         tokens = self.load_tokens()
         return bool(tokens and tokens.get("access_token"))
 
-    def get_valid_token(self) -> Optional[str]:
+    async def get_valid_token(self) -> Optional[str]:
         tokens = self.load_tokens()
         if not tokens:
             return None
@@ -65,7 +76,7 @@ class TraktClient:
         # If token expires within 24 hours (or is expired), refresh it
         if created_at and expires_in and (now >= created_at + expires_in - 86400):
             logger.info("Trakt access token near expiry, refreshing...")
-            refreshed = self.refresh_token()
+            refreshed = await self.refresh_token()
             if refreshed:
                 return refreshed.get("access_token")
             return access_token
@@ -74,18 +85,19 @@ class TraktClient:
 
     # ------------------ OAuth Device Code Flow ------------------
 
-    def generate_device_code(self) -> dict[str, Any]:
+    async def generate_device_code(self) -> dict[str, Any]:
         """Request a device code from Trakt."""
         if not self.client_id:
             raise ValueError("TRAKT_CLIENT_ID is not configured in .env")
 
         url = f"{self.api_url}/oauth/device/code"
-        res = requests.post(url, json={"client_id": self.client_id}, timeout=10)
+        client = self.get_client()
+        res = await client.post(url, json={"client_id": self.client_id})
         if res.status_code != 200:
             raise RuntimeError(f"Failed to generate device code ({res.status_code}): {res.text}")
         return res.json()
 
-    def poll_for_token(self, device_code: str) -> dict[str, Any]:
+    async def poll_for_token(self, device_code: str) -> dict[str, Any]:
         """Poll Trakt token endpoint for user approval of device code.
 
         Returns tokens dict when approved, or raises an exception.
@@ -99,17 +111,16 @@ class TraktClient:
             "client_id": self.client_id,
             "client_secret": self.client_secret,
         }
-        res = requests.post(url, json=payload, timeout=10)
+        client = self.get_client()
+        res = await client.post(url, json=payload)
 
         if res.status_code == 200:
             tokens = res.json()
-            # Trakt response includes created_at, or fallback to current time
             if "created_at" not in tokens:
                 tokens["created_at"] = int(time.time())
             self.save_tokens(tokens)
             return tokens
         elif res.status_code == 400:
-            # Pending user authorization
             return {"status": "pending"}
         elif res.status_code == 404:
             raise RuntimeError("Invalid device code.")
@@ -125,7 +136,7 @@ class TraktClient:
         else:
             raise RuntimeError(f"Unexpected status from Trakt ({res.status_code}): {res.text}")
 
-    def refresh_token(self) -> Optional[dict[str, Any]]:
+    async def refresh_token(self) -> Optional[dict[str, Any]]:
         """Refresh single-use OAuth access/refresh tokens."""
         tokens = self.load_tokens()
         if not tokens or not tokens.get("refresh_token"):
@@ -140,79 +151,142 @@ class TraktClient:
             "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
             "grant_type": "refresh_token",
         }
-        res = requests.post(url, json=payload, timeout=10)
-        if res.status_code == 200:
-            new_tokens = res.json()
-            if "created_at" not in new_tokens:
-                new_tokens["created_at"] = int(time.time())
-            self.save_tokens(new_tokens)
-            return new_tokens
-        else:
-            logger.error(f"Failed to refresh Trakt token ({res.status_code}): {res.text}")
+        client = self.get_client()
+        try:
+            res = await client.post(url, json=payload)
+            if res.status_code == 200:
+                new_tokens = res.json()
+                if "created_at" not in new_tokens:
+                    new_tokens["created_at"] = int(time.time())
+                self.save_tokens(new_tokens)
+                return new_tokens
+            else:
+                logger.error(f"Failed to refresh Trakt token ({res.status_code}): {res.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Network error refreshing Trakt token: {e}")
             return None
 
     # ------------------ Scrobbling & History Endpoints ------------------
 
-    def scrobble_start(self, media_payload: dict[str, Any]) -> dict[str, Any]:
+    async def scrobble_start(self, media_payload: dict[str, Any]) -> dict[str, Any]:
         """POST /scrobble/start - Notify Trakt playback started."""
         url = f"{self.api_url}/scrobble/start"
-        return self._post_authenticated(url, media_payload)
+        return await self._post_authenticated(url, media_payload)
 
-    def scrobble_pause(self, media_payload: dict[str, Any]) -> dict[str, Any]:
+    async def scrobble_pause(self, media_payload: dict[str, Any]) -> dict[str, Any]:
         """POST /scrobble/pause - Notify Trakt playback paused."""
         url = f"{self.api_url}/scrobble/pause"
-        return self._post_authenticated(url, media_payload)
+        return await self._post_authenticated(url, media_payload)
 
-    def scrobble_stop(self, media_payload: dict[str, Any]) -> dict[str, Any]:
+    async def scrobble_stop(self, media_payload: dict[str, Any]) -> dict[str, Any]:
         """POST /scrobble/stop - Notify Trakt playback stopped.
 
         Marks as watched if progress >= 80%.
         """
         url = f"{self.api_url}/scrobble/stop"
-        return self._post_authenticated(url, media_payload)
+        return await self._post_authenticated(url, media_payload)
 
-    def sync_history(self, sync_payload: dict[str, Any]) -> dict[str, Any]:
+    async def sync_history(self, sync_payload: dict[str, Any]) -> dict[str, Any]:
         """POST /sync/history - Directly mark episodes/movies as watched in Trakt history."""
         url = f"{self.api_url}/sync/history"
-        return self._post_authenticated(url, sync_payload)
+        return await self._post_authenticated(url, sync_payload)
 
-    def search_show(self, title: str, year: Optional[int] = None) -> list[dict[str, Any]]:
+    async def get_user_settings(self) -> Optional[dict[str, Any]]:
+        """GET /users/settings - Retrieve authenticated user profile information."""
+        if not self.is_authenticated():
+            return None
+        url = f"{self.api_url}/users/settings"
+        headers = await self._get_headers(authenticated=True)
+        client = self.get_client()
+        try:
+            res = await client.get(url, headers=headers)
+            if res.status_code == 200:
+                return res.json()
+            elif res.status_code == 401:
+                refreshed = await self.refresh_token()
+                if refreshed:
+                    headers = await self._get_headers(authenticated=True)
+                    retry_res = await client.get(url, headers=headers)
+                    if retry_res.status_code == 200:
+                        return retry_res.json()
+        except Exception as e:
+            logger.warning(f"Failed to fetch user settings from Trakt: {e}")
+        return None
+
+    async def search_show(self, title: str, year: Optional[int] = None) -> list[dict[str, Any]]:
         """Fallback search for a show by title/year."""
         url = f"{self.api_url}/search/show"
         params: dict[str, Any] = {"query": title}
         if year:
             params["years"] = str(year)
         try:
-            res = requests.get(url, headers=self._get_headers(authenticated=False), params=params, timeout=5)
+            client = self.get_client()
+            headers = await self._get_headers(authenticated=False)
+            res = await client.get(url, headers=headers, params=params)
             if res.status_code == 200:
                 return res.json()
         except Exception as e:
             logger.warning(f"Error searching show '{title}': {e}")
         return []
 
-    def search_movie(self, title: str, year: Optional[int] = None) -> list[dict[str, Any]]:
+    async def search_movie(self, title: str, year: Optional[int] = None) -> list[dict[str, Any]]:
         """Fallback search for a movie by title/year."""
         url = f"{self.api_url}/search/movie"
         params: dict[str, Any] = {"query": title}
         if year:
             params["years"] = str(year)
         try:
-            res = requests.get(url, headers=self._get_headers(authenticated=False), params=params, timeout=5)
+            client = self.get_client()
+            headers = await self._get_headers(authenticated=False)
+            res = await client.get(url, headers=headers, params=params)
             if res.status_code == 200:
                 return res.json()
         except Exception as e:
             logger.warning(f"Error searching movie '{title}': {e}")
         return []
 
-    def _post_authenticated(self, url: str, data: dict[str, Any]) -> dict[str, Any]:
-        headers = self._get_headers(authenticated=True)
-        res = requests.post(url, headers=headers, json=data, timeout=10)
-        if res.status_code in (200, 201):
-            return res.json()
-        elif res.status_code == 409:
-            # Trakt returns 409 if already scrobbled or conflict
-            logger.info(f"Trakt 409 Conflict/Already scrobbled for {url}")
-            return {"action": "conflict", "status": 409}
-        else:
-            logger.error(f"Trakt API error ({res.status_code}) on {url}: {res.text}")
-            return {"error": res.text, "status": res.status_code}
+    async def _post_authenticated(
+        self, url: str, data: dict[str, Any], retry_auth: bool = True
+    ) -> dict[str, Any]:
+        client = self.get_client()
+
+        for attempt in range(3):
+            headers = await self._get_headers(authenticated=True)
+            try:
+                res = await client.post(url, headers=headers, json=data)
+            except httpx.RequestError as exc:
+                logger.error(f"HTTP error contacting Trakt at {url}: {exc}")
+                return {"error": str(exc), "status": 503}
+
+            if res.status_code in (200, 201):
+                return res.json()
+            elif res.status_code == 409:
+                # Trakt returns 409 if already scrobbled or conflict
+                logger.info(f"Trakt 409 Conflict/Already scrobbled for {url}")
+                return {"action": "conflict", "status": 409}
+            elif res.status_code == 401 and retry_auth:
+                logger.warning("Trakt 401 Unauthorized encountered. Attempting token refresh...")
+                refreshed = await self.refresh_token()
+                if refreshed:
+                    # Retry once with refreshed credentials
+                    return await self._post_authenticated(url, data, retry_auth=False)
+                else:
+                    return {"error": "Authentication failed (token refresh failed)", "status": 401}
+            elif res.status_code == 429:
+                retry_after_raw = res.headers.get("Retry-After", "1")
+                try:
+                    retry_after = int(retry_after_raw)
+                except ValueError:
+                    retry_after = 1
+                wait_time = min(max(retry_after, 1), 5)
+                logger.warning(
+                    f"Trakt rate limit (429) on {url}. Waiting {wait_time}s (attempt {attempt + 1}/3)..."
+                )
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"Trakt API error ({res.status_code}) on {url}: {res.text}")
+                return {"error": res.text, "status": res.status_code}
+
+        return {"error": "Trakt rate limit exceeded after retries", "status": 429}

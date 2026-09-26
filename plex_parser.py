@@ -11,6 +11,7 @@ class ParsedMedia(BaseModel):
     media_type: str  # "episode" or "movie"
     title: str
     show_title: Optional[str] = None
+    show_year: Optional[int] = None
     season: Optional[int] = None
     episode: Optional[int] = None
     year: Optional[int] = None
@@ -24,6 +25,8 @@ class ParsedMedia(BaseModel):
             show_obj: dict[str, Any] = {
                 "title": self.show_title or self.title
             }
+            if self.show_year:
+                show_obj["year"] = self.show_year
             episode_obj: dict[str, Any] = {
                 "season": self.season if self.season is not None else 1,
                 "number": self.episode if self.episode is not None else 1,
@@ -32,6 +35,7 @@ class ParsedMedia(BaseModel):
                 episode_obj["ids"] = self.ids
             if self.title:
                 episode_obj["title"] = self.title
+
 
             return {
                 "show": show_obj,
@@ -65,22 +69,23 @@ class ParsedMedia(BaseModel):
                     ]
                 }
             # Otherwise match via show structure
-            return {
-                "shows": [
+            show_obj: dict[str, Any] = {
+                "title": self.show_title or self.title,
+                "seasons": [
                     {
-                        "title": self.show_title or self.title,
-                        "seasons": [
+                        "number": self.season if self.season is not None else 1,
+                        "episodes": [
                             {
-                                "number": self.season if self.season is not None else 1,
-                                "episodes": [
-                                    {
-                                        "number": self.episode if self.episode is not None else 1
-                                    }
-                                ]
+                                "number": self.episode if self.episode is not None else 1
                             }
                         ]
                     }
                 ]
+            }
+            if self.show_year:
+                show_obj["year"] = self.show_year
+            return {
+                "shows": [show_obj]
             }
         else:
             movie_item: dict[str, Any] = {
@@ -175,12 +180,15 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
     ids = parse_plex_ids(guid_list, legacy_guid)
 
     if media_type == "episode":
+        grandparent_year = metadata.get("grandparentYear")
+        show_year = int(grandparent_year) if grandparent_year else None
         return ParsedMedia(
             event=event,
             username=username,
             media_type="episode",
             title=metadata.get("title", ""),
             show_title=metadata.get("grandparentTitle") or metadata.get("parentTitle") or "",
+            show_year=show_year,
             season=metadata.get("parentIndex"),
             episode=metadata.get("index"),
             year=metadata.get("year"),
@@ -199,3 +207,4 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
             ids=ids,
             raw_payload=payload,
         )
+

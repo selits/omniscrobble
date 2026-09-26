@@ -1,10 +1,11 @@
+import asyncio
 import sys
 import time
 from config import Config
 from trakt_client import TraktClient
 
 
-def main():
+async def main():
     print("=" * 60)
     print("Trakt Account Authorization (Device Code Flow)")
     print("=" * 60)
@@ -19,9 +20,10 @@ def main():
 
     print("\nRequesting authorization code from Trakt...")
     try:
-        data = client.generate_device_code()
+        data = await client.generate_device_code()
     except Exception as e:
         print(f"\n[ERROR] Failed to get device code: {e}")
+        await client.close()
         sys.exit(1)
 
     user_code = data.get("user_code")
@@ -38,34 +40,37 @@ def main():
     print(f"\nWaiting for authorization (expires in {expires_in // 60} minutes)...")
 
     start_time = time.time()
-    while time.time() - start_time < expires_in:
-        time.sleep(interval)
-        try:
-            res = client.poll_for_token(device_code)
-            if res.get("status") == "pending":
-                print(".", end="", flush=True)
-                continue
-            elif res.get("status") == "slow_down":
-                interval += 5
-                continue
-            elif "access_token" in res:
-                print("\n\n[SUCCESS] Successfully authenticated with Trakt!")
-                print(f"Tokens saved to: {Config.TRAKT_TOKENS_FILE}")
-                print("You can now start the webhook server with: python main.py")
-                return
-        except TimeoutError:
-            print("\n[ERROR] Code expired. Please run this script again.")
-            sys.exit(1)
-        except PermissionError:
-            print("\n[ERROR] Authorization denied by user on Trakt.")
-            sys.exit(1)
-        except Exception as e:
-            print(f"\n[ERROR] Unexpected error: {e}")
-            sys.exit(1)
+    try:
+        while time.time() - start_time < expires_in:
+            await asyncio.sleep(interval)
+            try:
+                res = await client.poll_for_token(device_code)
+                if res.get("status") == "pending":
+                    print(".", end="", flush=True)
+                    continue
+                elif res.get("status") == "slow_down":
+                    interval += 5
+                    continue
+                elif "access_token" in res:
+                    print("\n\n[SUCCESS] Successfully authenticated with Trakt!")
+                    print(f"Tokens saved to: {Config.TRAKT_TOKENS_FILE}")
+                    print("You can now start the webhook server with: python main.py")
+                    return
+            except TimeoutError:
+                print("\n[ERROR] Code expired. Please run this script again.")
+                sys.exit(1)
+            except PermissionError:
+                print("\n[ERROR] Authorization denied by user on Trakt.")
+                sys.exit(1)
+            except Exception as e:
+                print(f"\n[ERROR] Unexpected error: {e}")
+                sys.exit(1)
 
-    print("\n[ERROR] Timed out waiting for authorization. Please try again.")
-    sys.exit(1)
+        print("\n[ERROR] Timed out waiting for authorization. Please try again.")
+        sys.exit(1)
+    finally:
+        await client.close()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

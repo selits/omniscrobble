@@ -1,10 +1,13 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from config import Config
 from main import app, trakt
+from trakt_client import TraktClient
+
 from plex_parser import parse_plex_ids, parse_plex_webhook
 
 
@@ -144,8 +147,11 @@ def test_webhook_endpoint_full_flow():
     }
 
     with patch.object(trakt, "is_authenticated", return_value=True), \
-         patch.object(trakt, "scrobble_stop", return_value={"action": "scrobble", "progress": 100}), \
-         patch.object(trakt, "sync_history", return_value={"added": {"episodes": 1}}):
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_sync:
+
+        mock_stop.return_value = {"action": "scrobble", "progress": 100}
+        mock_sync.return_value = {"added": {"episodes": 1}}
 
         response = client.post(
             "/webhook",
@@ -176,7 +182,9 @@ def test_webhook_secret_authentication():
 
     with patch.object(Config, "WEBHOOK_SECRET", "super_secret_token"), \
          patch.object(trakt, "is_authenticated", return_value=True), \
-         patch.object(trakt, "scrobble_start", return_value={"action": "start"}):
+         patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+
+        mock_start.return_value = {"action": "start"}
 
         # 1. Reject without token
         res_no_token = client.post("/webhook", data={"payload": json.dumps(plex_sample)})
@@ -199,4 +207,98 @@ def test_webhook_secret_authentication():
         )
         assert res_valid_header.status_code == 200
         assert res_valid_header.json()["status"] == "success"
+
+
+def test_tv_show_year_extraction():
+    payload = {
+        "event": "media.scrobble",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "episode",
+            "title": "Pilot",
+            "grandparentTitle": "Doctor Who",
+            "grandparentYear": 2005,
+            "parentIndex": 1,
+            "index": 1,
+            "duration": 2700000,
+            "viewOffset": 2700000,
+        },
+    }
+    parsed = parse_plex_webhook(payload)
+    assert parsed is not None
+    assert parsed.show_year == 2005
+
+    scrobble_data = parsed.to_trakt_scrobble_payload()
+    assert scrobble_data["show"]["year"] == 2005
+
+    history_data = parsed.to_trakt_history_payload()
+    assert history_data["shows"][0]["year"] == 2005
+
+
+@pytest.mark.asyncio
+async def test_trakt_client_401_retry(tmp_path):
+    class FakeConfig:
+        TRAKT_CLIENT_ID = "cid"
+        TRAKT_CLIENT_SECRET = "csec"
+        TRAKT_API_URL = "https://api.trakt.tv"
+        TRAKT_TOKENS_FILE = tmp_path / "tokens.json"
+
+    client = TraktClient(FakeConfig)
+    client.save_tokens({"access_token": "expired_token", "refresh_token": "valid_refresh", "created_at": 9999999999, "expires_in": 7200})
+
+    call_count = 0
+
+
+    def mock_handler(request: httpx.Request):
+        nonlocal call_count
+        if request.url.path == "/oauth/token":
+            return httpx.Response(200, json={"access_token": "fresh_token", "refresh_token": "new_refresh", "expires_in": 7200, "created_at": 200})
+        elif request.url.path == "/scrobble/start":
+            call_count += 1
+            if request.headers.get("Authorization") == "Bearer expired_token":
+                return httpx.Response(401, text="Unauthorized")
+            elif request.headers.get("Authorization") == "Bearer fresh_token":
+                return httpx.Response(201, json={"action": "start"})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(mock_handler)
+    client._http_client = httpx.AsyncClient(transport=transport)
+
+    res = await client.scrobble_start({"movie": {"title": "Test"}})
+    assert res == {"action": "start"}
+    assert call_count == 2
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_trakt_client_429_backoff(tmp_path):
+    class FakeConfig:
+        TRAKT_CLIENT_ID = "cid"
+        TRAKT_CLIENT_SECRET = "csec"
+        TRAKT_API_URL = "https://api.trakt.tv"
+        TRAKT_TOKENS_FILE = tmp_path / "tokens.json"
+
+    client = TraktClient(FakeConfig)
+    client.save_tokens({"access_token": "tok", "refresh_token": "ref", "created_at": 9999999999, "expires_in": 7200})
+
+    call_count = 0
+
+    def mock_handler(request: httpx.Request):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return httpx.Response(429, headers={"Retry-After": "1"}, text="Rate limited")
+        return httpx.Response(200, json={"action": "start"})
+
+    transport = httpx.MockTransport(mock_handler)
+    client._http_client = httpx.AsyncClient(transport=transport)
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        res = await client.scrobble_start({"movie": {"title": "Test"}})
+        assert res == {"action": "start"}
+        assert call_count == 2
+        mock_sleep.assert_awaited_once_with(1)
+    await client.close()
+
+
 
