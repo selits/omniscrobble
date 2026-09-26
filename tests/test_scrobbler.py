@@ -10,6 +10,7 @@ from queue_manager import QueueManager, process_queue
 from trakt_client import TraktClient
 
 from notifier import Notifier, format_media_title, get_trakt_url, notifier
+from playback_manager import PlaybackManager, playback_mgr
 from plex_parser import ParsedMedia, parse_plex_ids, parse_plex_webhook
 
 
@@ -1041,6 +1042,271 @@ def test_health_and_dashboard_notification_status():
         res_dash = client.get("/")
         assert res_dash.status_code == 200
         assert "Alerts: Discord" in res_dash.text
+
+
+def test_parsed_media_player_and_device():
+    payload = {
+        "event": "media.play",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {
+            "title": "Living Room Apple TV",
+            "device": "Apple TV",
+        },
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "duration": 9000000,
+            "viewOffset": 4500000,
+        },
+    }
+
+    parsed = parse_plex_webhook(payload, allowed_users=["selits"])
+    assert parsed is not None
+    assert parsed.player == "Living Room Apple TV"
+    assert parsed.device == "Apple TV"
+    assert parsed.progress == 50.0
+
+
+def test_playback_manager_lifecycle():
+    pm = PlaybackManager(stale_timeout_seconds=3600)
+    pm.clear()
+
+    media = ParsedMedia(
+        event="media.play",
+        username="selits",
+        media_type="episode",
+        title="Good News About Hell",
+        show_title="Severance",
+        season=1,
+        episode=1,
+        player="Living Room TV",
+        device="Apple TV",
+        progress=20.0,
+    )
+
+    # 1. Start playback
+    session = pm.update_playback(media, state="playing")
+    assert session["state"] == "playing"
+    assert session["title"] == "Severance S01E01 - Good News About Hell"
+
+    # 2. Active sessions
+    active_admin = pm.get_active_sessions(is_admin=True)
+    assert len(active_admin) == 1
+    assert active_admin[0]["username"] == "selits"
+
+    active_public = pm.get_active_sessions(is_admin=False)
+    assert len(active_public) == 1
+    assert active_public[0]["username"] == "se****"
+
+    # 3. Pause playback
+    media.progress = 55.0
+    pm.update_playback(media, state="paused")
+    active_paused = pm.get_active_sessions(is_admin=True)
+    assert active_paused[0]["state"] == "paused"
+    assert active_paused[0]["progress"] == 55.0
+
+    # 4. Stop playback
+    finished = pm.stop_playback(media)
+    assert finished is not None
+    assert finished["title"] == "Severance S01E01 - Good News About Hell"
+    assert len(pm.get_active_sessions()) == 0
+
+    rf_admin = pm.get_recently_finished(is_admin=True)
+    assert rf_admin is not None
+    assert rf_admin["username"] == "selits"
+
+    rf_public = pm.get_recently_finished(is_admin=False)
+    assert rf_public is not None
+    assert rf_public["username"] == "se****"
+
+    pm.clear()
+    assert pm.get_recently_finished() is None
+
+
+def test_api_playback_endpoint():
+    client = TestClient(app)
+    playback_mgr.clear()
+
+    # Empty
+    res = client.get("/api/playback")
+    assert res.status_code == 200
+    data = res.json()
+    assert "active_sessions" in data
+    assert len(data["active_sessions"]) == 0
+
+    # With active session
+    media = ParsedMedia(
+        event="media.play",
+        username="selits",
+        media_type="movie",
+        title="Oppenheimer",
+        year=2023,
+        player="Home Theater",
+        progress=45.0,
+    )
+    playback_mgr.update_playback(media, state="playing")
+
+    res2 = client.get("/api/playback")
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert len(data2["active_sessions"]) == 1
+    assert data2["active_sessions"][0]["title"] == "Oppenheimer (2023)"
+    playback_mgr.clear()
+
+
+@pytest.mark.asyncio
+async def test_trakt_search_media():
+    mock_client = AsyncMock()
+    mock_client.get.return_value = httpx.Response(
+        200,
+        json=[
+            {
+                "type": "movie",
+                "movie": {
+                    "title": "Inception",
+                    "year": 2010,
+                    "ids": {"imdb": "tt1375666", "trakt": 16},
+                },
+            }
+        ],
+    )
+
+    with patch.object(trakt, "get_client", return_value=mock_client), \
+         patch.object(trakt, "_get_headers", new_callable=AsyncMock) as mock_headers:
+        mock_headers.return_value = {"trakt-api-key": "fake"}
+        results = await trakt.search_media("Inception", "movie")
+        assert len(results) == 1
+        assert results[0]["movie"]["title"] == "Inception"
+
+
+def test_api_search_and_manual_scrobble():
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
+        # 1. Unauthenticated search -> 401
+        res_denied = client.get("/api/search?query=Inception")
+        assert res_denied.status_code == 401
+
+        # 2. Authenticated search -> 200
+        client.cookies.set("admin_token", "test_secret")
+        with patch.object(trakt, "search_media", new_callable=AsyncMock) as mock_search:
+            mock_search.return_value = [{"type": "movie", "movie": {"title": "Inception", "year": 2010}}]
+            res_ok = client.get("/api/search?query=Inception")
+            assert res_ok.status_code == 200
+            assert len(res_ok.json()["results"]) == 1
+
+        # 3. Unauthenticated manual scrobble -> 401
+        client.cookies.clear()
+        res_scrobble_denied = client.post("/api/scrobble/manual", json={"media_type": "movie", "title": "Inception"})
+        assert res_scrobble_denied.status_code == 401
+
+        # 4. Authenticated manual scrobble movie -> 200
+        client.cookies.set("admin_token", "test_secret")
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_sync:
+            mock_sync.return_value = {"added": {"movies": 1}}
+
+            payload = {
+                "media_type": "movie",
+                "title": "Interstellar",
+                "year": 2014,
+                "ids": {"imdb": "tt0816692"},
+            }
+            res_scrobble_ok = client.post("/api/scrobble/manual", json=payload)
+            assert res_scrobble_ok.status_code == 200
+            assert mock_sync.called
+            sync_payload = mock_sync.call_args[0][0]
+            assert "movies" in sync_payload
+            assert sync_payload["movies"][0]["title"] == "Interstellar"
+
+        # 5. Authenticated manual scrobble episode -> 200
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_sync:
+            mock_sync.return_value = {"added": {"episodes": 1}}
+
+            ep_payload = {
+                "media_type": "episode",
+                "title": "Succession",
+                "year": 2018,
+                "season": 4,
+                "episode": 3,
+                "ids": {"tmdb": 76331},
+            }
+            res_ep_ok = client.post("/api/scrobble/manual", json=ep_payload)
+            assert res_ep_ok.status_code == 200
+            assert mock_sync.called
+            sync_ep_payload = mock_sync.call_args[0][0]
+            assert "shows" in sync_ep_payload
+            assert sync_ep_payload["shows"][0]["title"] == "Succession"
+            assert sync_ep_payload["shows"][0]["seasons"][0]["episodes"][0]["number"] == 3
+
+        client.cookies.clear()
+
+
+def test_webhook_tracks_playback():
+    client = TestClient(app)
+    playback_mgr.clear()
+
+    play_payload = {
+        "event": "media.play",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {"title": "Living Room Apple TV"},
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Blade Runner 2049",
+            "year": 2017,
+            "duration": 9000000,
+            "viewOffset": 1000000,
+        },
+    }
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+        mock_start.return_value = {"action": "start"}
+
+        res = client.post("/webhook", data={"payload": json.dumps(play_payload)})
+        assert res.status_code == 200
+
+        sessions = playback_mgr.get_active_sessions()
+        assert len(sessions) == 1
+        assert sessions[0]["title"] == "Blade Runner 2049 (2017)"
+        assert sessions[0]["state"] == "playing"
+
+    # Stop event
+    stop_payload = {
+        "event": "media.stop",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {"title": "Living Room Apple TV"},
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Blade Runner 2049",
+            "year": 2017,
+            "duration": 9000000,
+            "viewOffset": 8500000,
+        },
+    }
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop:
+        mock_stop.return_value = {"action": "scrobble"}
+
+        res2 = client.post("/webhook", data={"payload": json.dumps(stop_payload)})
+        assert res2.status_code == 200
+
+        assert len(playback_mgr.get_active_sessions()) == 0
+        finished = playback_mgr.get_recently_finished()
+        assert finished is not None
+        assert finished["title"] == "Blade Runner 2049 (2017)"
+
+    playback_mgr.clear()
+
 
 
 
