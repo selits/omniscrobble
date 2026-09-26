@@ -25,9 +25,13 @@ mkdir -p "$HOME/.config/systemd/user"
 if [ -f "plex-trakt.service" ]; then
     cp plex-trakt.service "$HOME/.config/systemd/user/"
     systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable plex-trakt 2>/dev/null || true
 fi
 
-echo "==> Restarting plex-trakt service..."
+# Ensure user service keeps running after SSH logout
+loginctl enable-linger "$USER" 2>/dev/null || true
+
+echo "==> Starting/Restarting plex-trakt service..."
 systemctl --user restart plex-trakt 2>/dev/null || true
 
 echo "==> Checking service status..."
