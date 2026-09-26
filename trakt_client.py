@@ -225,6 +225,11 @@ class TraktClient:
         url = f"{self.api_url}/sync/history"
         return await self._post_authenticated(url, sync_payload)
 
+    async def sync_ratings(self, rating_payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /sync/ratings - Rate movies, shows, or episodes on Trakt."""
+        url = f"{self.api_url}/sync/ratings"
+        return await self._post_authenticated(url, rating_payload)
+
     async def get_user_settings(self) -> Optional[dict[str, Any]]:
         """GET /users/settings - Retrieve authenticated user profile information."""
         if not self.is_authenticated():

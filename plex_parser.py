@@ -8,13 +8,14 @@ logger = logging.getLogger("plex_parser")
 class ParsedMedia(BaseModel):
     event: str
     username: str
-    media_type: str  # "episode" or "movie"
+    media_type: str  # "episode", "movie", or "show"
     title: str
     show_title: Optional[str] = None
     show_year: Optional[int] = None
     season: Optional[int] = None
     episode: Optional[int] = None
     year: Optional[int] = None
+    rating: Optional[int] = None
     progress: float = 0.0
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
@@ -99,6 +100,62 @@ class ParsedMedia(BaseModel):
                 "movies": [movie_item]
             }
 
+    def to_trakt_rating_payload(self) -> dict[str, Any]:
+        """Convert to Trakt /sync/ratings payload format."""
+        rating_val = self.rating or 10
+
+        if self.media_type == "episode":
+            if self.ids:
+                return {
+                    "episodes": [
+                        {
+                            "rating": rating_val,
+                            "ids": self.ids,
+                        }
+                    ]
+                }
+            show_obj: dict[str, Any] = {
+                "title": self.show_title or self.title,
+                "seasons": [
+                    {
+                        "number": self.season if self.season is not None else 1,
+                        "episodes": [
+                            {
+                                "number": self.episode if self.episode is not None else 1,
+                                "rating": rating_val,
+                            }
+                        ],
+                    }
+                ],
+            }
+            if self.show_year:
+                show_obj["year"] = self.show_year
+            return {"shows": [show_obj]}
+
+        elif self.media_type == "show":
+            show_obj = {
+                "title": self.title,
+                "rating": rating_val,
+            }
+            if self.year:
+                show_obj["year"] = self.year
+            if self.ids:
+                show_obj["ids"] = self.ids
+            return {"shows": [show_obj]}
+
+        else:  # movie
+            movie_item: dict[str, Any] = {
+                "title": self.title,
+                "rating": rating_val,
+            }
+            if self.year:
+                movie_item["year"] = self.year
+            if self.ids:
+                movie_item["ids"] = self.ids
+            return {
+                "movies": [movie_item]
+            }
+
 
 def parse_plex_ids(guid_list: list[dict[str, str]], legacy_guid: str = "") -> dict[str, Any]:
     """Extract IMDb, TMDb, and TVDb IDs from Plex Metadata."""
@@ -159,8 +216,8 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
         logger.debug("Plex webhook received with no Metadata field.")
         return None
 
-    media_type = metadata.get("type")  # "episode" or "movie"
-    if media_type not in ("episode", "movie"):
+    media_type = metadata.get("type")  # "episode", "movie", or "show"
+    if media_type not in ("episode", "movie", "show"):
         logger.debug(f"Ignoring unsupported media type: {media_type}")
         return None
 
@@ -174,6 +231,20 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
     # If the event is media.scrobble, Plex has determined the media was fully watched
     if event == "media.scrobble" and progress < 90.0:
         progress = 100.0
+
+    # Extract user rating if present (media.rate event or userRating/rating fields)
+    raw_rating = (
+        payload.get("rating")
+        if payload.get("rating") is not None
+        else (metadata.get("userRating") or metadata.get("rating"))
+    )
+    rating: Optional[int] = None
+    if raw_rating is not None:
+        try:
+            val = float(raw_rating)
+            rating = min(10, max(1, int(round(val))))
+        except (ValueError, TypeError):
+            rating = None
 
     guid_list = metadata.get("Guid", [])
     legacy_guid = metadata.get("guid", "")
@@ -192,6 +263,19 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
             season=metadata.get("parentIndex"),
             episode=metadata.get("index"),
             year=metadata.get("year"),
+            rating=rating,
+            progress=progress,
+            ids=ids,
+            raw_payload=payload,
+        )
+    elif media_type == "show":
+        return ParsedMedia(
+            event=event,
+            username=username,
+            media_type="show",
+            title=metadata.get("title", ""),
+            year=metadata.get("year"),
+            rating=rating,
             progress=progress,
             ids=ids,
             raw_payload=payload,
@@ -203,6 +287,7 @@ def parse_plex_webhook(payload: dict[str, Any], allowed_users: Optional[list[str
             media_type="movie",
             title=metadata.get("title", ""),
             year=metadata.get("year"),
+            rating=rating,
             progress=progress,
             ids=ids,
             raw_payload=payload,
