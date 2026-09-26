@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 from collections import deque
+from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
@@ -18,8 +19,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("plex_trakt_scrobbler")
 
-app = FastAPI(title="Plex Trakt Scrobbler", version="1.0.0")
 trakt = TraktClient(Config)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await trakt.close()
+
+
+app = FastAPI(title="Plex Trakt Scrobbler", version="1.0.0", lifespan=lifespan)
+
 
 # In-memory log of recent webhook events for the status dashboard
 MAX_HISTORY = 30
@@ -106,10 +116,10 @@ async def plex_webhook(request: Request):
 
             # 1. Stop scrobble with 100% progress
             scrobble_payload["progress"] = 100.0
-            scrobble_res = trakt.scrobble_stop(scrobble_payload)
+            scrobble_res = await trakt.scrobble_stop(scrobble_payload)
 
             # 2. Also sync to history to guarantee item is marked as viewed
-            history_res = trakt.sync_history(parsed.to_trakt_history_payload())
+            history_res = await trakt.sync_history(parsed.to_trakt_history_payload())
             result = {"scrobble": scrobble_res, "history": history_res}
 
         elif Config.SCROBBLE_MODE == "scrobble":
@@ -117,22 +127,23 @@ async def plex_webhook(request: Request):
             if event in ("media.play", "media.resume"):
                 action_taken = "scrobble_start"
                 logger.info(f"Scrobble start: {parsed.title} ({parsed.progress:.1f}%)")
-                result = trakt.scrobble_start(scrobble_payload)
+                result = await trakt.scrobble_start(scrobble_payload)
             elif event == "media.pause":
                 if parsed.progress >= Config.SCROBBLE_THRESHOLD:
                     action_taken = "scrobble_stop"
                     logger.info(f"Scrobble stop (paused past threshold): {parsed.title} ({parsed.progress:.1f}%)")
-                    result = trakt.scrobble_stop(scrobble_payload)
+                    result = await trakt.scrobble_stop(scrobble_payload)
                 else:
                     action_taken = "scrobble_pause"
                     logger.info(f"Scrobble pause: {parsed.title} ({parsed.progress:.1f}%)")
-                    result = trakt.scrobble_pause(scrobble_payload)
+                    result = await trakt.scrobble_pause(scrobble_payload)
             elif event == "media.stop":
                 action_taken = "scrobble_stop"
                 logger.info(f"Scrobble stop: {parsed.title} ({parsed.progress:.1f}%)")
-                result = trakt.scrobble_stop(scrobble_payload)
+                result = await trakt.scrobble_stop(scrobble_payload)
         else:
             action_taken = f"skipped_{event}"
+
 
         log_event(parsed, action_taken, result)
         return {"status": "success", "event": event, "action": action_taken, "result": result}
