@@ -224,6 +224,17 @@ Expected response:
 
 ---
 
+## 🔄 Updating / Upgrading
+
+To update your installation to the latest release on your server or seedbox:
+
+```bash
+./upgrade.sh
+```
+This automatically fetches the latest code from GitHub, updates dependencies in `.venv`, updates the `systemd` user service, and restarts it cleanly.
+
+---
+
 ## 🧪 Testing
 
 To run the automated test suite locally:
