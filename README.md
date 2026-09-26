@@ -96,9 +96,9 @@ Choose an available port on your host (e.g. 8080, or your provider's assigned po
 ```bash
 app-ports show
 ```
-Pick any port for an app you **do not use** (e.g. `8080` pyLoad, `14135` The Lounge, etc.). Confirm it's free:
+Pick any port for an app you **do not use** (e.g. 8080). Confirm it's free:
 ```bash
-ss -tuln | grep 8080
+ss -tuln | grep <PORT>
 ```
 *(If it returns empty, the port is free to use).*
 
@@ -106,8 +106,9 @@ ss -tuln | grep 8080
 In `.env`, always set:
 ```ini
 SERVER_HOST=0.0.0.0
-SERVER_PORT=8080
+SERVER_PORT=<PORT>
 ```
+
 If set to `127.0.0.1`, the service will only accept connections from the host and will block incoming requests from the Plex container.
 
 ### 3. Auto-Starting on Server Reboots & Running 24/7
@@ -216,8 +217,9 @@ curl http://localhost:8080/health
 ```
 Expected response:
 ```json
-{"status":"healthy","authenticated":true,"trakt_user":"selits","allowed_users":["selits"],"scrobble_mode":"scrobble","webhook_secret_enabled":false}
+{"status":"healthy","authenticated":true,"trakt_user":"your_trakt_username","allowed_users":["your_plex_username"],"scrobble_mode":"scrobble","webhook_secret_enabled":false}
 ```
+
 
 
 ---
