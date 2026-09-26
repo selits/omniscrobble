@@ -301,4 +301,57 @@ async def test_trakt_client_429_backoff(tmp_path):
     await client.close()
 
 
+def test_api_events_and_clear():
+    client = TestClient(app)
+    # Get events
+    res = client.get("/api/events")
+    assert res.status_code == 200
+    assert "events" in res.json()
+
+    # Clear events
+    clear_res = client.post("/api/events/clear")
+    assert clear_res.status_code == 200
+    assert clear_res.json()["status"] == "cleared"
+
+    res_after = client.get("/api/events")
+    assert res_after.json()["events"] == []
+
+
+def test_auth_endpoints_and_page():
+    client = TestClient(app)
+
+    # 1. GET /auth page
+    res_page = client.get("/auth")
+    assert res_page.status_code == 200
+    assert "Link Trakt Account" in res_page.text
+
+    # 2. POST /api/auth/start
+    with patch.object(trakt, "generate_device_code", new_callable=AsyncMock) as mock_gen:
+        mock_gen.return_value = {
+            "device_code": "dev123",
+            "user_code": "ABCD1234",
+            "verification_url": "https://trakt.tv/activate",
+            "expires_in": 600,
+            "interval": 5,
+        }
+        res_start = client.post("/api/auth/start")
+        assert res_start.status_code == 200
+        assert res_start.json()["user_code"] == "ABCD1234"
+
+    # 3. POST /api/auth/poll pending
+    with patch.object(trakt, "poll_for_token", new_callable=AsyncMock) as mock_poll:
+        mock_poll.return_value = {"status": "pending"}
+        res_poll = client.post("/api/auth/poll", json={"device_code": "dev123"})
+        assert res_poll.status_code == 200
+        assert res_poll.json()["status"] == "pending"
+
+    # 4. POST /api/auth/poll success
+    with patch.object(trakt, "poll_for_token", new_callable=AsyncMock) as mock_poll:
+        mock_poll.return_value = {"access_token": "valid_token"}
+        res_poll_ok = client.post("/api/auth/poll", json={"device_code": "dev123"})
+        assert res_poll_ok.status_code == 200
+        assert res_poll_ok.json()["status"] == "success"
+
+
+
 
