@@ -14,6 +14,7 @@ import uvicorn
 
 
 from config import Config
+from notifier import notifier
 from plex_parser import ParsedMedia, parse_plex_webhook
 from queue_manager import QueueManager, process_queue
 from trakt_client import TraktClient
@@ -135,6 +136,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     await trakt.close()
+    await notifier.close()
 
 
 app = FastAPI(title="Plex Trakt Scrobbler", version="1.0.0", lifespan=lifespan)
@@ -294,6 +296,8 @@ async def plex_webhook(request: Request):
 
 
         log_event(parsed, action_taken, result)
+        if action_taken in ("mark_watched", "scrobble_stop", "rate"):
+            asyncio.create_task(notifier.dispatch(parsed, action_taken))
         return {"status": "success", "event": event, "action": action_taken, "result": result}
 
     except Exception as e:
@@ -340,6 +344,7 @@ async def health_check():
         "queue": {
             "pending": queue_mgr.get_pending_count(),
         },
+        "notifications": notifier.get_status(),
     }
 
 
@@ -591,6 +596,14 @@ async def dashboard(request: Request, response: Response):
     display_username = raw_username if is_admin else mask_username(raw_username)
     pending_queue = queue_mgr.get_pending_count()
 
+    notif_status = notifier.get_status()
+    enabled_notifs = []
+    if notif_status["discord"]:
+        enabled_notifs.append("Discord")
+    if notif_status["telegram"]:
+        enabled_notifs.append("Telegram")
+    notif_summary = ", ".join(enabled_notifs) if enabled_notifs else "Off"
+
     # Token health calculation
     token_info = trakt.get_token_info()
     if auth_status:
@@ -756,7 +769,7 @@ async def dashboard(request: Request, response: Response):
                 <div class="info-item">
                     <div class="info-label">Server Health</div>
                     <div class="info-value">🟢 Online</div>
-                    <div style="font-size:12px;color:#94a3b8;">Uptime: {get_uptime_str()} &bull; <span style="color:{'#f59e0b' if pending_queue > 0 else '#94a3b8'};">Queue: {pending_queue} pending</span></div>
+                    <div style="font-size:12px;color:#94a3b8;">Uptime: {get_uptime_str()} &bull; <span style="color:{'#f59e0b' if pending_queue > 0 else '#94a3b8'};">Queue: {pending_queue} pending</span> &bull; <span>Alerts: {notif_summary}</span></div>
                 </div>
                 <div class="info-item">
                     <div class="info-label">Playback Activity</div>
