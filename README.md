@@ -19,6 +19,14 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 
 ---
 
+## 📋 Prerequisites
+
+- **Plex Pass**: Plex requires an active Plex Pass subscription to enable outgoing Webhooks.
+- **Trakt Account**: A free account at [Trakt.tv](https://trakt.tv).
+- **Environment**: **Python 3.10+** (for bare-metal / systemd) or **Docker & Docker Compose**.
+
+---
+
 ## 🚀 Step-by-Step Setup Guide
 
 ### 1. Create a Trakt API Application
@@ -179,23 +187,57 @@ screen -S plex-trakt
 
 ---
 
+#### Option D: Docker & Docker Compose
+If you prefer running in a container:
+
+1. Configure your `.env` file (set `TRAKT_TOKENS_FILE=/app/data/trakt_tokens.json`).
+2. Start the service with Docker Compose:
+   ```bash
+   docker compose up -d
+   ```
+3. Check container logs and built-in health check:
+   ```bash
+   docker compose logs -f
+   ```
+   *(Data is persisted in the `./data` volume, and the container runs under a hardened, non-root `appuser`)*.
+
+---
+
 ## 🔗 Adding the Webhook in Plex
 
 1. Open **Plex Web** (`https://app.plex.tv/desktop`).
 2. Go to **Settings (wrench icon) &rarr; Webhooks** (under your Account settings).
 3. Click **Add Webhook**.
 4. Enter your webhook URL:
-   - **For Remote Server / Remote Remote Server**:
+   - **Without Webhook Secret**:
      ```text
      http://<your-server-ip-or-domain>:<PORT>/webhook
      ```
      *(Example: `http://your-server.example.com:8080/webhook`)*
-     > ⚠️ **Important:** Do **not** use `127.0.0.1` on Remote Server! Because Plex runs inside a container, `127.0.0.1` points inside the container itself instead of your server.
-   - **For Local PC / Docker on same machine**:
+   - **With Webhook Secret** (if `WEBHOOK_SECRET` is set in `.env`):
+     ```text
+     http://<your-server-ip-or-domain>:<PORT>/webhook?token=YOUR_WEBHOOK_SECRET
+     ```
+   - **For Local PC / Docker on same LAN**:
      ```text
      http://<local-lan-ip>:8080/webhook
      ```
+   > ⚠️ **Important for Remote & Containerized Environments:** Do **not** use `127.0.0.1`! Because Plex runs inside an isolated container, `127.0.0.1` points inside the container itself instead of your server host.
 5. Click **Save Changes**.
+
+---
+
+## 🗺️ Web UI & API Endpoints
+
+| Endpoint | Method | Description |
+| :--- | :---: | :--- |
+| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt user profile, active configuration, and live scrobble event log. |
+| **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based 1-click Trakt OAuth activation. |
+| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback and scrobble payloads. |
+| **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication status, and configured settings (for monitoring / Docker). |
+| **`/api/events`** | `GET` | **Event History**: Returns recent scrobble and playback events in JSON. |
+| **`/api/events/clear`** | `POST` | **Clear Events**: Resets the in-memory event log. |
+
 
 ---
 
@@ -221,6 +263,22 @@ Expected response:
 ```
 
 
+
+---
+
+## 🔄 Updating / Upgrading
+
+To update your installation to the latest release on your server or host:
+
+```bash
+./upgrade.sh
+```
+This automated script:
+1. Fetches the latest code from GitHub (`git fetch && git reset --hard origin/main`).
+2. Updates dependencies in your virtual environment (`.venv`).
+3. Refreshes and enables the `systemd` user service unit (`systemctl --user enable plex-trakt`).
+4. Ensures user background lingering is enabled (`loginctl enable-linger`).
+5. Restarts the service cleanly and outputs its live running status.
 
 ---
 
