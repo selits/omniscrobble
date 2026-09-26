@@ -157,3 +157,46 @@ def test_webhook_endpoint_full_flow():
         assert data["status"] == "success"
         assert data["action"] == "mark_watched"
         assert "history" in data["result"]
+
+
+def test_webhook_secret_authentication():
+    client = TestClient(app)
+    plex_sample = {
+        "event": "media.play",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Interstellar",
+            "year": 2014,
+            "duration": 7200000,
+            "viewOffset": 0,
+            "Guid": [{"id": "imdb://tt0816692"}],
+        },
+    }
+
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret_token"), \
+         patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_start", return_value={"action": "start"}):
+
+        # 1. Reject without token
+        res_no_token = client.post("/webhook", data={"payload": json.dumps(plex_sample)})
+        assert res_no_token.status_code == 401
+
+        # 2. Reject with wrong token
+        res_wrong_token = client.post("/webhook?token=wrong", data={"payload": json.dumps(plex_sample)})
+        assert res_wrong_token.status_code == 401
+
+        # 3. Allow with correct query token
+        res_valid_query = client.post("/webhook?token=super_secret_token", data={"payload": json.dumps(plex_sample)})
+        assert res_valid_query.status_code == 200
+        assert res_valid_query.json()["status"] == "success"
+
+        # 4. Allow with correct header token
+        res_valid_header = client.post(
+            "/webhook",
+            headers={"X-Webhook-Secret": "super_secret_token"},
+            data={"payload": json.dumps(plex_sample)},
+        )
+        assert res_valid_header.status_code == 200
+        assert res_valid_header.json()["status"] == "success"
+

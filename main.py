@@ -49,6 +49,12 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any]):
 @app.post("/webhook")
 async def plex_webhook(request: Request):
     """Receives multipart/form-data or json webhook notifications from Plex Media Server."""
+    if Config.WEBHOOK_SECRET:
+        token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
+        if not token or token != Config.WEBHOOK_SECRET:
+            logger.warning("Rejected unauthorized webhook request: invalid or missing token.")
+            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
+
     raw_data: Optional[dict[str, Any]] = None
 
     content_type = request.headers.get("content-type", "")
@@ -144,6 +150,7 @@ def health_check():
         "authenticated": trakt.is_authenticated(),
         "allowed_users": Config.PLEX_ALLOWED_USERS or "all",
         "scrobble_mode": Config.SCROBBLE_MODE,
+        "webhook_secret_enabled": bool(Config.WEBHOOK_SECRET),
     }
 
 
@@ -155,6 +162,7 @@ def dashboard():
         if auth_status
         else '<span style="background:#ef4444;color:#fff;padding:4px 10px;border-radius:9999px;font-size:12px;font-weight:600;">Not Connected (Run `python auth.py`)</span>'
     )
+    webhook_path = f"/webhook?token={Config.WEBHOOK_SECRET}" if Config.WEBHOOK_SECRET else "/webhook"
 
     rows = ""
     if not recent_events:
@@ -227,10 +235,14 @@ def dashboard():
                         <div class="info-label">Scrobble Threshold</div>
                         <div class="info-value">{Config.SCROBBLE_THRESHOLD}%</div>
                     </div>
+                    <div class="info-item">
+                        <div class="info-label">Webhook Secret</div>
+                        <div class="info-value">{'Enabled (Secured)' if Config.WEBHOOK_SECRET else 'Disabled (Open)'}</div>
+                    </div>
                 </div>
                 <div style="margin-top: 18px;">
                     <div class="info-label">Plex Webhook URL</div>
-                    <div class="webhook-box">http://&lt;YOUR_SERVER_IP&gt;:{Config.SERVER_PORT}/webhook</div>
+                    <div class="webhook-box">http://&lt;YOUR_SERVER_IP&gt;:{Config.SERVER_PORT}{webhook_path}</div>
                     <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Add this URL in Plex Web: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong>.</div>
                 </div>
             </div>
@@ -266,4 +278,8 @@ def dashboard():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=True)
+    if Config.DEBUG:
+        uvicorn.run("main:app", host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=True, reload_excludes=["*.json", "data/*"])
+    else:
+        uvicorn.run("main:app", host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=False)
+
