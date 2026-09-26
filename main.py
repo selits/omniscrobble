@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import time
+import urllib.parse
 from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -14,11 +15,13 @@ import uvicorn
 
 
 from config import Config
+from cowatch_manager import cowatch_mgr
 from notifier import notifier
 from playback_manager import playback_mgr
 from plex_parser import ParsedMedia, parse_plex_webhook
 from queue_manager import QueueManager, process_queue
 from trakt_client import TraktClient
+from user_manager import user_mgr
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger("plex_trakt_scrobbler")
 
 trakt = TraktClient(Config)
+user_mgr.set_default_client(trakt)
 queue_mgr = QueueManager(Config.QUEUE_DB_FILE)
 
 SERVER_START_TIME = time.time()
@@ -116,9 +120,9 @@ async def queue_worker_loop():
         try:
             interval = max(5, Config.QUEUE_RETRY_INTERVAL)
             await asyncio.sleep(interval)
-            if trakt.is_authenticated() and queue_mgr.get_pending_count() > 0:
+            if queue_mgr.get_pending_count() > 0:
                 logger.info("Background queue worker draining pending offline items...")
-                await process_queue(trakt, queue_mgr)
+                await process_queue(trakt, queue_mgr, user_mgr=user_mgr)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -137,6 +141,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     await trakt.close()
+    await user_mgr.close_all()
     await notifier.close()
 
 
@@ -164,11 +169,42 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any]):
         "action": action_str,
         "title": title_str,
         "type": media.media_type,
+        "show_title": media.show_title if media.media_type == "episode" else None,
+        "media_payload": {
+            "media_type": media.media_type,
+            "title": media.title,
+            "year": media.year,
+            "season": media.season,
+            "episode": media.episode,
+            "ids": media.ids,
+        },
         "progress": progress_str,
         "result_status": result.get("status") or ("ok" if not result.get("error") else "error"),
         "raw_result": result,
     }
     recent_events.appendleft(entry)
+
+
+async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
+    """Dual-scrobble/sync watched history to the partner Trakt account (CO_WATCH_USER)."""
+    target_user = Config.CO_WATCH_USER
+    if not target_user:
+        return
+    cw_client = user_mgr.get_client(target_user)
+    if not cw_client.is_authenticated():
+        logger.warning(f"Co-watch target user '{target_user}' Trakt is not authenticated. Skipping co-watch.")
+        return
+    try:
+        logger.info(f"Co-watching dual-sync triggering for partner @{target_user}: {parsed.title}")
+        history_payload = parsed.to_trakt_history_payload()
+        res = await cw_client.sync_history(history_payload)
+        if is_temporary_error(res):
+            queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
+        else:
+            logger.info(f"Co-watch dual-sync succeeded for partner @{target_user}: {parsed.title}")
+    except Exception as e:
+        logger.error(f"Error during co-watch dual-sync for @{target_user}: {e}")
+        queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=target_user)
 
 
 @app.post("/webhook")
@@ -214,8 +250,15 @@ async def plex_webhook(request: Request):
     if not parsed:
         return {"status": "ignored", "reason": "Non-media event, filtered user, or unsupported media type"}
 
-    if not trakt.is_authenticated():
-        logger.warning("Trakt is not authenticated! Run 'python auth.py' or visit /auth to authorize.")
+    # Dynamic multi-user client resolution:
+    # 1. Use user-specific Trakt client if authenticated for this Plex user
+    # 2. Fall back to default Trakt client
+    active_client = user_mgr.get_client(parsed.username)
+    if not active_client.is_authenticated():
+        active_client = trakt
+
+    if not active_client.is_authenticated():
+        logger.warning(f"Trakt is not authenticated for user '{parsed.username}' or default! Run 'python auth.py' or visit /auth to authorize.")
         return {"status": "error", "message": "Trakt not authenticated"}
 
     event = parsed.event
@@ -232,17 +275,17 @@ async def plex_webhook(request: Request):
 
             # 1. Stop scrobble with 100% progress
             scrobble_payload["progress"] = 100.0
-            scrobble_res = await trakt.scrobble_stop(scrobble_payload)
+            scrobble_res = await active_client.scrobble_stop(scrobble_payload)
 
             # 2. Also sync to history to guarantee item is marked as viewed
-            history_res = await trakt.sync_history(parsed.to_trakt_history_payload())
+            history_res = await active_client.sync_history(parsed.to_trakt_history_payload())
             result = {"scrobble": scrobble_res, "history": history_res}
 
             # Enqueue to offline retry if transient error occurred
             if is_temporary_error(scrobble_res):
-                queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")))
+                queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")), username=parsed.username)
             if is_temporary_error(history_res):
-                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(history_res.get("error", "")))
+                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(history_res.get("error", "")), username=parsed.username)
 
             scrobble_stats["total"] += 1
             if parsed.media_type == "movie":
@@ -255,9 +298,9 @@ async def plex_webhook(request: Request):
             rating_val = parsed.rating or 10
             logger.info(f"Syncing rating to Trakt: {parsed.title} -> {rating_val}/10 for user {parsed.username}")
             rating_payload = parsed.to_trakt_rating_payload()
-            result = await trakt.sync_ratings(rating_payload)
+            result = await active_client.sync_ratings(rating_payload)
             if is_temporary_error(result):
-                queue_mgr.enqueue("sync_ratings", rating_payload, error=str(result.get("error", "")))
+                queue_mgr.enqueue("sync_ratings", rating_payload, error=str(result.get("error", "")), username=parsed.username)
             scrobble_stats["ratings"] += 1
 
         elif Config.SCROBBLE_MODE == "scrobble":
@@ -266,15 +309,15 @@ async def plex_webhook(request: Request):
                 action_taken = "scrobble_start"
                 logger.info(f"Scrobble start: {parsed.title} ({parsed.progress:.1f}%)")
                 playback_mgr.update_playback(parsed, state="playing")
-                result = await trakt.scrobble_start(scrobble_payload)
+                result = await active_client.scrobble_start(scrobble_payload)
             elif event == "media.pause":
                 playback_mgr.update_playback(parsed, state="paused")
                 if parsed.progress >= Config.SCROBBLE_THRESHOLD:
                     action_taken = "scrobble_stop"
                     logger.info(f"Scrobble stop (paused past threshold): {parsed.title} ({parsed.progress:.1f}%)")
-                    result = await trakt.scrobble_stop(scrobble_payload)
+                    result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
-                        queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")))
+                        queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
                     scrobble_stats["total"] += 1
                     if parsed.media_type == "movie":
                         scrobble_stats["movies"] += 1
@@ -283,14 +326,14 @@ async def plex_webhook(request: Request):
                 else:
                     action_taken = "scrobble_pause"
                     logger.info(f"Scrobble pause: {parsed.title} ({parsed.progress:.1f}%)")
-                    result = await trakt.scrobble_pause(scrobble_payload)
+                    result = await active_client.scrobble_pause(scrobble_payload)
             elif event == "media.stop":
                 action_taken = "scrobble_stop"
                 logger.info(f"Scrobble stop: {parsed.title} ({parsed.progress:.1f}%)")
                 playback_mgr.stop_playback(parsed)
-                result = await trakt.scrobble_stop(scrobble_payload)
+                result = await active_client.scrobble_stop(scrobble_payload)
                 if is_temporary_error(result):
-                    queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")))
+                    queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
                 scrobble_stats["total"] += 1
                 if parsed.media_type == "movie":
                     scrobble_stats["movies"] += 1
@@ -299,21 +342,27 @@ async def plex_webhook(request: Request):
         else:
             action_taken = f"skipped_{event}"
 
-
         log_event(parsed, action_taken, result)
+
+        # Trigger outgoing notifications on scrobble or rating
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
             asyncio.create_task(notifier.dispatch(parsed, action_taken))
+
+        # Trigger Co-Watching dual-sync if event qualifies
+        if (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.SCROBBLE_THRESHOLD)) and cowatch_mgr.should_cowatch(parsed):
+            asyncio.create_task(execute_cowatch_sync(parsed, action_taken))
+
         return {"status": "success", "event": event, "action": action_taken, "result": result}
 
     except Exception as e:
         logger.error(f"Error executing Trakt action for {parsed.title}: {e}", exc_info=True)
         if event == "media.scrobble":
-            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e))
-            queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e))
+            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e), username=parsed.username)
+            queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=parsed.username)
         elif event == "media.rate":
-            queue_mgr.enqueue("sync_ratings", parsed.to_trakt_rating_payload(), error=str(e))
+            queue_mgr.enqueue("sync_ratings", parsed.to_trakt_rating_payload(), error=str(e), username=parsed.username)
         elif action_taken == "scrobble_stop":
-            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e))
+            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e), username=parsed.username)
         log_event(parsed, action_taken, {"error": str(e), "queued": True})
         return {"status": "error", "error": str(e), "queued": True}
 
@@ -374,7 +423,7 @@ def clear_events(request: Request):
 async def trigger_queue_retry(request: Request):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    res = await process_queue(trakt, queue_mgr)
+    res = await process_queue(trakt, queue_mgr, user_mgr=user_mgr)
     return {"status": "ok", "result": res, "pending_count": queue_mgr.get_pending_count()}
 
 
@@ -481,6 +530,101 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
 
 
 
+class AddShowRequest(BaseModel):
+    show: str
+
+
+class CowatchSyncRequest(BaseModel):
+    media_type: str
+    title: str
+    year: Optional[int] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    ids: dict[str, Any] = {}
+    target_user: Optional[str] = None
+
+
+@app.get("/api/cowatch")
+def get_cowatch_details(request: Request):
+    is_admin = is_admin_request(request)
+    status = cowatch_mgr.get_status()
+    users = user_mgr.list_configured_users()
+    if not is_admin:
+        if status.get("co_watch_user"):
+            status["co_watch_user"] = mask_username(status["co_watch_user"])
+        users = [
+            {**u, "username": mask_username(u["username"]) if not u.get("is_default") else u["username"]}
+            for u in users
+        ]
+    return {
+        "status": status,
+        "configured_users": users,
+    }
+
+
+@app.post("/api/cowatch/shows")
+def add_cowatch_show(payload: AddShowRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not payload.show.strip():
+        raise HTTPException(status_code=400, detail="Show name cannot be empty")
+    shows = cowatch_mgr.add_show(payload.show)
+    return {"status": "ok", "shows": shows}
+
+
+@app.delete("/api/cowatch/shows")
+def delete_cowatch_show(show: str, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    shows = cowatch_mgr.remove_show(show)
+    return {"status": "ok", "shows": shows}
+
+
+@app.post("/api/cowatch/sync")
+async def cowatch_manual_sync(payload: CowatchSyncRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = payload.target_user or Config.CO_WATCH_USER
+    if not target_user:
+        raise HTTPException(status_code=400, detail="No co-watch target user configured")
+    cw_client = user_mgr.get_client(target_user)
+    if not cw_client.is_authenticated():
+        raise HTTPException(status_code=400, detail=f"User '{target_user}' Trakt account is not authenticated")
+
+    if payload.media_type == "episode":
+        history_payload: dict[str, Any] = {
+            "shows": [
+                {
+                    "title": payload.title,
+                    "seasons": [
+                        {
+                            "number": payload.season if payload.season is not None else 1,
+                            "episodes": [
+                                {"number": payload.episode if payload.episode is not None else 1}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        if payload.year:
+            history_payload["shows"][0]["year"] = payload.year
+        if payload.ids:
+            history_payload["shows"][0]["ids"] = payload.ids
+    else:
+        movie_item: dict[str, Any] = {"title": payload.title}
+        if payload.year:
+            movie_item["year"] = payload.year
+        if payload.ids:
+            movie_item["ids"] = payload.ids
+        history_payload = {"movies": [movie_item]}
+
+    res = await cw_client.sync_history(history_payload)
+    if is_temporary_error(res):
+        queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
+    return {"status": "success", "target_user": target_user, "result": res}
+
+
 class AdminUnlockRequest(BaseModel):
     token: str
 
@@ -509,14 +653,17 @@ def admin_lock(response: Response):
 
 class DevicePollRequest(BaseModel):
     device_code: str
+    user: Optional[str] = None
 
 
 @app.post("/api/auth/start")
-async def auth_start(request: Request):
+async def auth_start(request: Request, user: Optional[str] = None):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    query_user = request.query_params.get("user") or user
+    target_client = user_mgr.get_client(query_user)
     try:
-        data = await trakt.generate_device_code()
+        data = await target_client.generate_device_code()
         return data
     except Exception as e:
         logger.error(f"Failed to generate device code: {e}")
@@ -528,11 +675,13 @@ async def auth_poll(payload: DevicePollRequest, request: Request):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     global trakt_user_profile
+    target_client = user_mgr.get_client(payload.user)
     try:
-        res = await trakt.poll_for_token(payload.device_code)
+        res = await target_client.poll_for_token(payload.device_code)
         if "access_token" in res:
-            trakt_user_profile = None  # Invalidate cached profile on new login
-            return {"status": "success"}
+            if not payload.user or payload.user == "default":
+                trakt_user_profile = None  # Invalidate cached profile on default login
+            return {"status": "success", "user": payload.user or "default"}
         elif res.get("status") in ("pending", "slow_down"):
             return res
         return {"status": "pending"}
@@ -541,7 +690,7 @@ async def auth_poll(payload: DevicePollRequest, request: Request):
 
 
 @app.get("/auth", response_class=HTMLResponse)
-async def auth_page(request: Request):
+async def auth_page(request: Request, user: Optional[str] = None):
     if not is_admin_request(request):
         locked_html = """<!DOCTYPE html>
 <html lang="en">
@@ -571,13 +720,28 @@ async def auth_page(request: Request):
 </body>
 </html>"""
         return HTMLResponse(content=locked_html, status_code=401)
-    profile = await get_cached_trakt_profile()
-    username = profile.get("username") if profile else ""
-    already_connected = trakt.is_authenticated()
+
+    target_uname = user.strip() if user else ""
+    target_client = user_mgr.get_client(target_uname)
+    already_connected = target_client.is_authenticated()
+
+    if target_uname:
+        page_title = f"Link Trakt • @{target_uname}"
+        h1_text = f"Link Trakt for @{target_uname}"
+        p_desc = f"Authorize this scrobbler to record playback and sync history with Trakt for Plex user <strong>@{target_uname}</strong>."
+        banner_user_str = f"Account for <strong>@{target_uname}</strong> is currently linked"
+    else:
+        profile = await get_cached_trakt_profile()
+        default_username = profile.get("username") if profile else ""
+        page_title = "Link Trakt Account"
+        h1_text = "Link Trakt Account"
+        p_desc = "Authorize this scrobbler to record playback and sync history with your Trakt profile."
+        banner_user_str = f"Currently linked to <strong>@{default_username}</strong>" if default_username else "Currently linked"
+
     already_connected_banner = (
         f'<div style="background:#064e3b;border:1px solid #059669;color:#6ee7b7;padding:12px;border-radius:8px;margin-bottom:20px;font-size:14px;">'
-        f'Currently linked to <strong>@{username}</strong>. You can authorize again below to reconnect or switch accounts.</div>'
-        if already_connected and username
+        f'{banner_user_str}. You can authorize again below to reconnect or switch accounts.</div>'
+        if already_connected
         else ""
     )
 
@@ -586,7 +750,7 @@ async def auth_page(request: Request):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Link Trakt Account</title>
+    <title>{page_title}</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -610,8 +774,8 @@ async def auth_page(request: Request):
 <body>
     <div class="card">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#ed1c24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="#ed1c24"/></svg>
-        <h1>Link Trakt Account</h1>
-        <p>Authorize this scrobbler to record playback and sync history with your Trakt profile.</p>
+        <h1>{h1_text}</h1>
+        <p>{p_desc}</p>
         {already_connected_banner}
         <div id="loading-view">
             <div class="status-row"><div class="spinner"></div> Requesting device code from Trakt...</div>
@@ -631,10 +795,12 @@ async def auth_page(request: Request):
         <a href="/" class="btn btn-back">&larr; Return to Dashboard</a>
     </div>
     <script>
+        const targetUser = "{target_uname}";
         let pollInterval = null;
         async function initAuth() {{
             try {{
-                const res = await fetch('/api/auth/start', {{ method: 'POST' }});
+                const url = targetUser ? ('/api/auth/start?user=' + encodeURIComponent(targetUser)) : '/api/auth/start';
+                const res = await fetch(url, {{ method: 'POST' }});
                 if (!res.ok) throw new Error('Failed to generate device code from Trakt. Check client credentials in .env.');
                 const data = await res.json();
                 document.getElementById('code-display').textContent = data.user_code;
@@ -648,7 +814,7 @@ async def auth_page(request: Request):
                         const pollRes = await fetch('/api/auth/poll', {{
                             method: 'POST',
                             headers: {{ 'Content-Type': 'application/json' }},
-                            body: JSON.stringify({{ device_code: data.device_code }})
+                            body: JSON.stringify({{ device_code: data.device_code, user: targetUser || null }})
                         }});
                         const pollData = await pollRes.json();
                         if (pollData.status === 'success') {{
@@ -760,12 +926,25 @@ async def dashboard(request: Request, response: Response):
 
     # Events rows
     rows = ""
+    col_span = 7 if is_admin else 6
     if not recent_events:
-        rows = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>'
+        rows = f'<tr><td colspan="{col_span}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>'
     else:
         for ev in recent_events:
             color = "#10b981" if ev["result_status"] in ("ok", 200, 201) else "#f59e0b"
             u = ev["user"] if is_admin else mask_username(ev["user"])
+            action_col = ""
+            if is_admin:
+                show_title = ev.get("show_title")
+                action_buttons = []
+                if show_title:
+                    show_esc = show_title.replace("'", "\\'")
+                    action_buttons.append(f'<button onclick="quickAddShow(\'{show_esc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Always co-watch this show">+ Co-Watch</button>')
+                if Config.CO_WATCH_USER and ev.get("media_payload"):
+                    media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
+                    action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;" title="Sync to partner">+ Sync Partner</button>')
+                action_col = f'<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;">{"".join(action_buttons)}</td>'
+
             rows += f"""
             <tr style="border-bottom: 1px solid #334155;">
                 <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{ev['timestamp']}</td>
@@ -774,6 +953,7 @@ async def dashboard(request: Request, response: Response):
                 <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{u}</td>
                 <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['action']} ({ev['progress']})</span></td>
                 <td style="padding:12px 16px;"><span style="color:{color};font-weight:600;font-size:13px;">{ev['result_status']}</span></td>
+                {action_col}
             </tr>
             """
 
@@ -875,6 +1055,112 @@ async def dashboard(request: Request, response: Response):
         </div>
     """
 
+    # Co-Watching & Multi-User configuration
+    cw_user = Config.CO_WATCH_USER
+    cw_user_display = cw_user if is_admin else mask_username(cw_user)
+    cw_shows = cowatch_mgr.get_shows()
+    configured_users = user_mgr.list_configured_users()
+
+    # Shared show chips
+    chips_html = ""
+    for s in cw_shows:
+        s_safe = s.replace("'", "\\'")
+        del_btn = (
+            f'<button onclick="removeCowatchShow(\'{s_safe}\')" title="Remove show" '
+            f'style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;">&times;</button>'
+            if is_admin
+            else ""
+        )
+        chips_html += f'<span style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:4px 10px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:3px;">{s}{del_btn}</span>'
+
+    if not chips_html:
+        chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>'
+
+    # Multi-user accounts list
+    users_badges_html = ""
+    for u in configured_users:
+        u_name = u["username"]
+        is_def = u.get("is_default", False)
+        is_cw = u.get("is_cowatch_target", False)
+        auth = u.get("authenticated", False)
+        status_color = "#10b981" if auth else "#ef4444"
+        status_text = "Connected" if auth else "Not Linked"
+        link_url = f"/auth?user={u_name}" if not is_def else "/auth"
+
+        link_btn = ""
+        if is_admin:
+            if not auth:
+                link_btn = f' <a href="{link_url}" class="btn-sm" style="background:#2563eb;color:#fff;text-decoration:none;padding:2px 8px;font-size:11px;margin-left:6px;">Link &rarr;</a>'
+            else:
+                link_btn = f' <a href="{link_url}" class="btn-sm" style="background:#334155;color:#94a3b8;text-decoration:none;padding:2px 8px;font-size:11px;margin-left:6px;">Reconnect</a>'
+
+        role_label = ""
+        if is_def:
+            role_label = '<span style="background:#1e3a8a;color:#93c5fd;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">Default</span>'
+        elif is_cw:
+            role_label = '<span style="background:#701a75;color:#f5d0fe;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">Partner</span>'
+
+        masked_uname = u_name if is_admin else mask_username(u_name)
+        users_badges_html += f"""
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-weight:600;color:#f8fafc;font-size:13px;">@{masked_uname}</span>
+                {role_label}
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="color:{status_color};font-size:12px;font-weight:500;">● {status_text}</span>
+                {link_btn}
+            </div>
+        </div>
+        """
+
+    rule_players_str = ", ".join(Config.CO_WATCH_PLAYERS) if Config.CO_WATCH_PLAYERS else "All Devices"
+    rule_movies_str = "Enabled" if Config.CO_WATCH_MOVIES else "Disabled"
+
+    cowatch_card_html = f"""
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>👥</span> Watch Together & Multi-User Accounts
+            </h3>
+            <span style="background:#0f172a;border:1px solid #334155;color:#38bdf8;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">
+                {f"Partner: @{cw_user_display}" if cw_user else "Single-User Mode"}
+            </span>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Dual-scrobble watched shows to your partner's Trakt account automatically, without syncing your solo shows.
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:20px;">
+            <div>
+                <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;">Shared Shows Whitelist</div>
+                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;min-height:54px;margin-bottom:10px;display:flex;flex-wrap:wrap;align-items:center;">
+                    {chips_html}
+                </div>
+                {f'''
+                <div style="display:flex;gap:8px;">
+                    <input type="text" id="cowatch-show-input" placeholder="Add show (e.g. Severance, The Bear)..."
+                           style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                           onkeydown="if(event.key==='Enter')addCowatchShow()" />
+                    <button onclick="addCowatchShow()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;">+ Add Show</button>
+                </div>
+                ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to add or remove shared shows.</div>'}
+                <div style="margin-top:10px;font-size:12px;color:#94a3b8;">
+                    Movies: <strong>{rule_movies_str}</strong> &bull; Devices: <strong>{rule_players_str}</strong>
+                </div>
+            </div>
+            <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;">Linked Trakt Accounts</div>
+                    {f'<button onclick="promptLinkAccount()" class="btn-sm" style="background:#334155;color:#38bdf8;">+ Link Account</button>' if is_admin else ''}
+                </div>
+                <div>
+                    {users_badges_html}
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -948,6 +1234,8 @@ async def dashboard(request: Request, response: Response):
             {webhook_html_section}
         </div>
 
+        {cowatch_card_html}
+
         <div class="card" style="padding: 0; overflow: hidden;">
             <div style="padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <h3 style="margin: 0;">Live Activity & Scrobble History</h3>
@@ -971,6 +1259,7 @@ async def dashboard(request: Request, response: Response):
                             <th>Plex User</th>
                             <th>Action</th>
                             <th>Trakt Status</th>
+                            {f'<th>Actions</th>' if is_admin else ''}
                         </tr>
                     </thead>
                     <tbody id="events-tbody">
@@ -1243,13 +1532,26 @@ async def dashboard(request: Request, response: Response):
 
         function renderRows(events) {{
             const tbody = document.getElementById('events-tbody');
+            const colSpan = isAdmin ? 7 : 6;
             if (!events || events.length === 0) {{
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="${{colSpan}}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>`;
                 return;
             }}
             let html = '';
             for (const ev of events) {{
                 const color = (ev.result_status === 'ok' || ev.result_status === 200 || ev.result_status === 201) ? '#10b981' : '#f59e0b';
+                let actionBtns = '';
+                if (isAdmin) {{
+                    if (ev.show_title) {{
+                        const showEsc = ev.show_title.replace(/'/g, "\\'");
+                        actionBtns += `<button onclick="quickAddShow('${{showEsc}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Always co-watch this show">+ Co-Watch</button>`;
+                    }}
+                    if (ev.media_payload) {{
+                        const mediaEnc = encodeURIComponent(JSON.stringify(ev.media_payload));
+                        actionBtns += `<button onclick="quickSyncPartner('${{mediaEnc}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Sync to partner">+ Sync Partner</button>`;
+                    }}
+                }}
+                const actionCol = isAdmin ? `<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;">${{actionBtns}}</td>` : '';
                 html += `
                 <tr style="border-bottom: 1px solid #334155;">
                     <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${{ev.timestamp}}</td>
@@ -1258,6 +1560,7 @@ async def dashboard(request: Request, response: Response):
                     <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${{ev.user}}</td>
                     <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">${{ev.action}} (${{ev.progress}})</span></td>
                     <td style="padding:12px 16px;"><span style="color:${{color}};font-weight:600;font-size:13px;">${{ev.result_status}}</span></td>
+                    ${{actionCol}}
                 </tr>`;
             }}
             tbody.innerHTML = html;
@@ -1307,6 +1610,101 @@ async def dashboard(request: Request, response: Response):
                 refreshTimer = setInterval(fetchEvents, 5000);
             }} else {{
                 if (refreshTimer) clearInterval(refreshTimer);
+            }}
+        }}
+
+        async function addCowatchShow() {{
+            if (!isAdmin) {{ openUnlockModal(); return; }}
+            const input = document.getElementById('cowatch-show-input');
+            const showName = input ? input.value.trim() : '';
+            if (!showName) return;
+            try {{
+                const res = await fetch('/api/cowatch/shows', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ show: showName }})
+                }});
+                if (res.ok) {{
+                    if (input) input.value = '';
+                    window.location.reload();
+                }} else {{
+                    const err = await res.json();
+                    alert('Failed to add show: ' + (err.detail || 'Error'));
+                }}
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+            }}
+        }}
+
+        async function removeCowatchShow(showName) {{
+            if (!isAdmin) {{ openUnlockModal(); return; }}
+            if (!confirm(`Remove "${{showName}}" from shared shows?`)) return;
+            try {{
+                const res = await fetch('/api/cowatch/shows?show=' + encodeURIComponent(showName), {{
+                    method: 'DELETE'
+                }});
+                if (res.ok) {{
+                    window.location.reload();
+                }} else {{
+                    const err = await res.json();
+                    alert('Failed to remove show: ' + (err.detail || 'Error'));
+                }}
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+            }}
+        }}
+
+        async function quickAddShow(showName, btn) {{
+            if (!isAdmin) {{ openUnlockModal(); return; }}
+            btn.disabled = true;
+            btn.textContent = 'Adding...';
+            try {{
+                const res = await fetch('/api/cowatch/shows', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ show: showName }})
+                }});
+                if (res.ok) {{
+                    btn.textContent = '✓ Added';
+                    btn.style.background = '#059669';
+                }} else {{
+                    btn.textContent = 'Error';
+                }}
+            }} catch (e) {{
+                btn.textContent = 'Error';
+            }}
+        }}
+
+        async function quickSyncPartner(payloadEnc, btn) {{
+            if (!isAdmin) {{ openUnlockModal(); return; }}
+            btn.disabled = true;
+            btn.textContent = 'Syncing...';
+            try {{
+                const payload = JSON.parse(decodeURIComponent(payloadEnc));
+                const res = await fetch('/api/cowatch/sync', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(payload)
+                }});
+                if (res.ok) {{
+                    btn.textContent = '✓ Synced';
+                    btn.style.background = '#059669';
+                }} else {{
+                    const err = await res.json();
+                    alert('Sync failed: ' + (err.detail || 'Error'));
+                    btn.textContent = 'Error';
+                }}
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+                btn.textContent = 'Error';
+            }}
+        }}
+
+        function promptLinkAccount() {{
+            if (!isAdmin) {{ openUnlockModal(); return; }}
+            const uname = prompt('Enter Plex username to link a Trakt account for:');
+            if (uname && uname.trim()) {{
+                window.location.href = '/auth?user=' + encodeURIComponent(uname.trim());
             }}
         }}
 

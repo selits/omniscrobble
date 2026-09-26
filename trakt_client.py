@@ -10,12 +10,12 @@ logger = logging.getLogger("trakt_client")
 
 
 class TraktClient:
-    def __init__(self, config: type[Config] = Config):
+    def __init__(self, config: type[Config] = Config, tokens_file: Optional[Path] = None):
         self.config = config
         self.client_id = config.TRAKT_CLIENT_ID
         self.client_secret = config.TRAKT_CLIENT_SECRET
         self.api_url = config.TRAKT_API_URL
-        self.tokens_file = config.TRAKT_TOKENS_FILE
+        self.tokens_file = tokens_file if tokens_file is not None else config.TRAKT_TOKENS_FILE
         self._tokens: Optional[dict[str, Any]] = None
         self._http_client: Optional[httpx.AsyncClient] = None
 

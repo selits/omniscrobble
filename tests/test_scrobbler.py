@@ -12,6 +12,8 @@ from trakt_client import TraktClient
 from notifier import Notifier, format_media_title, get_trakt_url, notifier
 from playback_manager import PlaybackManager, playback_mgr
 from plex_parser import ParsedMedia, parse_plex_ids, parse_plex_webhook
+from user_manager import UserClientManager, user_mgr
+from cowatch_manager import CowatchManager, cowatch_mgr
 
 
 def test_parse_plex_ids():
@@ -1306,6 +1308,283 @@ def test_webhook_tracks_playback():
         assert finished["title"] == "Blade Runner 2049 (2017)"
 
     playback_mgr.clear()
+
+
+def test_user_client_manager(tmp_path):
+    mgr = UserClientManager()
+    mgr.tokens_dir = tmp_path / "tokens"
+    mgr.tokens_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Default client resolution
+    c_default = mgr.get_client("default")
+    assert c_default is not None
+    assert mgr.get_client(None) is c_default
+
+    # 2. Per-user client
+    c_alice = mgr.get_client("alice")
+    assert c_alice is not c_default
+    assert c_alice.tokens_file == tmp_path / "tokens" / "alice_tokens.json"
+    assert mgr.get_client("Alice") is c_alice  # Case insensitivity & caching
+
+    # 3. List configured users
+    users = mgr.list_configured_users()
+    unames = [u["username"] for u in users]
+    assert "default" in unames
+
+
+def test_cowatch_manager(tmp_path):
+    data_file = tmp_path / "cowatch_shows.json"
+    mgr = CowatchManager()
+    mgr.data_file = data_file
+    mgr._shows = []
+    mgr._save_shows()
+
+    # 1. Add and remove shows
+    assert mgr.add_show("The Bear") == ["The Bear"]
+    assert mgr.add_show("Severance") == ["The Bear", "Severance"]
+    # Duplicate addition ignored
+    assert mgr.add_show("the bear") == ["The Bear", "Severance"]
+    assert len(mgr.get_shows()) == 2
+
+    # 2. Normalized matching
+    assert mgr.is_cowatch_show("The Bear") is True
+    assert mgr.is_cowatch_show("The Bear (2022)") is True
+    assert mgr.is_cowatch_show("the bear") is True
+    assert mgr.is_cowatch_show("Severance") is True
+    assert mgr.is_cowatch_show("Succession") is False
+
+    # 3. Persistence reload
+    mgr2 = CowatchManager()
+    mgr2.data_file = data_file
+    mgr2._load_shows()
+    assert "The Bear" in mgr2.get_shows()
+    assert "Severance" in mgr2.get_shows()
+
+    # 4. Remove show
+    mgr2.remove_show("The Bear")
+    assert "The Bear" not in mgr2.get_shows()
+    assert mgr2.is_cowatch_show("The Bear") is False
+
+
+def test_cowatch_should_cowatch_rules():
+    mgr = CowatchManager()
+    mgr._shows = ["Severance"]
+
+    # 1. No CO_WATCH_USER configured
+    with patch.object(Config, "CO_WATCH_USER", ""):
+        m = ParsedMedia(
+            event="media.scrobble",
+            username="selits",
+            media_type="episode",
+            title="Good News About Hell",
+            show_title="Severance",
+        )
+        assert mgr.should_cowatch(m) is False
+
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(Config, "CO_WATCH_MOVIES", False), \
+         patch.object(Config, "CO_WATCH_PLAYERS", []):
+
+        # 2. Event originated from partner user -> False (no self-sync loop)
+        m_partner = ParsedMedia(
+            event="media.scrobble",
+            username="partner",
+            media_type="episode",
+            title="Good News About Hell",
+            show_title="Severance",
+        )
+        assert mgr.should_cowatch(m_partner) is False
+
+        # 3. Matching episode from main user -> True
+        m_main = ParsedMedia(
+            event="media.scrobble",
+            username="selits",
+            media_type="episode",
+            title="Good News About Hell",
+            show_title="Severance",
+        )
+        assert mgr.should_cowatch(m_main) is True
+
+        # 4. Non-matching episode -> False
+        m_solo = ParsedMedia(
+            event="media.scrobble",
+            username="selits",
+            media_type="episode",
+            title="Ozymandias",
+            show_title="Breaking Bad",
+        )
+        assert mgr.should_cowatch(m_solo) is False
+
+        # 5. Movie when CO_WATCH_MOVIES is False -> False
+        m_movie = ParsedMedia(
+            event="media.scrobble",
+            username="selits",
+            media_type="movie",
+            title="Inception",
+            year=2010,
+        )
+        assert mgr.should_cowatch(m_movie) is False
+
+    # 6. Movie when CO_WATCH_MOVIES is True -> True
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(Config, "CO_WATCH_MOVIES", True), \
+         patch.object(Config, "CO_WATCH_PLAYERS", []):
+        assert mgr.should_cowatch(m_movie) is True
+
+    # 7. Player whitelist filtering
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(Config, "CO_WATCH_MOVIES", True), \
+         patch.object(Config, "CO_WATCH_PLAYERS", ["Living Room TV"]):
+        m_living_room = ParsedMedia(
+            event="media.scrobble",
+            username="selits",
+            media_type="movie",
+            title="Inception",
+            player="Living Room TV",
+        )
+        m_phone = ParsedMedia(
+            event="media.scrobble",
+            username="selits",
+            media_type="movie",
+            title="Inception",
+            player="iPhone",
+        )
+        assert mgr.should_cowatch(m_living_room) is True
+        assert mgr.should_cowatch(m_phone) is False
+
+
+def test_cowatch_api_endpoints():
+    client = TestClient(app)
+
+    # 1. GET /api/cowatch (public / masked vs admin)
+    res_pub = client.get("/api/cowatch")
+    assert res_pub.status_code == 200
+    assert "status" in res_pub.json()
+    assert "configured_users" in res_pub.json()
+
+    # 2. POST /api/cowatch/shows (auth check)
+    with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
+        # Unauthorized without token
+        res_unauth = client.post("/api/cowatch/shows", json={"show": "The Bear"})
+        assert res_unauth.status_code == 401
+
+        # Authorized with token
+        res_auth = client.post("/api/cowatch/shows?token=testsecret", json={"show": "The Bear"})
+        assert res_auth.status_code == 200
+        assert "The Bear" in res_auth.json()["shows"]
+
+        # 3. DELETE /api/cowatch/shows
+        res_del = client.delete("/api/cowatch/shows?token=testsecret&show=The+Bear")
+        assert res_del.status_code == 200
+        assert "The Bear" not in res_del.json()["shows"]
+
+
+def test_cowatch_manual_sync_endpoint():
+    client = TestClient(app)
+
+    # Mock partner client
+    mock_partner_client = MagicMock()
+    mock_partner_client.is_authenticated.return_value = True
+    mock_partner_client.sync_history = AsyncMock(return_value={"added": {"movies": 1}})
+
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(user_mgr, "get_client", return_value=mock_partner_client):
+
+        payload = {
+            "media_type": "movie",
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "ids": {"imdb": "tt15239678"},
+        }
+        res = client.post("/api/cowatch/sync", json=payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["target_user"] == "partner"
+        mock_partner_client.sync_history.assert_called_once()
+
+
+def test_multi_user_auth_flow():
+    client = TestClient(app)
+
+    mock_alice_client = MagicMock()
+    mock_alice_client.generate_device_code = AsyncMock(return_value={
+        "device_code": "alice_dev",
+        "user_code": "ALICE123",
+        "verification_url": "https://trakt.tv/activate",
+        "expires_in": 600,
+        "interval": 5,
+    })
+    mock_alice_client.poll_for_token = AsyncMock(return_value={"access_token": "alice_token"})
+
+    with patch.object(user_mgr, "get_client", return_value=mock_alice_client):
+        # 1. Start auth for alice
+        res_start = client.post("/api/auth/start?user=alice")
+        assert res_start.status_code == 200
+        assert res_start.json()["user_code"] == "ALICE123"
+
+        # 2. Poll for alice
+        res_poll = client.post("/api/auth/poll", json={"device_code": "alice_dev", "user": "alice"})
+        assert res_poll.status_code == 200
+        assert res_poll.json()["status"] == "success"
+        assert res_poll.json()["user"] == "alice"
+
+        # 3. GET /auth?user=alice
+        res_page = client.get("/auth?user=alice")
+        assert res_page.status_code == 200
+        assert "@alice" in res_page.text
+
+
+@pytest.mark.asyncio
+async def test_webhook_triggers_cowatch_sync():
+    client = TestClient(app)
+
+    mock_partner_client = MagicMock()
+    mock_partner_client.is_authenticated.return_value = True
+    mock_partner_client.sync_history = AsyncMock(return_value={"added": {"episodes": 1}})
+
+    payload = {
+        "event": "media.scrobble",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Metadata": {
+            "librarySectionType": "show",
+            "type": "episode",
+            "title": "Forks",
+            "grandparentTitle": "The Bear",
+            "parentTitle": "Season 2",
+            "index": 7,
+            "parentIndex": 2,
+            "year": 2023,
+            "duration": 2000000,
+            "viewOffset": 1950000,
+        },
+    }
+
+    def fake_get_client(uname):
+        if uname == "partner":
+            return mock_partner_client
+        return trakt
+
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(cowatch_mgr, "is_cowatch_show", return_value=True), \
+         patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_hist, \
+         patch.object(user_mgr, "get_client", side_effect=fake_get_client):
+
+        mock_stop.return_value = {"action": "scrobble"}
+        mock_hist.return_value = {"added": {"episodes": 1}}
+
+        res = client.post("/webhook", data={"payload": json.dumps(payload)})
+        assert res.status_code == 200
+
+        # Allow background create_task(execute_cowatch_sync) to execute
+        import asyncio
+        await asyncio.sleep(0.05)
+
+        mock_partner_client.sync_history.assert_called_once()
+
 
 
 

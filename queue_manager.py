@@ -29,6 +29,7 @@ class QueueManager:
                 """
                 CREATE TABLE IF NOT EXISTS queued_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL DEFAULT 'default',
                     event_type TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
@@ -38,22 +39,26 @@ class QueueManager:
                 )
                 """
             )
+            try:
+                conn.execute("ALTER TABLE queued_events ADD COLUMN username TEXT DEFAULT 'default'")
+            except Exception:
+                pass
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_queued_events_status ON queued_events(status)"
             )
             conn.commit()
 
-    def enqueue(self, event_type: str, payload: dict[str, Any], error: str = "") -> int:
+    def enqueue(self, event_type: str, payload: dict[str, Any], error: str = "", username: str = "default") -> int:
         """Insert a failed event into the offline retry queue."""
         payload_str = json.dumps(payload)
         now = int(time.time())
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO queued_events (event_type, payload, created_at, retry_count, last_error, status)
-                VALUES (?, ?, ?, 0, ?, 'pending')
+                INSERT INTO queued_events (username, event_type, payload, created_at, retry_count, last_error, status)
+                VALUES (?, ?, ?, ?, 0, ?, 'pending')
                 """,
-                (event_type, payload_str, now, error),
+                (username or "default", event_type, payload_str, now, error),
             )
             conn.commit()
             item_id = cursor.lastrowid or 0
@@ -65,7 +70,7 @@ class QueueManager:
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT id, event_type, payload, created_at, retry_count, last_error, status
+                SELECT id, username, event_type, payload, created_at, retry_count, last_error, status
                 FROM queued_events
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
@@ -83,6 +88,7 @@ class QueueManager:
                 p = {}
             items.append({
                 "id": r["id"],
+                "username": r["username"] if "username" in r.keys() else "default",
                 "event_type": r["event_type"],
                 "payload": p,
                 "created_at": r["created_at"],
@@ -157,7 +163,12 @@ class QueueManager:
             return cursor.rowcount
 
 
-async def process_queue(trakt_client: TraktClient, queue_mgr: QueueManager, max_items: int = 20) -> dict[str, int]:
+async def process_queue(
+    trakt_client: TraktClient,
+    queue_mgr: QueueManager,
+    max_items: int = 20,
+    user_mgr: Optional[Any] = None,
+) -> dict[str, int]:
     """Drain pending items from the offline queue and dispatch to Trakt."""
     pending = queue_mgr.get_pending(limit=max_items)
     if not pending:
@@ -168,21 +179,24 @@ async def process_queue(trakt_client: TraktClient, queue_mgr: QueueManager, max_
 
     for item in pending:
         item_id = item["id"]
+        username = item.get("username", "default")
         event_type = item["event_type"]
         payload = item["payload"]
+
+        client = user_mgr.get_client(username) if user_mgr else trakt_client
 
         try:
             res: dict[str, Any] = {}
             if event_type == "scrobble_stop":
-                res = await trakt_client.scrobble_stop(payload)
+                res = await client.scrobble_stop(payload)
             elif event_type == "sync_history":
-                res = await trakt_client.sync_history(payload)
+                res = await client.sync_history(payload)
             elif event_type == "sync_ratings":
-                res = await trakt_client.sync_ratings(payload)
+                res = await client.sync_ratings(payload)
             elif event_type == "scrobble_start":
-                res = await trakt_client.scrobble_start(payload)
+                res = await client.scrobble_start(payload)
             elif event_type == "scrobble_pause":
-                res = await trakt_client.scrobble_pause(payload)
+                res = await client.scrobble_pause(payload)
             else:
                 logger.warning(f"Unknown queued event type: {event_type}")
                 queue_mgr.mark_failure(item_id, f"Unknown event type: {event_type}")
