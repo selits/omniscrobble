@@ -97,6 +97,11 @@ class PlaybackManager:
         active.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
         return active
 
+    def get_active_count(self) -> int:
+        """Return the number of currently active playback sessions."""
+        return len(self.get_active_sessions(is_admin=True))
+
+
     def get_recently_finished(self, is_admin: bool = True) -> Optional[dict[str, Any]]:
         """Return recently finished media item if within 24h, applying privacy masking if needed."""
         if not self.recently_finished:

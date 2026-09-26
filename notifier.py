@@ -12,6 +12,7 @@ logger = logging.getLogger("notifier")
 
 DISCORD_COLOR_SCROBBLE = 0xED1C24  # Trakt Red
 DISCORD_COLOR_RATE = 0xF5A623      # Gold
+DISCORD_COLOR_COLLECTION = 0x00A8E8 # Cyan / Trakt Collection Blue
 
 
 def format_media_title(media: ParsedMedia) -> str:
@@ -41,7 +42,7 @@ def get_trakt_url(media: ParsedMedia) -> str:
 
 
 class Notifier:
-    """Handles dispatching outgoing webhook notifications to Discord and Telegram."""
+    """Handles dispatching outgoing webhook notifications across Discord, Telegram, Ntfy, and Pushover."""
 
     def __init__(self, config: type[Config] = Config):
         self.config = config
@@ -63,8 +64,11 @@ class Notifier:
         return {
             "discord": bool(self.config.DISCORD_WEBHOOK_URL),
             "telegram": bool(self.config.TELEGRAM_BOT_TOKEN and self.config.TELEGRAM_CHAT_ID),
+            "ntfy": bool(self.config.NTFY_URL),
+            "pushover": bool(self.config.PUSHOVER_USER_KEY and self.config.PUSHOVER_API_TOKEN),
             "notify_on_scrobble": self.config.NOTIFY_ON_SCROBBLE,
             "notify_on_rate": self.config.NOTIFY_ON_RATE,
+            "notify_on_collection": self.config.NOTIFY_ON_COLLECTION,
         }
 
     def build_discord_payload(self, media: ParsedMedia, action: str) -> dict[str, Any]:
@@ -82,6 +86,17 @@ class Notifier:
                 {"name": "User", "value": media.username, "inline": True},
                 {"name": "Type", "value": type_str, "inline": True},
             ]
+        elif action == "collection":
+            color = DISCORD_COLOR_COLLECTION
+            description = "Added to Trakt Collection"
+            fields = [
+                {"name": "Status", "value": "Collected", "inline": True},
+                {"name": "User", "value": media.username or "Plex Server", "inline": True},
+                {"name": "Type", "value": type_str, "inline": True},
+            ]
+            if media.video_resolution or media.audio_codec:
+                specs = " • ".join(filter(None, [media.video_resolution, media.audio_codec]))
+                fields.append({"name": "Specs", "value": specs.upper(), "inline": True})
         else:
             color = DISCORD_COLOR_SCROBBLE
             progress_val = f"{media.progress:.1f}%" if media.progress else "100.0%"
@@ -100,7 +115,7 @@ class Notifier:
             "description": description,
             "fields": fields,
             "footer": {
-                "text": f"Plex Trakt Webhook • {media.username}"
+                "text": f"Plex Trakt Webhook • {media.username or 'Server'}"
             },
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
@@ -114,7 +129,7 @@ class Notifier:
     def build_telegram_payload(self, media: ParsedMedia, action: str) -> dict[str, Any]:
         """Constructs a Telegram HTML formatted message payload."""
         title_str = html.escape(format_media_title(media))
-        user_str = html.escape(media.username)
+        user_str = html.escape(media.username or "Server")
         trakt_url = get_trakt_url(media)
 
         if action == "rate":
@@ -124,6 +139,17 @@ class Notifier:
                 f"🎬 <b>{title_str}</b>\n"
                 f"👤 <b>User:</b> <code>{user_str}</code>\n"
                 f"⭐ <b>Rating:</b> <b>{rating_val}/10</b>\n"
+                f"🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
+            )
+        elif action == "collection":
+            specs_str = ""
+            if media.video_resolution or media.audio_codec:
+                specs_str = f"💿 <b>Specs:</b> <code>{html.escape((media.video_resolution or '').upper())} • {html.escape((media.audio_codec or '').upper())}</code>\n"
+            text = (
+                f"📥 <b>Added to Trakt Collection</b>\n\n"
+                f"🎬 <b>{title_str}</b>\n"
+                f"👤 <b>User:</b> <code>{user_str}</code>\n"
+                f"{specs_str}"
                 f"🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
             )
         else:
@@ -201,6 +227,85 @@ class Notifier:
             logger.warning(f"Failed to deliver Telegram notification: {e}")
             return False
 
+    async def send_ntfy(
+        self,
+        media: ParsedMedia,
+        action: str,
+        client: Optional[httpx.AsyncClient] = None
+    ) -> bool:
+        """Sends a push notification via Ntfy."""
+        url = self.config.NTFY_URL
+        if not url:
+            return False
+
+        title_str = format_media_title(media)
+        trakt_url = get_trakt_url(media)
+        headers: dict[str, str] = {
+            "Title": f"Trakt: {title_str}",
+            "Click": trakt_url,
+            "Priority": self.config.NTFY_PRIORITY or "default",
+        }
+        if self.config.NTFY_AUTH_TOKEN:
+            headers["Authorization"] = f"Bearer {self.config.NTFY_AUTH_TOKEN}"
+
+        if action == "rate":
+            msg = f"Rated {media.rating or 10}/10 on Trakt by {media.username}"
+            headers["Tags"] = "star,trakt"
+        elif action == "collection":
+            msg = f"Added {title_str} to Trakt Collection"
+            headers["Tags"] = "cd,package,trakt"
+        else:
+            msg = f"Scrobbled {title_str} ({media.progress:.1f}% watched) by {media.username}"
+            headers["Tags"] = "movie_camera,popcorn,trakt"
+
+        http = client or self.get_client()
+        try:
+            res = await http.post(url, content=msg.encode("utf-8"), headers=headers)
+            return 200 <= res.status_code < 300
+        except Exception as e:
+            logger.warning(f"Failed to deliver Ntfy notification: {e}")
+            return False
+
+    async def send_pushover(
+        self,
+        media: ParsedMedia,
+        action: str,
+        client: Optional[httpx.AsyncClient] = None
+    ) -> bool:
+        """Sends a push notification via Pushover API."""
+        user_key = self.config.PUSHOVER_USER_KEY
+        api_token = self.config.PUSHOVER_API_TOKEN
+        if not user_key or not api_token:
+            return False
+
+        title_str = format_media_title(media)
+        trakt_url = get_trakt_url(media)
+
+        if action == "rate":
+            msg = f"⭐ Rated {media.rating or 10}/10 by {media.username}"
+        elif action == "collection":
+            msg = f"📥 Added to Trakt Collection by {media.username or 'Server'}"
+        else:
+            msg = f"🍿 Scrobbled to Trakt ({media.progress:.1f}% watched) by {media.username}"
+
+        payload = {
+            "token": api_token,
+            "user": user_key,
+            "title": f"Trakt: {title_str}",
+            "message": msg,
+            "url": trakt_url,
+            "url_title": "View on Trakt",
+            "priority": self.config.PUSHOVER_PRIORITY,
+        }
+
+        http = client or self.get_client()
+        try:
+            res = await http.post("https://api.pushover.net/1/messages.json", data=payload)
+            return 200 <= res.status_code < 300
+        except Exception as e:
+            logger.warning(f"Failed to deliver Pushover notification: {e}")
+            return False
+
     async def dispatch(
         self,
         media: ParsedMedia,
@@ -215,6 +320,9 @@ class Notifier:
         elif action == "rate":
             if not self.config.NOTIFY_ON_RATE:
                 return
+        elif action == "collection":
+            if not self.config.NOTIFY_ON_COLLECTION:
+                return
         else:
             return
 
@@ -223,6 +331,10 @@ class Notifier:
             tasks.append(self.send_discord(media, action, client=client))
         if self.config.TELEGRAM_BOT_TOKEN and self.config.TELEGRAM_CHAT_ID:
             tasks.append(self.send_telegram(media, action, client=client))
+        if self.config.NTFY_URL:
+            tasks.append(self.send_ntfy(media, action, client=client))
+        if self.config.PUSHOVER_USER_KEY and self.config.PUSHOVER_API_TOKEN:
+            tasks.append(self.send_pushover(media, action, client=client))
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
