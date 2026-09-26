@@ -7,14 +7,15 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 ## 🌟 Features
 
 - **Automatic Show & Movie Tracking**: Synchronizes playback in real-time (`media.play`, `media.pause`, `media.stop`) and automatically marks episodes as viewed in Trakt history upon completion (`media.scrobble`).
-- **Modern GUID Resolution**: Supports Plex's modern metadata agents (`imdb://`, `tmdb://`, `tvdb://`) and provides smart fallback matching for title, year, season, and episode.
+- **Modern GUID Resolution**: Supports Plex's modern metadata agents (`imdb://`, `tmdb://`, `tvdb://`), TV show year matching for remake disambiguation, and fallback title matching.
 - **Robust Multipart Parsing**: Handles Plex's multipart/form-data payloads (both JSON file parts and raw form fields) without validation errors.
 - **Smart Pause Handling**: Automatically finalizes scrobbles if playback is paused past the completion threshold (>=80%), preventing Trakt API 422 warnings.
-- **Device Code OAuth Flow**: Headless, one-command authorization (`python auth.py`) using Trakt's official device activation code (`https://trakt.tv/activate`).
-- **Automatic Token Refresh**: Transparently refreshes single-use Trakt access and refresh tokens before expiration.
+- **Web UI & Device Code OAuth Flow**: Authorize directly in your browser via `/auth` or headlessly via terminal (`python auth.py`) using Trakt's official activation code (`https://trakt.tv/activate`).
+- **Resilient Async Trakt Client**: Built on non-blocking `httpx.AsyncClient` with automatic OAuth token refresh on 401 and exponential backoff on 429 rate limits.
+- **Optional Webhook Secret**: Protect your webhook with a secret token (`/webhook?token=...` or `X-Webhook-Secret`) to prevent unauthorized spoofing.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
-- **Built-in Dashboard**: Access `http://<server-ip>:<PORT>/` to view live activity, recent scrobble logs, and connection health.
-- **Remote Server & Docker Ready**: Tested and optimized for containerized environments (Docker, VPS, Remote Servers).
+- **Live Auto-Refreshing Dashboard**: Access `http://<server-ip>:<PORT>/` to view connected Trakt user profile, live auto-updating event logs (5s poll), and health status.
+- **Remote Server & Docker Ready**: Tested and optimized for containerized environments (Docker, VPS, Remote Servers) with non-root security and healthchecks.
 
 ---
 
@@ -52,6 +53,9 @@ TRAKT_CLIENT_SECRET=your_client_secret_from_trakt
 # (Recommended) Restrict scrobbling to your Plex username only (leave blank to allow all users)
 PLEX_ALLOWED_USERS=your_plex_username
 
+# (Optional) Protect webhook endpoint from unauthorized requests
+WEBHOOK_SECRET=your_optional_secret_token
+
 # Host & Port: Use 0.0.0.0 so Plex containers can reach this service
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
@@ -65,15 +69,21 @@ SCROBBLE_THRESHOLD=80.0
 
 ### 3. Authenticate with Trakt (One-Time Setup)
 
-Run the device authorization script:
+You can authenticate either through your web browser or from the command line:
 
+#### Option A: Via Web Browser (Recommended)
+1. Start the server (see background/systemd setup below).
+2. Open **`http://<server-ip>:<PORT>/auth`** in your browser.
+3. The page will fetch your 8-character activation code. Click the link to **`https://trakt.tv/activate`**, enter the code, and click **Authorize**.
+4. The page will automatically detect approval and redirect to your dashboard!
+
+#### Option B: Via Terminal / CLI
 ```bash
 .venv/bin/python auth.py
 ```
+1. Open the activation URL displayed, enter the 8-character code, and authorize.
+2. The script will save your tokens to `trakt_tokens.json`.
 
-1. The script will display an 8-character code and direct you to: **`https://trakt.tv/activate`**
-2. Open that link in your browser, enter the code, and click **Authorize**.
-3. The script will detect your approval, fetch OAuth tokens, and save them securely to `trakt_tokens.json`.
 
 ---
 
@@ -206,8 +216,9 @@ curl http://localhost:8080/health
 ```
 Expected response:
 ```json
-{"status":"healthy","authenticated":true,"allowed_users":["selits"],"scrobble_mode":"scrobble"}
+{"status":"healthy","authenticated":true,"trakt_user":"selits","allowed_users":["selits"],"scrobble_mode":"scrobble","webhook_secret_enabled":false}
 ```
+
 
 ---
 
