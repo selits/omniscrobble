@@ -19,6 +19,7 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Web UI & Device Code OAuth Flow**: Authorize directly in your browser via `/auth` or headlessly via terminal (`python auth.py`) using Trakt's official activation code (`https://trakt.tv/activate`).
 - **Resilient Async Trakt Client**: Built on non-blocking `httpx.AsyncClient` with automatic OAuth token refresh on 401, token health telemetry, and exponential backoff on 429 rate limits.
 - **Persistent Offline Queue & Retry Worker**: Automatically preserves scrobbles, watches, and ratings in a local SQLite database during Trakt API downtime or network outages, retrying in the background until successfully synced.
+- **Outgoing Notifications (Discord & Telegram)**: Delivers real-time rich embeds to Discord and formatted alerts to Telegram upon scrobbles and ratings, complete with direct Trakt media links.
 - **Dashboard Admin Security & Privacy Shield**: Public visitors see a privacy-shielded view (masked usernames, masked webhook secret, locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
 - **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, and live auto-updating event logs (5s poll).
@@ -78,6 +79,13 @@ SERVER_PORT=8080
 # Scrobble behavior
 SCROBBLE_MODE=scrobble
 SCROBBLE_THRESHOLD=80.0
+
+# (Optional) Real-time notifications to Discord and/or Telegram
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+TELEGRAM_CHAT_ID=123456789
+NOTIFY_ON_SCROBBLE=true
+NOTIFY_ON_RATE=true
 ```
 
 ---

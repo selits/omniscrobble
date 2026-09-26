@@ -9,7 +9,8 @@ from main import app, get_uptime_str, mask_username, queue_mgr, recent_events, s
 from queue_manager import QueueManager, process_queue
 from trakt_client import TraktClient
 
-from plex_parser import parse_plex_ids, parse_plex_webhook
+from notifier import Notifier, format_media_title, get_trakt_url, notifier
+from plex_parser import ParsedMedia, parse_plex_ids, parse_plex_webhook
 
 
 def test_parse_plex_ids():
@@ -769,6 +770,278 @@ def test_queue_endpoints():
         assert res_clear_ok.status_code == 200
         assert res_clear_ok.json()["pending_count"] == 0
         client.cookies.clear()
+
+
+def test_notifier_title_formatting_and_trakt_url():
+    # Episode with subtitle
+    ep = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        title="Ozymandias",
+        show_title="Breaking Bad",
+        season=5,
+        episode=14,
+        ids={"imdb": "tt2301451"},
+    )
+    assert format_media_title(ep) == "Breaking Bad S05E14 - Ozymandias"
+    assert get_trakt_url(ep) == "https://trakt.tv/search/imdb/tt2301451"
+
+    # Episode without subtitle or title same as show
+    ep_same = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        title="Breaking Bad",
+        show_title="Breaking Bad",
+        season=5,
+        episode=14,
+        ids={"tmdb": 62085},
+    )
+    assert format_media_title(ep_same) == "Breaking Bad S05E14"
+    assert get_trakt_url(ep_same) == "https://trakt.tv/search/tmdb/62085"
+
+    # Movie with year
+    movie = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        year=2010,
+        ids={"tvdb": 12345},
+    )
+    assert format_media_title(movie) == "Inception (2010)"
+    assert get_trakt_url(movie) == "https://trakt.tv/search/tvdb/12345"
+
+    # Fallback without IDs
+    plain = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Unknown Film",
+    )
+    assert format_media_title(plain) == "Unknown Film"
+    assert get_trakt_url(plain) == "https://trakt.tv"
+
+
+def test_notifier_build_payloads():
+    media_scrobble = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        title="Ozymandias",
+        show_title="Breaking Bad",
+        season=5,
+        episode=14,
+        progress=100.0,
+        ids={"imdb": "tt2301451"},
+    )
+
+    notifier_inst = Notifier(Config)
+
+    # 1. Discord Scrobble payload
+    discord_scrobble = notifier_inst.build_discord_payload(media_scrobble, "mark_watched")
+    assert "embeds" in discord_scrobble
+    embed = discord_scrobble["embeds"][0]
+    assert embed["color"] == 0xED1C24
+    assert embed["title"] == "Breaking Bad S05E14 - Ozymandias"
+    assert embed["url"] == "https://trakt.tv/search/imdb/tt2301451"
+    assert any(f["name"] == "Progress" and f["value"] == "100.0%" for f in embed["fields"])
+
+    # 2. Discord Rating payload
+    media_rate = ParsedMedia(
+        event="media.rate",
+        username="selits",
+        media_type="movie",
+        title="Dune: Part Two",
+        year=2024,
+        rating=10,
+        ids={"imdb": "tt15239678"},
+    )
+    discord_rate = notifier_inst.build_discord_payload(media_rate, "rate")
+    embed_rate = discord_rate["embeds"][0]
+    assert embed_rate["color"] == 0xF5A623
+    assert embed_rate["title"] == "Dune: Part Two (2024)"
+    assert any(f["name"] == "Rating" and "10/10" in f["value"] for f in embed_rate["fields"])
+
+    # 3. Telegram Scrobble payload
+    with patch.object(Config, "TELEGRAM_CHAT_ID", "123456"):
+        tg_scrobble = notifier_inst.build_telegram_payload(media_scrobble, "mark_watched")
+        assert tg_scrobble["chat_id"] == "123456"
+        assert tg_scrobble["parse_mode"] == "HTML"
+        assert "Breaking Bad S05E14 - Ozymandias" in tg_scrobble["text"]
+        assert "Scrobbled to Trakt" in tg_scrobble["text"]
+
+    # 4. Telegram Rating payload
+    with patch.object(Config, "TELEGRAM_CHAT_ID", "123456"):
+        tg_rate = notifier_inst.build_telegram_payload(media_rate, "rate")
+        assert tg_rate["chat_id"] == "123456"
+        assert "Dune: Part Two (2024)" in tg_rate["text"]
+        assert "10/10" in tg_rate["text"]
+
+
+@pytest.mark.asyncio
+async def test_notifier_send_discord_and_telegram():
+    media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        year=2010,
+        progress=100.0,
+    )
+
+    notifier_inst = Notifier(Config)
+
+    # 1. Discord unconfigured
+    with patch.object(Config, "DISCORD_WEBHOOK_URL", ""):
+        assert await notifier_inst.send_discord(media, "mark_watched") is False
+
+    # 2. Discord configured & success (204 No Content)
+    mock_discord_client = AsyncMock()
+    mock_discord_client.post.return_value = httpx.Response(204)
+    with patch.object(Config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test"):
+        success = await notifier_inst.send_discord(media, "mark_watched", client=mock_discord_client)
+        assert success is True
+        mock_discord_client.post.assert_called_once()
+
+    # 3. Discord failure response (500)
+    mock_discord_client.post.return_value = httpx.Response(500, text="Internal Server Error")
+    with patch.object(Config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test"):
+        assert await notifier_inst.send_discord(media, "mark_watched", client=mock_discord_client) is False
+
+    # 4. Discord network exception handled gracefully
+    mock_discord_client.post.side_effect = httpx.ConnectTimeout("Discord timed out")
+    with patch.object(Config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test"):
+        assert await notifier_inst.send_discord(media, "mark_watched", client=mock_discord_client) is False
+
+    # 5. Telegram unconfigured
+    with patch.object(Config, "TELEGRAM_BOT_TOKEN", ""), patch.object(Config, "TELEGRAM_CHAT_ID", ""):
+        assert await notifier_inst.send_telegram(media, "mark_watched") is False
+
+    # 6. Telegram configured & success
+    mock_tg_client = AsyncMock()
+    mock_tg_client.post.return_value = httpx.Response(200, json={"ok": True})
+    with patch.object(Config, "TELEGRAM_BOT_TOKEN", "fake_bot_token"), patch.object(Config, "TELEGRAM_CHAT_ID", "12345"):
+        success = await notifier_inst.send_telegram(media, "mark_watched", client=mock_tg_client)
+        assert success is True
+        mock_tg_client.post.assert_called_once()
+
+    # 7. Telegram error response (400)
+    mock_tg_client.post.return_value = httpx.Response(400, text="Bad Request")
+    with patch.object(Config, "TELEGRAM_BOT_TOKEN", "fake_bot_token"), patch.object(Config, "TELEGRAM_CHAT_ID", "12345"):
+        assert await notifier_inst.send_telegram(media, "mark_watched", client=mock_tg_client) is False
+
+    # 8. Telegram network exception handled gracefully
+    mock_tg_client.post.side_effect = httpx.ConnectError("Network is down")
+    with patch.object(Config, "TELEGRAM_BOT_TOKEN", "fake_bot_token"), patch.object(Config, "TELEGRAM_CHAT_ID", "12345"):
+        assert await notifier_inst.send_telegram(media, "mark_watched", client=mock_tg_client) is False
+
+
+@pytest.mark.asyncio
+async def test_notifier_dispatch_toggles():
+    media_scrobble = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        year=2010,
+    )
+    media_rate = ParsedMedia(
+        event="media.rate",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        rating=9,
+    )
+
+    notifier_inst = Notifier(Config)
+
+    with patch.object(Config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test"), \
+         patch.object(Config, "TELEGRAM_BOT_TOKEN", "bot123"), \
+         patch.object(Config, "TELEGRAM_CHAT_ID", "chat123"):
+
+        # 1. When NOTIFY_ON_SCROBBLE is disabled
+        with patch.object(Config, "NOTIFY_ON_SCROBBLE", False), \
+             patch.object(notifier_inst, "send_discord", new_callable=AsyncMock) as mock_d, \
+             patch.object(notifier_inst, "send_telegram", new_callable=AsyncMock) as mock_t:
+            await notifier_inst.dispatch(media_scrobble, "mark_watched")
+            mock_d.assert_not_called()
+            mock_t.assert_not_called()
+
+        # 2. When NOTIFY_ON_RATE is disabled
+        with patch.object(Config, "NOTIFY_ON_RATE", False), \
+             patch.object(notifier_inst, "send_discord", new_callable=AsyncMock) as mock_d, \
+             patch.object(notifier_inst, "send_telegram", new_callable=AsyncMock) as mock_t:
+            await notifier_inst.dispatch(media_rate, "rate")
+            mock_d.assert_not_called()
+            mock_t.assert_not_called()
+
+        # 3. When both enabled
+        with patch.object(Config, "NOTIFY_ON_SCROBBLE", True), \
+             patch.object(Config, "NOTIFY_ON_RATE", True), \
+             patch.object(notifier_inst, "send_discord", new_callable=AsyncMock) as mock_d, \
+             patch.object(notifier_inst, "send_telegram", new_callable=AsyncMock) as mock_t:
+            await notifier_inst.dispatch(media_scrobble, "mark_watched")
+            mock_d.assert_called_once()
+            mock_t.assert_called_once()
+
+
+def test_webhook_triggers_notification_dispatch():
+    client = TestClient(app)
+
+    plex_sample = {
+        "event": "media.scrobble",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Interstellar",
+            "year": 2014,
+            "duration": 10000000,
+            "viewOffset": 9900000,
+            "Guid": [{"id": "imdb://tt0816692"}],
+        },
+    }
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_sync, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_dispatch:
+
+        mock_stop.return_value = {"action": "scrobble"}
+        mock_sync.return_value = {"added": {"movies": 1}}
+
+        res = client.post("/webhook", data={"payload": json.dumps(plex_sample)})
+        assert res.status_code == 200
+        # Check that dispatch was called with parsed media and action
+        assert mock_dispatch.called
+        args = mock_dispatch.call_args[0]
+        assert args[0].title == "Interstellar"
+        assert args[1] == "mark_watched"
+
+
+def test_health_and_dashboard_notification_status():
+    client = TestClient(app)
+
+    with patch.object(Config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test"), \
+         patch.object(Config, "TELEGRAM_BOT_TOKEN", ""), \
+         patch.object(Config, "TELEGRAM_CHAT_ID", ""):
+
+        # 1. Check /health
+        res_health = client.get("/health")
+        assert res_health.status_code == 200
+        data = res_health.json()
+        assert "notifications" in data
+        assert data["notifications"]["discord"] is True
+        assert data["notifications"]["telegram"] is False
+
+        # 2. Check dashboard
+        res_dash = client.get("/")
+        assert res_dash.status_code == 200
+        assert "Alerts: Discord" in res_dash.text
+
 
 
 
