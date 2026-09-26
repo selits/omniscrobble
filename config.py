@@ -14,6 +14,12 @@ class Config:
         Path(_tokens_env) if Path(_tokens_env).is_absolute() else (BASE_DIR / _tokens_env)
     )
 
+    _queue_env = os.getenv("QUEUE_DB_FILE", "data/queue.db")
+    QUEUE_DB_FILE: Path = (
+        Path(_queue_env) if Path(_queue_env).is_absolute() else (BASE_DIR / _queue_env)
+    )
+    QUEUE_RETRY_INTERVAL: int = int(os.getenv("QUEUE_RETRY_INTERVAL", "300"))
+
     # Optional secret token to authenticate incoming webhook requests (e.g. /webhook?token=YOUR_SECRET)
     WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "").strip()
 

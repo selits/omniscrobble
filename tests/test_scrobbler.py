@@ -5,7 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from config import Config
-from main import app, get_uptime_str, mask_username, recent_events, scrobble_stats, trakt
+from main import app, get_uptime_str, mask_username, queue_mgr, recent_events, scrobble_stats, trakt
+from queue_manager import QueueManager, process_queue
 from trakt_client import TraktClient
 
 from plex_parser import parse_plex_ids, parse_plex_webhook
@@ -626,6 +627,148 @@ def test_webhook_rating_flow():
         assert data["action"] == "rate"
         assert scrobble_stats["ratings"] == initial_ratings_count + 1
         assert "rate (9/10)" in recent_events[0]["action"]
+
+
+def test_queue_manager_crud(tmp_path):
+    db_file = tmp_path / "test_queue.db"
+    qm = QueueManager(db_file)
+
+    # 1. Initially empty
+    assert qm.get_pending_count() == 0
+    assert qm.get_pending() == []
+
+    # 2. Enqueue items
+    id1 = qm.enqueue("scrobble_stop", {"movie": {"title": "Matrix"}}, error="Timeout")
+    id2 = qm.enqueue("sync_ratings", {"shows": [{"title": "Dark"}]}, error="503 Service Unavailable")
+    assert id1 > 0
+    assert id2 > 0
+    assert qm.get_pending_count() == 2
+
+    # 3. Retrieve pending
+    items = qm.get_pending(limit=10)
+    assert len(items) == 2
+    assert items[0]["id"] == id1
+    assert items[0]["event_type"] == "scrobble_stop"
+    assert items[0]["payload"]["movie"]["title"] == "Matrix"
+    assert items[1]["id"] == id2
+    assert items[1]["event_type"] == "sync_ratings"
+
+    # 4. Mark failure and max_retries
+    qm.mark_failure(id1, error="Still down", max_retries=2)
+    items = qm.get_pending()
+    assert len(items) == 2
+    assert items[0]["retry_count"] == 1
+    assert items[0]["status"] == "pending"
+
+    # Second failure triggers status="failed"
+    qm.mark_failure(id1, error="Permanent fail", max_retries=2)
+    assert qm.get_pending_count() == 1  # Only id2 is still pending
+
+    # 5. Retry all failed
+    reset_count = qm.retry_all_failed()
+    assert reset_count == 1
+    assert qm.get_pending_count() == 2
+
+    # 6. Mark success
+    qm.mark_success(id1)
+    assert qm.get_pending_count() == 1
+
+    # 7. Clear queue
+    qm.clear_queue()
+    assert qm.get_pending_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_process_queue_success(tmp_path):
+    db_file = tmp_path / "process_queue.db"
+    qm = QueueManager(db_file)
+    qm.enqueue("scrobble_stop", {"movie": {"title": "Interstellar"}})
+    qm.enqueue("sync_ratings", {"movies": [{"title": "Inception", "rating": 10}]})
+
+    mock_client = MagicMock(spec=TraktClient)
+    mock_client.scrobble_stop = AsyncMock(return_value={"action": "scrobble"})
+    mock_client.sync_ratings = AsyncMock(return_value={"added": {"movies": 1}})
+
+    stats = await process_queue(mock_client, qm)
+    assert stats["processed"] == 2
+    assert stats["succeeded"] == 2
+    assert stats["failed"] == 0
+    assert qm.get_pending_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_process_queue_transient_failure(tmp_path):
+    db_file = tmp_path / "process_queue_fail.db"
+    qm = QueueManager(db_file)
+    qm.enqueue("scrobble_stop", {"movie": {"title": "Tenet"}})
+    qm.enqueue("sync_history", {"episodes": []})
+
+    mock_client = MagicMock(spec=TraktClient)
+    # First item encounters 503
+    mock_client.scrobble_stop = AsyncMock(return_value={"status": 503, "error": "Service Unavailable"})
+
+    stats = await process_queue(mock_client, qm)
+    assert stats["succeeded"] == 0
+    assert stats["failed"] == 1
+    # Stops processing batch on transient failure; 2 items remain in queue
+    assert qm.get_pending_count() == 2
+
+
+def test_webhook_automatic_enqueue_on_failure():
+    client = TestClient(app)
+    plex_sample = {
+        "event": "media.scrobble",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Gladiator",
+            "year": 2000,
+            "duration": 9000000,
+            "viewOffset": 8500000,
+            "Guid": [{"id": "imdb://tt0172495"}],
+        },
+    }
+
+    initial_pending = queue_mgr.get_pending_count()
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_sync:
+
+        # Simulate 503 Service Unavailable from Trakt
+        mock_stop.return_value = {"status": 503, "error": "Trakt API Unavailable"}
+        mock_sync.return_value = {"status": 503, "error": "Trakt API Unavailable"}
+
+        res = client.post("/webhook", data={"payload": json.dumps(plex_sample)})
+        assert res.status_code == 200
+        # Check that both stop and history events were enqueued
+        assert queue_mgr.get_pending_count() >= initial_pending + 2
+
+
+def test_queue_endpoints():
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
+        # 1. POST /api/queue/retry without auth -> 401
+        res_retry_denied = client.post("/api/queue/retry")
+        assert res_retry_denied.status_code == 401
+
+        # 2. POST /api/queue/clear without auth -> 401
+        res_clear_denied = client.post("/api/queue/clear")
+        assert res_clear_denied.status_code == 401
+
+        # 3. With admin cookie -> 200
+        client.cookies.set("admin_token", "super_secret")
+        with patch("main.process_queue", new_callable=AsyncMock) as mock_proc:
+            mock_proc.return_value = {"processed": 0, "succeeded": 0, "failed": 0}
+            res_retry_ok = client.post("/api/queue/retry")
+            assert res_retry_ok.status_code == 200
+            assert "pending_count" in res_retry_ok.json()
+
+        res_clear_ok = client.post("/api/queue/clear")
+        assert res_clear_ok.status_code == 200
+        assert res_clear_ok.json()["pending_count"] == 0
+        client.cookies.clear()
 
 
 

@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import json
 import logging
@@ -14,6 +15,7 @@ import uvicorn
 
 from config import Config
 from plex_parser import ParsedMedia, parse_plex_webhook
+from queue_manager import QueueManager, process_queue
 from trakt_client import TraktClient
 
 logging.basicConfig(
@@ -23,6 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger("plex_trakt_scrobbler")
 
 trakt = TraktClient(Config)
+queue_mgr = QueueManager(Config.QUEUE_DB_FILE)
 
 SERVER_START_TIME = time.time()
 
@@ -33,6 +36,16 @@ scrobble_stats: dict[str, int] = {
     "episodes": 0,
     "ratings": 0,
 }
+
+
+def is_temporary_error(res: dict[str, Any]) -> bool:
+    """Detect transient errors (5xx server errors, 429 rate limits, network timeouts)."""
+    status = res.get("status")
+    err = res.get("error")
+    return (
+        status in (500, 502, 503, 504, 429)
+        or (isinstance(err, str) and any(x in err.lower() for x in ("connect", "timeout", "network", "service unavailable", "rate limit")))
+    )
 
 
 def get_uptime_str() -> str:
@@ -92,9 +105,35 @@ def is_admin_request(request: Request) -> bool:
     return False
 
 
+queue_worker_task: Optional[asyncio.Task] = None
+
+
+async def queue_worker_loop():
+    """Background worker periodically checking and retrying offline queued events."""
+    while True:
+        try:
+            interval = max(5, Config.QUEUE_RETRY_INTERVAL)
+            await asyncio.sleep(interval)
+            if trakt.is_authenticated() and queue_mgr.get_pending_count() > 0:
+                logger.info("Background queue worker draining pending offline items...")
+                await process_queue(trakt, queue_mgr)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in background queue retry worker: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global queue_worker_task
+    queue_worker_task = asyncio.create_task(queue_worker_loop())
     yield
+    if queue_worker_task:
+        queue_worker_task.cancel()
+        try:
+            await queue_worker_task
+        except asyncio.CancelledError:
+            pass
     await trakt.close()
 
 
@@ -194,6 +233,13 @@ async def plex_webhook(request: Request):
             # 2. Also sync to history to guarantee item is marked as viewed
             history_res = await trakt.sync_history(parsed.to_trakt_history_payload())
             result = {"scrobble": scrobble_res, "history": history_res}
+
+            # Enqueue to offline retry if transient error occurred
+            if is_temporary_error(scrobble_res):
+                queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")))
+            if is_temporary_error(history_res):
+                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(history_res.get("error", "")))
+
             scrobble_stats["total"] += 1
             if parsed.media_type == "movie":
                 scrobble_stats["movies"] += 1
@@ -206,6 +252,8 @@ async def plex_webhook(request: Request):
             logger.info(f"Syncing rating to Trakt: {parsed.title} -> {rating_val}/10 for user {parsed.username}")
             rating_payload = parsed.to_trakt_rating_payload()
             result = await trakt.sync_ratings(rating_payload)
+            if is_temporary_error(result):
+                queue_mgr.enqueue("sync_ratings", rating_payload, error=str(result.get("error", "")))
             scrobble_stats["ratings"] += 1
 
         elif Config.SCROBBLE_MODE == "scrobble":
@@ -219,6 +267,8 @@ async def plex_webhook(request: Request):
                     action_taken = "scrobble_stop"
                     logger.info(f"Scrobble stop (paused past threshold): {parsed.title} ({parsed.progress:.1f}%)")
                     result = await trakt.scrobble_stop(scrobble_payload)
+                    if is_temporary_error(result):
+                        queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")))
                     scrobble_stats["total"] += 1
                     if parsed.media_type == "movie":
                         scrobble_stats["movies"] += 1
@@ -232,6 +282,8 @@ async def plex_webhook(request: Request):
                 action_taken = "scrobble_stop"
                 logger.info(f"Scrobble stop: {parsed.title} ({parsed.progress:.1f}%)")
                 result = await trakt.scrobble_stop(scrobble_payload)
+                if is_temporary_error(result):
+                    queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")))
                 scrobble_stats["total"] += 1
                 if parsed.media_type == "movie":
                     scrobble_stats["movies"] += 1
@@ -246,8 +298,15 @@ async def plex_webhook(request: Request):
 
     except Exception as e:
         logger.error(f"Error executing Trakt action for {parsed.title}: {e}", exc_info=True)
-        log_event(parsed, action_taken, {"error": str(e)})
-        return {"status": "error", "error": str(e)}
+        if event == "media.scrobble":
+            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e))
+            queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e))
+        elif event == "media.rate":
+            queue_mgr.enqueue("sync_ratings", parsed.to_trakt_rating_payload(), error=str(e))
+        elif action_taken == "scrobble_stop":
+            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e))
+        log_event(parsed, action_taken, {"error": str(e), "queued": True})
+        return {"status": "error", "error": str(e), "queued": True}
 
 
 trakt_user_profile: Optional[dict[str, Any]] = None
@@ -278,6 +337,9 @@ async def health_check():
         "uptime": get_uptime_str(),
         "token_health": token_info,
         "stats": scrobble_stats,
+        "queue": {
+            "pending": queue_mgr.get_pending_count(),
+        },
     }
 
 
@@ -296,6 +358,22 @@ def clear_events(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     recent_events.clear()
     return {"status": "cleared"}
+
+
+@app.post("/api/queue/retry")
+async def trigger_queue_retry(request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    res = await process_queue(trakt, queue_mgr)
+    return {"status": "ok", "result": res, "pending_count": queue_mgr.get_pending_count()}
+
+
+@app.post("/api/queue/clear")
+def trigger_queue_clear(request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    queue_mgr.clear_queue()
+    return {"status": "ok", "pending_count": 0}
 
 
 class AdminUnlockRequest(BaseModel):
@@ -511,6 +589,7 @@ async def dashboard(request: Request, response: Response):
     raw_username = profile.get("username") if profile else None
 
     display_username = raw_username if is_admin else mask_username(raw_username)
+    pending_queue = queue_mgr.get_pending_count()
 
     # Token health calculation
     token_info = trakt.get_token_info()
@@ -677,7 +756,7 @@ async def dashboard(request: Request, response: Response):
                 <div class="info-item">
                     <div class="info-label">Server Health</div>
                     <div class="info-value">🟢 Online</div>
-                    <div style="font-size:12px;color:#94a3b8;">Uptime: {get_uptime_str()}</div>
+                    <div style="font-size:12px;color:#94a3b8;">Uptime: {get_uptime_str()} &bull; <span style="color:{'#f59e0b' if pending_queue > 0 else '#94a3b8'};">Queue: {pending_queue} pending</span></div>
                 </div>
                 <div class="info-item">
                     <div class="info-label">Playback Activity</div>
@@ -689,9 +768,10 @@ async def dashboard(request: Request, response: Response):
         </div>
 
         <div class="card" style="padding: 0; overflow: hidden;">
-            <div style="padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center;">
+            <div style="padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
                 <h3 style="margin: 0;">Live Activity & Scrobble History</h3>
                 <div style="display:flex;align-items:center;gap:12px;">
+                    {f'<button onclick="retryQueue()" class="btn-sm" style="background:#d97706;color:#fff;font-weight:600;">🔄 Retry Queue ({pending_queue})</button>' if pending_queue > 0 else ''}
                     <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
                         <input type="checkbox" id="auto-refresh-toggle" checked onchange="toggleAutoRefresh(this)"> Auto-refresh (5s)
                     </label>
@@ -834,6 +914,21 @@ async def dashboard(request: Request, response: Response):
                 }}
             }} catch (e) {{
                 console.error('Error fetching live events:', e);
+            }}
+        }}
+
+        async function retryQueue() {{
+            if (!isAdmin) {{
+                openUnlockModal();
+                return;
+            }}
+            try {{
+                const res = await fetch('/api/queue/retry', {{ method: 'POST' }});
+                if (res.ok) {{
+                    window.location.reload();
+                }}
+            }} catch (e) {{
+                console.error('Error retrying queue:', e);
             }}
         }}
 

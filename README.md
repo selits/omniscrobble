@@ -18,6 +18,7 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Smart Pause Handling**: Automatically finalizes scrobbles if playback is paused past the completion threshold (>=80%), preventing Trakt API 422 warnings.
 - **Web UI & Device Code OAuth Flow**: Authorize directly in your browser via `/auth` or headlessly via terminal (`python auth.py`) using Trakt's official activation code (`https://trakt.tv/activate`).
 - **Resilient Async Trakt Client**: Built on non-blocking `httpx.AsyncClient` with automatic OAuth token refresh on 401, token health telemetry, and exponential backoff on 429 rate limits.
+- **Persistent Offline Queue & Retry Worker**: Automatically preserves scrobbles, watches, and ratings in a local SQLite database during Trakt API downtime or network outages, retrying in the background until successfully synced.
 - **Dashboard Admin Security & Privacy Shield**: Public visitors see a privacy-shielded view (masked usernames, masked webhook secret, locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
 - **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, and live auto-updating event logs (5s poll).
