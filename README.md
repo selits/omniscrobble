@@ -100,8 +100,59 @@ SERVER_PORT=8080
 ```
 If set to `127.0.0.1`, the service will only accept connections from the host and will block incoming requests from the Plex container.
 
-### 3. Running 24/7 in Background with Screen
-Use `screen` to keep the scrobbler running even when you disconnect from SSH:
+### 3. Auto-Starting on Server Reboots & Running 24/7
+
+Choose one of the methods below to keep the scrobbler running in the background and ensure it automatically restarts if the server reboots:
+
+#### Option A: systemd User Service (Recommended for Linux Servers & VPS)
+Modern remote servers (like remote Linux servers or VPS) and Linux servers support user-level `systemd` services without needing `sudo`. This automatically restarts the service on server boot and recovers from crashes.
+
+1. Copy the provided service file to your systemd user directory:
+   ```bash
+   mkdir -p ~/.config/systemd/user
+   cp plex-trakt.service ~/.config/systemd/user/
+   ```
+   *(Note: The service file uses `%h/plex-trakt-webhook`. If your repository folder is named or located differently, adjust `WorkingDirectory` and `ExecStart` inside `~/.config/systemd/user/plex-trakt.service` accordingly).*
+
+2. Enable lingering so the service starts on boot without requiring an active SSH session:
+   ```bash
+   loginctl enable-linger $USER
+   ```
+   *(On many managed Linux hosts, lingering is typically enabled by default).*
+
+3. Reload systemd, enable, and start the service:
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now plex-trakt.service
+   ```
+
+4. **Useful management commands:**
+   ```bash
+   # Check service status
+   systemctl --user status plex-trakt.service
+
+   # View live logs
+   journalctl --user -u plex-trakt.service -f
+
+   # Restart or stop the service
+   systemctl --user restart plex-trakt.service
+   systemctl --user stop plex-trakt.service
+   ```
+
+---
+
+#### Option B: Cron `@reboot` (Fallback for Environments without systemd)
+If your host does not support user systemd services:
+1. Run `crontab -e`.
+2. Add the following line at the end (adjusting the path to your repository):
+   ```bash
+   @reboot /home/<username>/plex-trakt-webhook/start.sh >> /home/<username>/plex-trakt-webhook/server.log 2>&1 &
+   ```
+
+---
+
+#### Option C: Running with Screen (Manual / Temporary)
+If you only want to run it during testing without surviving server reboots:
 
 ```bash
 # Start a new screen session
@@ -112,18 +163,8 @@ screen -S plex-trakt
 ```
 
 - **Detach from screen** (keeps it running): Press **`Ctrl+A`** followed by **`D`**.
-- **Re-attach to check live logs**:
-  ```bash
-  screen -x plex-trakt
-  ```
-- **List running screens**:
-  ```bash
-  screen -ls
-  ```
-- **Stop or clean up duplicate screens**:
-  ```bash
-  pkill -f "screen.*plex-trakt"
-  ```
+- **Re-attach to check live logs**: `screen -x plex-trakt`
+- **Stop screen**: `pkill -f "screen.*plex-trakt"`
 
 ---
 
