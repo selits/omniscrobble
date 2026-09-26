@@ -22,6 +22,9 @@ This document defines the architectural rules, security boundaries, and developm
 
 ## 2. Git Branching & Workflow (CRITICAL)
 
+- **Explicit User Permission Required for Commits & Pushes:**
+  - NEVER execute `git commit` or `git push` autonomously.
+  - Always present the proposed commit message, diff summary, and changed files to the user, and wait for their explicit confirmation before committing or pushing.
 - **No Direct Commits to Main/Master:**
   - Never commit or push directly to `main` (or `master`).
   - Always work in a dedicated branch (e.g., `feature/...`, `docs/...`, `fix/...`).
