@@ -1,9 +1,11 @@
 import asyncio
 import datetime
+import io
 import json
 import logging
 import time
 import urllib.parse
+import zipfile
 from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any, Optional
@@ -16,6 +18,7 @@ import uvicorn
 
 from config import Config
 from cowatch_manager import cowatch_mgr
+from metrics import metrics_registry
 from notifier import notifier
 from playback_manager import playback_mgr
 from plex_parser import ParsedMedia, parse_plex_webhook
@@ -41,6 +44,7 @@ scrobble_stats: dict[str, int] = {
     "movies": 0,
     "episodes": 0,
     "ratings": 0,
+    "collections": 0,
 }
 
 
@@ -133,6 +137,25 @@ async def queue_worker_loop():
 async def lifespan(app: FastAPI):
     global queue_worker_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
+
+    # Startup self-diagnostics check
+    token_info = trakt.get_token_info()
+    if not trakt.is_authenticated():
+        logger.warning("Startup Diagnostics: Trakt is not authenticated. Visit /auth to link your account.")
+    elif not token_info.get("healthy", False):
+        logger.warning(f"Startup Diagnostics: Trakt token status is {token_info.get('status')}.")
+    else:
+        logger.info(f"Startup Diagnostics: Trakt token healthy (~{token_info.get('days_remaining')} days remaining).")
+
+    active_notifiers = [k for k, v in notifier.get_status().items() if v and k in ("discord", "telegram", "ntfy", "pushover")]
+    logger.info(f"Startup Diagnostics: Active notification channels: {active_notifiers or 'None'}")
+    if Config.ALLOWED_LIBRARIES:
+        logger.info(f"Startup Diagnostics: Library whitelist active: {Config.ALLOWED_LIBRARIES}")
+    if Config.EXCLUDED_LIBRARIES:
+        logger.info(f"Startup Diagnostics: Library denylist active: {Config.EXCLUDED_LIBRARIES}")
+    if Config.SYNC_COLLECTION:
+        logger.info("Startup Diagnostics: Trakt Collection sync enabled for library.new events.")
+
     yield
     if queue_worker_task:
         queue_worker_task.cancel()
@@ -200,11 +223,14 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
         res = await cw_client.sync_history(history_payload)
         if is_temporary_error(res):
             queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
+            metrics_registry.record_cowatch("queued")
         else:
             logger.info(f"Co-watch dual-sync succeeded for partner @{target_user}: {parsed.title}")
+            metrics_registry.record_cowatch("success")
     except Exception as e:
         logger.error(f"Error during co-watch dual-sync for @{target_user}: {e}")
         queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=target_user)
+        metrics_registry.record_cowatch("failed")
 
 
 @app.post("/webhook")
@@ -214,6 +240,7 @@ async def plex_webhook(request: Request):
         token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
         if not token or token != Config.WEBHOOK_SECRET:
             logger.warning("Rejected unauthorized webhook request: invalid or missing token.")
+            metrics_registry.record_request("webhook", 401)
             raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
 
     raw_data: Optional[dict[str, Any]] = None
@@ -224,6 +251,7 @@ async def plex_webhook(request: Request):
             raw_data = await request.json()
         except Exception as e:
             logger.error(f"Failed to parse raw JSON body: {e}")
+            metrics_registry.record_request("webhook", 400)
             raise HTTPException(status_code=400, detail="Invalid JSON body")
     else:
         try:
@@ -241,14 +269,22 @@ async def plex_webhook(request: Request):
                     raw_data = json.loads(str(payload_field))
         except Exception as e:
             logger.error(f"Failed to parse multipart form data: {e}")
+            metrics_registry.record_request("webhook", 400)
             raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
     if not raw_data:
+        metrics_registry.record_request("webhook", 400)
         raise HTTPException(status_code=400, detail="No payload found in request")
 
-    parsed = parse_plex_webhook(raw_data, Config.PLEX_ALLOWED_USERS)
+    parsed = parse_plex_webhook(
+        raw_data,
+        allowed_users=Config.PLEX_ALLOWED_USERS,
+        allowed_libraries=Config.ALLOWED_LIBRARIES,
+        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+    )
     if not parsed:
-        return {"status": "ignored", "reason": "Non-media event, filtered user, or unsupported media type"}
+        metrics_registry.record_request("webhook", 200)
+        return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
     # Dynamic multi-user client resolution:
     # 1. Use user-specific Trakt client if authenticated for this Plex user
@@ -259,6 +295,7 @@ async def plex_webhook(request: Request):
 
     if not active_client.is_authenticated():
         logger.warning(f"Trakt is not authenticated for user '{parsed.username}' or default! Run 'python auth.py' or visit /auth to authorize.")
+        metrics_registry.record_request("webhook", 200)
         return {"status": "error", "message": "Trakt not authenticated"}
 
     event = parsed.event
@@ -267,7 +304,29 @@ async def plex_webhook(request: Request):
     action_taken = "none"
 
     try:
-        if event == "media.scrobble":
+        if event == "library.new":
+            if not Config.SYNC_COLLECTION:
+                metrics_registry.record_request("webhook", 200)
+                return {"status": "ignored", "reason": "Collection sync is disabled (SYNC_COLLECTION=false)"}
+
+            action_taken = "collection"
+            logger.info(f"Adding new media to Trakt collection: {parsed.title}")
+            col_payload = parsed.to_trakt_collection_payload()
+            result = await active_client.sync_collection(col_payload)
+            if is_temporary_error(result):
+                queue_mgr.enqueue("sync_collection", col_payload, error=str(result.get("error", "")), username=parsed.username)
+                metrics_registry.record_collection(parsed.media_type, "queued")
+            else:
+                metrics_registry.record_collection(parsed.media_type, "success")
+
+            scrobble_stats["collections"] = scrobble_stats.get("collections", 0) + 1
+            log_event(parsed, action_taken, result)
+            if Config.NOTIFY_ON_COLLECTION:
+                asyncio.create_task(notifier.dispatch(parsed, "collection"))
+            metrics_registry.record_request("webhook", 200)
+            return {"status": "success", "event": "library.new", "action": "collection", "result": result}
+
+        elif event == "media.scrobble":
             # Plex determined the user watched the show/movie (>90%)
             action_taken = "mark_watched"
             logger.info(f"Marking as watched in Trakt: {parsed.title} for user {parsed.username}")
@@ -284,6 +343,10 @@ async def plex_webhook(request: Request):
             # Enqueue to offline retry if transient error occurred
             if is_temporary_error(scrobble_res):
                 queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")), username=parsed.username)
+                metrics_registry.record_scrobble(parsed.media_type, "queued")
+            else:
+                metrics_registry.record_scrobble(parsed.media_type, "success")
+
             if is_temporary_error(history_res):
                 queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(history_res.get("error", "")), username=parsed.username)
 
@@ -301,6 +364,9 @@ async def plex_webhook(request: Request):
             result = await active_client.sync_ratings(rating_payload)
             if is_temporary_error(result):
                 queue_mgr.enqueue("sync_ratings", rating_payload, error=str(result.get("error", "")), username=parsed.username)
+                metrics_registry.record_rating("queued")
+            else:
+                metrics_registry.record_rating("success")
             scrobble_stats["ratings"] += 1
 
         elif Config.SCROBBLE_MODE == "scrobble":
@@ -318,6 +384,9 @@ async def plex_webhook(request: Request):
                     result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
                         queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
+                        metrics_registry.record_scrobble(parsed.media_type, "queued")
+                    else:
+                        metrics_registry.record_scrobble(parsed.media_type, "success")
                     scrobble_stats["total"] += 1
                     if parsed.media_type == "movie":
                         scrobble_stats["movies"] += 1
@@ -334,6 +403,9 @@ async def plex_webhook(request: Request):
                 result = await active_client.scrobble_stop(scrobble_payload)
                 if is_temporary_error(result):
                     queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
+                    metrics_registry.record_scrobble(parsed.media_type, "queued")
+                else:
+                    metrics_registry.record_scrobble(parsed.media_type, "success")
                 scrobble_stats["total"] += 1
                 if parsed.media_type == "movie":
                     scrobble_stats["movies"] += 1
@@ -352,18 +424,26 @@ async def plex_webhook(request: Request):
         if (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.SCROBBLE_THRESHOLD)) and cowatch_mgr.should_cowatch(parsed):
             asyncio.create_task(execute_cowatch_sync(parsed, action_taken))
 
+        metrics_registry.record_request("webhook", 200)
         return {"status": "success", "event": event, "action": action_taken, "result": result}
 
     except Exception as e:
         logger.error(f"Error executing Trakt action for {parsed.title}: {e}", exc_info=True)
-        if event == "media.scrobble":
+        if event == "library.new":
+            queue_mgr.enqueue("sync_collection", parsed.to_trakt_collection_payload(), error=str(e), username=parsed.username)
+            metrics_registry.record_collection(parsed.media_type, "queued")
+        elif event == "media.scrobble":
             queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e), username=parsed.username)
             queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=parsed.username)
+            metrics_registry.record_scrobble(parsed.media_type, "queued")
         elif event == "media.rate":
             queue_mgr.enqueue("sync_ratings", parsed.to_trakt_rating_payload(), error=str(e), username=parsed.username)
+            metrics_registry.record_rating("queued")
         elif action_taken == "scrobble_stop":
             queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e), username=parsed.username)
+            metrics_registry.record_scrobble(parsed.media_type, "queued")
         log_event(parsed, action_taken, {"error": str(e), "queued": True})
+        metrics_registry.record_request("webhook", 500)
         return {"status": "error", "error": str(e), "queued": True}
 
 
@@ -390,6 +470,9 @@ async def health_check():
         "authenticated": trakt.is_authenticated(),
         "trakt_user": profile.get("username") if profile else None,
         "allowed_users": Config.PLEX_ALLOWED_USERS or "all",
+        "allowed_libraries": Config.ALLOWED_LIBRARIES or "all",
+        "excluded_libraries": Config.EXCLUDED_LIBRARIES or "none",
+        "sync_collection": Config.SYNC_COLLECTION,
         "scrobble_mode": Config.SCROBBLE_MODE,
         "webhook_secret_enabled": bool(Config.WEBHOOK_SECRET),
         "uptime": get_uptime_str(),
@@ -400,6 +483,108 @@ async def health_check():
         },
         "notifications": notifier.get_status(),
     }
+
+
+@app.get("/metrics")
+def get_metrics():
+    """Prometheus exposition metrics endpoint."""
+    uptime_seconds = time.time() - SERVER_START_TIME
+    pending = queue_mgr.get_pending_count()
+    active_streams = playback_mgr.get_active_count()
+    metrics_text = metrics_registry.generate_prometheus_text(
+        uptime_seconds=uptime_seconds,
+        queue_pending=pending,
+        active_streams=active_streams,
+    )
+    return Response(
+        content=metrics_text,
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+@app.get("/api/backup")
+async def export_backup(request: Request):
+    """Download a zip archive containing server configuration, tokens, and databases."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # 1. Primary trakt_tokens.json
+        if Config.TRAKT_TOKENS_FILE.exists():
+            zf.write(Config.TRAKT_TOKENS_FILE, arcname="trakt_tokens.json")
+
+        # 2. Multi-user tokens in data/tokens
+        tokens_dir = Config.BASE_DIR / "data" / "tokens"
+        if tokens_dir.exists():
+            for p in tokens_dir.glob("*.json"):
+                zf.write(p, arcname=f"data/tokens/{p.name}")
+
+        # 3. Co-watch shows file
+        if Config.CO_WATCH_DATA_FILE.exists():
+            zf.write(Config.CO_WATCH_DATA_FILE, arcname="data/cowatch_shows.json")
+
+        # 4. SQLite queue database
+        if Config.QUEUE_DB_FILE.exists():
+            zf.write(Config.QUEUE_DB_FILE, arcname="data/queue.db")
+
+    buffer.seek(0)
+    filename = f"plex-trakt-backup-{datetime.date.today().isoformat()}.zip"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/restore")
+async def import_backup(request: Request):
+    """Restore server configuration and tokens from an uploaded zip backup."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    form = await request.form()
+    file = form.get("backup_file")
+    if not file or not hasattr(file, "read"):
+        raise HTTPException(status_code=400, detail="Missing backup_file in form")
+
+    contents = await file.read()
+    if isinstance(contents, str):
+        contents = contents.encode("utf-8")
+
+    restored_files = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(contents), "r") as zf:
+            for zip_info in zf.infolist():
+                name = zip_info.filename.replace("\\", "/")
+                # Strict path traversal / zip slip protection
+                if ".." in name or name.startswith("/"):
+                    continue
+                # Only allow specific safe targets
+                if name != "trakt_tokens.json" and not name.startswith("data/"):
+                    continue
+
+                target_path = Config.BASE_DIR / name
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(zip_info) as source, open(target_path, "wb") as target:
+                    target.write(source.read())
+                restored_files.append(name)
+
+        # Reload clients and caches
+        for c in list(user_mgr._clients.values()):
+            c._tokens = None
+        user_mgr._clients.clear()
+        user_mgr.set_default_client(trakt)
+        trakt._tokens = None
+        trakt.load_tokens()
+        cowatch_mgr._load_shows()
+
+    except Exception as e:
+        logger.error(f"Error restoring backup: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to restore backup: {e}")
+
+    return {"status": "success", "restored": restored_files}
+
 
 
 @app.get("/api/events")
@@ -864,11 +1049,23 @@ async def dashboard(request: Request, response: Response):
 
     notif_status = notifier.get_status()
     enabled_notifs = []
-    if notif_status["discord"]:
+    if notif_status.get("discord"):
         enabled_notifs.append("Discord")
-    if notif_status["telegram"]:
+    if notif_status.get("telegram"):
         enabled_notifs.append("Telegram")
+    if notif_status.get("ntfy"):
+        enabled_notifs.append("Ntfy")
+    if notif_status.get("pushover"):
+        enabled_notifs.append("Pushover")
     notif_summary = ", ".join(enabled_notifs) if enabled_notifs else "Off"
+
+    # Library filtering display
+    if Config.ALLOWED_LIBRARIES:
+        allowed_libs_display = ", ".join(Config.ALLOWED_LIBRARIES)
+    elif Config.EXCLUDED_LIBRARIES:
+        allowed_libs_display = "All except " + ", ".join(Config.EXCLUDED_LIBRARIES)
+    else:
+        allowed_libs_display = "All Libraries"
 
     # Token health calculation
     token_info = trakt.get_token_info()
@@ -1161,6 +1358,31 @@ async def dashboard(request: Request, response: Response):
     </div>
     """
 
+    backup_card_html = f"""
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>💾</span> System Backup & Prometheus Observability
+            </h3>
+            <a href="/metrics" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Export or restore your configuration, multi-user Trakt tokens, co-watch whitelist, and offline retry queue.
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+            {f'''
+            <a href="/api/backup" download class="btn-sm" style="background:#0284c7;color:#fff;text-decoration:none;padding:8px 16px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                💾 Download Backup (.zip)
+            </a>
+            <label class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                📤 Restore Backup (.zip)
+                <input type="file" id="backup-file-input" accept=".zip" onchange="uploadBackup(this)" style="display:none;" />
+            </label>
+            ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin authorization required to download or restore server backups.</div>'}
+        </div>
+    </div>
+    """
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1216,9 +1438,9 @@ async def dashboard(request: Request, response: Response):
                     <div><span style="color:{token_health_color};font-size:12px;">● {token_health_str}</span></div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Allowed Plex Users</div>
+                    <div class="info-label">Plex Users & Libraries</div>
                     <div class="info-value">{allowed_users_display}</div>
-                    <div style="font-size:12px;color:#94a3b8;">{'Filter active' if Config.PLEX_ALLOWED_USERS else 'All users permitted'}</div>
+                    <div style="font-size:12px;color:#94a3b8;">Libs: {allowed_libs_display} &bull; Coll: {'On' if Config.SYNC_COLLECTION else 'Off'}</div>
                 </div>
                 <div class="info-item">
                     <div class="info-label">Server Health</div>
@@ -1228,13 +1450,15 @@ async def dashboard(request: Request, response: Response):
                 <div class="info-item">
                     <div class="info-label">Playback Activity</div>
                     <div class="info-value">🍿 {scrobble_stats['total']} Scrobble(s)</div>
-                    <div style="font-size:12px;color:#94a3b8;">🎬 {scrobble_stats['movies']} &bull; 📺 {scrobble_stats['episodes']} &bull; ⭐ {scrobble_stats['ratings']} ratings</div>
+                    <div style="font-size:12px;color:#94a3b8;">🎬 {scrobble_stats['movies']} &bull; 📺 {scrobble_stats['episodes']} &bull; ⭐ {scrobble_stats['ratings']} &bull; 📦 {scrobble_stats.get('collections', 0)} coll</div>
                 </div>
             </div>
             {webhook_html_section}
         </div>
 
         {cowatch_card_html}
+
+        {backup_card_html}
 
         <div class="card" style="padding: 0; overflow: hidden;">
             <div style="padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -1706,6 +1930,32 @@ async def dashboard(request: Request, response: Response):
             if (uname && uname.trim()) {{
                 window.location.href = '/auth?user=' + encodeURIComponent(uname.trim());
             }}
+        async function uploadBackup(input) {{
+            if (!isAdmin) {{ openUnlockModal(); return; }}
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            if (!confirm(`Restore system configuration and tokens from "${{file.name}}"? This will overwrite existing tokens and configuration.`)) {{
+                input.value = '';
+                return;
+            }}
+            const formData = new FormData();
+            formData.append('backup_file', file);
+            try {{
+                const res = await fetch('/api/restore', {{
+                    method: 'POST',
+                    body: formData
+                }});
+                if (res.ok) {{
+                    alert('✓ Backup successfully restored!');
+                    window.location.reload();
+                }} else {{
+                    const err = await res.json();
+                    alert('Restore failed: ' + (err.detail || 'Error'));
+                }}
+            }} catch (e) {{
+                alert('Restore error: ' + e.message);
+            }}
+            input.value = '';
         }}
 
         refreshTimer = setInterval(fetchEvents, 5000);

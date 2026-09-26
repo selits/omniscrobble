@@ -1586,6 +1586,266 @@ async def test_webhook_triggers_cowatch_sync():
         mock_partner_client.sync_history.assert_called_once()
 
 
+def test_library_filtering():
+    """Verify that events from excluded or non-allowed Plex libraries are filtered out."""
+    base_payload = {
+        "event": "media.scrobble",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Family Trip 2024",
+            "librarySectionTitle": "Home Videos",
+            "duration": 60000,
+            "viewOffset": 60000,
+        },
+    }
+
+    # 1. Excluded library matches -> ignored
+    res_excluded = parse_plex_webhook(base_payload, excluded_libraries=["Home Videos", "Fitness"])
+    assert res_excluded is None
+
+    # 2. Case-insensitive excluded match -> ignored
+    res_excluded_case = parse_plex_webhook(base_payload, excluded_libraries=["home videos"])
+    assert res_excluded_case is None
+
+    # 3. Allowed library check: item not in allowed -> ignored
+    res_not_allowed = parse_plex_webhook(base_payload, allowed_libraries=["Movies", "TV Shows"])
+    assert res_not_allowed is None
+
+    # 4. Item matches allowed library -> parsed successfully
+    movie_payload = {
+        "event": "media.scrobble",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "librarySectionTitle": "Movies",
+            "duration": 60000,
+            "viewOffset": 60000,
+        },
+    }
+    res_allowed = parse_plex_webhook(
+        movie_payload,
+        allowed_libraries=["Movies", "TV Shows"],
+        excluded_libraries=["Home Videos"],
+    )
+    assert res_allowed is not None
+    assert res_allowed.title == "Dune: Part Two"
+    assert res_allowed.library_section_title == "Movies"
+
+
+def test_parse_collection_media_specs():
+    """Verify that video resolution, audio codec, and channels are extracted for Trakt collection payload."""
+    payload = {
+        "event": "library.new",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Oppenheimer",
+            "year": 2023,
+            "librarySectionTitle": "4K Movies",
+            "Guid": [{"id": "imdb://tt15398776"}],
+            "Media": [
+                {
+                    "videoResolution": "4k",
+                    "audioCodec": "truehd",
+                    "audioChannels": 8,
+                }
+            ],
+        },
+    }
+    parsed = parse_plex_webhook(payload)
+    assert parsed is not None
+    assert parsed.video_resolution == "4k"
+    assert parsed.audio_codec == "truehd"
+    assert parsed.audio_channels == "7.1"
+
+    col_payload = parsed.to_trakt_collection_payload()
+    assert "movies" in col_payload
+    movie = col_payload["movies"][0]
+    assert movie["title"] == "Oppenheimer"
+    assert movie["resolution"] == "uhd_4k"
+    assert movie["audio"] == "dolby_truehd"
+    assert movie["audio_channels"] == "7.1"
+    assert movie["media_type"] == "digital"
+    assert movie["ids"]["imdb"] == "tt15398776"
+
+
+@pytest.mark.asyncio
+async def test_trakt_client_sync_collection():
+    """Verify TraktClient.sync_collection delegates to POST /sync/collection."""
+    with patch.object(trakt, "_post_authenticated", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"added": {"movies": 1, "episodes": 0}}
+        payload = {"movies": [{"title": "Oppenheimer", "year": 2023}]}
+        res = await trakt.sync_collection(payload)
+        assert res["added"]["movies"] == 1
+        mock_post.assert_called_once()
+        assert "/sync/collection" in mock_post.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_webhook_library_new_collection_flow():
+    """Verify that library.new webhooks trigger Trakt collection synchronization."""
+    client = TestClient(app)
+    payload = {
+        "event": "library.new",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Alien: Romulus",
+            "year": 2024,
+            "Guid": [{"id": "imdb://tt18412256"}],
+            "Media": [{"videoResolution": "1080", "audioCodec": "eac3", "audioChannels": 6}],
+        },
+    }
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_collection", new_callable=AsyncMock) as mock_sync, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_notif, \
+         patch.object(Config, "SYNC_COLLECTION", True):
+
+        mock_sync.return_value = {"added": {"movies": 1}}
+
+        res = client.post("/webhook", data={"payload": json.dumps(payload)})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["action"] == "collection"
+        assert mock_sync.called
+        sent_payload = mock_sync.call_args[0][0]
+        assert sent_payload["movies"][0]["resolution"] == "hd_1080p"
+        assert sent_payload["movies"][0]["audio"] == "dolby_digital_plus"
+        assert sent_payload["movies"][0]["audio_channels"] == "5.1"
+
+    # Verify when SYNC_COLLECTION=False, event is ignored
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(Config, "SYNC_COLLECTION", False):
+        res_disabled = client.post("/webhook", data={"payload": json.dumps(payload)})
+        assert res_disabled.status_code == 200
+        assert res_disabled.json()["status"] == "ignored"
+
+
+@pytest.mark.asyncio
+async def test_queue_collection_retry():
+    """Verify that queued sync_collection events are successfully processed by background worker."""
+    col_payload = {"movies": [{"title": "Gladiator II", "year": 2024}]}
+    item_id = queue_mgr.enqueue("sync_collection", col_payload, username="default")
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_collection", new_callable=AsyncMock) as mock_sync:
+        mock_sync.return_value = {"added": {"movies": 1}}
+
+        stats = await process_queue(trakt, queue_mgr)
+        assert stats["succeeded"] >= 1
+        assert queue_mgr.get_pending_count() == 0
+
+
+def test_prometheus_metrics_endpoint():
+    """Verify that /metrics exports valid Prometheus text exposition format."""
+    client = TestClient(app)
+    res = client.get("/metrics")
+    assert res.status_code == 200
+    assert "text/plain" in res.headers["content-type"]
+    body = res.text
+
+    # Check for Prometheus metric definitions
+    assert "# HELP plex_trakt_uptime_seconds" in body
+    assert "# TYPE plex_trakt_uptime_seconds gauge" in body
+    assert "# HELP plex_trakt_requests_total" in body
+    assert "# HELP plex_trakt_scrobbles_total" in body
+    assert "# HELP plex_trakt_collections_total" in body
+    assert "# HELP plex_trakt_active_streams" in body
+    assert "plex_trakt_uptime_seconds" in body
+
+
+@pytest.mark.asyncio
+async def test_ntfy_and_pushover_notifications():
+    """Verify Ntfy and Pushover notification builders and dispatch."""
+    media = ParsedMedia(
+        event="library.new",
+        username="selits",
+        media_type="movie",
+        title="Dune: Part Two",
+        year=2024,
+        video_resolution="4k",
+        audio_codec="truehd",
+        ids={"imdb": "tt15239678"},
+    )
+
+    mock_http = AsyncMock()
+    mock_resp = MagicMock(status_code=200)
+    mock_http.post = AsyncMock(return_value=mock_resp)
+
+    # 1. Ntfy delivery
+    with patch.object(Config, "NTFY_URL", "https://ntfy.sh/my_test_topic"), \
+         patch.object(Config, "NTFY_AUTH_TOKEN", "tk_test"):
+        res_ntfy = await notifier.send_ntfy(media, "collection", client=mock_http)
+        assert res_ntfy is True
+        assert mock_http.post.called
+        call_headers = mock_http.post.call_args[1]["headers"]
+        assert "Trakt: Dune: Part Two" in call_headers["Title"]
+        assert call_headers["Authorization"] == "Bearer tk_test"
+
+    # 2. Pushover delivery
+    mock_http.post.reset_mock()
+    with patch.object(Config, "PUSHOVER_USER_KEY", "u_key"), \
+         patch.object(Config, "PUSHOVER_API_TOKEN", "t_tok"):
+        res_push = await notifier.send_pushover(media, "collection", client=mock_http)
+        assert res_push is True
+        assert mock_http.post.called
+        post_data = mock_http.post.call_args[1]["data"]
+        assert post_data["user"] == "u_key"
+        assert "Dune: Part Two" in post_data["title"]
+
+
+def test_backup_and_restore_endpoints():
+    """Verify zip backup export, safe restoration, and security controls."""
+    client = TestClient(app)
+    # 1. Unauthenticated backup request -> 401
+    client.cookies.clear()
+    with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
+        res_unauth = client.get("/api/backup")
+        assert res_unauth.status_code == 401
+
+        # 2. Authenticated backup request -> 200 with zip content
+        client.cookies.set("admin_token", "test_secret")
+        res_backup = client.get("/api/backup")
+        assert res_backup.status_code == 200
+        assert "application/zip" in res_backup.headers["content-type"]
+        assert "attachment; filename=" in res_backup.headers["content-disposition"]
+
+        # Verify zip content structure
+        import io
+        import zipfile
+        zf = zipfile.ZipFile(io.BytesIO(res_backup.content))
+        namelist = zf.namelist()
+        assert isinstance(namelist, list)
+
+        # 3. Restore test: create a zip and upload
+        test_zip_buf = io.BytesIO()
+        with zipfile.ZipFile(test_zip_buf, "w") as test_zf:
+            test_zf.writestr("data/cowatch_shows.json", json.dumps(["Severance", "Succession"]))
+            # Zip slip attack attempt (must be skipped safely)
+            test_zf.writestr("../evil_file.txt", "evil")
+
+        test_zip_buf.seek(0)
+        files = {"backup_file": ("backup.zip", test_zip_buf.getvalue(), "application/zip")}
+        res_restore = client.post("/api/restore", files=files)
+        assert res_restore.status_code == 200
+        restore_data = res_restore.json()
+        assert restore_data["status"] == "success"
+        assert "data/cowatch_shows.json" in restore_data["restored"]
+        # Malicious path was ignored
+        assert "../evil_file.txt" not in restore_data["restored"]
+
+        # 4. Unauthenticated restore request -> 401
+        client.cookies.clear()
+        res_restore_denied = client.post("/api/restore", files=files)
+        assert res_restore_denied.status_code == 401
+
+
+
+
 
 
 

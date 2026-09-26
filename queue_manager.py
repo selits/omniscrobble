@@ -193,6 +193,8 @@ async def process_queue(
                 res = await client.sync_history(payload)
             elif event_type == "sync_ratings":
                 res = await client.sync_ratings(payload)
+            elif event_type == "sync_collection":
+                res = await client.sync_collection(payload)
             elif event_type == "scrobble_start":
                 res = await client.scrobble_start(payload)
             elif event_type == "scrobble_pause":
