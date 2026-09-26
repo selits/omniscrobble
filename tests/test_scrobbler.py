@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from config import Config
-from main import app, trakt
+from main import app, get_uptime_str, mask_username, recent_events, trakt
 from trakt_client import TraktClient
 
 from plex_parser import parse_plex_ids, parse_plex_webhook
@@ -351,6 +351,152 @@ def test_auth_endpoints_and_page():
         res_poll_ok = client.post("/api/auth/poll", json={"device_code": "dev123"})
         assert res_poll_ok.status_code == 200
         assert res_poll_ok.json()["status"] == "success"
+
+
+def test_mask_username():
+    assert mask_username("selits") == "se****"
+    assert mask_username("alex") == "a***"
+    assert mask_username("bob") == "b**"
+    assert mask_username("al") == "a*"
+    assert mask_username("a") == "*"
+    assert mask_username("") == ""
+    assert mask_username(None) == ""
+
+
+def test_get_uptime_str():
+    uptime = get_uptime_str()
+    assert isinstance(uptime, str)
+    assert len(uptime) > 0
+
+
+def test_token_info(tmp_path):
+    class FakeConfig:
+        TRAKT_CLIENT_ID = "cid"
+        TRAKT_CLIENT_SECRET = "csec"
+        TRAKT_API_URL = "https://api.trakt.tv"
+        TRAKT_TOKENS_FILE = tmp_path / "tokens.json"
+
+    client = TraktClient(FakeConfig)
+
+    # 1. No tokens
+    info_none = client.get_token_info()
+    assert info_none["status"] == "none"
+    assert info_none["healthy"] is False
+
+    # 2. Healthy token
+    import time
+    now = int(time.time())
+    client.save_tokens({"access_token": "tok123", "created_at": now, "expires_in": 7776000})
+    info_healthy = client.get_token_info()
+    assert info_healthy["status"] == "healthy"
+    assert info_healthy["healthy"] is True
+    assert info_healthy["days_remaining"] >= 89
+
+    # 3. Expired token
+    client.save_tokens({"access_token": "tok123", "created_at": now - 100000, "expires_in": 50000})
+    info_expired = client.get_token_info()
+    assert info_expired["status"] == "expired"
+    assert info_expired["healthy"] is False
+    assert info_expired["days_remaining"] == 0
+
+
+def test_admin_authorization_gate():
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "secret123"):
+        # 1. Clear events without admin rights -> 401
+        res_clear_denied = client.post("/api/events/clear")
+        assert res_clear_denied.status_code == 401
+
+        # 2. Clear events with valid header -> 200
+        res_clear_header = client.post("/api/events/clear", headers={"x-webhook-secret": "secret123"})
+        assert res_clear_header.status_code == 200
+
+        # 3. Clear events with cookie -> 200
+        client.cookies.set("admin_token", "secret123")
+        res_clear_cookie = client.post("/api/events/clear")
+        assert res_clear_cookie.status_code == 200
+        client.cookies.clear()
+
+        # 4. Auth endpoints without admin rights -> 401
+        res_auth_denied = client.get("/auth")
+        assert res_auth_denied.status_code == 401
+        assert "Admin Authorization Required" in res_auth_denied.text
+
+        res_start_denied = client.post("/api/auth/start")
+        assert res_start_denied.status_code == 401
+
+        res_poll_denied = client.post("/api/auth/poll", json={"device_code": "dev123"})
+        assert res_poll_denied.status_code == 401
+
+        # 5. Admin unlock endpoint
+        res_unlock_bad = client.post("/api/admin/unlock", json={"token": "wrong"})
+        assert res_unlock_bad.status_code == 401
+
+        res_unlock_ok = client.post("/api/admin/unlock", json={"token": "secret123"})
+        assert res_unlock_ok.status_code == 200
+        assert "admin_token" in res_unlock_ok.cookies
+
+        # 6. Admin lock endpoint
+        res_lock = client.post("/api/admin/lock")
+        assert res_lock.status_code == 200
+
+
+def test_dashboard_privacy_masking():
+    client = TestClient(app)
+
+    recent_events.appendleft({
+        "timestamp": "2026-09-26 12:00:00",
+        "user": "selits",
+        "event": "media.scrobble",
+        "action": "mark_watched",
+        "title": "Severance S01E01",
+        "type": "episode",
+        "progress": "100.0%",
+        "result_status": "ok",
+        "raw_result": {},
+    })
+
+    with patch.object(Config, "WEBHOOK_SECRET", "my_super_secret"), \
+         patch.object(Config, "PLEX_ALLOWED_USERS", ["selits"]):
+
+        # 1. Unauthenticated request: masked usernames & secret
+        res_locked = client.get("/")
+        assert res_locked.status_code == 200
+        assert "se****" in res_locked.text
+        assert "my_super_secret" not in res_locked.text
+        assert "●●●●●●●●" in res_locked.text
+        assert "🔓 Unlock Admin" in res_locked.text
+
+        # 2. Events API masked
+        res_events = client.get("/api/events")
+        assert res_events.status_code == 200
+        assert res_events.json()["events"][0]["user"] == "se****"
+
+        # 3. Authenticated request via cookie: reveals unmasked data
+        client.cookies.set("admin_token", "my_super_secret")
+        res_unlocked = client.get("/")
+        assert res_unlocked.status_code == 200
+        assert "my_super_secret" in res_unlocked.text
+        assert "🔒 Lock Admin" in res_unlocked.text
+        assert "📋 Copy URL" in res_unlocked.text
+
+        res_events_unlocked = client.get("/api/events")
+        assert res_events_unlocked.json()["events"][0]["user"] == "selits"
+        client.cookies.clear()
+
+
+def test_health_and_stats():
+    client = TestClient(app)
+    res = client.get("/health")
+    assert res.status_code == 200
+    data = res.json()
+    assert "uptime" in data
+    assert "token_health" in data
+    assert "stats" in data
+    assert "total" in data["stats"]
+    assert "movies" in data["stats"]
+    assert "episodes" in data["stats"]
 
 
 

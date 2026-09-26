@@ -63,6 +63,39 @@ class TraktClient:
         tokens = self.load_tokens()
         return bool(tokens and tokens.get("access_token"))
 
+    def get_token_info(self) -> dict[str, Any]:
+        """Return token status, health, and remaining days until auto-renewal."""
+        tokens = self.load_tokens()
+        if not tokens or not tokens.get("access_token"):
+            return {"status": "none", "healthy": False, "days_remaining": 0}
+
+        created_at = tokens.get("created_at", 0)
+        expires_in = tokens.get("expires_in", 0)
+        if not created_at or not expires_in:
+            return {"status": "healthy", "healthy": True, "days_remaining": 90}
+
+        now = time.time()
+        expires_at = created_at + expires_in
+        seconds_remaining = expires_at - now
+        days_remaining = max(0, int(seconds_remaining // 86400))
+
+        if seconds_remaining <= 0:
+            return {
+                "status": "expired",
+                "healthy": False,
+                "days_remaining": 0,
+                "created_at": created_at,
+                "expires_in": expires_in,
+            }
+
+        return {
+            "status": "healthy",
+            "healthy": True,
+            "days_remaining": days_remaining,
+            "created_at": created_at,
+            "expires_in": expires_in,
+        }
+
     async def get_valid_token(self) -> Optional[str]:
         tokens = self.load_tokens()
         if not tokens:
