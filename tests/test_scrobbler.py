@@ -2230,9 +2230,118 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/plex-trakt-webhook" in html
-    assert "v1.1.0" in html
+    assert "v1.1.1" in html
     assert "https://github.com/selits/plex-trakt-webhook/releases" in html
     assert "https://github.com/selits/plex-trakt-webhook#readme" in html
+    assert "Auto-refresh (30s)" in html
+    assert '<input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh(this)">' in html
+
+
+def test_media_stop_below_threshold():
+    client = TestClient(app)
+    stop_payload = {
+        "event": "media.stop",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {"title": "Living Room Apple TV"},
+        "Metadata": {
+            "librarySectionType": "show",
+            "type": "episode",
+            "title": "Critical Failure",
+            "grandparentTitle": "The Ark",
+            "parentIndex": 3,
+            "index": 9,
+            "year": 2026,
+            "duration": 2520000,
+            "viewOffset": 840000,
+        },
+    }
+
+    initial_total = scrobble_stats["total"]
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_dispatch:
+        mock_stop.return_value = {"action": "pause"}
+
+        res = client.post("/webhook", data={"payload": json.dumps(stop_payload)})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["action"] == "playback_stopped"
+        assert scrobble_stats["total"] == initial_total
+        mock_stop.assert_called_once()
+        mock_dispatch.assert_not_called()
+
+
+def test_media_stop_below_one_percent():
+    client = TestClient(app)
+    stop_payload = {
+        "event": "media.stop",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {"title": "Living Room Apple TV"},
+        "Metadata": {
+            "librarySectionType": "show",
+            "type": "episode",
+            "title": "Critical Failure",
+            "grandparentTitle": "The Ark",
+            "parentIndex": 3,
+            "index": 9,
+            "year": 2026,
+            "duration": 2520000,
+            "viewOffset": 0,
+        },
+    }
+
+    initial_total = scrobble_stats["total"]
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_dispatch:
+
+        res = client.post("/webhook", data={"payload": json.dumps(stop_payload)})
+        assert res.status_code == 200
+        data = res.json()
+        assert data["action"] == "playback_stopped"
+        assert data["result"]["status"] == "ignored"
+        assert scrobble_stats["total"] == initial_total
+        mock_stop.assert_not_called()
+        mock_dispatch.assert_not_called()
+
+
+def test_notifier_zero_and_custom_progress():
+    notifier_inst = Notifier(Config)
+    media_zero = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        title="Critical Failure",
+        show="The Ark",
+        season=3,
+        episode=9,
+        progress=0.0,
+    )
+    discord_payload = notifier_inst.build_discord_payload(media_zero, "mark_watched")
+    embed = discord_payload["embeds"][0]
+    assert any(f["name"] == "Progress" and f["value"] == "0.0%" for f in embed["fields"])
+    assert "0.0% watched" in embed["description"]
+
+    media_partial = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        title="Critical Failure",
+        show="The Ark",
+        season=3,
+        episode=9,
+        progress=85.5,
+    )
+    discord_payload_partial = notifier_inst.build_discord_payload(media_partial, "mark_watched")
+    embed_partial = discord_payload_partial["embeds"][0]
+    assert any(f["name"] == "Progress" and f["value"] == "85.5%" for f in embed_partial["fields"])
+    assert "85.5% watched" in embed_partial["description"]
+
+
 
 
 
