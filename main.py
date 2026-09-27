@@ -24,6 +24,11 @@ from notifier import notifier
 from playback_manager import playback_mgr
 from plex_parser import ParsedMedia, parse_plex_webhook
 from queue_manager import QueueManager, process_queue
+from sonarr_client import (
+    SonarrClient,
+    parse_sonarr_webhook,
+    parse_radarr_webhook,
+)
 from trakt_client import TraktClient
 from user_manager import user_mgr
 
@@ -34,6 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger("plex_trakt_scrobbler")
 
 trakt = TraktClient(Config)
+sonarr = SonarrClient()
 user_mgr.set_default_client(trakt)
 queue_mgr = QueueManager(Config.QUEUE_DB_FILE)
 
@@ -156,6 +162,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"Startup Diagnostics: Library denylist active: {Config.EXCLUDED_LIBRARIES}")
     if Config.SYNC_COLLECTION:
         logger.info("Startup Diagnostics: Trakt Collection sync enabled for library.new events.")
+    if sonarr.is_configured:
+        logger.info(f"Startup Diagnostics: Sonarr integration enabled ({Config.SONARR_URL}).")
 
     yield
     if queue_worker_task:
@@ -458,6 +466,148 @@ async def plex_webhook(request: Request):
         return {"status": "error", "error": str(e), "queued": True}
 
 
+@app.get("/sonarr")
+def sonarr_info():
+    """Friendly information endpoint for Sonarr webhook setup."""
+    return {
+        "status": "online",
+        "service": "Sonarr Webhook Handler",
+        "method": "POST",
+        "instructions": "In Sonarr, go to Settings -> Connect -> Add Webhook and point the URL to this endpoint (e.g. /sonarr or /sonarr?token=...).",
+    }
+
+
+@app.post("/sonarr")
+async def sonarr_webhook(request: Request):
+    """Receives webhooks from Sonarr for instant Trakt collection sync."""
+    if Config.WEBHOOK_SECRET:
+        token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
+        if not token or not secrets.compare_digest(token, Config.WEBHOOK_SECRET):
+            logger.warning("Rejected unauthorized Sonarr webhook request: invalid or missing token.")
+            metrics_registry.record_request("sonarr", 401)
+            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
+
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.error(f"Failed to parse Sonarr JSON payload: {e}")
+        metrics_registry.record_request("sonarr", 400)
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_type, trakt_payload, parsed = parse_sonarr_webhook(payload)
+
+    if event_type == "test":
+        logger.info("Received Sonarr test webhook - connection verified!")
+        metrics_registry.record_request("sonarr", 200)
+        return {"status": "success", "message": "Sonarr webhook received successfully"}
+
+    if event_type == "ignored" or not trakt_payload or not parsed:
+        metrics_registry.record_request("sonarr", 200)
+        return {"status": "ignored", "reason": f"Event '{payload.get('eventType')}' ignored"}
+
+    if not Config.SYNC_COLLECTION:
+        metrics_registry.record_request("sonarr", 200)
+        return {"status": "ignored", "reason": "Collection sync is disabled (SYNC_COLLECTION=false)"}
+
+    active_client = user_mgr.get_client()
+    action_taken = "collection"
+    logger.info(f"Sonarr: Adding new media to Trakt collection: {parsed.show_title} S{parsed.season:02d}E{parsed.episode:02d}")
+    try:
+        result = await active_client.sync_collection(trakt_payload)
+        if is_temporary_error(result):
+            queue_mgr.enqueue("sync_collection", trakt_payload, error=str(result.get("error", "")), username="Sonarr")
+            metrics_registry.record_collection("episode", "queued")
+        else:
+            metrics_registry.record_collection("episode", "success")
+
+        scrobble_stats["collections"] = scrobble_stats.get("collections", 0) + 1
+        log_event(parsed, action_taken, result)
+
+        if Config.NOTIFY_ON_COLLECTION:
+            asyncio.create_task(notifier.dispatch(parsed, "collection"))
+
+        metrics_registry.record_request("sonarr", 200)
+        return {"status": "success", "event": "sonarr.download", "action": "collection", "result": result}
+    except Exception as e:
+        logger.error(f"Error processing Sonarr collection sync: {e}")
+        queue_mgr.enqueue("sync_collection", trakt_payload, error=str(e), username="Sonarr")
+        metrics_registry.record_collection("episode", "queued")
+        log_event(parsed, action_taken, {"error": str(e), "queued": True})
+        metrics_registry.record_request("sonarr", 500)
+        return {"status": "error", "error": str(e), "queued": True}
+
+
+@app.get("/radarr")
+def radarr_info():
+    """Friendly information endpoint for Radarr webhook setup."""
+    return {
+        "status": "online",
+        "service": "Radarr Webhook Handler",
+        "method": "POST",
+        "instructions": "In Radarr, go to Settings -> Connect -> Add Webhook and point the URL to this endpoint (e.g. /radarr or /radarr?token=...).",
+    }
+
+
+@app.post("/radarr")
+async def radarr_webhook(request: Request):
+    """Receives webhooks from Radarr for instant Trakt collection sync."""
+    if Config.WEBHOOK_SECRET:
+        token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
+        if not token or not secrets.compare_digest(token, Config.WEBHOOK_SECRET):
+            logger.warning("Rejected unauthorized Radarr webhook request: invalid or missing token.")
+            metrics_registry.record_request("radarr", 401)
+            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
+
+    try:
+        payload = await request.json()
+    except Exception as e:
+        logger.error(f"Failed to parse Radarr JSON payload: {e}")
+        metrics_registry.record_request("radarr", 400)
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_type, trakt_payload, parsed = parse_radarr_webhook(payload)
+
+    if event_type == "test":
+        logger.info("Received Radarr test webhook - connection verified!")
+        metrics_registry.record_request("radarr", 200)
+        return {"status": "success", "message": "Radarr webhook received successfully"}
+
+    if event_type == "ignored" or not trakt_payload or not parsed:
+        metrics_registry.record_request("radarr", 200)
+        return {"status": "ignored", "reason": f"Event '{payload.get('eventType')}' ignored"}
+
+    if not Config.SYNC_COLLECTION:
+        metrics_registry.record_request("radarr", 200)
+        return {"status": "ignored", "reason": "Collection sync is disabled (SYNC_COLLECTION=false)"}
+
+    active_client = user_mgr.get_client()
+    action_taken = "collection"
+    logger.info(f"Radarr: Adding new movie to Trakt collection: {parsed.title} ({parsed.year})")
+    try:
+        result = await active_client.sync_collection(trakt_payload)
+        if is_temporary_error(result):
+            queue_mgr.enqueue("sync_collection", trakt_payload, error=str(result.get("error", "")), username="Radarr")
+            metrics_registry.record_collection("movie", "queued")
+        else:
+            metrics_registry.record_collection("movie", "success")
+
+        scrobble_stats["collections"] = scrobble_stats.get("collections", 0) + 1
+        log_event(parsed, action_taken, result)
+
+        if Config.NOTIFY_ON_COLLECTION:
+            asyncio.create_task(notifier.dispatch(parsed, "collection"))
+
+        metrics_registry.record_request("radarr", 200)
+        return {"status": "success", "event": "radarr.download", "action": "collection", "result": result}
+    except Exception as e:
+        logger.error(f"Error processing Radarr collection sync: {e}")
+        queue_mgr.enqueue("sync_collection", trakt_payload, error=str(e), username="Radarr")
+        metrics_registry.record_collection("movie", "queued")
+        log_event(parsed, action_taken, {"error": str(e), "queued": True})
+        metrics_registry.record_request("radarr", 500)
+        return {"status": "error", "error": str(e), "queued": True}
+
+
 trakt_user_profile: Optional[dict[str, Any]] = None
 
 
@@ -486,6 +636,9 @@ async def health_check():
         "sync_collection": Config.SYNC_COLLECTION,
         "scrobble_mode": Config.SCROBBLE_MODE,
         "webhook_secret_enabled": bool(Config.WEBHOOK_SECRET),
+        "sonarr": {
+            "configured": sonarr.is_configured,
+        },
         "uptime": get_uptime_str(),
         "token_health": token_info,
         "stats": scrobble_stats,
@@ -791,6 +944,17 @@ def delete_cowatch_show(show: str, request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     shows = cowatch_mgr.remove_show(show)
     return {"status": "ok", "shows": shows}
+
+
+@app.get("/api/sonarr/shows")
+async def get_sonarr_shows(request: Request, q: str = "", limit: int = 15):
+    """Search series from Sonarr for Co-Watch autocomplete."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not sonarr.is_configured:
+        return {"configured": False, "shows": []}
+    shows = await sonarr.search_series(query=q, limit=limit)
+    return {"configured": True, "shows": shows}
 
 
 @app.post("/api/cowatch/sync")
@@ -1384,6 +1548,12 @@ async def dashboard(request: Request, response: Response):
     else:
         devices_rule_html = ""
     rule_movies_str = "Enabled" if Config.CO_WATCH_MOVIES else "Disabled"
+    sonarr_status_note = (
+        '<span style="color:#10b981;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px;">'
+        '✓ Connected to Sonarr (type to search library)</span>'
+        if sonarr.is_configured
+        else '<span style="color:#64748b;font-size:11px;">Configure SONARR_URL & SONARR_API_KEY in .env for library search</span>'
+    )
 
     cowatch_card_html = f"""
     <div class="card">
@@ -1405,12 +1575,19 @@ async def dashboard(request: Request, response: Response):
                     {chips_html}
                 </div>
                 {f'''
-                <div style="display:flex;gap:8px;">
-                    <input type="text" id="cowatch-show-input" placeholder="Add show (e.g. Severance, The Bear)..."
-                           style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
-                           onkeydown="if(event.key==='Enter')addCowatchShow()" />
+                <div style="display:flex;gap:8px;position:relative;">
+                    <div style="flex:1;position:relative;">
+                        <input type="text" id="cowatch-show-input" placeholder="Add show (e.g. Severance, The Bear)..."
+                               style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                               oninput="onCowatchShowInput(this.value)"
+                               onfocus="onCowatchShowInput(this.value)"
+                               autocomplete="off"
+                               onkeydown="if(event.key==='Enter')addCowatchShow()" />
+                        <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
+                    </div>
                     <button onclick="addCowatchShow()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;">+ Add Show</button>
                 </div>
+                <div style="margin-top:4px;">{sonarr_status_note}</div>
                 ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to add or remove shared shows.</div>'}
                 <div style="margin-top:10px;font-size:12px;color:#94a3b8;">
                     Movies: <strong>{rule_movies_str}</strong>{devices_rule_html}
@@ -1705,6 +1882,8 @@ async def dashboard(request: Request, response: Response):
             if (e.key === 'Escape') {{
                 closeUnlockModal();
                 closeScrobbleModal();
+                const box = document.getElementById('sonarr-suggestions');
+                if (box) box.style.display = 'none';
             }}
         }});
 
@@ -1944,6 +2123,56 @@ async def dashboard(request: Request, response: Response):
                 if (refreshTimer) clearInterval(refreshTimer);
             }}
         }}
+
+        let sonarrDebounceTimer = null;
+        async function onCowatchShowInput(val) {{
+            clearTimeout(sonarrDebounceTimer);
+            const box = document.getElementById('sonarr-suggestions');
+            if (!box) return;
+            if (!val || val.trim().length < 1) {{
+                box.style.display = 'none';
+                return;
+            }}
+            sonarrDebounceTimer = setTimeout(async () => {{
+                try {{
+                    const res = await fetch('/api/sonarr/shows?q=' + encodeURIComponent(val.trim()));
+                    if (!res.ok) {{ box.style.display = 'none'; return; }}
+                    const data = await res.json();
+                    if (!data.configured || !data.shows || data.shows.length === 0) {{
+                        box.style.display = 'none';
+                        return;
+                    }}
+                    box.innerHTML = data.shows.map(s => {{
+                        const yr = s.year ? ` (${{s.year}})` : '';
+                        const st = s.status ? ` • <span style="color:#94a3b8;font-size:11px;">${{s.status}}</span>` : '';
+                        const safeTitle = s.title.replace(/"/g, '&quot;').replace(/'/g, "\\'");
+                        return `<div onclick="selectSonarrShow('${{safeTitle}}')" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #334155;color:#f8fafc;display:flex;justify-content:space-between;align-items:center;" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='transparent'">
+                            <div><strong>${{s.title}}</strong><span style="color:#94a3b8;font-size:12px;">${{yr}}</span>${{st}}</div>
+                            <span style="color:#38bdf8;font-size:11px;font-weight:600;">+ Select</span>
+                        </div>`;
+                    }}).join('');
+                    box.style.display = 'block';
+                }} catch (e) {{
+                    box.style.display = 'none';
+                }}
+            }}, 200);
+        }}
+
+        function selectSonarrShow(title) {{
+            const input = document.getElementById('cowatch-show-input');
+            const box = document.getElementById('sonarr-suggestions');
+            if (input) input.value = title;
+            if (box) box.style.display = 'none';
+            addCowatchShow();
+        }}
+
+        document.addEventListener('click', (e) => {{
+            const box = document.getElementById('sonarr-suggestions');
+            const input = document.getElementById('cowatch-show-input');
+            if (box && e.target !== input && !box.contains(e.target)) {{
+                box.style.display = 'none';
+            }}
+        }});
 
         async function addCowatchShow() {{
             if (!isAdmin) {{ openUnlockModal(); return; }}
