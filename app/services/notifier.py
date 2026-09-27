@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import html
 import logging
+import urllib.parse
 from typing import Any, Optional
 import httpx
 
@@ -35,13 +36,14 @@ def format_media_title(media: ParsedMedia) -> str:
 
 
 def get_trakt_url(media: ParsedMedia) -> str:
-    """Resolve direct Trakt search or web URL based on available external IDs."""
-    if media.ids.get("imdb"):
-        return f"https://trakt.tv/search/imdb/{media.ids['imdb']}"
-    if media.ids.get("tmdb"):
-        return f"https://trakt.tv/search/tmdb/{media.ids['tmdb']}"
-    if media.ids.get("tvdb"):
-        return f"https://trakt.tv/search/tvdb/{media.ids['tvdb']}"
+    """Resolve direct Trakt search web URL based on media title or show title."""
+    if media.media_type == "episode":
+        query = media.show_title or media.title
+    else:
+        query = media.title
+
+    if query:
+        return f"https://trakt.tv/search?q={urllib.parse.quote_plus(query)}"
     return "https://trakt.tv"
 
 
