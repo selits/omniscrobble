@@ -29,6 +29,8 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Multi-User Trakt Support**: Link separate Trakt accounts for different Plex users (`/auth?user=username`), allowing household members sharing the server to scrobble to their own profiles.
 - **Watch Together (Co-Watching) Engine**: Automatically dual-scrobbles watched TV shows or movies to your partner's Trakt account when you watch together, while leaving solo shows untracked. Manage shared shows directly from your phone or desktop with interactive tag chips.
 - **Sonarr & Radarr Integrations**: Real-time autocomplete for TV series from your Sonarr library (automatically excluding shows already in your whitelist) plus direct webhook endpoints (`/sonarr`, `/radarr`) for instant Trakt collection sync upon download import.
+- **Interactive Air-Gapped Demo Mode (`/demo`)**: Explore a fully populated, authenticated dashboard view with realistic mock playback (*Severance S02E01* on Apple TV 4K), 1,428 scrobbles, activity history, linked multi-user accounts, and Co-Watch configuration with zero risk to disk storage or Trakt credentials.
+- **Authenticated System Log Viewer**: Inspect live service logs directly from the dashboard via an interactive terminal modal with level filtering (`ALL`, `ERROR`, `WARNING`, `INFO`), keyword search, auto-scroll, and copy-to-clipboard, backed by `journalctl` on Linux systemd and an in-memory ring buffer fallback with automatic secret redaction.
 - **Dashboard Admin Security & Screenshot Privacy Shield**: Public visitors see a hardened, privacy-shielded view (masked usernames, completely masked partner account `@●●●●●●●●`, masked server hostname/port `http://●●●●●●●●:●●●●/webhook?token=●●●●●●●●` for safe screenshots, and locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
 - **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, recent activity logs with optional 30s auto-refresh, and a repository footer with live version badge.
@@ -283,10 +285,12 @@ If you prefer running in a container:
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
 | **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt profiles, active stream status, co-watch whitelist, and live activity. |
+| **`/demo`** | `GET` | **Demo Dashboard**: Air-gapped preview environment showcasing full dashboard with realistic mock data and zero secret exposure. |
 | **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based OAuth activation (support `?user=username` for multi-user linking). |
 | **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback, rating, scrobble, and library additions. |
 | **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token health telemetry. |
 | **`/metrics`** | `GET` | **Prometheus Metrics**: Scrape real-time service, playback, and queue metrics in standard exposition format. |
+| **`/api/logs`** | `GET` | **System Logs**: Live service logs from `journalctl` or in-memory ring buffer with automatic secret redaction (Admin only). |
 | **`/api/events`** | `GET` | **Event History**: Returns recent scrobble, rating, and playback events in JSON. |
 | **`/api/events/clear`** | `POST` | **Clear Events**: Resets the in-memory event log (Admin only). |
 | **`/api/playback`** | `GET` | **Active Streams**: Returns real-time streaming sessions and recently finished media. |
@@ -381,6 +385,14 @@ scrape_configs:
 | `plex_trakt_queue_pending` | Gauge | Current number of pending items in the offline retry queue. |
 | `plex_trakt_active_streams` | Gauge | Current count of active Plex playback sessions. |
 
+### 📜 Authenticated System Log Viewer
+
+The web dashboard includes an integrated, real-time terminal log viewer accessible via the **"📜 View Logs"** button in the System Operations card (protected by the `WEBHOOK_SECRET` admin authorization gate):
+- **Live Search & Filtering**: Filter logs in real-time by keyword, show title, or log level (`ALL`, `ERROR`, `WARNING`, `INFO`).
+- **Dual Log Source**: Automatically queries `journalctl --user -u plex-trakt` when running as a systemd user service on Linux, with transparent fallback to an in-memory 1,000-line `RingBufferLogHandler` for containerized (Docker) and local development.
+- **Strict Privacy Redaction**: Automatically sanitizes sensitive tokens, query parameters (`?token=...`), Bearer authorization headers, and webhook secrets from all emitted log lines.
+- **Convenience Controls**: Auto-scroll to bottom, 1-click copy-to-clipboard, and manual refresh.
+
 ---
 
 ## 🛡️ Persistent Offline Queue & Disaster Recovery
@@ -465,6 +477,8 @@ plex-trakt-webhook/
 │   │   └── sonarr_client.py # Sonarr/Radarr API client, webhook parsers & resolution mapping
 │   ├── services/            # Core business logic services
 │   │   ├── cowatch_manager.py  # Watch Together whitelist & dual-scrobble rules engine
+│   │   ├── demo_manager.py     # Air-gapped mock playback, stats, and activity generator
+│   │   ├── log_manager.py      # Systemd journalctl reader, in-memory ring buffer & secret redaction
 │   │   ├── notifier.py         # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover)
 │   │   ├── playback_manager.py # Active streaming sessions & dashboard cards
 │   │   ├── queue_manager.py    # Persistent SQLite offline retry queue & background worker
@@ -483,7 +497,7 @@ plex-trakt-webhook/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (69 tests)
+└── tests/                   # Comprehensive pytest test suite (74 tests)
 ```
 
 ---

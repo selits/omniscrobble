@@ -2364,6 +2364,7 @@ def test_demo_dashboard_page():
     assert "demo_partner" in html
     assert "View Logs" in html
     assert "Exit Demo" in html
+    assert "✕ Exit Demo" in html
     assert "1,428" in html or "1428" in html
 
 
@@ -2372,11 +2373,14 @@ def test_demo_query_param_on_root():
     res_demo = client.get("/?demo=true")
     assert res_demo.status_code == 200
     assert "Demo Mode Active" in res_demo.text
+    assert "✕ Exit Demo" in res_demo.text
 
-    # Without ?demo=true, demo banner should not be present
+    # Without ?demo=true, demo banner should not be present, but header button and modal link are
     res_normal = client.get("/")
     assert res_normal.status_code == 200
     assert "Demo Mode Active" not in res_normal.text
+    assert "🎭 Demo" in res_normal.text
+    assert "Try Demo Mode" in res_normal.text
 
 
 def test_demo_api_endpoints():
