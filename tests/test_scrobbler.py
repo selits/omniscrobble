@@ -1943,13 +1943,23 @@ def test_dashboard_privacy_shield_and_script_syntax():
 
 
 def test_auth_page_script_syntax():
-    """Verify that /auth page script has balanced braces."""
+    """Verify that /auth page scripts (both locked and unlocked) have balanced braces."""
     client = TestClient(app)
     with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
+        # 1. Unauthenticated locked /auth
+        client.cookies.clear()
+        res_locked = client.get("/auth")
+        assert res_locked.status_code == 401
+        import re
+        scripts_locked = re.findall(r'<script>(.*?)</script>', res_locked.text, re.DOTALL)
+        assert len(scripts_locked) >= 1
+        for idx, s in enumerate(scripts_locked):
+            assert s.count('{') == s.count('}'), f"Locked auth script {idx} unbalanced"
+
+        # 2. Authenticated /auth
         client.cookies.set("admin_token", "testsecret")
         res = client.get("/auth")
         assert res.status_code == 200
-        import re
         scripts = re.findall(r'<script>(.*?)</script>', res.text, re.DOTALL)
         assert len(scripts) >= 1
         for idx, s in enumerate(scripts):
