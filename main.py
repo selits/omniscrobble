@@ -233,6 +233,16 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
         metrics_registry.record_cowatch("failed")
 
 
+@app.get("/webhook")
+def get_webhook_info():
+    """Friendly information endpoint when /webhook is visited in a browser (HTTP GET)."""
+    return {
+        "status": "online",
+        "message": "Plex Webhook endpoint is active and waiting for HTTP POST events from Plex Media Server.",
+        "dashboard_url": "/",
+    }
+
+
 @app.post("/webhook")
 async def plex_webhook(request: Request):
     """Receives multipart/form-data or json webhook notifications from Plex Media Server."""

@@ -25,15 +25,16 @@ class CowatchManager:
             try:
                 with open(self.data_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    if isinstance(data, list):
+                    if isinstance(data, list) and data:
                         self._shows = [s.strip() for s in data if s and s.strip()]
                         return
             except Exception as e:
                 logger.error(f"Error loading co-watch shows from {self.data_file}: {e}")
 
-        # Fallback to config default
-        self._shows = list(self.config.CO_WATCH_SHOWS)
-        self._save_shows()
+        # Fallback to config default if persistent file is empty or missing
+        self._shows = [s.strip() for s in self.config.CO_WATCH_SHOWS if s and s.strip()]
+        if self._shows:
+            self._save_shows()
 
     def _save_shows(self) -> None:
         """Persist current shows to disk."""
