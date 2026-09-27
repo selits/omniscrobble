@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import logging
+import secrets
 import time
 import urllib.parse
 import zipfile
@@ -92,24 +93,24 @@ def is_admin_request(request: Request) -> bool:
 
     If WEBHOOK_SECRET is not configured, admin mode is granted by default.
     Otherwise, verifies against query param ?token=, x-webhook-secret header,
-    or the admin_token HTTP-only cookie.
+    or the admin_token HTTP-only cookie using timing-safe comparison.
     """
     if not Config.WEBHOOK_SECRET:
         return True
 
     # 1. Query parameter (?token=...)
     token = request.query_params.get("token")
-    if token and token == Config.WEBHOOK_SECRET:
+    if token and secrets.compare_digest(token, Config.WEBHOOK_SECRET):
         return True
 
     # 2. Request header (x-webhook-secret: ...)
     header_token = request.headers.get("x-webhook-secret")
-    if header_token and header_token == Config.WEBHOOK_SECRET:
+    if header_token and secrets.compare_digest(header_token, Config.WEBHOOK_SECRET):
         return True
 
     # 3. Secure cookie (admin_token=...)
     cookie_token = request.cookies.get("admin_token")
-    if cookie_token and cookie_token == Config.WEBHOOK_SECRET:
+    if cookie_token and secrets.compare_digest(cookie_token, Config.WEBHOOK_SECRET):
         return True
 
     return False
@@ -168,7 +169,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-app = FastAPI(title="Plex Trakt Scrobbler", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Plex Trakt Scrobbler", version="1.0.2", lifespan=lifespan)
 
 
 # In-memory log of recent webhook events for the status dashboard
@@ -248,7 +249,7 @@ async def plex_webhook(request: Request):
     """Receives multipart/form-data or json webhook notifications from Plex Media Server."""
     if Config.WEBHOOK_SECRET:
         token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
-        if not token or token != Config.WEBHOOK_SECRET:
+        if not token or not secrets.compare_digest(token, Config.WEBHOOK_SECRET):
             logger.warning("Rejected unauthorized webhook request: invalid or missing token.")
             metrics_registry.record_request("webhook", 401)
             raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
@@ -602,7 +603,20 @@ def get_events(request: Request):
     is_admin = is_admin_request(request)
     events = list(recent_events)
     if not is_admin:
-        events = [{**ev, "user": mask_username(ev.get("user"))} for ev in events]
+        events = [
+            {
+                "timestamp": ev.get("timestamp"),
+                "user": mask_username(ev.get("user")),
+                "event": ev.get("event"),
+                "action": ev.get("action"),
+                "title": ev.get("title"),
+                "type": ev.get("type"),
+                "show_title": None,
+                "progress": ev.get("progress"),
+                "result_status": ev.get("result_status"),
+            }
+            for ev in events
+        ]
     return {"events": events}
 
 
@@ -747,8 +761,12 @@ def get_cowatch_details(request: Request):
     if not is_admin:
         if status.get("co_watch_user"):
             status["co_watch_user"] = mask_username(status["co_watch_user"])
+        # Privacy shielding: hide show titles and player devices for non-admin viewers
+        status["shows_count"] = len(status.get("shows", []))
+        status["shows"] = []
+        status["co_watch_players"] = []
         users = [
-            {**u, "username": mask_username(u["username"]) if not u.get("is_default") else u["username"]}
+            {**u, "username": mask_username(u["username"])}
             for u in users
         ]
     return {
@@ -828,13 +846,14 @@ class AdminUnlockRequest(BaseModel):
 def admin_unlock(payload: AdminUnlockRequest, response: Response):
     if not Config.WEBHOOK_SECRET:
         return {"status": "ok", "message": "Admin authentication not required"}
-    if payload.token != Config.WEBHOOK_SECRET:
+    if not secrets.compare_digest(payload.token, Config.WEBHOOK_SECRET):
         raise HTTPException(status_code=401, detail="Invalid admin secret")
     response.set_cookie(
         key="admin_token",
         value=Config.WEBHOOK_SECRET,
         httponly=True,
         samesite="lax",
+        path="/",
         max_age=86400 * 30,
     )
     return {"status": "ok", "message": "Admin mode unlocked"}
@@ -900,18 +919,53 @@ async def auth_page(request: Request, user: Optional[str] = None):
         .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 36px; max-width: 440px; width: 100%; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
         .icon { width: 56px; height: 56px; margin: 0 auto 16px; display: block; }
         h1 { font-size: 20px; font-weight: 700; margin-bottom: 8px; color: #f8fafc; }
-        p { color: #94a3b8; font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+        p { color: #94a3b8; font-size: 14px; margin-bottom: 20px; line-height: 1.5; }
         .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #3b82f6; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; width: 100%; transition: background 0.15s; }
         .btn:hover { background: #2563eb; }
+        input[type="password"] { width: 100%; background: #0f172a; border: 1px solid #475569; border-radius: 6px; padding: 10px 12px; color: #f8fafc; font-size: 14px; margin-bottom: 12px; outline: none; }
     </style>
 </head>
 <body>
     <div class="card">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         <h1>Admin Authorization Required</h1>
-        <p>Linking or managing the Trakt connection requires administrative privileges. Please return to the dashboard and unlock admin mode first.</p>
-        <a href="/" class="btn">&larr; Return to Dashboard</a>
+        <p>Linking or managing Trakt accounts requires administrative privileges. Enter your webhook secret below to proceed:</p>
+        <input type="password" id="auth-secret-input" placeholder="Enter webhook secret..." onkeydown="if(event.key==='Enter')submitAuthUnlock()" autofocus />
+        <div id="auth-err" style="color:#ef4444;font-size:12px;margin-bottom:12px;display:none;"></div>
+        <button id="auth-unlock-btn" onclick="submitAuthUnlock()" class="btn" style="margin-bottom:14px;">Unlock &rarr;</button>
+        <div style="margin-top:6px;">
+            <a href="/" style="color:#94a3b8;font-size:13px;text-decoration:none;">&larr; Return to Dashboard</a>
+        </div>
     </div>
+    <script>
+        async function submitAuthUnlock() {
+            const s = document.getElementById('auth-secret-input').value.trim();
+            const err = document.getElementById('auth-err');
+            const btn = document.getElementById('auth-unlock-btn');
+            if (!s) return;
+            err.style.display = 'none';
+            if (btn) { btn.disabled = true; btn.textContent = 'Unlocking...'; }
+            try {
+                const res = await fetch('/api/admin/unlock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: s })
+                });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    if (btn) { btn.disabled = false; btn.textContent = 'Unlock \u2192'; }
+                    const d = await res.json();
+                    err.textContent = d.detail || 'Invalid secret token';
+                    err.style.display = 'block';
+                }
+            } catch (e) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Unlock \u2192'; }
+                err.textContent = 'Network error: ' + e.message;
+                err.style.display = 'block';
+            }
+        }
+    </script>
 </body>
 </html>"""
         return HTMLResponse(content=locked_html, status_code=401)
@@ -1040,12 +1094,13 @@ async def auth_page(request: Request, user: Optional[str] = None):
 async def dashboard(request: Request, response: Response):
     # Auto-login admin if valid ?token= passed in URL
     query_token = request.query_params.get("token")
-    if query_token and Config.WEBHOOK_SECRET and query_token == Config.WEBHOOK_SECRET:
+    if query_token and Config.WEBHOOK_SECRET and secrets.compare_digest(query_token, Config.WEBHOOK_SECRET):
         response.set_cookie(
             key="admin_token",
             value=Config.WEBHOOK_SECRET,
             httponly=True,
             samesite="lax",
+            path="/",
             max_age=86400 * 30,
         )
 
@@ -1208,7 +1263,7 @@ async def dashboard(request: Request, response: Response):
         card_border = "#10b981" if s["state"] == "playing" else "#f59e0b"
         badge_text = "Currently Streaming" if s["state"] == "playing" else "Paused"
         badge_color = card_border
-        user_dev = f"• {s['username']} on {s['player']}" + (f" ({s['device']})" if s['device'] else "")
+        user_dev = f"• {s['username']}" + (f" on {s['player']}" if (is_admin and s['player']) else "") + (f" ({s['device']})" if (is_admin and s['device']) else "")
         stream_title = s['title']
         stream_url = s['trakt_url']
         stream_prog_text = f"{s['progress']:.1f}%"
@@ -1219,7 +1274,7 @@ async def dashboard(request: Request, response: Response):
         card_border = "#38bdf8"
         badge_text = "Recently Finished"
         badge_color = "#38bdf8"
-        user_dev = f"• {f['username']} on {f['player']}"
+        user_dev = f"• {f['username']}" + (f" on {f['player']}" if (is_admin and f['player']) else "")
         stream_title = f['title']
         stream_url = f['trakt_url']
         stream_prog_text = "100.0%"
@@ -1269,19 +1324,17 @@ async def dashboard(request: Request, response: Response):
     configured_users = user_mgr.list_configured_users()
 
     # Shared show chips
-    chips_html = ""
-    for s in cw_shows:
-        s_safe = s.replace("'", "\\'")
-        del_btn = (
-            f'<button onclick="removeCowatchShow(\'{s_safe}\')" title="Remove show" '
-            f'style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;">&times;</button>'
-            if is_admin
-            else ""
-        )
-        chips_html += f'<span style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:4px 10px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:3px;">{s}{del_btn}</span>'
-
-    if not chips_html:
-        chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>'
+    if not is_admin:
+        count = len(cw_shows)
+        chips_html = f'<div style="color:#94a3b8;font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 2px;"><span>🔒</span><span><strong>{count} shared show{"s" if count != 1 else ""} configured</strong> &bull; Unlock admin access to view titles and manage whitelist.</span></div>'
+    else:
+        chips_html = ""
+        for s in cw_shows:
+            s_safe = s.replace("'", "\\'")
+            del_btn = f'<button onclick="removeCowatchShow(\'{s_safe}\')" title="Remove show" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;">&times;</button>'
+            chips_html += f'<span style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:4px 10px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:3px;">{s}{del_btn}</span>'
+        if not chips_html:
+            chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>'
 
     # Multi-user accounts list
     users_badges_html = ""
@@ -1307,11 +1360,15 @@ async def dashboard(request: Request, response: Response):
         elif is_cw:
             role_label = '<span style="background:#701a75;color:#f5d0fe;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">Partner</span>'
 
-        masked_uname = u_name if is_admin else mask_username(u_name)
+        if is_def and raw_username:
+            display_name = raw_username if is_admin else mask_username(raw_username)
+        else:
+            display_name = u_name if is_admin else mask_username(u_name)
+
         users_badges_html += f"""
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-weight:600;color:#f8fafc;font-size:13px;">@{masked_uname}</span>
+                <span style="font-weight:600;color:#f8fafc;font-size:13px;">@{display_name}</span>
                 {role_label}
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
@@ -1321,7 +1378,11 @@ async def dashboard(request: Request, response: Response):
         </div>
         """
 
-    rule_players_str = ", ".join(Config.CO_WATCH_PLAYERS) if Config.CO_WATCH_PLAYERS else "All Devices"
+    if is_admin:
+        rule_players_str = ", ".join(Config.CO_WATCH_PLAYERS) if Config.CO_WATCH_PLAYERS else "All Devices"
+        devices_rule_html = f" &bull; Devices: <strong>{rule_players_str}</strong>"
+    else:
+        devices_rule_html = ""
     rule_movies_str = "Enabled" if Config.CO_WATCH_MOVIES else "Disabled"
 
     cowatch_card_html = f"""
@@ -1352,7 +1413,7 @@ async def dashboard(request: Request, response: Response):
                 </div>
                 ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to add or remove shared shows.</div>'}
                 <div style="margin-top:10px;font-size:12px;color:#94a3b8;">
-                    Movies: <strong>{rule_movies_str}</strong> &bull; Devices: <strong>{rule_players_str}</strong>
+                    Movies: <strong>{rule_movies_str}</strong>{devices_rule_html}
                 </div>
             </div>
             <div>
@@ -1505,7 +1566,7 @@ async def dashboard(request: Request, response: Response):
     </div>
 
     <!-- Admin Unlock Modal -->
-    <div id="unlock-modal">
+    <div id="unlock-modal" onclick="if(event.target===this)closeUnlockModal()">
         <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px;max-width:400px;width:90%;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
             <h3 style="margin-top:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
                 <span>🔓</span> Unlock Admin Access
@@ -1519,13 +1580,13 @@ async def dashboard(request: Request, response: Response):
             <div id="unlock-error" style="color:#ef4444;font-size:12px;margin-bottom:12px;display:none;"></div>
             <div style="display:flex;justify-content:flex-end;gap:8px;">
                 <button onclick="closeUnlockModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
-                <button onclick="submitUnlock()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Unlock</button>
+                <button id="unlock-submit-btn" onclick="submitUnlock()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Unlock</button>
             </div>
         </div>
     </div>
 
     <!-- Manual Scrobble Modal -->
-    <div id="scrobble-modal">
+    <div id="scrobble-modal" onclick="if(event.target===this)closeScrobbleModal()">
         <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px;max-width:560px;width:92%;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);max-height:85vh;display:flex;flex-direction:column;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -1558,8 +1619,9 @@ async def dashboard(request: Request, response: Response):
         function copyWebhookUrl() {{
             const input = document.getElementById('webhook-url-input');
             if (!input) return;
-            navigator.clipboard.writeText(input.value).then(() => {{
-                const btn = document.getElementById('copy-btn');
+            const btn = document.getElementById('copy-btn');
+            const showSuccess = () => {{
+                if (!btn) return;
                 const orig = btn.innerHTML;
                 btn.innerHTML = '✓ Copied!';
                 btn.style.background = '#10b981';
@@ -1567,10 +1629,26 @@ async def dashboard(request: Request, response: Response):
                     btn.innerHTML = orig;
                     btn.style.background = '#0284c7';
                 }}, 2000);
-            }}).catch(() => {{
+            }};
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(input.value).then(showSuccess).catch(() => {{
+                    input.select();
+                    document.execCommand('copy');
+                    showSuccess();
+                }});
+            }} else {{
                 input.select();
                 document.execCommand('copy');
-            }});
+                showSuccess();
+            }}
+        }}
+
+        // Clean query token from browser address bar once cookie is saved
+        if (window.location.search && window.location.search.includes('token=')) {{
+            try {{
+                window.history.replaceState({{}}, document.title, window.location.pathname);
+            }} catch (e) {{}}
         }}
 
         function openUnlockModal() {{
@@ -1589,8 +1667,13 @@ async def dashboard(request: Request, response: Response):
         async function submitUnlock() {{
             const secret = document.getElementById('admin-secret-input').value.trim();
             const errDiv = document.getElementById('unlock-error');
+            const btn = document.getElementById('unlock-submit-btn');
             if (!secret) return;
             errDiv.style.display = 'none';
+            if (btn) {{
+                btn.disabled = true;
+                btn.textContent = 'Unlocking...';
+            }}
             try {{
                 const res = await fetch('/api/admin/unlock', {{
                     method: 'POST',
@@ -1598,21 +1681,36 @@ async def dashboard(request: Request, response: Response):
                     body: JSON.stringify({{ token: secret }})
                 }});
                 if (res.ok) {{
-                    window.location.reload();
+                    window.location.href = window.location.pathname;
                 }} else {{
+                    if (btn) {{
+                        btn.disabled = false;
+                        btn.textContent = 'Unlock';
+                    }}
                     const data = await res.json();
                     errDiv.textContent = data.detail || 'Invalid secret token';
                     errDiv.style.display = 'block';
                 }}
             }} catch (e) {{
+                if (btn) {{
+                    btn.disabled = false;
+                    btn.textContent = 'Unlock';
+                }}
                 errDiv.textContent = 'Connection error: ' + e.message;
                 errDiv.style.display = 'block';
             }}
         }}
 
+        window.addEventListener('keydown', (e) => {{
+            if (e.key === 'Escape') {{
+                closeUnlockModal();
+                closeScrobbleModal();
+            }}
+        }});
+
         async function lockAdmin() {{
             await fetch('/api/admin/lock', {{ method: 'POST' }});
-            window.location.reload();
+            window.location.href = window.location.pathname;
         }}
 
         function openManualScrobbleModal() {{
@@ -1737,9 +1835,8 @@ async def dashboard(request: Request, response: Response):
                 card.style.borderLeftColor = s.state === 'playing' ? '#10b981' : '#f59e0b';
                 document.getElementById('stream-state-badge').textContent = s.state === 'playing' ? 'Currently Streaming' : 'Paused';
                 document.getElementById('stream-state-badge').style.color = s.state === 'playing' ? '#10b981' : '#f59e0b';
-                const indicator = document.getElementById('stream-pulse-indicator');
-                if (indicator) indicator.style.background = s.state === 'playing' ? '#10b981' : '#f59e0b';
-                document.getElementById('stream-user-device').textContent = `• ${{s.username}} on ${{s.player || 'Plex'}}${{s.device ? ' (' + s.device + ')' : ''}}`;
+                const devStr = (isAdmin && s.player) ? (` on ${{s.player}}${{s.device ? ' (' + s.device + ')' : ''}}`) : '';
+                document.getElementById('stream-user-device').textContent = `• ${{s.username}}${{devStr}}`;
                 document.getElementById('stream-title').textContent = s.title;
                 document.getElementById('stream-trakt-link').href = s.trakt_url || 'https://trakt.tv';
                 document.getElementById('stream-progress-text').textContent = `${{s.progress.toFixed(1)}}%`;
@@ -1753,7 +1850,8 @@ async def dashboard(request: Request, response: Response):
                 document.getElementById('stream-state-badge').style.color = '#38bdf8';
                 const indicator = document.getElementById('stream-pulse-indicator');
                 if (indicator) indicator.style.background = '#38bdf8';
-                document.getElementById('stream-user-device').textContent = `• ${{f.username}} on ${{f.player || 'Plex'}}`;
+                const fDevStr = (isAdmin && f.player) ? (` on ${{f.player}}`) : '';
+                document.getElementById('stream-user-device').textContent = `• ${{f.username}}${{fDevStr}}`;
                 document.getElementById('stream-title').textContent = f.title;
                 document.getElementById('stream-trakt-link').href = f.trakt_url || 'https://trakt.tv';
                 document.getElementById('stream-progress-text').textContent = '100.0%';
@@ -1940,6 +2038,8 @@ async def dashboard(request: Request, response: Response):
             if (uname && uname.trim()) {{
                 window.location.href = '/auth?user=' + encodeURIComponent(uname.trim());
             }}
+        }}
+
         async function uploadBackup(input) {{
             if (!isAdmin) {{ openUnlockModal(); return; }}
             if (!input.files || !input.files[0]) return;

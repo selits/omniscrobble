@@ -1480,10 +1480,26 @@ def test_cowatch_api_endpoints():
     client = TestClient(app)
 
     # 1. GET /api/cowatch (public / masked vs admin)
-    res_pub = client.get("/api/cowatch")
-    assert res_pub.status_code == 200
-    assert "status" in res_pub.json()
-    assert "configured_users" in res_pub.json()
+    with patch.object(Config, "WEBHOOK_SECRET", "testsecret"), \
+         patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(Config, "CO_WATCH_PLAYERS", ["selits's Fire TV", "Shield TV"]):
+        cowatch_mgr._shows = ["Severance", "The Bear"]
+        res_pub = client.get("/api/cowatch")
+        assert res_pub.status_code == 200
+        pub_data = res_pub.json()
+        assert pub_data["status"]["shows"] == []
+        assert pub_data["status"]["shows_count"] == 2
+        assert pub_data["status"]["co_watch_user"] == "pa*****"
+        assert pub_data["status"]["co_watch_players"] == []
+
+        # Admin access reveals shows and actual device names
+        client.cookies.set("admin_token", "testsecret")
+        res_admin = client.get("/api/cowatch")
+        assert res_admin.status_code == 200
+        admin_data = res_admin.json()
+        assert admin_data["status"]["shows"] == ["Severance", "The Bear"]
+        assert admin_data["status"]["co_watch_players"] == ["selits's Fire TV", "Shield TV"]
+        client.cookies.clear()
 
     # 2. POST /api/cowatch/shows (auth check)
     with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
@@ -1865,6 +1881,91 @@ def test_backup_and_restore_endpoints():
         client.cookies.clear()
         res_restore_denied = client.post("/api/restore", files=files)
         assert res_restore_denied.status_code == 401
+
+
+def test_dashboard_privacy_shield_and_script_syntax():
+    """Verify that HTML dashboards have balanced scripts and robust non-admin privacy shielding."""
+    client = TestClient(app)
+    playback_mgr.clear()
+    recent_events.clear()
+
+    with patch.object(Config, "WEBHOOK_SECRET", "testsecret"), \
+         patch.object(Config, "CO_WATCH_USER", "bon.vivant"), \
+         patch.object(Config, "CO_WATCH_PLAYERS", ["selits's Fire TV", "Google TV"]):
+        cowatch_mgr._shows = ["Secret CoWatch Show Alpha", "Secret CoWatch Show Beta"]
+
+        # 1. Unauthenticated / Non-Admin Dashboard Request
+        client.cookies.clear()
+        res = client.get("/")
+        assert res.status_code == 200
+        html = res.text
+
+        # Validate that scripts have perfectly balanced curly braces (no JavaScript syntax errors)
+        import re
+        scripts = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)
+        assert len(scripts) >= 1
+        for idx, s in enumerate(scripts):
+            open_count = s.count('{')
+            close_count = s.count('}')
+            assert open_count == close_count, f"Script {idx} in dashboard has unbalanced braces: open={open_count}, close={close_count}"
+
+        # Privacy checks for non-admin viewers:
+        # Show titles must be hidden
+        assert "Secret CoWatch Show Alpha" not in html
+        assert "Secret CoWatch Show Beta" not in html
+        assert "2 shared shows configured" in html
+        assert "Unlock admin access to view titles" in html
+
+        # Personal device names and Devices rule must be completely hidden
+        assert "selits's Fire TV" not in html
+        assert "Google TV" not in html
+        assert "Devices:" not in html
+
+        # Partner username masked
+        assert "@bon.vivant" not in html
+        assert "@bo********" in html
+
+        # Webhook secret masked
+        assert "testsecret" not in html
+
+        # 2. Authenticated Admin Dashboard Request
+        client.cookies.set("admin_token", "testsecret")
+        res_admin = client.get("/")
+        assert res_admin.status_code == 200
+        html_admin = res_admin.text
+
+        # Admin sees full show titles and device names
+        assert "Secret CoWatch Show Alpha" in html_admin
+        assert "Secret CoWatch Show Beta" in html_admin
+        assert "Devices: <strong>selits's Fire TV, Google TV</strong>" in html_admin
+        assert "testsecret" in html_admin
+        client.cookies.clear()
+
+
+def test_auth_page_script_syntax():
+    """Verify that /auth page scripts (both locked and unlocked) have balanced braces."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
+        # 1. Unauthenticated locked /auth
+        client.cookies.clear()
+        res_locked = client.get("/auth")
+        assert res_locked.status_code == 401
+        import re
+        scripts_locked = re.findall(r'<script>(.*?)</script>', res_locked.text, re.DOTALL)
+        assert len(scripts_locked) >= 1
+        for idx, s in enumerate(scripts_locked):
+            assert s.count('{') == s.count('}'), f"Locked auth script {idx} unbalanced"
+
+        # 2. Authenticated /auth
+        client.cookies.set("admin_token", "testsecret")
+        res = client.get("/auth")
+        assert res.status_code == 200
+        scripts = re.findall(r'<script>(.*?)</script>', res.text, re.DOTALL)
+        assert len(scripts) >= 1
+        for idx, s in enumerate(scripts):
+            assert s.count('{') == s.count('}'), f"Auth script {idx} unbalanced"
+        client.cookies.clear()
+
 
 
 
