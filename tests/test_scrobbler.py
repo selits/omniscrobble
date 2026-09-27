@@ -4,16 +4,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from config import Config
-from main import app, get_uptime_str, mask_username, queue_mgr, recent_events, scrobble_stats, trakt
-from queue_manager import QueueManager, process_queue
-from trakt_client import TraktClient
+from app.config import Config
+from app.main import app, get_uptime_str, mask_username, queue_mgr, recent_events, scrobble_stats, trakt
+from app.services.queue_manager import QueueManager, process_queue
+from app.clients.trakt_client import TraktClient
 
-from notifier import Notifier, format_media_title, get_trakt_url, notifier
-from playback_manager import PlaybackManager, playback_mgr
-from plex_parser import ParsedMedia, parse_plex_ids, parse_plex_webhook
-from user_manager import UserClientManager, user_mgr
-from cowatch_manager import CowatchManager, cowatch_mgr
+from app.services.notifier import Notifier, format_media_title, get_trakt_url, notifier
+from app.services.playback_manager import PlaybackManager, playback_mgr
+from app.plex_parser import ParsedMedia, parse_plex_ids, parse_plex_webhook
+from app.services.user_manager import UserClientManager, user_mgr
+from app.services.cowatch_manager import CowatchManager, cowatch_mgr
 
 
 def test_parse_plex_ids():
@@ -774,7 +774,7 @@ def test_queue_endpoints():
 
         # 3. With admin cookie -> 200
         client.cookies.set("admin_token", "super_secret")
-        with patch("main.process_queue", new_callable=AsyncMock) as mock_proc:
+        with patch("app.main.process_queue", new_callable=AsyncMock) as mock_proc:
             mock_proc.return_value = {"processed": 0, "succeeded": 0, "failed": 0}
             res_retry_ok = client.post("/api/queue/retry")
             assert res_retry_ok.status_code == 200
@@ -1971,7 +1971,7 @@ def test_auth_page_script_syntax():
 
 @pytest.mark.asyncio
 async def test_sonarr_client_search_and_cache():
-    from sonarr_client import SonarrClient
+    from app.clients.sonarr_client import SonarrClient
     sc = SonarrClient(base_url="http://sonarr.local:8989", api_key="secretkey")
     assert sc.is_configured is True
 
@@ -2002,7 +2002,7 @@ async def test_sonarr_client_search_and_cache():
 
 
 def test_sonarr_webhook_parsing():
-    from sonarr_client import parse_sonarr_webhook
+    from app.clients.sonarr_client import parse_sonarr_webhook
 
     # Test event
     ev_type, trakt_p, parsed = parse_sonarr_webhook({"eventType": "Test"})
@@ -2042,7 +2042,7 @@ def test_sonarr_webhook_parsing():
 
 
 def test_radarr_webhook_parsing():
-    from sonarr_client import parse_radarr_webhook
+    from app.clients.sonarr_client import parse_radarr_webhook
 
     ev_type, trakt_p, parsed = parse_radarr_webhook({"eventType": "Test"})
     assert ev_type == "test"
@@ -2130,7 +2130,7 @@ def test_sonarr_webhook_collection_sync():
     }
     client = TestClient(app)
     with patch.object(Config, "WEBHOOK_SECRET", ""):
-        with patch("user_manager.user_mgr.get_client") as mock_get_client:
+        with patch("app.main.user_mgr.get_client") as mock_get_client:
             mock_trakt = AsyncMock()
             mock_trakt.sync_collection.return_value = {"added": {"episodes": 1}}
             mock_get_client.return_value = mock_trakt
@@ -2142,8 +2142,8 @@ def test_sonarr_webhook_collection_sync():
 
 
 def test_720p_resolution_mapping():
-    from plex_parser import map_plex_resolution
-    from sonarr_client import map_arr_resolution
+    from app.plex_parser import map_plex_resolution
+    from app.clients.sonarr_client import map_arr_resolution
 
     # Plex mappings
     assert map_plex_resolution("720") == "hd_720p"
@@ -2161,42 +2161,23 @@ def test_720p_resolution_mapping():
 
 
 def test_modular_package_structure():
-    """Verify modular app package structure, template loading, and backward-compatible shims."""
+    """Verify clean modular app package structure, template loading, and base directory resolution."""
     import main as root_main
     import app.main as app_main
-    import config as root_config
     import app.config as app_config
-    import cowatch_manager as root_cw
     import app.services.cowatch_manager as app_cw
-    import user_manager as root_um
     import app.services.user_manager as app_um
-    import notifier as root_notif
     import app.services.notifier as app_notif
-    import playback_manager as root_pm
     import app.services.playback_manager as app_pm
-    import queue_manager as root_qm
     import app.services.queue_manager as app_qm
-    import trakt_client as root_tc
     import app.clients.trakt_client as app_tc
-    import sonarr_client as root_sc
     import app.clients.sonarr_client as app_sc
-    import plex_parser as root_pp
     import app.plex_parser as app_pp
-    import metrics as root_m
     import app.metrics as app_m
+    import os
 
-    # 1. Identity checks
+    # 1. Main entrypoint re-exports app
     assert root_main.app is app_main.app
-    assert root_config.Config is app_config.Config
-    assert root_cw.cowatch_mgr is app_cw.cowatch_mgr
-    assert root_um.user_mgr is app_um.user_mgr
-    assert root_notif.notifier is app_notif.notifier
-    assert root_pm.playback_mgr is app_pm.playback_mgr
-    assert root_qm.QueueManager is app_qm.QueueManager
-    assert root_tc.TraktClient is app_tc.TraktClient
-    assert root_sc.SonarrClient is app_sc.SonarrClient
-    assert root_pp.parse_plex_webhook is app_pp.parse_plex_webhook
-    assert root_m.metrics_registry is app_m.metrics_registry
 
     # 2. Template verification
     templates_dir = app_main.TEMPLATES_DIR
@@ -2206,8 +2187,25 @@ def test_modular_package_structure():
     assert (templates_dir / "auth_locked.html").is_file()
 
     # 3. Base directory is project root
-    assert app_config.Config.BASE_DIR == root_config.BASE_DIR
     assert (app_config.Config.BASE_DIR / "requirements.txt").is_file()
+    assert (app_config.Config.BASE_DIR / "main.py").is_file()
+    assert (app_config.Config.BASE_DIR / "auth.py").is_file()
+
+    # 4. Verify no old root shim files exist in base folder
+    root_files = set(os.listdir(app_config.Config.BASE_DIR))
+    for deprecated in [
+        "config.py",
+        "cowatch_manager.py",
+        "metrics.py",
+        "notifier.py",
+        "playback_manager.py",
+        "plex_parser.py",
+        "queue_manager.py",
+        "sonarr_client.py",
+        "trakt_client.py",
+        "user_manager.py",
+    ]:
+        assert deprecated not in root_files, f"{deprecated} should no longer exist in root directory"
 
 
 
