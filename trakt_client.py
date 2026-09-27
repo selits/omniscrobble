@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
+from pathlib import Path
 import time
 from typing import Any, Optional
 import httpx
@@ -10,12 +13,12 @@ logger = logging.getLogger("trakt_client")
 
 
 class TraktClient:
-    def __init__(self, config: type[Config] = Config):
+    def __init__(self, config: type[Config] = Config, tokens_file: Optional[Path] = None):
         self.config = config
         self.client_id = config.TRAKT_CLIENT_ID
         self.client_secret = config.TRAKT_CLIENT_SECRET
         self.api_url = config.TRAKT_API_URL
-        self.tokens_file = config.TRAKT_TOKENS_FILE
+        self.tokens_file = tokens_file if tokens_file is not None else config.TRAKT_TOKENS_FILE
         self._tokens: Optional[dict[str, Any]] = None
         self._http_client: Optional[httpx.AsyncClient] = None
 
@@ -62,6 +65,39 @@ class TraktClient:
     def is_authenticated(self) -> bool:
         tokens = self.load_tokens()
         return bool(tokens and tokens.get("access_token"))
+
+    def get_token_info(self) -> dict[str, Any]:
+        """Return token status, health, and remaining days until auto-renewal."""
+        tokens = self.load_tokens()
+        if not tokens or not tokens.get("access_token"):
+            return {"status": "none", "healthy": False, "days_remaining": 0}
+
+        created_at = tokens.get("created_at", 0)
+        expires_in = tokens.get("expires_in", 0)
+        if not created_at or not expires_in:
+            return {"status": "healthy", "healthy": True, "days_remaining": 90}
+
+        now = time.time()
+        expires_at = created_at + expires_in
+        seconds_remaining = expires_at - now
+        days_remaining = max(0, int(seconds_remaining // 86400))
+
+        if seconds_remaining <= 0:
+            return {
+                "status": "expired",
+                "healthy": False,
+                "days_remaining": 0,
+                "created_at": created_at,
+                "expires_in": expires_in,
+            }
+
+        return {
+            "status": "healthy",
+            "healthy": True,
+            "days_remaining": days_remaining,
+            "created_at": created_at,
+            "expires_in": expires_in,
+        }
 
     async def get_valid_token(self) -> Optional[str]:
         tokens = self.load_tokens()
@@ -192,6 +228,17 @@ class TraktClient:
         url = f"{self.api_url}/sync/history"
         return await self._post_authenticated(url, sync_payload)
 
+    async def sync_ratings(self, rating_payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /sync/ratings - Rate movies, shows, or episodes on Trakt."""
+        url = f"{self.api_url}/sync/ratings"
+        return await self._post_authenticated(url, rating_payload)
+
+    async def sync_collection(self, collection_payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /sync/collection - Add movies, shows, or episodes to user's Trakt collection."""
+        url = f"{self.api_url}/sync/collection"
+        return await self._post_authenticated(url, collection_payload)
+
+
     async def get_user_settings(self) -> Optional[dict[str, Any]]:
         """GET /users/settings - Retrieve authenticated user profile information."""
         if not self.is_authenticated():
@@ -244,6 +291,19 @@ class TraktClient:
                 return res.json()
         except Exception as e:
             logger.warning(f"Error searching movie '{title}': {e}")
+    async def search_media(self, query: str, media_type: Optional[str] = None) -> list[dict[str, Any]]:
+        """Search Trakt catalog for movies and/or shows."""
+        type_path = media_type if media_type in ("movie", "show", "episode") else "movie,show"
+        url = f"{self.api_url}/search/{type_path}"
+        params: dict[str, Any] = {"query": query, "limit": 10}
+        try:
+            client = self.get_client()
+            headers = await self._get_headers(authenticated=False)
+            res = await client.get(url, headers=headers, params=params)
+            if res.status_code == 200:
+                return res.json()
+        except Exception as e:
+            logger.warning(f"Error searching media '{query}': {e}")
         return []
 
     async def _post_authenticated(
