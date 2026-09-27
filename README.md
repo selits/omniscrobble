@@ -28,9 +28,10 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Integrated Manual Scrobble Tool**: Search Trakt's global catalog directly from the dashboard and mark any missed movie or episode as watched with one click.
 - **Multi-User Trakt Support**: Link separate Trakt accounts for different Plex users (`/auth?user=username`), allowing household members sharing the server to scrobble to their own profiles.
 - **Watch Together (Co-Watching) Engine**: Automatically dual-scrobbles watched TV shows or movies to your partner's Trakt account when you watch together, while leaving solo shows untracked. Manage shared shows directly from your phone or desktop with interactive tag chips.
+- **Sonarr & Radarr Integrations**: Real-time autocomplete for TV series from your Sonarr library (automatically excluding shows already in your whitelist) plus direct webhook endpoints (`/sonarr`, `/radarr`) for instant Trakt collection sync upon download import.
 - **Dashboard Admin Security & Screenshot Privacy Shield**: Public visitors see a hardened, privacy-shielded view (masked usernames, completely masked partner account `@●●●●●●●●`, masked server hostname/port `http://●●●●●●●●:●●●●/webhook?token=●●●●●●●●` for safe screenshots, and locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
-- **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, and live auto-updating event logs (5s poll).
+- **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, live auto-updating event logs (5s poll), and a repository footer with live version badge.
 - **Seedbox & Docker Ready**: Tested and optimized for containerized environments (Ultra.cc, Whatbox, Docker) with non-root security, healthchecks, and `env_file` auto-loading.
 
 ---
@@ -299,7 +300,7 @@ If you prefer running in a container:
 | **`/api/cowatch`** | `GET` | **Co-Watch Status**: Returns shared shows list, configuration, and linked user profiles. |
 | **`/api/cowatch/shows`** | `POST` / `DELETE` | **Shared Shows Manager**: Add or remove TV shows from the Watch Together whitelist (Admin only). |
 | **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
-| **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist (Admin only). |
+| **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist, automatically excluding already whitelisted shows (Admin only). |
 | **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
 | **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
 
@@ -319,7 +320,7 @@ When couples, roommates, or families watch TV shows together on a shared living 
 - **Device Filtering (`CO_WATCH_PLAYERS`)**: Optional rule to only trigger dual-scrobble when playing on shared devices (e.g. `Living Room Apple TV`), preventing dual-sync when you watch in bed on your phone.
 - **Movie Co-Watching (`CO_WATCH_MOVIES`)**: Toggle whether all finished movies dual-sync to your partner.
 - **Mobile-Friendly Web Dashboard**: Add or remove shared shows with interactive tag chips (`[ The Bear ✕ ]`) or click `[+ Co-Watch]` in the activity feed with 0 server restarts.
-- **Sonarr Live Autocomplete**: As you type show names into the dashboard, it queries your Sonarr library in real-time for instant 1-click addition.
+- **Sonarr Live Autocomplete**: As you type show names into the dashboard, it queries your Sonarr library in real-time, automatically filtering out already whitelisted shows for instant 1-click addition.
 
 ### 3. Setting Up Watch Together
 1. Add your partner's username in `.env`:
@@ -342,7 +343,7 @@ Connect Sonarr and Radarr to supercharge your dashboard and collection tracking:
    SONARR_API_KEY=your_sonarr_api_key_here
    ```
 
-   Now when adding shows to your shared list on the dashboard, matching series from your Sonarr library will autocomplete automatically with years and status badges!
+   Now when adding shows to your shared list on the dashboard, matching series from your Sonarr library will autocomplete automatically with years and status badges, excluding shows you've already added!
 2. **Direct Webhooks for Trakt Collection**:
    * In Sonarr: Go to **Settings &rarr; Connect &rarr; Add Webhook**.
    * URL: `http://<server>:<PORT>/sonarr` (or `http://<server>:<PORT>/sonarr?token=YOUR_SECRET` if `WEBHOOK_SECRET` is set).
@@ -482,7 +483,7 @@ plex-trakt-webhook/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (65+ tests)
+└── tests/                   # Comprehensive pytest test suite (66 tests)
 ```
 
 ---
