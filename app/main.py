@@ -182,7 +182,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 REPO_URL = "https://github.com/selits/plex-trakt-webhook"
 
 app = FastAPI(title="Plex Trakt Scrobbler", version=APP_VERSION, lifespan=lifespan)
@@ -424,20 +424,28 @@ async def plex_webhook(request: Request):
                     logger.info(f"Scrobble pause: {parsed.title} ({parsed.progress:.1f}%)")
                     result = await active_client.scrobble_pause(scrobble_payload)
             elif event == "media.stop":
-                action_taken = "scrobble_stop"
-                logger.info(f"Scrobble stop: {parsed.title} ({parsed.progress:.1f}%)")
                 playback_mgr.stop_playback(parsed)
-                result = await active_client.scrobble_stop(scrobble_payload)
-                if is_temporary_error(result):
-                    queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
-                    metrics_registry.record_scrobble(parsed.media_type, "queued")
+                if parsed.progress >= Config.SCROBBLE_THRESHOLD:
+                    action_taken = "scrobble_stop"
+                    logger.info(f"Scrobble stop (watched): {parsed.title} ({parsed.progress:.1f}%)")
+                    result = await active_client.scrobble_stop(scrobble_payload)
+                    if is_temporary_error(result):
+                        queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
+                        metrics_registry.record_scrobble(parsed.media_type, "queued")
+                    else:
+                        metrics_registry.record_scrobble(parsed.media_type, "success")
+                    scrobble_stats["total"] += 1
+                    if parsed.media_type == "movie":
+                        scrobble_stats["movies"] += 1
+                    elif parsed.media_type == "episode":
+                        scrobble_stats["episodes"] += 1
                 else:
-                    metrics_registry.record_scrobble(parsed.media_type, "success")
-                scrobble_stats["total"] += 1
-                if parsed.media_type == "movie":
-                    scrobble_stats["movies"] += 1
-                elif parsed.media_type == "episode":
-                    scrobble_stats["episodes"] += 1
+                    action_taken = "playback_stopped"
+                    logger.info(f"Playback stopped below threshold: {parsed.title} ({parsed.progress:.1f}%)")
+                    if parsed.progress >= 1.0:
+                        result = await active_client.scrobble_stop(scrobble_payload)
+                    else:
+                        result = {"status": "ignored", "reason": "Progress below 1.0%"}
         else:
             action_taken = f"skipped_{event}"
 
