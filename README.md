@@ -483,7 +483,7 @@ plex-trakt-webhook/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (66 tests)
+└── tests/                   # Comprehensive pytest test suite (69 tests)
 ```
 
 ---
