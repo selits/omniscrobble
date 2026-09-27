@@ -77,7 +77,7 @@ TRAKT_CLIENT_SECRET=your_client_secret_from_trakt
 # (Recommended) Restrict scrobbling to your Plex username only (leave blank to allow all users)
 PLEX_ALLOWED_USERS=your_plex_username
 
-# (Optional) Protect webhook endpoint from unauthorized requests
+# (Optional) Protect webhook endpoint from unauthorized requests and unlock dashboard admin tools
 WEBHOOK_SECRET=your_optional_secret_token
 
 # Host & Port: Use 0.0.0.0 so Plex containers can reach this service
@@ -88,12 +88,33 @@ SERVER_PORT=8080
 SCROBBLE_MODE=scrobble
 SCROBBLE_THRESHOLD=80.0
 
-# (Optional) Real-time notifications to Discord and/or Telegram
+# Trakt Collection Sync (library.new events)
+SYNC_COLLECTION=true
+NOTIFY_ON_COLLECTION=true
+
+# Library Section Filtering (Optional)
+ALLOWED_LIBRARIES=
+EXCLUDED_LIBRARIES=Home Videos, Personal Videos, Fitness
+
+# Homelab & Prometheus Metrics
+PROMETHEUS_METRICS_ENABLED=true
+
+# (Optional) Real-time notifications (Discord, Telegram, Ntfy, Pushover)
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
-TELEGRAM_CHAT_ID=123456789
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+NTFY_URL=https://ntfy.sh/your_topic
+NTFY_AUTH_TOKEN=
+PUSHOVER_USER_KEY=
+PUSHOVER_API_TOKEN=
 NOTIFY_ON_SCROBBLE=true
 NOTIFY_ON_RATE=true
+
+# (Optional) Watch Together / Co-Watching
+CO_WATCH_USER=partner_username
+CO_WATCH_SHOWS=The Bear, Severance, House of the Dragon
+CO_WATCH_PLAYERS=Living Room Apple TV, Main TV
+CO_WATCH_MOVIES=false
 ```
 
 ---
@@ -256,13 +277,19 @@ If you prefer running in a container:
 | :--- | :---: | :--- |
 | **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt profiles, active stream status, co-watch whitelist, and live activity. |
 | **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based OAuth activation (support `?user=username` for multi-user linking). |
-| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback, rating, and scrobble payloads. |
+| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback, rating, scrobble, and library additions. |
 | **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token health telemetry. |
-| **`/api/events`** | `GET` | **Event History**: Returns recent scrobble and playback events in JSON. |
+| **`/metrics`** | `GET` | **Prometheus Metrics**: Scrape real-time service, playback, and queue metrics in standard exposition format. |
+| **`/api/events`** | `GET` | **Event History**: Returns recent scrobble, rating, and playback events in JSON. |
 | **`/api/events/clear`** | `POST` | **Clear Events**: Resets the in-memory event log (Admin only). |
 | **`/api/playback`** | `GET` | **Active Streams**: Returns real-time streaming sessions and recently finished media. |
 | **`/api/search`** | `GET` | **Trakt Search**: Search movies and shows across Trakt's global database (Admin only). |
 | **`/api/scrobble/manual`** | `POST` | **Manual Scrobble**: 1-click manual history scrobble for any movie or episode (Admin only). |
+| **`/api/queue`** | `GET` | **Offline Queue**: View pending items, retry counts, and error diagnostics in the SQLite queue. |
+| **`/api/queue/retry`** | `POST` | **Retry Queue**: Trigger immediate background processing of pending queue items (Admin only). |
+| **`/api/queue/clear`** | `POST` | **Clear Queue**: Purge pending or failed queue items (Admin only). |
+| **`/api/backup`** | `GET` | **Download Backup**: Export a timestamped `.zip` containing tokens, retry database, and settings (Admin only). |
+| **`/api/restore`** | `POST` | **Restore Backup**: Upload and restore a `.zip` backup archive with Zip Slip security verification (Admin only). |
 | **`/api/cowatch`** | `GET` | **Co-Watch Status**: Returns shared shows list, configuration, and linked user profiles. |
 | **`/api/cowatch/shows`** | `POST` / `DELETE` | **Shared Shows Manager**: Add or remove TV shows from the Watch Together whitelist (Admin only). |
 | **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
@@ -294,6 +321,85 @@ When couples, roommates, or families watch TV shows together on a shared living 
    ```
 2. Link their Trakt account by opening `http://<server>:<PORT>/auth?user=partner_username` and entering their Trakt activation code.
 3. Done! Shows in your whitelist will now automatically scrobble to both accounts seamlessly.
+
+---
+
+## 📊 Homelab Observability & Prometheus Metrics
+
+`plex-trakt-webhook` includes a built-in, thread-safe Prometheus metrics registry exporting directly on `/metrics` (enabled via `PROMETHEUS_METRICS_ENABLED=true`).
+
+### Prometheus Scrape Configuration
+Add the following to your `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: 'plex-trakt-webhook'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['<server-ip>:<PORT>']
+```
+
+### Exported Metrics
+
+| Metric | Type | Description |
+| :--- | :---: | :--- |
+| `plex_trakt_uptime_seconds` | Gauge | Total server process uptime in seconds. |
+| `plex_trakt_requests_total` | Counter | Incoming HTTP requests labeled by `endpoint` and `status`. |
+| `plex_trakt_scrobbles_total` | Counter | Scrobble attempts labeled by `media_type` and `status` (`success`, `queued`). |
+| `plex_trakt_ratings_total` | Counter | Ratings synchronized to Trakt labeled by `media_type` and `status`. |
+| `plex_trakt_collections_total` | Counter | Media items added to Trakt collection labeled by `media_type` and `status`. |
+| `plex_trakt_queue_pending` | Gauge | Current number of pending items in the offline retry queue. |
+| `plex_trakt_active_streams` | Gauge | Current count of active Plex playback sessions. |
+
+---
+
+## 🛡️ Persistent Offline Queue & Disaster Recovery
+
+### 1. Resilient Offline Queue (SQLite)
+If Trakt experiences API downtime (HTTP 5xx), rate limits (HTTP 429), or your server temporarily loses internet connectivity:
+- The service automatically enqueues the failed scrobble, rating, or collection event into `data/queue.db`.
+- A background worker attempts to drain the queue at regular intervals (`QUEUE_RETRY_INTERVAL`, default 300s) with exponential backoff.
+- The web dashboard displays live queue depth and allows 1-click **"Retry Queue Now"** or **"Clear Queue"** directly from the UI.
+
+### 2. 1-Click System Backup & Restore
+Safeguard your multi-user tokens, offline retry database, and watch-together configuration without manual file copying:
+- **Download Backup**: Click **"Download Backup (.zip)"** on the dashboard or request `GET /api/backup` (Admin only) to receive a timestamped archive.
+- **Restore Backup**: Drag and drop your `.zip` archive or send `POST /api/restore` (Admin only). The server automatically applies Zip Slip security path validation, unpacks the configuration, and refreshes active Trakt clients without rebooting.
+
+---
+
+## 🗃️ Library Filtering & Trakt Collection Sync
+
+### 1. Library Section Filtering
+Prevent personal or non-commercial media from polluting your Trakt history:
+- `ALLOWED_LIBRARIES`: Comma-separated whitelist (e.g. `Movies, 4K Movies, TV Shows`). Only webhooks from these sections are processed.
+- `EXCLUDED_LIBRARIES`: Comma-separated blacklist (e.g. `Home Videos, Fitness, Personal Recordings`). Any webhook matching an excluded library is discarded immediately.
+
+### 2. Trakt Collection Sync
+When `SYNC_COLLECTION=true`, newly added media (`library.new` events) automatically syncs to Trakt's collection (`/sync/collection`):
+- Technical media specifications are parsed and submitted to Trakt:
+  - **Resolution**: `4k`, `1080p`, `720p`, `480p`, `sd`
+  - **Audio Codec**: `dolby_truehd`, `dts_hd_ma`, `dolby_digital_plus`, `aac`, `flac`, etc.
+  - **Audio Channels**: `7.1`, `5.1`, `2.0`
+
+---
+
+## 🔔 Multi-Channel Notifications
+
+Deliver real-time alerts whenever a movie or episode is scrobbled, rated, or added to your Trakt collection:
+
+- **Discord**: Set `DISCORD_WEBHOOK_URL` to receive rich embeds with poster art, ratings, and clickable buttons linking directly to Trakt.
+- **Telegram**: Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` to receive HTML-formatted playback updates.
+- **Ntfy**: Set `NTFY_URL` (e.g. `https://ntfy.sh/your_topic`) and optional `NTFY_AUTH_TOKEN` for lightweight mobile push notifications.
+- **Pushover**: Set `PUSHOVER_USER_KEY` and `PUSHOVER_API_TOKEN` for native push alerts on iOS and Android.
+
+Toggles:
+- `NOTIFY_ON_SCROBBLE=true`: Alerts on finished playback (`media.scrobble` / `scrobble_stop`).
+- `NOTIFY_ON_RATE=true`: Alerts when rating media in Plex.
+- `NOTIFY_ON_COLLECTION=true`: Alerts when new media is added to your collection.
+
+---
 
 ## 💡 Troubleshooting & FAQ
 
