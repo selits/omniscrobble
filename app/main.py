@@ -32,6 +32,8 @@ from app.services.playback_manager import playback_mgr
 from app.plex_parser import ParsedMedia, parse_plex_webhook
 from app.services.queue_manager import QueueManager, process_queue
 from app.services.user_manager import user_mgr
+from app.services.demo_manager import demo_mgr
+from app.services.log_manager import log_mgr
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
@@ -770,6 +772,8 @@ async def import_backup(request: Request):
 
 @app.get("/api/events")
 def get_events(request: Request):
+    if request.query_params.get("demo") == "true":
+        return {"events": demo_mgr.get_demo_events()}
     is_admin = is_admin_request(request)
     events = list(recent_events)
     if not is_admin:
@@ -792,6 +796,8 @@ def get_events(request: Request):
 
 @app.post("/api/events/clear")
 def clear_events(request: Request):
+    if request.query_params.get("demo") == "true":
+        return {"status": "cleared"}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     recent_events.clear()
@@ -800,6 +806,8 @@ def clear_events(request: Request):
 
 @app.post("/api/queue/retry")
 async def trigger_queue_retry(request: Request):
+    if request.query_params.get("demo") == "true":
+        return {"status": "ok", "result": {}, "pending_count": 0}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     res = await process_queue(trakt, queue_mgr, user_mgr=user_mgr)
@@ -808,6 +816,8 @@ async def trigger_queue_retry(request: Request):
 
 @app.post("/api/queue/clear")
 def trigger_queue_clear(request: Request):
+    if request.query_params.get("demo") == "true":
+        return {"status": "ok", "pending_count": 0}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     queue_mgr.clear_queue()
@@ -816,11 +826,33 @@ def trigger_queue_clear(request: Request):
 
 @app.get("/api/playback")
 def get_playback_status(request: Request):
+    if request.query_params.get("demo") == "true":
+        return {
+            "active_sessions": [demo_mgr.get_demo_playback()],
+            "recently_finished": None,
+        }
     is_admin = is_admin_request(request)
     return {
         "active_sessions": playback_mgr.get_active_sessions(is_admin=is_admin),
         "recently_finished": playback_mgr.get_recently_finished(is_admin=is_admin),
     }
+
+
+@app.get("/api/logs")
+async def get_system_logs(
+    request: Request,
+    lines: int = 150,
+    source: str = "auto",
+):
+    """Return sanitized server logs from journalctl or in-memory ring buffer."""
+    if request.query_params.get("demo") == "true":
+        return {
+            "source": "demo (simulated journal)",
+            "lines": demo_mgr.get_demo_logs(lines=lines),
+        }
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required to view logs")
+    return await log_mgr.get_logs(lines=lines, source=source)
 
 
 class ManualScrobbleRequest(BaseModel):
@@ -834,6 +866,12 @@ class ManualScrobbleRequest(BaseModel):
 
 @app.get("/api/search")
 async def search_media_endpoint(query: str, type: Optional[str] = None, request: Request = None):
+    if request and request.query_params.get("demo") == "true":
+        results = [
+            {"type": "show", "show": {"title": s["title"], "year": s.get("year", 2024), "overview": f"A critically acclaimed show about {s['title']}.", "ids": {"trakt": 1000}}}
+            for s in demo_mgr.get_demo_sonarr_shows(query)
+        ]
+        return {"results": results}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if not query.strip():
@@ -844,6 +882,8 @@ async def search_media_endpoint(query: str, type: Optional[str] = None, request:
 
 @app.post("/api/scrobble/manual")
 async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "success", "result": {"scrobbled": True}}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if not trakt.is_authenticated():
@@ -947,6 +987,11 @@ def get_cowatch_details(request: Request):
 
 @app.post("/api/cowatch/shows")
 def add_cowatch_show(payload: AddShowRequest, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        current = demo_mgr.get_demo_cowatch_shows()
+        if payload.show and payload.show not in current:
+            current.append(payload.show)
+        return {"status": "ok", "shows": sorted(current, key=lambda x: x.lower())}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if not payload.show.strip():
@@ -957,6 +1002,9 @@ def add_cowatch_show(payload: AddShowRequest, request: Request):
 
 @app.delete("/api/cowatch/shows")
 def delete_cowatch_show(show: str, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        current = [s for s in demo_mgr.get_demo_cowatch_shows() if s.lower() != show.lower()]
+        return {"status": "ok", "shows": sorted(current, key=lambda x: x.lower())}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     shows = cowatch_mgr.remove_show(show)
@@ -968,6 +1016,8 @@ async def get_sonarr_shows(
     request: Request, q: str = "", limit: int = 15, exclude_shared: bool = True
 ):
     """Search series from Sonarr for Co-Watch autocomplete, excluding already whitelisted shows."""
+    if request and request.query_params.get("demo") == "true":
+        return {"configured": True, "shows": demo_mgr.get_demo_sonarr_shows(q)}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if not sonarr.is_configured:
@@ -979,6 +1029,8 @@ async def get_sonarr_shows(
 
 @app.post("/api/cowatch/sync")
 async def cowatch_manual_sync(payload: CowatchSyncRequest, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "success", "result": {"synced": True}}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     target_user = payload.target_user or Config.CO_WATCH_USER
@@ -1128,111 +1180,145 @@ async def auth_page(request: Request, user: Optional[str] = None):
     )
     return HTMLResponse(content=rendered)
 
+@app.get("/demo", response_class=HTMLResponse)
+async def demo_dashboard(request: Request, response: Response):
+    return await render_dashboard_response(request, response, is_demo=True)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, response: Response):
-    # Auto-login admin if valid ?token= passed in URL
-    query_token = request.query_params.get("token")
-    if query_token and Config.WEBHOOK_SECRET and secrets.compare_digest(query_token, Config.WEBHOOK_SECRET):
-        response.set_cookie(
-            key="admin_token",
-            value=Config.WEBHOOK_SECRET,
-            httponly=True,
-            samesite="lax",
-            path="/",
-            max_age=86400 * 30,
-        )
+    is_demo = request.query_params.get("demo") == "true"
+    return await render_dashboard_response(request, response, is_demo=is_demo)
 
-    is_admin = is_admin_request(request)
-    auth_status = trakt.is_authenticated()
-    profile = await get_cached_trakt_profile() if auth_status else None
-    raw_username = profile.get("username") if profile else None
 
-    display_username = raw_username if is_admin else mask_username(raw_username)
-    pending_queue = queue_mgr.get_pending_count()
-
-    notif_status = notifier.get_status()
-    enabled_notifs = []
-    if notif_status.get("discord"):
-        enabled_notifs.append("Discord")
-    if notif_status.get("telegram"):
-        enabled_notifs.append("Telegram")
-    if notif_status.get("ntfy"):
-        enabled_notifs.append("Ntfy")
-    if notif_status.get("pushover"):
-        enabled_notifs.append("Pushover")
-    notif_summary = ", ".join(enabled_notifs) if enabled_notifs else "Off"
-
-    # Library filtering display
-    if Config.ALLOWED_LIBRARIES:
-        allowed_libs_display = ", ".join(Config.ALLOWED_LIBRARIES)
-    elif Config.EXCLUDED_LIBRARIES:
-        allowed_libs_display = "All except " + ", ".join(Config.EXCLUDED_LIBRARIES)
-    else:
-        allowed_libs_display = "All Libraries"
-
-    # Token health calculation
-    token_info = trakt.get_token_info()
-    if auth_status:
-        if token_info.get("healthy"):
-            days = token_info.get("days_remaining", 0)
-            token_health_str = f"Healthy • Auto-renews in {days}d"
-            token_health_color = "#10b981"
-        else:
-            token_health_str = "Token Expired / Refresh Needed"
-            token_health_color = "#ef4444"
-    else:
-        token_health_str = "Not Linked"
-        token_health_color = "#94a3b8"
-
-    # Header status badge
-    if auth_status:
-        user_label = f"Connected as @{display_username}" if display_username else "Connected"
-        if is_admin:
-            status_badge = f'<a href="/auth" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">{user_label} &bull; Manage</a>'
-        else:
-            status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#065f46;color:#a7f3d0;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">{user_label} &bull; 🔒 Locked</a>'
-    else:
-        if is_admin:
-            status_badge = '<a href="/auth" style="background:#ef4444;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">Not Connected &bull; Link Trakt &rarr;</a>'
-        else:
-            status_badge = '<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#991b1b;color:#fecaca;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">Not Connected &bull; 🔒 Unlock &rarr;</a>'
-
-    # Admin header controls
-    if Config.WEBHOOK_SECRET:
-        if is_admin:
-            admin_btn = '<button onclick="lockAdmin()" class="btn-sm" style="background:#334155;color:#f87171;font-weight:600;border:1px solid #475569;">🔒 Lock Admin</button>'
-        else:
-            admin_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔓 Unlock Admin</button>'
-    else:
-        admin_btn = '<span style="font-size:12px;color:#94a3b8;background:#1e293b;padding:4px 10px;border-radius:6px;border:1px solid #334155;">Open Mode</span>'
-
-    # Allowed Plex Users display
-    if Config.PLEX_ALLOWED_USERS:
-        if is_admin:
-            allowed_users_display = ", ".join(Config.PLEX_ALLOWED_USERS)
-        else:
-            allowed_users_display = ", ".join(mask_username(u) for u in Config.PLEX_ALLOWED_USERS)
-    else:
-        allowed_users_display = "All Users"
-
-    # Base URL for webhook
-    base_url = str(request.base_url).rstrip("/")
-    if Config.WEBHOOK_SECRET:
-        full_webhook_url = f"{base_url}/webhook?token={Config.WEBHOOK_SECRET}"
-        scheme = request.base_url.scheme or "http"
-        port_suffix = ":●●●●" if request.base_url.port else ""
-        masked_webhook_url = f"{scheme}://●●●●●●●●{port_suffix}/webhook?token=●●●●●●●●"
-    else:
-        full_webhook_url = f"{base_url}/webhook"
+async def render_dashboard_response(request: Request, response: Response, is_demo: bool = False) -> HTMLResponse:
+    if is_demo:
+        is_admin = True
+        auth_status = True
+        raw_username = "demo_viewer"
+        display_username = "demo_viewer"
+        pending_queue = 0
+        notif_summary = "Discord, Telegram"
+        allowed_users_display = "demo_viewer, demo_partner"
+        allowed_libs_display = "Movies, TV Shows, Anime"
+        sync_collection_display = "On"
+        token_health_str = "Healthy • Auto-renews in 84d"
+        token_health_color = "#10b981"
+        status_badge = '<a href="javascript:void(0)" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">Connected as @demo_viewer &bull; Demo</a>'
+        admin_btn = '<span style="font-size:12px;color:#38bdf8;background:#1e293b;border:1px solid #334155;padding:4px 10px;border-radius:6px;font-weight:600;">👑 Demo Admin</span>'
+        full_webhook_url = "https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
         masked_webhook_url = full_webhook_url
+        demo_banner = '<div style="background:linear-gradient(90deg, #1e3a8a, #0284c7);color:#ffffff;padding:12px 18px;border-radius:10px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);flex-wrap:wrap;gap:10px;"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🎭</span><div><strong style="color:#ffffff;">Demo Mode Active:</strong><span style="color:#e0f2fe;font-size:13px;margin-left:4px;">Simulated authenticated view with mock information. No real accounts or tokens are exposed.</span></div></div><a href="/" style="background:rgba(255,255,255,0.2);color:#ffffff;text-decoration:none;padding:5px 12px;border-radius:6px;font-weight:600;font-size:12px;transition:background 0.15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.3)\'" onmouseout="this.style.background=\'rgba(255,255,255,0.2)\'">Exit Demo &rarr;</a></div>'
+        demo_footer_link = '<a href="/" style="color:#38bdf8;text-decoration:none;font-weight:600;">Exit Demo</a>'
+    else:
+        demo_banner = ""
+        demo_footer_link = f'<a href="/demo" style="color: #64748b; text-decoration: none; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color=\'#f8fafc\'" onmouseout="this.style.color=\'#64748b\'">🎭 Demo Mode</a>'
+        # Auto-login admin if valid ?token= passed in URL
+        query_token = request.query_params.get("token")
+        if query_token and Config.WEBHOOK_SECRET and secrets.compare_digest(query_token, Config.WEBHOOK_SECRET):
+            response.set_cookie(
+                key="admin_token",
+                value=Config.WEBHOOK_SECRET,
+                httponly=True,
+                samesite="lax",
+                path="/",
+                max_age=86400 * 30,
+            )
+
+        is_admin = is_admin_request(request)
+        auth_status = trakt.is_authenticated()
+        profile = await get_cached_trakt_profile() if auth_status else None
+        raw_username = profile.get("username") if profile else None
+
+        display_username = raw_username if is_admin else mask_username(raw_username)
+        pending_queue = queue_mgr.get_pending_count()
+
+        notif_status = notifier.get_status()
+        enabled_notifs = []
+        if notif_status.get("discord"):
+            enabled_notifs.append("Discord")
+        if notif_status.get("telegram"):
+            enabled_notifs.append("Telegram")
+        if notif_status.get("ntfy"):
+            enabled_notifs.append("Ntfy")
+        if notif_status.get("pushover"):
+            enabled_notifs.append("Pushover")
+        notif_summary = ", ".join(enabled_notifs) if enabled_notifs else "Off"
+
+        # Library filtering display
+        if Config.ALLOWED_LIBRARIES:
+            allowed_libs_display = ", ".join(Config.ALLOWED_LIBRARIES)
+        elif Config.EXCLUDED_LIBRARIES:
+            allowed_libs_display = "All except " + ", ".join(Config.EXCLUDED_LIBRARIES)
+        else:
+            allowed_libs_display = "All Libraries"
+
+        sync_collection_display = "On" if Config.SYNC_COLLECTION else "Off"
+
+        # Token health calculation
+        token_info = trakt.get_token_info()
+        if auth_status:
+            if token_info.get("healthy"):
+                days = token_info.get("days_remaining", 0)
+                token_health_str = f"Healthy • Auto-renews in {days}d"
+                token_health_color = "#10b981"
+            else:
+                token_health_str = "Token Expired / Refresh Needed"
+                token_health_color = "#ef4444"
+        else:
+            token_health_str = "Not Linked"
+            token_health_color = "#94a3b8"
+
+        # Header status badge
+        if auth_status:
+            user_label = f"Connected as @{display_username}" if display_username else "Connected"
+            if is_admin:
+                status_badge = f'<a href="/auth" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">{user_label} &bull; Manage</a>'
+            else:
+                status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#065f46;color:#a7f3d0;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">{user_label} &bull; 🔒 Locked</a>'
+        else:
+            if is_admin:
+                status_badge = '<a href="/auth" style="background:#ef4444;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">Not Connected &bull; Link Trakt &rarr;</a>'
+            else:
+                status_badge = '<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#991b1b;color:#fecaca;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">Not Connected &bull; 🔒 Unlock &rarr;</a>'
+
+        # Admin header controls
+        if Config.WEBHOOK_SECRET:
+            if is_admin:
+                admin_btn = '<button onclick="lockAdmin()" class="btn-sm" style="background:#334155;color:#f87171;font-weight:600;border:1px solid #475569;">🔒 Lock Admin</button>'
+            else:
+                admin_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔓 Unlock Admin</button>'
+        else:
+            admin_btn = '<span style="font-size:12px;color:#94a3b8;background:#1e293b;padding:4px 10px;border-radius:6px;border:1px solid #334155;">Open Mode</span>'
+
+        # Allowed Plex Users display
+        if Config.PLEX_ALLOWED_USERS:
+            if is_admin:
+                allowed_users_display = ", ".join(Config.PLEX_ALLOWED_USERS)
+            else:
+                allowed_users_display = ", ".join(mask_username(u) for u in Config.PLEX_ALLOWED_USERS)
+        else:
+            allowed_users_display = "All Users"
+
+        # Base URL for webhook
+        base_url = str(request.base_url).rstrip("/")
+        if Config.WEBHOOK_SECRET:
+            full_webhook_url = f"{base_url}/webhook?token={Config.WEBHOOK_SECRET}"
+            scheme = request.base_url.scheme or "http"
+            port_suffix = ":●●●●" if request.base_url.port else ""
+            masked_webhook_url = f"{scheme}://●●●●●●●●{port_suffix}/webhook?token=●●●●●●●●"
+        else:
+            full_webhook_url = f"{base_url}/webhook"
+            masked_webhook_url = full_webhook_url
 
     # Events rows
+    events_list = demo_mgr.get_demo_events() if is_demo else recent_events
     rows = ""
     col_span = 7 if is_admin else 6
-    if not recent_events:
+    if not events_list:
         rows = f'<tr><td colspan="{col_span}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>'
     else:
-        for ev in recent_events:
+        for ev in events_list:
             color = "#10b981" if ev["result_status"] in ("ok", 200, 201) else "#f59e0b"
             u = ev["user"] if is_admin else mask_username(ev["user"])
             action_col = ""
@@ -1240,9 +1326,9 @@ async def dashboard(request: Request, response: Response):
                 show_title = ev.get("show_title")
                 action_buttons = []
                 if show_title:
-                    show_esc = show_title.replace("'", "\\'")
-                    action_buttons.append(f'<button onclick="quickAddShow(\'{show_esc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Always co-watch this show">+ Co-Watch</button>')
-                if Config.CO_WATCH_USER and ev.get("media_payload"):
+                    show_esc = urllib.parse.quote(show_title)
+                    action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Always co-watch this show">+ Co-Watch</button>')
+                if (Config.CO_WATCH_USER or is_demo) and ev.get("media_payload"):
                     media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
                     action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;" title="Sync to partner">+ Sync Partner</button>')
                 action_col = f'<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;">{"".join(action_buttons)}</td>'
@@ -1294,8 +1380,12 @@ async def dashboard(request: Request, response: Response):
     clear_button_html = '<button onclick="clearHistory()" class="btn-sm" style="color:#f87171;">Clear</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="color:#64748b;" title="Admin unlock required to clear logs">🔒 Clear</button>'
     manual_scrobble_btn_html = '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔍 Manual Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;color:#94a3b8;border:1px solid #334155;">🔍 Manual Scrobble</button>'
 
-    active_sessions = playback_mgr.get_active_sessions(is_admin=is_admin)
-    recently_finished = playback_mgr.get_recently_finished(is_admin=is_admin)
+    if is_demo:
+        active_sessions = [demo_mgr.get_demo_playback()]
+        recently_finished = None
+    else:
+        active_sessions = playback_mgr.get_active_sessions(is_admin=is_admin)
+        recently_finished = playback_mgr.get_recently_finished(is_admin=is_admin)
 
     if active_sessions:
         s = active_sessions[0]
@@ -1358,10 +1448,16 @@ async def dashboard(request: Request, response: Response):
     """
 
     # Co-Watching & Multi-User configuration
-    cw_user = Config.CO_WATCH_USER
-    cw_user_display = cw_user if is_admin else "●●●●●●●●"
-    cw_shows = sorted(cowatch_mgr.get_shows(), key=lambda x: x.lower())
-    configured_users = user_mgr.list_configured_users()
+    if is_demo:
+        cw_user = "demo_partner"
+        cw_user_display = "demo_partner"
+        cw_shows = demo_mgr.get_demo_cowatch_shows()
+        configured_users = demo_mgr.get_demo_users()
+    else:
+        cw_user = Config.CO_WATCH_USER
+        cw_user_display = cw_user if is_admin else "●●●●●●●●"
+        cw_shows = sorted(cowatch_mgr.get_shows(), key=lambda x: x.lower())
+        configured_users = user_mgr.list_configured_users()
 
     # Shared show chips
     if not is_admin:
@@ -1498,12 +1594,15 @@ async def dashboard(request: Request, response: Response):
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>💾</span> System Backup & Prometheus Observability
+                <span>💾</span> System Operations & Observability
             </h3>
-            <a href="/metrics" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
+            <div style="display:flex;gap:8px;align-items:center;">
+                {f'<button onclick="openLogsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;">📜 View Logs</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;cursor:pointer;" title="Admin unlock required to view logs">🔒 View Logs</button>'}
+                <a href="/metrics" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
+            </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-            Export or restore your configuration, multi-user Trakt tokens, co-watch whitelist, and offline retry queue.
+            Export or restore your configuration, multi-user Trakt tokens, co-watch whitelist, and inspect live service logs.
         </p>
         <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
             {f'''
@@ -1519,9 +1618,12 @@ async def dashboard(request: Request, response: Response):
     </div>
     """
 
+    stats_data = demo_mgr.get_demo_stats() if is_demo else scrobble_stats
 
     rendered = DASHBOARD_HTML
     replacements = {
+        '{{DEMO_BANNER}}': demo_banner,
+        '{{DEMO_FOOTER_LINK}}': demo_footer_link,
         '{{STATUS_BADGE}}': status_badge,
         '{{ADMIN_BTN}}': admin_btn,
         '{{ACTIVE_PLAYBACK_CARD}}': active_playback_card_html,
@@ -1535,11 +1637,11 @@ async def dashboard(request: Request, response: Response):
         '{{QUEUE_COLOR}}': ('#f59e0b' if pending_queue > 0 else '#94a3b8'),
         '{{PENDING_QUEUE}}': str(pending_queue),
         '{{NOTIF_SUMMARY}}': notif_summary,
-        '{{STAT_TOTAL}}': str(scrobble_stats['total']),
-        '{{STAT_MOVIES}}': str(scrobble_stats['movies']),
-        '{{STAT_EPISODES}}': str(scrobble_stats['episodes']),
-        '{{STAT_RATINGS}}': str(scrobble_stats['ratings']),
-        '{{STAT_COLLECTIONS}}': str(scrobble_stats.get('collections', 0)),
+        '{{STAT_TOTAL}}': str(stats_data['total']),
+        '{{STAT_MOVIES}}': str(stats_data['movies']),
+        '{{STAT_EPISODES}}': str(stats_data['episodes']),
+        '{{STAT_RATINGS}}': str(stats_data['ratings']),
+        '{{STAT_COLLECTIONS}}': str(stats_data.get('collections', 0)),
         '{{WEBHOOK_CARD}}': webhook_html_section,
         '{{COWATCH_CARD}}': cowatch_card_html,
         '{{BACKUP_CARD}}': backup_card_html,
@@ -1549,6 +1651,7 @@ async def dashboard(request: Request, response: Response):
         '{{ACTIONS_HEADER}}': ('<th>Actions</th>' if is_admin else ''),
         '{{EVENT_ROWS}}': rows,
         '{{IS_ADMIN_JS}}': ('true' if is_admin else 'false'),
+        '{{IS_DEMO_JS}}': ('true' if is_demo else 'false'),
         '{{APP_VERSION}}': APP_VERSION,
         '{{REPO_URL}}': REPO_URL,
     }

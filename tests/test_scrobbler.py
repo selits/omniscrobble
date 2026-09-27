@@ -14,6 +14,8 @@ from app.services.playback_manager import PlaybackManager, playback_mgr
 from app.plex_parser import ParsedMedia, parse_plex_ids, parse_plex_webhook
 from app.services.user_manager import UserClientManager, user_mgr
 from app.services.cowatch_manager import CowatchManager, cowatch_mgr
+from app.services.log_manager import log_mgr
+from app.services.demo_manager import demo_mgr
 
 
 def test_parse_plex_ids():
@@ -2349,6 +2351,165 @@ def test_notifier_zero_and_custom_progress():
     embed_partial = discord_payload_partial["embeds"][0]
     assert any(f["name"] == "Progress" and f["value"] == "85.5%" for f in embed_partial["fields"])
     assert "85.5% watched" in embed_partial["description"]
+
+
+def test_demo_dashboard_page():
+    client = TestClient(app)
+    res = client.get("/demo")
+    assert res.status_code == 200
+    html = res.text
+    assert "Demo Mode Active" in html
+    assert "Severance" in html
+    assert "demo_viewer" in html
+    assert "demo_partner" in html
+    assert "View Logs" in html
+    assert "Exit Demo" in html
+    assert "1,428" in html or "1428" in html
+
+
+def test_demo_query_param_on_root():
+    client = TestClient(app)
+    res_demo = client.get("/?demo=true")
+    assert res_demo.status_code == 200
+    assert "Demo Mode Active" in res_demo.text
+
+    # Without ?demo=true, demo banner should not be present
+    res_normal = client.get("/")
+    assert res_normal.status_code == 200
+    assert "Demo Mode Active" not in res_normal.text
+
+
+def test_demo_api_endpoints():
+    client = TestClient(app)
+
+    # 1. Playback
+    res = client.get("/api/playback?demo=true")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data["active_sessions"]) == 1
+    assert "Severance" in data["active_sessions"][0]["title"]
+    assert data["recently_finished"] is None
+
+    # 2. Events
+    res = client.get("/api/events?demo=true")
+    assert res.status_code == 200
+    events = res.json()["events"]
+    assert len(events) >= 5
+    assert any("Severance" in e["title"] for e in events)
+
+    # 3. Clear events
+    res = client.post("/api/events/clear?demo=true")
+    assert res.status_code == 200
+    assert res.json()["status"] == "cleared"
+
+    # 4. Queue retry & clear
+    res = client.post("/api/queue/retry?demo=true")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+
+    res = client.post("/api/queue/clear?demo=true")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+
+    # 5. Search
+    res = client.get("/api/search?demo=true&query=Severance")
+    assert res.status_code == 200
+    results = res.json()["results"]
+    assert any("Severance" in r.get("show", {}).get("title", "") for r in results)
+
+    # 6. Manual scrobble
+    res = client.post("/api/scrobble/manual?demo=true", json={"media_type": "movie", "title": "Inception"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "success"
+
+    # 7. Cowatch shows
+    res = client.post("/api/cowatch/shows?demo=true", json={"show": "Ted Lasso"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+
+    res = client.delete("/api/cowatch/shows?show=Ted%20Lasso&demo=true")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+
+    # 8. Sonarr shows
+    res = client.get("/api/sonarr/shows?demo=true")
+    assert res.status_code == 200
+    shows = res.json()["shows"]
+    assert len(shows) >= 5
+
+    res_q = client.get("/api/sonarr/shows?demo=true&q=Severance")
+    assert res_q.status_code == 200
+    assert any(s["title"] == "Severance" for s in res_q.json()["shows"])
+
+    # 9. Cowatch sync
+    res = client.post("/api/cowatch/sync?demo=true", json={"media_type": "episode", "title": "Severance"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "success"
+
+
+def test_api_logs_access_control():
+    orig_secret = Config.WEBHOOK_SECRET
+    try:
+        Config.WEBHOOK_SECRET = "supersecret_test_token"
+        client = TestClient(app)
+
+        # Non-admin request should receive 401
+        res = client.get("/api/logs")
+        assert res.status_code == 401
+
+        # Demo mode allows log viewing without admin auth
+        res_demo = client.get("/api/logs?demo=true")
+        assert res_demo.status_code == 200
+        demo_data = res_demo.json()
+        assert "simulated journal" in demo_data["source"]
+        assert len(demo_data["lines"]) > 0
+
+        # Admin unlocked request succeeds
+        client.cookies.set("admin_token", "supersecret_test_token")
+        res_admin = client.get("/api/logs?lines=20")
+        assert res_admin.status_code == 200
+        admin_data = res_admin.json()
+        assert "source" in admin_data
+        assert isinstance(admin_data["lines"], list)
+    finally:
+        Config.WEBHOOK_SECRET = orig_secret
+
+
+def test_log_sanitization_and_buffer():
+    orig_secret = Config.WEBHOOK_SECRET
+    try:
+        Config.WEBHOOK_SECRET = "my_webhook_secret_value"
+
+        # Test token masking in query param
+        line1 = "GET /webhook?token=my_webhook_secret_value HTTP/1.1 200"
+        sanitized1 = log_mgr.sanitize_line(line1)
+        assert "my_webhook_secret_value" not in sanitized1
+        assert "token=●●●●" in sanitized1 or "●●●●" in sanitized1
+
+        # Test Bearer token masking
+        line2 = "Sending auth header: Bearer abc123secrettoken456"
+        sanitized2 = log_mgr.sanitize_line(line2)
+        assert "abc123secrettoken456" not in sanitized2
+        assert "Bearer ●●●●" in sanitized2
+
+        # Test header masking
+        line3 = "Header received x-webhook-secret: raw_secret_pass"
+        sanitized3 = log_mgr.sanitize_line(line3)
+        assert "raw_secret_pass" not in sanitized3
+        assert "x-webhook-secret: ●●●●" in sanitized3
+
+        # Test buffer capture
+        import logging
+        test_log = logging.getLogger("test_buffer_logger")
+        test_log.setLevel(logging.DEBUG)
+        test_msg = "Scrobble event test unique buffer verify 987654"
+        test_log.warning(test_msg)
+
+        buffer_lines = log_mgr.get_buffer_logs(lines=50)
+        assert any(test_msg in l for l in buffer_lines)
+    finally:
+        Config.WEBHOOK_SECRET = orig_secret
+
 
 
 
