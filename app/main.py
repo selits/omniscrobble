@@ -182,7 +182,10 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-app = FastAPI(title="Plex Trakt Scrobbler", version="1.2.0", lifespan=lifespan)
+APP_VERSION = "1.2.0"
+REPO_URL = "https://github.com/selits/plex-trakt-webhook"
+
+app = FastAPI(title="Plex Trakt Scrobbler", version=APP_VERSION, lifespan=lifespan)
 
 
 # In-memory log of recent webhook events for the status dashboard
@@ -952,13 +955,16 @@ def delete_cowatch_show(show: str, request: Request):
 
 
 @app.get("/api/sonarr/shows")
-async def get_sonarr_shows(request: Request, q: str = "", limit: int = 15):
-    """Search series from Sonarr for Co-Watch autocomplete."""
+async def get_sonarr_shows(
+    request: Request, q: str = "", limit: int = 15, exclude_shared: bool = True
+):
+    """Search series from Sonarr for Co-Watch autocomplete, excluding already whitelisted shows."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if not sonarr.is_configured:
         return {"configured": False, "shows": []}
-    shows = await sonarr.search_series(query=q, limit=limit)
+    exclude = cowatch_mgr.get_shows() if exclude_shared else None
+    shows = await sonarr.search_series(query=q, limit=limit, exclude=exclude)
     return {"configured": True, "shows": shows}
 
 
@@ -1528,6 +1534,8 @@ async def dashboard(request: Request, response: Response):
         '{{ACTIONS_HEADER}}': ('<th>Actions</th>' if is_admin else ''),
         '{{EVENT_ROWS}}': rows,
         '{{IS_ADMIN_JS}}': ('true' if is_admin else 'false'),
+        '{{APP_VERSION}}': APP_VERSION,
+        '{{REPO_URL}}': REPO_URL,
     }
     for k, v in replacements.items():
         rendered = rendered.replace(k, v)
