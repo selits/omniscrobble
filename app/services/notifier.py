@@ -103,7 +103,7 @@ class Notifier:
                 fields.append({"name": "Specs", "value": specs.upper(), "inline": True})
         else:
             color = DISCORD_COLOR_SCROBBLE
-            progress_val = f"{media.progress:.1f}%" if media.progress else "100.0%"
+            progress_val = f"{media.progress:.1f}%" if media.progress is not None else "100.0%"
             description = f"Scrobbled to Trakt ({progress_val} watched)"
             fields = [
                 {"name": "Status", "value": "Watched", "inline": True},
@@ -157,7 +157,7 @@ class Notifier:
                 f"🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
             )
         else:
-            progress_val = f"{media.progress:.1f}%" if media.progress else "100.0%"
+            progress_val = f"{media.progress:.1f}%" if media.progress is not None else "100.0%"
             text = (
                 f"🎬 <b>Scrobbled to Trakt</b>\n\n"
                 f"🍿 <b>{title_str}</b>\n"

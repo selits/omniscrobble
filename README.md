@@ -31,7 +31,7 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Sonarr & Radarr Integrations**: Real-time autocomplete for TV series from your Sonarr library (automatically excluding shows already in your whitelist) plus direct webhook endpoints (`/sonarr`, `/radarr`) for instant Trakt collection sync upon download import.
 - **Dashboard Admin Security & Screenshot Privacy Shield**: Public visitors see a hardened, privacy-shielded view (masked usernames, completely masked partner account `@●●●●●●●●`, masked server hostname/port `http://●●●●●●●●:●●●●/webhook?token=●●●●●●●●` for safe screenshots, and locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
-- **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, live auto-updating event logs (5s poll), and a repository footer with live version badge.
+- **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, recent activity logs with optional 30s auto-refresh, and a repository footer with live version badge.
 - **Seedbox & Docker Ready**: Tested and optimized for containerized environments (Ultra.cc, Whatbox, Docker) with non-root security, healthchecks, and `env_file` auto-loading.
 
 ---

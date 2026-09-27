@@ -82,7 +82,7 @@
                     {{MANUAL_SCROBBLE_BTN}}
                     {{RETRY_QUEUE_BTN}}
                     <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
-                        <input type="checkbox" id="auto-refresh-toggle" checked onchange="toggleAutoRefresh(this)"> Auto-refresh (5s)
+                        <input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh(this)"> Auto-refresh (30s)
                     </label>
                     <button onclick="fetchEvents()" class="btn-sm">Refresh</button>
                     {{CLEAR_BUTTON}}
@@ -510,9 +510,12 @@
 
         function toggleAutoRefresh(cb) {
             if (cb.checked) {
-                refreshTimer = setInterval(fetchEvents, 5000);
+                localStorage.setItem('plex_trakt_auto_refresh', 'true');
+                refreshTimer = setInterval(fetchEvents, 30000);
             } else {
+                localStorage.setItem('plex_trakt_auto_refresh', 'false');
                 if (refreshTimer) clearInterval(refreshTimer);
+                refreshTimer = null;
             }
         }
 
@@ -689,7 +692,11 @@
             input.value = '';
         }
 
-        refreshTimer = setInterval(fetchEvents, 5000);
+        if (localStorage.getItem('plex_trakt_auto_refresh') === 'true') {
+            const toggle = document.getElementById('auto-refresh-toggle');
+            if (toggle) toggle.checked = true;
+            refreshTimer = setInterval(fetchEvents, 30000);
+        }
     </script>
 </body>
 </html>
