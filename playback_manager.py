@@ -92,6 +92,9 @@ class PlaybackManager:
             item = dict(s)
             if not is_admin:
                 item["username"] = mask_username_simple(item["username"])
+                item["player"] = ""
+                item["device"] = ""
+                item["key"] = f"{item['username']}:client"
             active.append(item)
 
         active.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
@@ -113,6 +116,8 @@ class PlaybackManager:
         entry = dict(self.recently_finished)
         if not is_admin:
             entry["username"] = mask_username_simple(entry["username"])
+            entry["player"] = ""
+            entry["device"] = ""
         return entry
 
     def clear(self) -> None:
