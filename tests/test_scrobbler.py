@@ -2230,7 +2230,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/plex-trakt-webhook" in html
-    assert "v1.1.0" in html
+    assert "v1.1.1" in html
     assert "https://github.com/selits/plex-trakt-webhook/releases" in html
     assert "https://github.com/selits/plex-trakt-webhook#readme" in html
     assert "Auto-refresh (30s)" in html
