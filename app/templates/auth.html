@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{PAGE_TITLE}}</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 36px; max-width: 480px; width: 100%; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
+        .icon { width: 56px; height: 56px; margin: 0 auto 16px; display: block; }
+        h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; color: #f8fafc; }
+        p { color: #94a3b8; font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+        .code-box { background: #0f172a; border: 2px dashed #ed1c24; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .code-label { font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; margin-bottom: 6px; }
+        .code-val { font-size: 32px; font-weight: 700; letter-spacing: 0.15em; color: #f8fafc; font-family: monospace; }
+        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #ed1c24; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; width: 100%; transition: background 0.15s; }
+        .btn:hover { background: #c81017; }
+        .btn-back { background: #334155; margin-top: 12px; color: #cbd5e1; }
+        .btn-back:hover { background: #475569; }
+        .status-row { margin-top: 18px; font-size: 13px; color: #38bdf8; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .spinner { width: 14px; height: 14px; border: 2px solid #38bdf8; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#ed1c24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="#ed1c24"/></svg>
+        <h1>{{H1_TEXT}}</h1>
+        <p>{{P_DESC}}</p>
+        {{ALREADY_CONNECTED_BANNER}}
+        <div id="loading-view">
+            <div class="status-row"><div class="spinner"></div> Requesting device code from Trakt...</div>
+        </div>
+        <div id="auth-view" style="display:none;">
+            <div class="code-box">
+                <div class="code-label">Your Activation Code</div>
+                <div class="code-val" id="code-display">--------</div>
+            </div>
+            <a id="activate-link" class="btn" href="https://trakt.tv/activate" target="_blank" rel="noopener">
+                1. Open trakt.tv/activate &rarr;
+            </a>
+            <div class="status-row" id="status-text">
+                <div class="spinner"></div> Waiting for authorization on Trakt...
+            </div>
+        </div>
+        <a href="/" class="btn btn-back">&larr; Return to Dashboard</a>
+    </div>
+    <script>
+        const targetUser = "{{TARGET_UNAME}}";
+        let pollInterval = null;
+        async function initAuth() {
+            try {
+                const url = targetUser ? ('/api/auth/start?user=' + encodeURIComponent(targetUser)) : '/api/auth/start';
+                const res = await fetch(url, { method: 'POST' });
+                if (!res.ok) throw new Error('Failed to generate device code from Trakt. Check client credentials in .env.');
+                const data = await res.json();
+                document.getElementById('code-display').textContent = data.user_code;
+                document.getElementById('activate-link').href = data.verification_url || 'https://trakt.tv/activate';
+                document.getElementById('loading-view').style.display = 'none';
+                document.getElementById('auth-view').style.display = 'block';
+
+                const intervalMs = (data.interval || 5) * 1000;
+                pollInterval = setInterval(async () => {
+                    try {
+                        const pollRes = await fetch('/api/auth/poll', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ device_code: data.device_code, user: targetUser || null })
+                        });
+                        const pollData = await pollRes.json();
+                        if (pollData.status === 'success') {
+                            clearInterval(pollInterval);
+                            document.getElementById('status-text').innerHTML = '<span style="color:#10b981;font-weight:600;">&#10003; Successfully Authorized! Redirecting...</span>';
+                            setTimeout(() => { window.location.href = '/'; }, 1500);
+                        } else if (pollData.status === 'error') {
+                            clearInterval(pollInterval);
+                            document.getElementById('status-text').innerHTML = '<span style="color:#ef4444;">Error: ' + pollData.message + '</span>';
+                        }
+                    } catch (e) {
+                        console.error('Polling error', e);
+                    }
+                }, intervalMs);
+            } catch (err) {
+                document.getElementById('loading-view').innerHTML = '<span style="color:#ef4444;">' + err.message + '</span>';
+            }
+        }
+        window.onload = initAuth;
+    </script>
+</body>
+</html>

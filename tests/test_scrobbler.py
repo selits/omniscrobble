@@ -481,6 +481,7 @@ def test_dashboard_privacy_masking():
         assert "se****" in res_locked.text
         assert "my_super_secret" not in res_locked.text
         assert "●●●●●●●●" in res_locked.text
+        assert "://●●●●●●●●" in res_locked.text
         assert "🔓 Unlock Admin" in res_locked.text
 
         # 2. Events API masked
@@ -1921,9 +1922,10 @@ def test_dashboard_privacy_shield_and_script_syntax():
         assert "Google TV" not in html
         assert "Devices:" not in html
 
-        # Partner username masked
+        # Partner username completely masked
         assert "@bon.vivant" not in html
-        assert "@bo********" in html
+        assert "@bo********" not in html
+        assert "@●●●●●●●●" in html
 
         # Webhook secret masked
         assert "testsecret" not in html
@@ -2156,6 +2158,57 @@ def test_720p_resolution_mapping():
     assert map_arr_resolution("Bluray-720p") == "hd_720p"
     assert map_arr_resolution("720p") == "hd_720p"
     assert map_arr_resolution({"quality": {"name": "HDTV-720p", "resolution": 720}}) == "hd_720p"
+
+
+def test_modular_package_structure():
+    """Verify modular app package structure, template loading, and backward-compatible shims."""
+    import main as root_main
+    import app.main as app_main
+    import config as root_config
+    import app.config as app_config
+    import cowatch_manager as root_cw
+    import app.services.cowatch_manager as app_cw
+    import user_manager as root_um
+    import app.services.user_manager as app_um
+    import notifier as root_notif
+    import app.services.notifier as app_notif
+    import playback_manager as root_pm
+    import app.services.playback_manager as app_pm
+    import queue_manager as root_qm
+    import app.services.queue_manager as app_qm
+    import trakt_client as root_tc
+    import app.clients.trakt_client as app_tc
+    import sonarr_client as root_sc
+    import app.clients.sonarr_client as app_sc
+    import plex_parser as root_pp
+    import app.plex_parser as app_pp
+    import metrics as root_m
+    import app.metrics as app_m
+
+    # 1. Identity checks
+    assert root_main.app is app_main.app
+    assert root_config.Config is app_config.Config
+    assert root_cw.cowatch_mgr is app_cw.cowatch_mgr
+    assert root_um.user_mgr is app_um.user_mgr
+    assert root_notif.notifier is app_notif.notifier
+    assert root_pm.playback_mgr is app_pm.playback_mgr
+    assert root_qm.QueueManager is app_qm.QueueManager
+    assert root_tc.TraktClient is app_tc.TraktClient
+    assert root_sc.SonarrClient is app_sc.SonarrClient
+    assert root_pp.parse_plex_webhook is app_pp.parse_plex_webhook
+    assert root_m.metrics_registry is app_m.metrics_registry
+
+    # 2. Template verification
+    templates_dir = app_main.TEMPLATES_DIR
+    assert templates_dir.is_dir()
+    assert (templates_dir / "dashboard.html").is_file()
+    assert (templates_dir / "auth.html").is_file()
+    assert (templates_dir / "auth_locked.html").is_file()
+
+    # 3. Base directory is project root
+    assert app_config.Config.BASE_DIR == root_config.BASE_DIR
+    assert (app_config.Config.BASE_DIR / "requirements.txt").is_file()
+
 
 
 
