@@ -214,6 +214,16 @@ def test_webhook_secret_authentication():
         assert res_valid_header.json()["status"] == "success"
 
 
+def test_webhook_get_info():
+    """Verify that visiting /webhook via browser GET returns a friendly status message."""
+    client = TestClient(app)
+    res = client.get("/webhook")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "online"
+    assert "Plex Webhook endpoint is active" in data["message"]
+
+
 def test_tv_show_year_extraction():
     payload = {
         "event": "media.scrobble",
@@ -1326,10 +1336,23 @@ def test_user_client_manager(tmp_path):
     assert c_alice.tokens_file == tmp_path / "tokens" / "alice_tokens.json"
     assert mgr.get_client("Alice") is c_alice  # Case insensitivity & caching
 
-    # 3. List configured users
+    # 3. List configured users & co-watch deduplication
     users = mgr.list_configured_users()
     unames = [u["username"] for u in users]
     assert "default" in unames
+
+    # 4. Username with dots & deduplication test
+    with patch.object(Config, "CO_WATCH_USER", "bon.vivant"):
+        # Simulate bonvivant_tokens.json existing
+        (mgr.tokens_dir / "bonvivant_tokens.json").write_text(json.dumps({"access_token": "abc"}))
+        users_cowatch = mgr.list_configured_users()
+        user_names_cowatch = [u["username"] for u in users_cowatch]
+        # Should not have both bonvivant and bon.vivant
+        assert user_names_cowatch.count("bon.vivant") == 1
+        assert "bonvivant" not in user_names_cowatch
+        cw_entry = next(u for u in users_cowatch if u["username"] == "bon.vivant")
+        assert cw_entry["is_cowatch_target"] is True
+        assert cw_entry["tokens_file"] == "bonvivant_tokens.json"
 
 
 def test_cowatch_manager(tmp_path):
