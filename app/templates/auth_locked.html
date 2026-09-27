@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Locked • Admin Authorization Required</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 36px; max-width: 440px; width: 100%; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
+        .icon { width: 56px; height: 56px; margin: 0 auto 16px; display: block; }
+        h1 { font-size: 20px; font-weight: 700; margin-bottom: 8px; color: #f8fafc; }
+        p { color: #94a3b8; font-size: 14px; margin-bottom: 20px; line-height: 1.5; }
+        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #3b82f6; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; width: 100%; transition: background 0.15s; }
+        .btn:hover { background: #2563eb; }
+        input[type="password"] { width: 100%; background: #0f172a; border: 1px solid #475569; border-radius: 6px; padding: 10px 12px; color: #f8fafc; font-size: 14px; margin-bottom: 12px; outline: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <h1>Admin Authorization Required</h1>
+        <p>Linking or managing Trakt accounts requires administrative privileges. Enter your webhook secret below to proceed:</p>
+        <input type="password" id="auth-secret-input" placeholder="Enter webhook secret..." onkeydown="if(event.key==='Enter')submitAuthUnlock()" autofocus />
+        <div id="auth-err" style="color:#ef4444;font-size:12px;margin-bottom:12px;display:none;"></div>
+        <button id="auth-unlock-btn" onclick="submitAuthUnlock()" class="btn" style="margin-bottom:14px;">Unlock &rarr;</button>
+        <div style="margin-top:6px;">
+            <a href="/" style="color:#94a3b8;font-size:13px;text-decoration:none;">&larr; Return to Dashboard</a>
+        </div>
+    </div>
+    <script>
+        async function submitAuthUnlock() {
+            const s = document.getElementById('auth-secret-input').value.trim();
+            const err = document.getElementById('auth-err');
+            const btn = document.getElementById('auth-unlock-btn');
+            if (!s) return;
+            err.style.display = 'none';
+            if (btn) { btn.disabled = true; btn.textContent = 'Unlocking...'; }
+            try {
+                const res = await fetch('/api/admin/unlock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: s })
+                });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    if (btn) { btn.disabled = false; btn.textContent = 'Unlock \u2192'; }
+                    const d = await res.json();
+                    err.textContent = d.detail || 'Invalid secret token';
+                    err.style.display = 'block';
+                }
+            } catch (e) {
+                if (btn) { btn.disabled = false; btn.textContent = 'Unlock \u2192'; }
+                err.textContent = 'Network error: ' + e.message;
+                err.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>

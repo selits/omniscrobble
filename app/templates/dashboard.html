@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plex to Trakt Scrobbler</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 32px 20px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #1e293b; gap: 12px; flex-wrap: wrap; }
+        .title { font-size: 24px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 12px; }
+        .header-actions { display: flex; align-items: center; gap: 10px; }
+        .card { background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid #334155; }
+        .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #e2e8f0; }
+        .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+        .info-item { background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155; }
+        .info-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+        .info-value { font-size: 15px; font-weight: 600; margin: 4px 0 2px 0; color: #f1f5f9; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { background: #0f172a; padding: 12px 16px; font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; border-bottom: 1px solid #334155; }
+        .btn-sm { background: #334155; border: none; color: #e2e8f0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s, opacity 0.15s; }
+        .btn-sm:hover { opacity: 0.9; }
+        .btn-copy { background: #0284c7; color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+        .btn-copy:hover { opacity: 0.9; }
+        .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
+        @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+        #scrobble-modal, #unlock-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="title">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ed1c24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="#ed1c24"/></svg>
+                Plex &rarr; Trakt Scrobbler
+            </div>
+            <div class="header-actions">
+                {{STATUS_BADGE}}
+                {{ADMIN_BTN}}
+            </div>
+        </div>
+
+        {{ACTIVE_PLAYBACK_CARD}}
+
+        <div class="card">
+            <h3>Server & Account Configuration</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Trakt Connection</div>
+                    <div class="info-value">{{ACCOUNT_DISPLAY}}</div>
+                    <div><span style="color:{{TOKEN_HEALTH_COLOR}};font-size:12px;">● {{TOKEN_HEALTH_STR}}</span></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Plex Users & Libraries</div>
+                    <div class="info-value">{{ALLOWED_USERS_DISPLAY}}</div>
+                    <div style="font-size:12px;color:#94a3b8;">Libs: {{ALLOWED_LIBS_DISPLAY}} &bull; Coll: {{SYNC_COLLECTION_DISPLAY}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Server Health</div>
+                    <div class="info-value">🟢 Online</div>
+                    <div style="font-size:12px;color:#94a3b8;">Uptime: {{UPTIME_STR}} &bull; <span style="color:{{QUEUE_COLOR}};">Queue: {{PENDING_QUEUE}} pending</span> &bull; <span>Alerts: {{NOTIF_SUMMARY}}</span></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Playback Activity</div>
+                    <div class="info-value">🍿 {{STAT_TOTAL}} Scrobble(s)</div>
+                    <div style="font-size:12px;color:#94a3b8;">🎬 {{STAT_MOVIES}} &bull; 📺 {{STAT_EPISODES}} &bull; ⭐ {{STAT_RATINGS}} &bull; 📦 {{STAT_COLLECTIONS}} coll</div>
+                </div>
+            </div>
+            {{WEBHOOK_CARD}}
+        </div>
+
+        {{COWATCH_CARD}}
+
+        {{BACKUP_CARD}}
+
+        <div class="card" style="padding: 0; overflow: hidden;">
+            <div style="padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <h3 style="margin: 0;">Live Activity & Scrobble History</h3>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    {{MANUAL_SCROBBLE_BTN}}
+                    {{RETRY_QUEUE_BTN}}
+                    <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="auto-refresh-toggle" checked onchange="toggleAutoRefresh(this)"> Auto-refresh (5s)
+                    </label>
+                    <button onclick="fetchEvents()" class="btn-sm">Refresh</button>
+                    {{CLEAR_BUTTON}}
+                </div>
+            </div>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Media Title</th>
+                            <th>Type</th>
+                            <th>Plex User</th>
+                            <th>Action</th>
+                            <th>Trakt Status</th>
+                            {{ACTIONS_HEADER}}
+                        </tr>
+                    </thead>
+                    <tbody id="events-tbody">
+                        {{EVENT_ROWS}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Unlock Modal -->
+    <div id="unlock-modal" onclick="if(event.target===this)closeUnlockModal()">
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px;max-width:400px;width:90%;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+            <h3 style="margin-top:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                <span>🔓</span> Unlock Admin Access
+            </h3>
+            <p style="color:#94a3b8;font-size:13px;margin:8px 0 16px;line-height:1.5;">
+                Enter your <code>WEBHOOK_SECRET</code> from your <code>.env</code> file to reveal webhook URLs and unlock administration features.
+            </p>
+            <form id="unlock-form" onsubmit="event.preventDefault();submitUnlock();" autocomplete="off" style="margin:0;">
+                <input type="password" id="admin-secret-input" name="admin_secret" placeholder="Enter webhook secret..."
+                       autocomplete="current-password"
+                       style="width:100%;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:10px 12px;color:#f8fafc;font-size:14px;box-sizing:border-box;margin-bottom:12px;outline:none;" />
+                <div id="unlock-error" style="color:#ef4444;font-size:12px;margin-bottom:12px;display:none;"></div>
+                <div style="display:flex;justify-content:flex-end;gap:8px;">
+                    <button type="button" onclick="closeUnlockModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
+                    <button type="submit" id="unlock-submit-btn" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Unlock</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Manual Scrobble Modal -->
+    <div id="scrobble-modal" onclick="if(event.target===this)closeScrobbleModal()">
+        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px;max-width:560px;width:92%;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);max-height:85vh;display:flex;flex-direction:column;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>🍿</span> Manual Scrobble to Trakt
+                </h3>
+                <button onclick="closeScrobbleModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Search Trakt's global database to quickly mark any movie or show as watched in your history.
+            </p>
+            <form onsubmit="event.preventDefault();executeTraktSearch();" autocomplete="off" style="margin:0 0 16px 0;">
+                <div style="display:flex;gap:8px;">
+                    <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, The Bear)..."
+                           autocomplete="off"
+                           data-lpignore="true"
+                           data-1p-ignore="true"
+                           style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:10px 12px;color:#f8fafc;font-size:14px;outline:none;" />
+                    <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:10px 16px;">Search</button>
+                </div>
+            </form>
+            <div id="scrobble-search-loading" style="display:none;color:#38bdf8;font-size:13px;text-align:center;padding:12px;">
+                Searching Trakt catalog...
+            </div>
+            <div id="scrobble-search-results" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px;max-height:360px;padding-right:4px;">
+                <div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const isAdmin = {{IS_ADMIN_JS}};
+        let refreshTimer = null;
+
+        function copyWebhookUrl() {
+            const input = document.getElementById('webhook-url-input');
+            if (!input) return;
+            const btn = document.getElementById('copy-btn');
+            const showSuccess = () => {
+                if (!btn) return;
+                const orig = btn.innerHTML;
+                btn.innerHTML = '✓ Copied!';
+                btn.style.background = '#10b981';
+                setTimeout(() => {
+                    btn.innerHTML = orig;
+                    btn.style.background = '#0284c7';
+                }, 2000);
+            };
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(input.value).then(showSuccess).catch(() => {
+                    input.select();
+                    document.execCommand('copy');
+                    showSuccess();
+                });
+            } else {
+                input.select();
+                document.execCommand('copy');
+                showSuccess();
+            }
+        }
+
+        // Clean query token from browser address bar once cookie is saved
+        if (window.location.search && window.location.search.includes('token=')) {
+            try {
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } catch (e) {}
+        }
+
+        function openUnlockModal() {
+            const modal = document.getElementById('unlock-modal');
+            modal.style.display = 'flex';
+            const input = document.getElementById('admin-secret-input');
+            input.value = '';
+            document.getElementById('unlock-error').style.display = 'none';
+            setTimeout(() => input.focus(), 50);
+        }
+
+        function closeUnlockModal() {
+            document.getElementById('unlock-modal').style.display = 'none';
+        }
+
+        async function submitUnlock() {
+            const secret = document.getElementById('admin-secret-input').value.trim();
+            const errDiv = document.getElementById('unlock-error');
+            const btn = document.getElementById('unlock-submit-btn');
+            if (!secret) return;
+            errDiv.style.display = 'none';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Unlocking...';
+            }
+            try {
+                const res = await fetch('/api/admin/unlock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: secret })
+                });
+                if (res.ok) {
+                    window.location.href = window.location.pathname;
+                } else {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = 'Unlock';
+                    }
+                    const data = await res.json();
+                    errDiv.textContent = data.detail || 'Invalid secret token';
+                    errDiv.style.display = 'block';
+                }
+            } catch (e) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Unlock';
+                }
+                errDiv.textContent = 'Connection error: ' + e.message;
+                errDiv.style.display = 'block';
+            }
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeUnlockModal();
+                closeScrobbleModal();
+                const box = document.getElementById('sonarr-suggestions');
+                if (box) box.style.display = 'none';
+            }
+        });
+
+        async function lockAdmin() {
+            await fetch('/api/admin/lock', { method: 'POST' });
+            window.location.href = window.location.pathname;
+        }
+
+        function openManualScrobbleModal() {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            document.getElementById('scrobble-modal').style.display = 'flex';
+            const input = document.getElementById('scrobble-search-input');
+            input.value = '';
+            document.getElementById('scrobble-search-results').innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>';
+            setTimeout(() => input.focus(), 50);
+        }
+
+        function closeScrobbleModal() {
+            document.getElementById('scrobble-modal').style.display = 'none';
+        }
+
+        async function executeTraktSearch() {
+            const query = document.getElementById('scrobble-search-input').value.trim();
+            if (!query) return;
+            const loading = document.getElementById('scrobble-search-loading');
+            const resultsContainer = document.getElementById('scrobble-search-results');
+            loading.style.display = 'block';
+            resultsContainer.innerHTML = '';
+
+            try {
+                const res = await fetch('/api/search?query=' + encodeURIComponent(query));
+                loading.style.display = 'none';
+                if (!res.ok) throw new Error('Search failed');
+                const data = await res.json();
+                renderSearchResults(data.results);
+            } catch (err) {
+                loading.style.display = 'none';
+                resultsContainer.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px;">' + err.message + '</div>';
+            }
+        }
+
+        function renderSearchResults(results) {
+            const container = document.getElementById('scrobble-search-results');
+            if (!results || results.length === 0) {
+                container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">No results found on Trakt.</div>';
+                return;
+            }
+            let html = '';
+            for (const item of results) {
+                const type = item.type || (item.movie ? 'movie' : 'show');
+                const media = item.movie || item.show || item;
+                const title = media.title;
+                const year = media.year ? `(${media.year})` : '';
+                const payloadData = {
+                    media_type: type,
+                    title: media.title,
+                    year: media.year,
+                    ids: media.ids || {}
+                };
+                const mediaJson = encodeURIComponent(JSON.stringify(payloadData));
+
+                html += `
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="background:#334155;color:#93c5fd;font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${type}</span>
+                            <span style="font-weight:600;color:#f8fafc;font-size:14px;">${title} ${year}</span>
+                        </div>
+                        ${media.overview ? `<p style="color:#94a3b8;font-size:12px;margin:4px 0 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${media.overview}</p>` : ''}
+                    </div>
+                    <button onclick="submitManualScrobble('${mediaJson}', this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;white-space:nowrap;padding:8px 12px;">
+                        ✓ Mark Watched
+                    </button>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        async function submitManualScrobble(mediaJsonEncoded, btn) {
+            try {
+                const payload = JSON.parse(decodeURIComponent(mediaJsonEncoded));
+                btn.disabled = true;
+                btn.innerHTML = 'Syncing...';
+                const res = await fetch('/api/scrobble/manual', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    btn.innerHTML = '✓ Watched!';
+                    btn.style.background = '#059669';
+                    fetchEvents();
+                    fetchPlayback();
+                    setTimeout(() => closeScrobbleModal(), 1200);
+                } else {
+                    const err = await res.json();
+                    btn.innerHTML = 'Error';
+                    btn.style.background = '#ef4444';
+                    alert('Failed to scrobble: ' + (err.detail || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function fetchPlayback() {
+            try {
+                const res = await fetch('/api/playback');
+                if (res.ok) {
+                    const data = await res.json();
+                    renderPlayback(data);
+                }
+            } catch (e) {
+                console.error('Error fetching playback:', e);
+            }
+        }
+
+        function renderPlayback(data) {
+            const card = document.getElementById('active-playback-card');
+            if (!card) return;
+            const sessions = data.active_sessions || [];
+            if (sessions.length > 0) {
+                const s = sessions[0];
+                card.style.display = 'block';
+                card.style.borderLeftColor = s.state === 'playing' ? '#10b981' : '#f59e0b';
+                document.getElementById('stream-state-badge').textContent = s.state === 'playing' ? 'Currently Streaming' : 'Paused';
+                document.getElementById('stream-state-badge').style.color = s.state === 'playing' ? '#10b981' : '#f59e0b';
+                const devStr = (isAdmin && s.player) ? (` on ${s.player}${s.device ? ' (' + s.device + ')' : ''}`) : '';
+                document.getElementById('stream-user-device').textContent = `• ${s.username}${devStr}`;
+                document.getElementById('stream-title').textContent = s.title;
+                document.getElementById('stream-trakt-link').href = s.trakt_url || 'https://trakt.tv';
+                document.getElementById('stream-progress-text').textContent = `${s.progress.toFixed(1)}%`;
+                document.getElementById('stream-progress-bar').style.width = `${s.progress}%`;
+                document.getElementById('stream-progress-bar').style.background = s.state === 'playing' ? '#10b981' : '#f59e0b';
+            } else if (data.recently_finished) {
+                const f = data.recently_finished;
+                card.style.display = 'block';
+                card.style.borderLeftColor = '#38bdf8';
+                document.getElementById('stream-state-badge').textContent = 'Recently Finished';
+                document.getElementById('stream-state-badge').style.color = '#38bdf8';
+                const indicator = document.getElementById('stream-pulse-indicator');
+                if (indicator) indicator.style.background = '#38bdf8';
+                const fDevStr = (isAdmin && f.player) ? (` on ${f.player}`) : '';
+                document.getElementById('stream-user-device').textContent = `• ${f.username}${fDevStr}`;
+                document.getElementById('stream-title').textContent = f.title;
+                document.getElementById('stream-trakt-link').href = f.trakt_url || 'https://trakt.tv';
+                document.getElementById('stream-progress-text').textContent = '100.0%';
+                document.getElementById('stream-progress-bar').style.width = '100%';
+                document.getElementById('stream-progress-bar').style.background = '#38bdf8';
+            } else {
+                card.style.display = 'none';
+            }
+        }
+
+        function renderRows(events) {
+            const tbody = document.getElementById('events-tbody');
+            const colSpan = isAdmin ? 7 : 6;
+            if (!events || events.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>`;
+                return;
+            }
+            let html = '';
+            for (const ev of events) {
+                const color = (ev.result_status === 'ok' || ev.result_status === 200 || ev.result_status === 201) ? '#10b981' : '#f59e0b';
+                let actionBtns = '';
+                if (isAdmin) {
+                    if (ev.show_title) {
+                        const showEsc = ev.show_title.replace(/'/g, "\'");
+                        actionBtns += `<button onclick="quickAddShow('${showEsc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Always co-watch this show">+ Co-Watch</button>`;
+                    }
+                    if (ev.media_payload) {
+                        const mediaEnc = encodeURIComponent(JSON.stringify(ev.media_payload));
+                        actionBtns += `<button onclick="quickSyncPartner('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Sync to partner">+ Sync Partner</button>`;
+                    }
+                }
+                const actionCol = isAdmin ? `<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;">${actionBtns}</td>` : '';
+                html += `
+                <tr style="border-bottom: 1px solid #334155;">
+                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${ev.timestamp}</td>
+                    <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">${ev.title}</td>
+                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">${ev.type}</span></td>
+                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${ev.user}</td>
+                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">${ev.action} (${ev.progress})</span></td>
+                    <td style="padding:12px 16px;"><span style="color:${color};font-weight:600;font-size:13px;">${ev.result_status}</span></td>
+                    ${actionCol}
+                </tr>`;
+            }
+            tbody.innerHTML = html;
+        }
+
+        async function fetchEvents() {
+            try {
+                const res = await fetch('/api/events');
+                if (res.ok) {
+                    const data = await res.json();
+                    renderRows(data.events);
+                }
+            } catch (e) {
+                console.error('Error fetching live events:', e);
+            }
+            fetchPlayback();
+        }
+
+        async function retryQueue() {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            try {
+                const res = await fetch('/api/queue/retry', { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                }
+            } catch (e) {
+                console.error('Error retrying queue:', e);
+            }
+        }
+
+        async function clearHistory() {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            if (confirm('Clear all recent activity logs?')) {
+                await fetch('/api/events/clear', { method: 'POST' });
+                fetchEvents();
+            }
+        }
+
+        function toggleAutoRefresh(cb) {
+            if (cb.checked) {
+                refreshTimer = setInterval(fetchEvents, 5000);
+            } else {
+                if (refreshTimer) clearInterval(refreshTimer);
+            }
+        }
+
+        let sonarrDebounceTimer = null;
+        async function onCowatchShowInput(val) {
+            clearTimeout(sonarrDebounceTimer);
+            const box = document.getElementById('sonarr-suggestions');
+            if (!box) return;
+            if (!val || val.trim().length < 1) {
+                box.style.display = 'none';
+                return;
+            }
+            sonarrDebounceTimer = setTimeout(async () => {
+                try {
+                    const res = await fetch('/api/sonarr/shows?q=' + encodeURIComponent(val.trim()));
+                    if (!res.ok) { box.style.display = 'none'; return; }
+                    const data = await res.json();
+                    if (!data.configured || !data.shows || data.shows.length === 0) {
+                        box.style.display = 'none';
+                        return;
+                    }
+                    box.innerHTML = data.shows.map(s => {
+                        const yr = s.year ? ` (${s.year})` : '';
+                        const st = s.status ? ` • <span style="color:#94a3b8;font-size:11px;">${s.status}</span>` : '';
+                        const safeTitle = s.title.replace(/"/g, '&quot;').replace(/'/g, "\'");
+                        return `<div onclick="selectSonarrShow('${safeTitle}')" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #334155;color:#f8fafc;display:flex;justify-content:space-between;align-items:center;" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='transparent'">
+                            <div><strong>${s.title}</strong><span style="color:#94a3b8;font-size:12px;">${yr}</span>${st}</div>
+                            <span style="color:#38bdf8;font-size:11px;font-weight:600;">+ Select</span>
+                        </div>`;
+                    }).join('');
+                    box.style.display = 'block';
+                } catch (e) {
+                    box.style.display = 'none';
+                }
+            }, 200);
+        }
+
+        function selectSonarrShow(title) {
+            const input = document.getElementById('cowatch-show-input');
+            const box = document.getElementById('sonarr-suggestions');
+            if (input) input.value = title;
+            if (box) box.style.display = 'none';
+            addCowatchShow();
+        }
+
+        document.addEventListener('click', (e) => {
+            const box = document.getElementById('sonarr-suggestions');
+            const input = document.getElementById('cowatch-show-input');
+            if (box && e.target !== input && !box.contains(e.target)) {
+                box.style.display = 'none';
+            }
+        });
+
+        async function addCowatchShow() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const input = document.getElementById('cowatch-show-input');
+            const showName = input ? input.value.trim() : '';
+            if (!showName) return;
+            try {
+                const res = await fetch('/api/cowatch/shows', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ show: showName })
+                });
+                if (res.ok) {
+                    if (input) input.value = '';
+                    window.location.reload();
+                } else {
+                    const err = await res.json();
+                    alert('Failed to add show: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function removeCowatchShow(showName) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (!confirm(`Remove "${showName}" from shared shows?`)) return;
+            try {
+                const res = await fetch('/api/cowatch/shows?show=' + encodeURIComponent(showName), {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    const err = await res.json();
+                    alert('Failed to remove show: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function quickAddShow(showName, btn) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            btn.disabled = true;
+            btn.textContent = 'Adding...';
+            try {
+                const res = await fetch('/api/cowatch/shows', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ show: showName })
+                });
+                if (res.ok) {
+                    btn.textContent = '✓ Added';
+                    btn.style.background = '#059669';
+                } else {
+                    btn.textContent = 'Error';
+                }
+            } catch (e) {
+                btn.textContent = 'Error';
+            }
+        }
+
+        async function quickSyncPartner(payloadEnc, btn) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            btn.disabled = true;
+            btn.textContent = 'Syncing...';
+            try {
+                const payload = JSON.parse(decodeURIComponent(payloadEnc));
+                const res = await fetch('/api/cowatch/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    btn.textContent = '✓ Synced';
+                    btn.style.background = '#059669';
+                } else {
+                    const err = await res.json();
+                    alert('Sync failed: ' + (err.detail || 'Error'));
+                    btn.textContent = 'Error';
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                btn.textContent = 'Error';
+            }
+        }
+
+        function promptLinkAccount() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const uname = prompt('Enter Plex username to link a Trakt account for:');
+            if (uname && uname.trim()) {
+                window.location.href = '/auth?user=' + encodeURIComponent(uname.trim());
+            }
+        }
+
+        async function uploadBackup(input) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            if (!confirm(`Restore system configuration and tokens from "${file.name}"? This will overwrite existing tokens and configuration.`)) {
+                input.value = '';
+                return;
+            }
+            const formData = new FormData();
+            formData.append('backup_file', file);
+            try {
+                const res = await fetch('/api/restore', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (res.ok) {
+                    alert('✓ Backup successfully restored!');
+                    window.location.reload();
+                } else {
+                    const err = await res.json();
+                    alert('Restore failed: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Restore error: ' + e.message);
+            }
+            input.value = '';
+        }
+
+        refreshTimer = setInterval(fetchEvents, 5000);
+    </script>
+</body>
+</html>
