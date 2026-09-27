@@ -1353,7 +1353,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             <div class="info-label">Plex Webhook URL</div>
             <span style="color:#10b981;font-size:11px;font-weight:600;">✓ Admin Unlocked</span>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div class="webhook-row">
             <input type="text" readonly id="webhook-url-input" value="{full_webhook_url}"
                    style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#38bdf8;font-family:monospace;font-size:13px;outline:none;" />
             <button onclick="copyWebhookUrl()" id="copy-btn" class="btn-copy">
@@ -1368,7 +1368,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             <div class="info-label">Plex Webhook URL</div>
             <span style="color:#f59e0b;font-size:11px;font-weight:600;">🔒 Secret Masked</span>
         </div>
-        <div style="display:flex;gap:8px;">
+        <div class="webhook-row">
             <input type="text" readonly value="{masked_webhook_url}"
                    style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#64748b;font-family:monospace;font-size:13px;outline:none;user-select:none;" />
             <button onclick="openUnlockModal()" class="btn-copy" style="background:#2563eb;">
@@ -1506,7 +1506,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             display_name = u_name if is_admin else mask_username(u_name)
 
         users_badges_html += f"""
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
             <div style="display:flex;align-items:center;gap:6px;">
                 <span style="font-weight:600;color:#f8fafc;font-size:13px;">@{display_name}</span>
                 {role_label}
@@ -1544,7 +1544,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
             Dual-scrobble watched shows to your partner's Trakt account automatically, without syncing your solo shows.
         </p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:20px;">
+        <div class="cowatch-grid">
             <div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
                     <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
@@ -1558,7 +1558,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 </div>
                 {f'''
                 <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
-                    <div style="display:flex;gap:8px;position:relative;">
+                    <div class="cowatch-form-row">
                         <div style="flex:1;position:relative;">
                             <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Severance, The Bear)..."
                                    style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"

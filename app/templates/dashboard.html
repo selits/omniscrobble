@@ -7,17 +7,25 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { max-width: 100%; overflow-x: hidden; }
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 32px 20px; }
-        .container { max-width: 1000px; margin: 0 auto; }
+        .container { max-width: 1000px; margin: 0 auto; width: 100%; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #1e293b; gap: 12px; flex-wrap: wrap; }
         .title { font-size: 24px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 12px; }
-        .header-actions { display: flex; align-items: center; gap: 10px; }
+        .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .card { background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid #334155; }
         .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #e2e8f0; }
+        #stream-title { word-break: break-word; }
         .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
         .info-item { background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155; }
         .info-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
         .info-value { font-size: 15px; font-weight: 600; margin: 4px 0 2px 0; color: #f1f5f9; }
+        .webhook-row { display: flex; gap: 8px; }
+        .cowatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+        .cowatch-form-row { display: flex; gap: 8px; position: relative; }
+        .activity-header { padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .activity-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
         th { background: #0f172a; padding: 12px 16px; font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; border-bottom: 1px solid #334155; }
         .btn-sm { background: #334155; border: none; color: #e2e8f0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s, opacity 0.15s; }
@@ -26,7 +34,49 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+        #scrobble-modal, #unlock-modal, #logs-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
+        .modal-dialog-sm { max-width: 400px; display: block; }
+        .modal-dialog-md { max-width: 560px; }
+        .modal-dialog-lg { max-width: 850px; background: #0f172a; padding: 24px; }
+        .search-form-row { display: flex; gap: 8px; }
+        .logs-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .logs-filter-group { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 220px; }
+        .logs-status-group { display: flex; align-items: center; gap: 12px; }
+        .scrobble-item { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .footer { margin-top: 24px; padding-top: 18px; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; color: #64748b; font-size: 12px; flex-wrap: wrap; gap: 8px; }
+
+        /* Responsive Breakpoints for Mobile Viewports (<= 640px) */
+        @media (max-width: 640px) {
+            body { padding: 16px 12px; }
+            .header { margin-bottom: 16px; padding-bottom: 14px; flex-direction: column; align-items: flex-start; gap: 12px; }
+            .header .title { font-size: 20px; }
+            .header-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
+            .card { padding: 16px 14px; margin-bottom: 16px; border-radius: 10px; }
+            .card h3 { font-size: 15px; }
+            .info-grid { grid-template-columns: 1fr; gap: 10px; }
+            .info-item { padding: 12px 14px; }
+            .webhook-row { flex-direction: column; align-items: stretch; gap: 8px; }
+            .webhook-row .btn-copy { width: 100%; text-align: center; padding: 12px; min-height: 42px; display: flex; align-items: center; justify-content: center; }
+            .cowatch-grid { grid-template-columns: 1fr; gap: 16px; }
+            .cowatch-form-row { flex-direction: column; align-items: stretch; }
+            .cowatch-form-row button { width: 100%; padding: 10px; font-size: 13px; }
+            .activity-header { padding: 14px 12px; flex-direction: column; align-items: flex-start; gap: 10px; }
+            .activity-header h3 { font-size: 15px; }
+            .activity-actions { width: 100%; gap: 6px; }
+            table th, table td { padding: 8px 10px !important; font-size: 12px !important; }
+            .modal-dialog { padding: 18px 14px; width: 95%; max-height: 90vh; }
+            .search-form-row { flex-direction: column; align-items: stretch; }
+            .search-form-row button { width: 100%; padding: 11px; }
+            .scrobble-item { flex-direction: column; align-items: stretch; gap: 10px; }
+            .scrobble-item button { width: 100%; text-align: center; padding: 10px; }
+            .logs-toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
+            .logs-filter-group { width: 100%; min-width: unset; flex-wrap: wrap; gap: 6px; }
+            .logs-filter-group input { min-width: 140px; }
+            .logs-status-group { width: 100%; justify-content: space-between; }
+            #logs-terminal { min-height: 220px !important; font-size: 11px !important; padding: 10px !important; }
+            .footer { flex-direction: column; align-items: center; text-align: center; gap: 12px; }
+        }
     </style>
 </head>
 <body>
@@ -78,9 +128,9 @@
         {{BACKUP_CARD}}
 
         <div class="card" style="padding: 0; overflow: hidden;">
-            <div style="padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div class="activity-header">
                 <h3 style="margin: 0;">Live Activity & Scrobble History</h3>
-                <div style="display:flex;align-items:center;gap:12px;">
+                <div class="activity-actions">
                     {{MANUAL_SCROBBLE_BTN}}
                     {{RETRY_QUEUE_BTN}}
                     <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
@@ -90,7 +140,7 @@
                     {{CLEAR_BUTTON}}
                 </div>
             </div>
-            <div style="overflow-x: auto;">
+            <div class="table-container">
                 <table>
                     <thead>
                         <tr>
@@ -110,12 +160,12 @@
             </div>
         </div>
 
-        <div class="footer" style="margin-top: 24px; padding-top: 18px; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; color: #64748b; font-size: 12px; flex-wrap: wrap; gap: 8px;">
+        <div class="footer">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="color: #94a3b8; font-weight: 500;">Plex &rarr; Trakt Scrobbler</span>
                 <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v{{APP_VERSION}}</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;">
                 <a href="{{REPO_URL}}" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color='#f8fafc'" onmouseout="this.style.color='#94a3b8'">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
                     GitHub
@@ -133,7 +183,7 @@
 
     <!-- Admin Unlock Modal -->
     <div id="unlock-modal" onclick="if(event.target===this)closeUnlockModal()">
-        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px;max-width:400px;width:90%;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+        <div class="modal-dialog modal-dialog-sm">
             <h3 style="margin-top:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
                 <span>🔓</span> Unlock Admin Access
             </h3>
@@ -158,7 +208,7 @@
 
     <!-- Manual Scrobble Modal -->
     <div id="scrobble-modal" onclick="if(event.target===this)closeScrobbleModal()">
-        <div style="background:#1e293b;border:1px solid #334155;border-radius:12px;padding:28px;max-width:560px;width:92%;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);max-height:85vh;display:flex;flex-direction:column;">
+        <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
                     <span>🍿</span> Manual Scrobble to Trakt
@@ -169,7 +219,7 @@
                 Search Trakt's global database to quickly mark any movie or show as watched in your history.
             </p>
             <form onsubmit="event.preventDefault();executeTraktSearch();" autocomplete="off" style="margin:0 0 16px 0;">
-                <div style="display:flex;gap:8px;">
+                <div class="search-form-row">
                     <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, The Bear)..."
                            autocomplete="off"
                            data-lpignore="true"
@@ -188,8 +238,8 @@
     </div>
 
     <!-- Server Logs Modal -->
-    <div id="logs-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center;backdrop-filter:blur(3px);" onclick="if(event.target===this)closeLogsModal()">
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;padding:24px;max-width:850px;width:94%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 25px 50px -12px rgba(0,0,0,0.7);">
+    <div id="logs-modal" onclick="if(event.target===this)closeLogsModal()">
+        <div class="modal-dialog modal-dialog-lg">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
                     <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -203,8 +253,8 @@
                     <button onclick="closeLogsModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;padding:4px 10px;font-size:14px;font-weight:700;">&times;</button>
                 </div>
             </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-                <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:220px;">
+            <div class="logs-toolbar">
+                <div class="logs-filter-group">
                     <input type="text" id="logs-search-input" placeholder="Filter logs (e.g. error, webhook, show title)..." oninput="filterLogs()" style="flex:1;background:#020617;border:1px solid #334155;border-radius:6px;padding:6px 12px;color:#f8fafc;font-size:12px;outline:none;" />
                     <select id="logs-level-select" onchange="filterLogs()" style="background:#020617;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#f8fafc;font-size:12px;outline:none;">
                         <option value="ALL">All Levels</option>
@@ -213,7 +263,7 @@
                         <option value="INFO">Info &amp; Above</option>
                     </select>
                 </div>
-                <div style="display:flex;align-items:center;gap:12px;">
+                <div class="logs-status-group">
                     <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
                         <input type="checkbox" id="logs-tail-checkbox" checked> Auto-scroll bottom
                     </label>
@@ -388,7 +438,7 @@
                 const mediaJson = encodeURIComponent(JSON.stringify(payloadData));
 
                 html += `
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                <div class="scrobble-item">
                     <div>
                         <div style="display:flex;align-items:center;gap:8px;">
                             <span style="background:#334155;color:#93c5fd;font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${type}</span>

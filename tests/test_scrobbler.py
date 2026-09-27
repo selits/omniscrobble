@@ -2515,15 +2515,29 @@ def test_log_sanitization_and_buffer():
         Config.WEBHOOK_SECRET = orig_secret
 
 
+def test_dashboard_mobile_responsiveness():
+    """Verify that the dashboard and demo pages contain mobile responsive viewport and CSS structures."""
+    client = TestClient(app)
 
+    for path in ["/", "/demo"]:
+        resp = client.get(path)
+        assert resp.status_code == 200
+        html = resp.text
 
+        # 1. Viewport meta tag
+        assert '<meta name="viewport" content="width=device-width, initial-scale=1.0">' in html
 
+        # 2. CSS Media query for mobile viewports
+        assert "@media (max-width: 640px)" in html
+        assert "-webkit-overflow-scrolling: touch" in html
 
-
-
-
-
-
-
-
+        # 3. Mobile layout classes
+        assert 'class="cowatch-grid"' in html
+        assert 'class="webhook-row"' in html
+        assert 'class="activity-header"' in html
+        assert 'class="activity-actions"' in html
+        assert 'class="table-container"' in html
+        assert 'class="modal-dialog' in html
+        assert 'class="logs-toolbar"' in html
+        assert 'class="footer"' in html
 
