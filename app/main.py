@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import html
 import io
 import json
 import logging
@@ -182,7 +183,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 REPO_URL = "https://github.com/selits/plex-trakt-webhook"
 
 app = FastAPI(title="Plex Trakt Scrobbler", version=APP_VERSION, lifespan=lifespan)
@@ -1359,7 +1360,7 @@ async def dashboard(request: Request, response: Response):
     # Co-Watching & Multi-User configuration
     cw_user = Config.CO_WATCH_USER
     cw_user_display = cw_user if is_admin else "●●●●●●●●"
-    cw_shows = cowatch_mgr.get_shows()
+    cw_shows = sorted(cowatch_mgr.get_shows(), key=lambda x: x.lower())
     configured_users = user_mgr.list_configured_users()
 
     # Shared show chips
@@ -1369,9 +1370,9 @@ async def dashboard(request: Request, response: Response):
     else:
         chips_html = ""
         for s in cw_shows:
-            s_safe = s.replace("'", "\\'")
-            del_btn = f'<button onclick="removeCowatchShow(\'{s_safe}\')" title="Remove show" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;">&times;</button>'
-            chips_html += f'<span style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;padding:4px 10px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:3px;">{s}{del_btn}</span>'
+            s_enc = urllib.parse.quote(s)
+            del_btn = f'<button data-show="{s_enc}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove {html.escape(s)}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;" onmouseover="this.style.color=\'#ef4444\'" onmouseout="this.style.color=\'#f87171\'">&times;</button>'
+            chips_html += f'<span class="cowatch-chip" data-title="{html.escape(s.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">{html.escape(s)}{del_btn}</span>'
         if not chips_html:
             chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>'
 
@@ -1447,8 +1448,14 @@ async def dashboard(request: Request, response: Response):
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:20px;">
             <div>
-                <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;">Shared Shows Whitelist</div>
-                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;min-height:54px;margin-bottom:10px;display:flex;flex-wrap:wrap;align-items:center;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                        <span>Shared Shows Whitelist</span>
+                        <span id="cowatch-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(cw_shows)}</span>
+                    </div>
+                    {f'<input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:110px;" />' if is_admin else ''}
+                </div>
+                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:180px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
                     {chips_html}
                 </div>
                 {f'''

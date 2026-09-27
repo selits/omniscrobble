@@ -799,7 +799,7 @@ def test_notifier_title_formatting_and_trakt_url():
         ids={"imdb": "tt2301451"},
     )
     assert format_media_title(ep) == "Breaking Bad S05E14 - Ozymandias"
-    assert get_trakt_url(ep) == "https://trakt.tv/search/imdb/tt2301451"
+    assert get_trakt_url(ep) == "https://trakt.tv/search?q=Breaking+Bad"
 
     # Episode without subtitle or title same as show
     ep_same = ParsedMedia(
@@ -813,7 +813,7 @@ def test_notifier_title_formatting_and_trakt_url():
         ids={"tmdb": 62085},
     )
     assert format_media_title(ep_same) == "Breaking Bad S05E14"
-    assert get_trakt_url(ep_same) == "https://trakt.tv/search/tmdb/62085"
+    assert get_trakt_url(ep_same) == "https://trakt.tv/search?q=Breaking+Bad"
 
     # Movie with year
     movie = ParsedMedia(
@@ -825,9 +825,9 @@ def test_notifier_title_formatting_and_trakt_url():
         ids={"tvdb": 12345},
     )
     assert format_media_title(movie) == "Inception (2010)"
-    assert get_trakt_url(movie) == "https://trakt.tv/search/tvdb/12345"
+    assert get_trakt_url(movie) == "https://trakt.tv/search?q=Inception"
 
-    # Fallback without IDs
+    # Fallback with title
     plain = ParsedMedia(
         event="media.scrobble",
         username="selits",
@@ -835,7 +835,16 @@ def test_notifier_title_formatting_and_trakt_url():
         title="Unknown Film",
     )
     assert format_media_title(plain) == "Unknown Film"
-    assert get_trakt_url(plain) == "https://trakt.tv"
+    assert get_trakt_url(plain) == "https://trakt.tv/search?q=Unknown+Film"
+
+    # Empty title fallback
+    empty = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="",
+    )
+    assert get_trakt_url(empty) == "https://trakt.tv"
 
 
 def test_notifier_build_payloads():
@@ -859,7 +868,7 @@ def test_notifier_build_payloads():
     embed = discord_scrobble["embeds"][0]
     assert embed["color"] == 0xED1C24
     assert embed["title"] == "Breaking Bad S05E14 - Ozymandias"
-    assert embed["url"] == "https://trakt.tv/search/imdb/tt2301451"
+    assert embed["url"] == "https://trakt.tv/search?q=Breaking+Bad"
     assert any(f["name"] == "Progress" and f["value"] == "100.0%" for f in embed["fields"])
 
     # 2. Discord Rating payload
@@ -2230,7 +2239,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/plex-trakt-webhook" in html
-    assert "v1.1.1" in html
+    assert "v1.1.2" in html
     assert "https://github.com/selits/plex-trakt-webhook/releases" in html
     assert "https://github.com/selits/plex-trakt-webhook#readme" in html
     assert "Auto-refresh (30s)" in html
