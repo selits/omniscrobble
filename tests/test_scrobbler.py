@@ -1967,6 +1967,197 @@ def test_auth_page_script_syntax():
         client.cookies.clear()
 
 
+@pytest.mark.asyncio
+async def test_sonarr_client_search_and_cache():
+    from sonarr_client import SonarrClient
+    sc = SonarrClient(base_url="http://sonarr.local:8989", api_key="secretkey")
+    assert sc.is_configured is True
+
+    mock_series_data = [
+        {"title": "Severance", "year": 2022, "tvdbId": 371980, "imdbId": "tt11280740", "status": "continuing"},
+        {"title": "The Bear", "year": 2022, "tvdbId": 412497, "imdbId": "tt14452776", "status": "continuing"},
+        {"title": "House of the Dragon", "year": 2022, "tvdbId": 371572, "imdbId": "tt11198330", "status": "continuing"},
+    ]
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = mock_series_data
+
+    mock_http = AsyncMock()
+    mock_http.get.return_value = mock_resp
+
+    # First search
+    res = await sc.search_series("sev", client=mock_http)
+    assert len(res) == 1
+    assert res[0]["title"] == "Severance"
+    assert mock_http.get.call_count == 1
+
+    # Second search should hit memory cache
+    res2 = await sc.search_series("bear", client=mock_http)
+    assert len(res2) == 1
+    assert res2[0]["title"] == "The Bear"
+    assert mock_http.get.call_count == 1  # Cache hit, no second network request
+
+
+def test_sonarr_webhook_parsing():
+    from sonarr_client import parse_sonarr_webhook
+
+    # Test event
+    ev_type, trakt_p, parsed = parse_sonarr_webhook({"eventType": "Test"})
+    assert ev_type == "test"
+    assert trakt_p is None
+
+    # Download event
+    dl_payload = {
+        "eventType": "Download",
+        "series": {
+            "title": "Severance",
+            "year": 2022,
+            "tvdbId": 371980,
+            "imdbId": "tt11280740",
+        },
+        "episodes": [
+            {
+                "episodeNumber": 1,
+                "seasonNumber": 1,
+                "title": "Good News About Hell",
+            }
+        ],
+        "episodeFile": {
+            "quality": "WEBDL-1080p",
+            "releaseGroup": "FLUX",
+        },
+    }
+    ev_type, trakt_p, parsed = parse_sonarr_webhook(dl_payload)
+    assert ev_type == "download"
+    assert trakt_p is not None
+    assert trakt_p["shows"][0]["title"] == "Severance"
+    assert trakt_p["shows"][0]["ids"]["tvdb"] == 371980
+    assert trakt_p["shows"][0]["seasons"][0]["episodes"][0]["resolution"] == "hd_1080p"
+    assert parsed.show_title == "Severance"
+    assert parsed.season == 1
+    assert parsed.episode == 1
+
+
+def test_radarr_webhook_parsing():
+    from sonarr_client import parse_radarr_webhook
+
+    ev_type, trakt_p, parsed = parse_radarr_webhook({"eventType": "Test"})
+    assert ev_type == "test"
+
+    dl_payload = {
+        "eventType": "Download",
+        "movie": {
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "tmdbId": 693134,
+            "imdbId": "tt15239678",
+        },
+        "movieFile": {
+            "quality": "WEBDL-2160p",
+        },
+    }
+    ev_type, trakt_p, parsed = parse_radarr_webhook(dl_payload)
+    assert ev_type == "download"
+    assert trakt_p["movies"][0]["title"] == "Dune: Part Two"
+    assert trakt_p["movies"][0]["ids"]["tmdb"] == 693134
+    assert trakt_p["movies"][0]["resolution"] == "uhd_4k"
+    assert parsed.title == "Dune: Part Two"
+
+
+def test_sonarr_api_routes():
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
+        # 1. /api/sonarr/shows requires admin
+        client.cookies.clear()
+        res_unauth = client.get("/api/sonarr/shows")
+        assert res_unauth.status_code == 401
+
+        # 2. /api/sonarr/shows with admin
+        client.cookies.set("admin_token", "testsecret")
+        res_auth = client.get("/api/sonarr/shows")
+        assert res_auth.status_code == 200
+        data = res_auth.json()
+        assert "configured" in data
+        assert "shows" in data
+
+        # 3. GET /sonarr and GET /radarr info
+        assert client.get("/sonarr").status_code == 200
+        assert client.get("/radarr").status_code == 200
+
+        # 4. POST /sonarr unauthorized
+        res_sonarr_unauth = client.post("/sonarr", json={"eventType": "Test"})
+        assert res_sonarr_unauth.status_code == 401
+
+        # 5. POST /sonarr authorized test event
+        res_sonarr_test = client.post("/sonarr?token=testsecret", json={"eventType": "Test"})
+        assert res_sonarr_test.status_code == 200
+        assert res_sonarr_test.json()["status"] == "success"
+
+        # 6. POST /radarr authorized test event
+        res_radarr_test = client.post("/radarr?token=testsecret", json={"eventType": "Test"})
+        assert res_radarr_test.status_code == 200
+        assert res_radarr_test.json()["status"] == "success"
+
+        # 7. Health check includes sonarr
+        res_health = client.get("/health")
+        assert res_health.status_code == 200
+        assert "sonarr" in res_health.json()
+
+        client.cookies.clear()
+
+
+def test_sonarr_webhook_collection_sync():
+    dl_payload = {
+        "eventType": "Download",
+        "series": {
+            "title": "Severance",
+            "year": 2022,
+            "tvdbId": 371980,
+        },
+        "episodes": [
+            {
+                "episodeNumber": 1,
+                "seasonNumber": 1,
+                "title": "Good News About Hell",
+            }
+        ],
+        "episodeFile": {
+            "quality": "WEBDL-1080p",
+        },
+    }
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", ""):
+        with patch("user_manager.user_mgr.get_client") as mock_get_client:
+            mock_trakt = AsyncMock()
+            mock_trakt.sync_collection.return_value = {"added": {"episodes": 1}}
+            mock_get_client.return_value = mock_trakt
+
+            res = client.post("/sonarr", json=dl_payload)
+            assert res.status_code == 200
+            assert res.json()["status"] == "success"
+            assert mock_trakt.sync_collection.called
+
+
+def test_720p_resolution_mapping():
+    from plex_parser import map_plex_resolution
+    from sonarr_client import map_arr_resolution
+
+    # Plex mappings
+    assert map_plex_resolution("720") == "hd_720p"
+    assert map_plex_resolution("720p") == "hd_720p"
+    assert map_plex_resolution("1080") == "hd_1080p"
+    assert map_plex_resolution("1080p") == "hd_1080p"
+    assert map_plex_resolution("4k") == "uhd_4k"
+
+    # Sonarr / Radarr quality mappings
+    assert map_arr_resolution("HDTV-720p") == "hd_720p"
+    assert map_arr_resolution("WEBDL-720p") == "hd_720p"
+    assert map_arr_resolution("Bluray-720p") == "hd_720p"
+    assert map_arr_resolution("720p") == "hd_720p"
+    assert map_arr_resolution({"quality": {"name": "HDTV-720p", "resolution": 720}}) == "hd_720p"
+
+
 
 
 
