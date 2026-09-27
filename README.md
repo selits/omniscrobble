@@ -28,7 +28,7 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Integrated Manual Scrobble Tool**: Search Trakt's global catalog directly from the dashboard and mark any missed movie or episode as watched with one click.
 - **Multi-User Trakt Support**: Link separate Trakt accounts for different Plex users (`/auth?user=username`), allowing household members sharing the server to scrobble to their own profiles.
 - **Watch Together (Co-Watching) Engine**: Automatically dual-scrobbles watched TV shows or movies to your partner's Trakt account when you watch together, while leaving solo shows untracked. Manage shared shows directly from your phone or desktop with interactive tag chips.
-- **Dashboard Admin Security & Privacy Shield**: Public visitors see a privacy-shielded view (masked usernames, masked webhook secret, locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
+- **Dashboard Admin Security & Screenshot Privacy Shield**: Public visitors see a hardened, privacy-shielded view (masked usernames, completely masked partner account `@●●●●●●●●`, masked server hostname/port `http://●●●●●●●●:●●●●/webhook?token=●●●●●●●●` for safe screenshots, and locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
 - **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, and live auto-updating event logs (5s poll).
 - **Remote Server & Docker Ready**: Tested and optimized for containerized environments (Docker, VPS, Remote Servers) with non-root security, healthchecks, and `env_file` auto-loading.
@@ -450,7 +450,40 @@ Expected response:
 {"status":"healthy","authenticated":true,"trakt_user":"your_trakt_username","allowed_users":["your_plex_username"],"scrobble_mode":"scrobble","webhook_secret_enabled":false}
 ```
 
+---
 
+## 🏗️ Architecture & Codebase Structure
+
+`plex-trakt-webhook` follows a clean, modular Python package architecture:
+
+```text
+plex-trakt-webhook/
+├── app/
+│   ├── clients/             # External API integrations
+│   │   ├── trakt_client.py  # Trakt OAuth device flow, scrobbling, ratings, collection sync & search
+│   │   └── sonarr_client.py # Sonarr/Radarr API client, webhook parsers & resolution mapping
+│   ├── services/            # Core business logic services
+│   │   ├── cowatch_manager.py  # Watch Together whitelist & dual-scrobble rules engine
+│   │   ├── notifier.py         # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover)
+│   │   ├── playback_manager.py # Active streaming sessions & dashboard cards
+│   │   ├── queue_manager.py    # Persistent SQLite offline retry queue & background worker
+│   │   └── user_manager.py     # Multi-user account client cache & token persistence
+│   ├── templates/           # Clean, externalized HTML/CSS/JS dashboard and auth views
+│   │   ├── dashboard.html   # Main real-time status dashboard view
+│   │   ├── auth.html        # Trakt device activation view
+│   │   └── auth_locked.html # Admin authorization gate view
+│   ├── config.py            # Centralized environment & directory configuration
+│   ├── main.py              # FastAPI application, route handlers & template rendering
+│   ├── metrics.py           # Thread-safe Prometheus metrics registry & exposition formatter
+│   └── plex_parser.py       # Plex multipart/JSON webhook parsing & media models
+├── main.py                  # Backward-compatible service entrypoint (Uvicorn)
+├── auth.py                  # Standalone CLI device code authentication tool
+├── plex-trakt.service       # systemd user service unit
+├── start.sh                 # Portable startup wrapper script
+├── upgrade.sh               # 1-click automated upgrade script
+├── Dockerfile               # Multi-stage hardened non-root container image
+└── tests/                   # Comprehensive pytest test suite (65+ tests)
+```
 
 ---
 
