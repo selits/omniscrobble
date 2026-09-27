@@ -120,10 +120,18 @@ class SonarrClient:
         return self._cached_series
 
     async def search_series(
-        self, query: str = "", client: Optional[httpx.AsyncClient] = None, limit: int = 15
+        self,
+        query: str = "",
+        client: Optional[httpx.AsyncClient] = None,
+        limit: int = 15,
+        exclude: Optional[list[str] | set[str]] = None,
     ) -> list[dict[str, Any]]:
-        """Search cached Sonarr series by title substring/prefix."""
+        """Search cached Sonarr series by title substring/prefix, optionally excluding series."""
         all_series = await self.get_series(client=client)
+        if exclude:
+            exclude_set = {e.strip().lower() for e in exclude if e and e.strip()}
+            all_series = [s for s in all_series if s.get("title", "").strip().lower() not in exclude_set]
+
         if not query or not query.strip():
             return all_series[:limit]
 

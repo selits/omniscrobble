@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Config
-from app.main import app, get_uptime_str, mask_username, queue_mgr, recent_events, scrobble_stats, trakt
+from app.main import app, get_uptime_str, mask_username, queue_mgr, recent_events, scrobble_stats, trakt, sonarr
 from app.services.queue_manager import QueueManager, process_queue
 from app.clients.trakt_client import TraktClient
 
@@ -2000,6 +2000,11 @@ async def test_sonarr_client_search_and_cache():
     assert res2[0]["title"] == "The Bear"
     assert mock_http.get.call_count == 1  # Cache hit, no second network request
 
+    # Search with exclude parameter
+    res3 = await sc.search_series("", client=mock_http, exclude=["The Bear", "Severance"])
+    assert len(res3) == 1
+    assert res3[0]["title"] == "House of the Dragon"
+
 
 def test_sonarr_webhook_parsing():
     from app.clients.sonarr_client import parse_sonarr_webhook
@@ -2082,6 +2087,16 @@ def test_sonarr_api_routes():
         data = res_auth.json()
         assert "configured" in data
         assert "shows" in data
+
+        # 2b. /api/sonarr/shows passes exclude from cowatch_mgr to search_series
+        with patch.object(sonarr, "base_url", "http://sonarr:8989"), \
+             patch.object(sonarr, "api_key", "secretkey"), \
+             patch.object(sonarr, "search_series", new_callable=AsyncMock) as mock_search, \
+             patch.object(cowatch_mgr, "get_shows", return_value=["The Bear"]):
+            mock_search.return_value = [{"title": "Severance"}]
+            res_filtered = client.get("/api/sonarr/shows?q=sev")
+            assert res_filtered.status_code == 200
+            mock_search.assert_called_once_with(query="sev", limit=15, exclude=["The Bear"])
 
         # 3. GET /sonarr and GET /radarr info
         assert client.get("/sonarr").status_code == 200
@@ -2206,6 +2221,18 @@ def test_modular_package_structure():
         "user_manager.py",
     ]:
         assert deprecated not in root_files, f"{deprecated} should no longer exist in root directory"
+
+
+def test_dashboard_footer_and_repo_link():
+    """Verify that the dashboard renders the version badge and GitHub repository links."""
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    assert "https://github.com/selits/plex-trakt-webhook" in html
+    assert "v1.2.0" in html
+    assert "https://github.com/selits/plex-trakt-webhook/releases" in html
+    assert "https://github.com/selits/plex-trakt-webhook#readme" in html
 
 
 
