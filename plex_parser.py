@@ -6,17 +6,17 @@ logger = logging.getLogger("plex_parser")
 
 
 def map_plex_resolution(res: Optional[str]) -> Optional[str]:
-    """Map Plex videoResolution (e.g. 4k, 1080) to Trakt resolution."""
+    """Map Plex videoResolution (e.g. 4k, 1080, 720) to Trakt resolution."""
     if not res:
         return None
     r = str(res).lower()
-    if r in ("4k", "uhd", "2160"):
+    if r in ("4k", "uhd", "2160", "2160p"):
         return "uhd_4k"
-    elif r == "1080":
+    elif r in ("1080", "1080p", "1080i"):
         return "hd_1080p"
-    elif r == "720":
+    elif r in ("720", "720p"):
         return "hd_720p"
-    elif r in ("576", "480", "sd"):
+    elif r in ("576", "576p", "480", "480p", "sd"):
         return "sd_480p"
     return None
 

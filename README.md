@@ -115,6 +115,12 @@ CO_WATCH_USER=partner_username
 CO_WATCH_SHOWS=The Bear, Severance, House of the Dragon
 CO_WATCH_PLAYERS=Living Room Apple TV, Main TV
 CO_WATCH_MOVIES=false
+
+# (Optional) Sonarr & Radarr Integration
+SONARR_URL=http://localhost:8989
+SONARR_API_KEY=your_sonarr_api_key_here
+RADARR_URL=http://localhost:7878
+RADARR_API_KEY=your_radarr_api_key_here
 ```
 
 ---
@@ -293,6 +299,9 @@ If you prefer running in a container:
 | **`/api/cowatch`** | `GET` | **Co-Watch Status**: Returns shared shows list, configuration, and linked user profiles. |
 | **`/api/cowatch/shows`** | `POST` / `DELETE` | **Shared Shows Manager**: Add or remove TV shows from the Watch Together whitelist (Admin only). |
 | **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
+| **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist (Admin only). |
+| **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
+| **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
 
 
 ---
@@ -310,6 +319,7 @@ When couples, roommates, or families watch TV shows together on a shared living 
 - **Device Filtering (`CO_WATCH_PLAYERS`)**: Optional rule to only trigger dual-scrobble when playing on shared devices (e.g. `Living Room Apple TV`), preventing dual-sync when you watch in bed on your phone.
 - **Movie Co-Watching (`CO_WATCH_MOVIES`)**: Toggle whether all finished movies dual-sync to your partner.
 - **Mobile-Friendly Web Dashboard**: Add or remove shared shows with interactive tag chips (`[ The Bear ✕ ]`) or click `[+ Co-Watch]` in the activity feed with 0 server restarts.
+- **Sonarr Live Autocomplete**: As you type show names into the dashboard, it queries your Sonarr library in real-time for instant 1-click addition.
 
 ### 3. Setting Up Watch Together
 1. Add your partner's username in `.env`:
@@ -321,6 +331,24 @@ When couples, roommates, or families watch TV shows together on a shared living 
    ```
 2. Link their Trakt account by opening `http://<server>:<PORT>/auth?user=partner_username` and entering their Trakt activation code.
 3. Done! Shows in your whitelist will now automatically scrobble to both accounts seamlessly.
+
+### 4. Sonarr & Radarr Integration
+Connect Sonarr and Radarr to supercharge your dashboard and collection tracking:
+1. **Live Co-Watch Autocomplete**:
+   Add your Sonarr credentials to `.env`:
+
+   ```ini
+   SONARR_URL=http://localhost:8989
+   SONARR_API_KEY=your_sonarr_api_key_here
+   ```
+
+   Now when adding shows to your shared list on the dashboard, matching series from your Sonarr library will autocomplete automatically with years and status badges!
+2. **Direct Webhooks for Trakt Collection**:
+   * In Sonarr: Go to **Settings &rarr; Connect &rarr; Add Webhook**.
+   * URL: `http://<server>:<PORT>/sonarr` (or `http://<server>:<PORT>/sonarr?token=YOUR_SECRET` if `WEBHOOK_SECRET` is set).
+   * Triggers: Check **On Download** and **On Upgrade**.
+   * Click **Test** and **Save**. Your Trakt collection will now update the moment Sonarr imports a download!
+   * (Radarr is also supported using `http://<server>:<PORT>/radarr`).
 
 ---
 

@@ -84,4 +84,10 @@ class Config:
     CO_WATCH_MOVIES: bool = os.getenv("CO_WATCH_MOVIES", "false").lower() in ("true", "1", "yes")
     CO_WATCH_DATA_FILE: Path = BASE_DIR / "data" / "cowatch_shows.json"
 
+    # Sonarr & Radarr Integrations
+    SONARR_URL: str = os.getenv("SONARR_URL", "").strip().rstrip("/")
+    SONARR_API_KEY: str = os.getenv("SONARR_API_KEY", "").strip()
+    RADARR_URL: str = os.getenv("RADARR_URL", "").strip().rstrip("/")
+    RADARR_API_KEY: str = os.getenv("RADARR_API_KEY", "").strip()
+
 
