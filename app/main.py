@@ -1209,9 +1209,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         full_webhook_url = "https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
         masked_webhook_url = full_webhook_url
         demo_banner = '<div style="background:linear-gradient(90deg, #1e3a8a, #0284c7);color:#ffffff;padding:12px 18px;border-radius:10px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);flex-wrap:wrap;gap:10px;"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🎭</span><div><strong style="color:#ffffff;">Demo Mode Active:</strong><span style="color:#e0f2fe;font-size:13px;margin-left:4px;">Simulated authenticated view with mock information. No real accounts or tokens are exposed.</span></div></div><a href="/" style="background:rgba(255,255,255,0.2);color:#ffffff;text-decoration:none;padding:5px 12px;border-radius:6px;font-weight:600;font-size:12px;transition:background 0.15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.3)\'" onmouseout="this.style.background=\'rgba(255,255,255,0.2)\'">Exit Demo &rarr;</a></div>'
+        demo_header_btn = '<a href="/" class="btn-sm" style="background:#0284c7;border:1px solid #38bdf8;color:#ffffff;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:opacity 0.15s;" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Exit demo mode">✕ Exit Demo</a>'
         demo_footer_link = '<a href="/" style="color:#38bdf8;text-decoration:none;font-weight:600;">Exit Demo</a>'
     else:
         demo_banner = ""
+        demo_header_btn = '<a href="/demo" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:color 0.15s, border-color 0.15s;" onmouseover="this.style.color=\'#f8fafc\';this.style.borderColor=\'#475569\'" onmouseout="this.style.color=\'#94a3b8\';this.style.borderColor=\'#334155\'" title="Preview dashboard with mock data">🎭 Demo</a>'
         demo_footer_link = f'<a href="/demo" style="color: #64748b; text-decoration: none; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color=\'#f8fafc\'" onmouseout="this.style.color=\'#64748b\'">🎭 Demo Mode</a>'
         # Auto-login admin if valid ?token= passed in URL
         query_token = request.query_params.get("token")
@@ -1623,6 +1625,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     rendered = DASHBOARD_HTML
     replacements = {
         '{{DEMO_BANNER}}': demo_banner,
+        '{{DEMO_HEADER_BTN}}': demo_header_btn,
         '{{DEMO_FOOTER_LINK}}': demo_footer_link,
         '{{STATUS_BADGE}}': status_badge,
         '{{ADMIN_BTN}}': admin_btn,
