@@ -185,7 +185,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.2.0"
 REPO_URL = "https://github.com/selits/plex-trakt-webhook"
 
 app = FastAPI(title="Plex Trakt Scrobbler", version=APP_VERSION, lifespan=lifespan)
