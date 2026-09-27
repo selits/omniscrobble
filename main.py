@@ -169,7 +169,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-app = FastAPI(title="Plex Trakt Scrobbler", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Plex Trakt Scrobbler", version="1.0.2", lifespan=lifespan)
 
 
 # In-memory log of recent webhook events for the status dashboard
