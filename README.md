@@ -1,5 +1,10 @@
 # Plex to Trakt Webhook Scrobbler
 
+[![CI](https://github.com/selits/plex-trakt-webhook/actions/workflows/ci.yml/badge.svg)](https://github.com/selits/plex-trakt-webhook/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)
+![Docker](https://img.shields.io/badge/docker-ready-2496ed.svg?logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 A lightweight, modern Python service that receives Plex Media Server webhooks and automatically tracks your TV shows and movies, updating playback status in real-time and marking episodes as watched in your Trakt account.
 
 ---
@@ -7,15 +12,26 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 ## 🌟 Features
 
 - **Automatic Show & Movie Tracking**: Synchronizes playback in real-time (`media.play`, `media.pause`, `media.stop`) and automatically marks episodes as viewed in Trakt history upon completion (`media.scrobble`).
+- **Instant Rating Synchronization**: Automatically syncs star and 1–10 numerical ratings set in Plex (`media.rate`) directly to your Trakt profile for movies, episodes, and entire shows (`/sync/ratings`).
+- **Trakt Collection Synchronization**: Automatically syncs newly downloaded or added movies and episodes to your Trakt collection (`library.new` $\to$ `/sync/collection`), recording technical media specifications (resolution, audio codec, audio channels).
+- **Library Section Filtering**: Exclude home video, fitness, or personal libraries (`EXCLUDED_LIBRARIES`) or whitelist specific libraries (`ALLOWED_LIBRARIES`) so private files never pollute your Trakt profile.
 - **Modern GUID Resolution**: Supports Plex's modern metadata agents (`imdb://`, `tmdb://`, `tvdb://`), TV show year matching for remake disambiguation, and fallback title matching.
 - **Robust Multipart Parsing**: Handles Plex's multipart/form-data payloads (both JSON file parts and raw form fields) without validation errors.
 - **Smart Pause Handling**: Automatically finalizes scrobbles if playback is paused past the completion threshold (>=80%), preventing Trakt API 422 warnings.
 - **Web UI & Device Code OAuth Flow**: Authorize directly in your browser via `/auth` or headlessly via terminal (`python auth.py`) using Trakt's official activation code (`https://trakt.tv/activate`).
-- **Resilient Async Trakt Client**: Built on non-blocking `httpx.AsyncClient` with automatic OAuth token refresh on 401 and exponential backoff on 429 rate limits.
-- **Optional Webhook Secret**: Protect your webhook with a secret token (`/webhook?token=...` or `X-Webhook-Secret`) to prevent unauthorized spoofing.
+- **Resilient Async Trakt Client**: Built on non-blocking `httpx.AsyncClient` with automatic OAuth token refresh on 401, token health telemetry, and exponential backoff on 429 rate limits.
+- **Persistent Offline Queue & Retry Worker**: Automatically preserves scrobbles, watches, ratings, and collection additions in a local SQLite database during Trakt API downtime or network outages, retrying in the background until successfully synced.
+- **Multi-Channel Push Notifications**: Delivers real-time rich embeds to Discord, messages to Telegram, and lightweight push alerts to Ntfy or Pushover upon scrobbles, ratings, and collection additions.
+- **Homelab Observability & Prometheus Metrics**: Built-in `/metrics` endpoint exporting standard Prometheus exposition metrics (request counts, scrobble status, queue depth, active playback sessions, uptime) for Grafana monitoring.
+- **1-Click System Backup & Restore**: Export and restore a timestamped `.zip` archive containing your OAuth tokens, SQLite retry database, and co-watch settings directly from the dashboard.
+- **Live Playback Observability**: Real-time animated dashboard card showing active streams (`▶ Currently Streaming` / `⏸ Paused`), progress bar, device names, and recently finished media.
+- **Integrated Manual Scrobble Tool**: Search Trakt's global catalog directly from the dashboard and mark any missed movie or episode as watched with one click.
+- **Multi-User Trakt Support**: Link separate Trakt accounts for different Plex users (`/auth?user=username`), allowing household members sharing the server to scrobble to their own profiles.
+- **Watch Together (Co-Watching) Engine**: Automatically dual-scrobbles watched TV shows or movies to your partner's Trakt account when you watch together, while leaving solo shows untracked. Manage shared shows directly from your phone or desktop with interactive tag chips.
+- **Dashboard Admin Security & Privacy Shield**: Public visitors see a privacy-shielded view (masked usernames, masked webhook secret, locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
-- **Live Auto-Refreshing Dashboard**: Access `http://<server-ip>:<PORT>/` to view connected Trakt user profile, live auto-updating event logs (5s poll), and health status.
-- **Seedbox & Docker Ready**: Tested and optimized for containerized environments (Ultra.cc, Whatbox, Docker) with non-root security and healthchecks.
+- **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, and live auto-updating event logs (5s poll).
+- **Seedbox & Docker Ready**: Tested and optimized for containerized environments (Ultra.cc, Whatbox, Docker) with non-root security, healthchecks, and `env_file` auto-loading.
 
 ---
 
@@ -71,6 +87,13 @@ SERVER_PORT=8080
 # Scrobble behavior
 SCROBBLE_MODE=scrobble
 SCROBBLE_THRESHOLD=80.0
+
+# (Optional) Real-time notifications to Discord and/or Telegram
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+TELEGRAM_CHAT_ID=123456789
+NOTIFY_ON_SCROBBLE=true
+NOTIFY_ON_RATE=true
 ```
 
 ---
@@ -231,15 +254,46 @@ If you prefer running in a container:
 
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
-| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt user profile, active configuration, and live scrobble event log. |
-| **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based 1-click Trakt OAuth activation. |
-| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback and scrobble payloads. |
-| **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication status, and configured settings (for monitoring / Docker). |
+| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt profiles, active stream status, co-watch whitelist, and live activity. |
+| **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based OAuth activation (support `?user=username` for multi-user linking). |
+| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback, rating, and scrobble payloads. |
+| **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token health telemetry. |
 | **`/api/events`** | `GET` | **Event History**: Returns recent scrobble and playback events in JSON. |
-| **`/api/events/clear`** | `POST` | **Clear Events**: Resets the in-memory event log. |
+| **`/api/events/clear`** | `POST` | **Clear Events**: Resets the in-memory event log (Admin only). |
+| **`/api/playback`** | `GET` | **Active Streams**: Returns real-time streaming sessions and recently finished media. |
+| **`/api/search`** | `GET` | **Trakt Search**: Search movies and shows across Trakt's global database (Admin only). |
+| **`/api/scrobble/manual`** | `POST` | **Manual Scrobble**: 1-click manual history scrobble for any movie or episode (Admin only). |
+| **`/api/cowatch`** | `GET` | **Co-Watch Status**: Returns shared shows list, configuration, and linked user profiles. |
+| **`/api/cowatch/shows`** | `POST` / `DELETE` | **Shared Shows Manager**: Add or remove TV shows from the Watch Together whitelist (Admin only). |
+| **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
 
 
 ---
+
+## 👥 Watch Together & Multi-User Accounts
+
+### 1. The Co-Watching Dilemma
+When couples, roommates, or families watch TV shows together on a shared living room Plex profile, only the primary profile's Trakt account traditionally gets updated. If you try to scrobble everything, your partner's Trakt account gets polluted with shows you watched alone.
+
+### 2. The Solution: Intelligent Dual-Sync
+`plex-trakt-webhook` solves this with an integrated **Watch Together Engine**:
+- **Shared Shows Whitelist**: Define shows you watch together (e.g., *The Bear*, *Severance*, *Succession*).
+- **Automatic Matching**: When you finish an episode of a shared show on your Plex profile, it automatically marks as watched on **both** your Trakt account and your partner's Trakt account.
+- **Solo Shows Untouched**: Solo shows, anime, or personal binge sessions are tracked strictly on your own profile.
+- **Device Filtering (`CO_WATCH_PLAYERS`)**: Optional rule to only trigger dual-scrobble when playing on shared devices (e.g. `Living Room Apple TV`), preventing dual-sync when you watch in bed on your phone.
+- **Movie Co-Watching (`CO_WATCH_MOVIES`)**: Toggle whether all finished movies dual-sync to your partner.
+- **Mobile-Friendly Web Dashboard**: Add or remove shared shows with interactive tag chips (`[ The Bear ✕ ]`) or click `[+ Co-Watch]` in the activity feed with 0 server restarts.
+
+### 3. Setting Up Watch Together
+1. Add your partner's username in `.env`:
+   ```ini
+   CO_WATCH_USER=partner_username
+   CO_WATCH_SHOWS=The Bear, Severance, House of the Dragon
+   CO_WATCH_PLAYERS=Living Room Apple TV, Main TV
+   CO_WATCH_MOVIES=false
+   ```
+2. Link their Trakt account by opening `http://<server>:<PORT>/auth?user=partner_username` and entering their Trakt activation code.
+3. Done! Shows in your whitelist will now automatically scrobble to both accounts seamlessly.
 
 ## 💡 Troubleshooting & FAQ
 

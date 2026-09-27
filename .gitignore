@@ -9,6 +9,9 @@ ENV/
 *.env
 trakt_tokens.json
 data/
+*.db
+*.sqlite
+*.sqlite3
 
 
 # Byte-compiled / optimized / DLL files
