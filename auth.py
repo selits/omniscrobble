@@ -1,12 +1,8 @@
 import asyncio
 import sys
 import time
-try:
-    from app.config import Config
-    from app.clients.trakt_client import TraktClient
-except ImportError:
-    from config import Config
-    from trakt_client import TraktClient
+from app.config import Config
+from app.clients.trakt_client import TraktClient
 
 
 async def main():
