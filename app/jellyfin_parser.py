@@ -216,6 +216,8 @@ def parse_jellyfin_webhook(
     elif user_data.get("IsFavorite") is True:
         rating = 10
 
+    item_id = str(item.get("Id") or payload.get("ItemId") or payload.get("Id") or "").strip() or None
+
     return ParsedMedia(
         event=event,
         username=username,
@@ -234,6 +236,7 @@ def parse_jellyfin_webhook(
         device=str(device) if device else None,
         library_section_title=library_name or None,
         server_type="jellyfin",
+        rating_key=item_id,
         ids=ids,
         raw_payload=payload,
     )

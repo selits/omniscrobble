@@ -85,6 +85,7 @@ class ParsedMedia(BaseModel):
     audio_channels: Optional[str] = None
     library_section_title: Optional[str] = None
     server_type: str = "plex"
+    rating_key: Optional[str] = None
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -397,6 +398,8 @@ def parse_plex_webhook(
     audio_channels_val = first_media.get("audioChannels")
     audio_channels = map_plex_audio_channels(audio_channels_val) if audio_channels_val else None
 
+    rating_key = str(metadata.get("ratingKey", "")) if metadata.get("ratingKey") is not None else None
+
     if media_type == "episode":
         grandparent_year = metadata.get("grandparentYear")
         show_year = int(grandparent_year) if grandparent_year else None
@@ -420,6 +423,7 @@ def parse_plex_webhook(
             audio_codec=audio_codec,
             audio_channels=audio_channels,
             library_section_title=library_section_title,
+            rating_key=rating_key,
             ids=ids,
             raw_payload=payload,
         )
@@ -440,6 +444,7 @@ def parse_plex_webhook(
             audio_codec=audio_codec,
             audio_channels=audio_channels,
             library_section_title=library_section_title,
+            rating_key=rating_key,
             ids=ids,
             raw_payload=payload,
         )
@@ -460,6 +465,7 @@ def parse_plex_webhook(
             audio_codec=audio_codec,
             audio_channels=audio_channels,
             library_section_title=library_section_title,
+            rating_key=rating_key,
             ids=ids,
             raw_payload=payload,
         )

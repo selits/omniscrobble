@@ -56,7 +56,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -176,6 +176,8 @@
         </div>
 
         {{COWATCH_CARD}}
+
+        {{RECONCILIATION_CARD}}
 
         {{BACKUP_CARD}}
 
@@ -397,6 +399,77 @@
                     <button type="submit" id="test-submit-btn" class="btn-sm" style="background:#4338ca;color:#fff;font-weight:600;padding:8px 16px;">▶ Run Simulation</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Library Reconciliation Modal -->
+    <div id="reconcile-modal" onclick="if(event.target===this)closeReconcileModal()">
+        <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>🔄</span> Two-Way Library Reconciliation
+                    </h3>
+                    <span id="reconcile-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">Loading...</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button onclick="fetchDiscrepancies(true)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;" title="Rescan media server and Trakt">🔄 Rescan</button>
+                    <button onclick="closeReconcileModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Select items to synchronize between Plex Media Server and Trakt. Echo webhooks are suppressed automatically during reconciliation.
+            </p>
+
+            <!-- Filter tabs -->
+            <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('all', this)" style="background:#0284c7;color:#fff;">All (<span id="count-all">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('trakt_only', this)" style="background:#1e293b;border:1px solid #334155;">Trakt Only &bull; Mark Plex (<span id="count-trakt">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('plex_only', this)" style="background:#1e293b;border:1px solid #334155;">Plex Only &bull; Push Trakt (<span id="count-plex">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('rating_mismatch', this)" style="background:#1e293b;border:1px solid #334155;">Ratings (<span id="count-ratings">0</span>)</button>
+            </div>
+
+            <!-- Reconciliation Progress Banner -->
+            <div id="reconcile-progress-box" style="display:none;background:#0f172a;border:1px solid #0284c7;border-radius:8px;padding:12px;margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#e2e8f0;margin-bottom:6px;">
+                    <span id="reconcile-progress-msg" style="font-weight:600;">Reconciling items...</span>
+                    <span id="reconcile-progress-stats">0%</span>
+                </div>
+                <div style="background:#1e293b;border-radius:9999px;height:8px;overflow:hidden;">
+                    <div id="reconcile-progress-bar" style="background:#0284c7;height:100%;width:0%;transition:width 0.3s ease;"></div>
+                </div>
+            </div>
+
+            <!-- Discrepancies Table -->
+            <div class="table-container" style="flex:1;overflow-y:auto;max-height:420px;border:1px solid #334155;border-radius:8px;">
+                <table style="width:100%;">
+                    <thead>
+                        <tr>
+                            <th style="width:36px;text-align:center;"><input type="checkbox" id="reconcile-select-all" onchange="toggleSelectAllReconcile(this)" /></th>
+                            <th>Media Item</th>
+                            <th>Type</th>
+                            <th>Plex Server</th>
+                            <th>Trakt Profile</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reconcile-tbody">
+                        <tr><td colspan="6" style="text-align:center;padding:24px;color:#94a3b8;">Loading library discrepancies...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Footer Actions -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px;">
+                <div style="font-size:12px;color:#94a3b8;">
+                    <span id="reconcile-selected-count">0</span> items selected
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button type="button" onclick="closeReconcileModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
+                    <button type="button" id="reconcile-selected-btn" onclick="executeSelectedReconcile()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;" disabled>⚡ Sync Selected</button>
+                    <button type="button" id="reconcile-all-btn" onclick="executeAllReconcile()" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Reconcile All</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1312,6 +1385,291 @@
                 input.value = input.dataset.plex || '';
                 if (btnPlex) { btnPlex.style.background = '#2563eb'; btnPlex.style.color = '#fff'; btnPlex.style.fontWeight = '600'; }
                 if (instructions) instructions.innerHTML = 'Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Jellyfin (<code>/webhook/jellyfin</code>) &bull; Emby (<code>/webhook/emby</code>) &bull; Sonarr (<code>/sonarr</code>) &bull; Radarr (<code>/radarr</code>).';
+            }
+        }
+
+        // Two-Way Library Reconciliation Logic
+        let reconcileDiffItems = [];
+        let reconcileActiveFilter = 'all';
+        let reconcileSelectedIds = new Set();
+
+        function openReconcileModal(force = false) {
+            const modal = document.getElementById('reconcile-modal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            fetchDiscrepancies(force);
+        }
+
+        function closeReconcileModal() {
+            const modal = document.getElementById('reconcile-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function fetchDiscrepancies(force = false) {
+            const tbody = document.getElementById('reconcile-tbody');
+            const badge = document.getElementById('reconcile-count-badge');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#38bdf8;">Scanning media server & Trakt libraries...</td></tr>';
+            }
+            if (badge) badge.innerText = 'Scanning...';
+
+            try {
+                const url = (isDemo ? '/api/sync/diff?demo=true' : '/api/sync/diff') + (force ? '?force=true' : '');
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    reconcileDiffItems = data.diff || [];
+                    reconcileSelectedIds.clear();
+                    updateReconcileCounts();
+                    renderDiscrepanciesTable();
+                    const cardBadge = document.getElementById('reconcile-diff-badge');
+                    if (cardBadge) cardBadge.innerText = reconcileDiffItems.length;
+                } else {
+                    const err = await res.json();
+                    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:#ef4444;">Failed to scan discrepancies: ${err.detail || 'Error'}</td></tr>`;
+                    if (badge) badge.innerText = 'Error';
+                }
+            } catch (e) {
+                if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:#ef4444;">Error connecting to server: ${e.message}</td></tr>`;
+                if (badge) badge.innerText = 'Error';
+            }
+        }
+
+        function updateReconcileCounts() {
+            const allCount = reconcileDiffItems.length;
+            const traktCount = reconcileDiffItems.filter(i => i.status === 'trakt_only').length;
+            const plexCount = reconcileDiffItems.filter(i => i.status === 'plex_only').length;
+            const ratingCount = reconcileDiffItems.filter(i => i.status === 'rating_mismatch').length;
+
+            const cAll = document.getElementById('count-all');
+            const cTrakt = document.getElementById('count-trakt');
+            const cPlex = document.getElementById('count-plex');
+            const cRatings = document.getElementById('count-ratings');
+            const badge = document.getElementById('reconcile-count-badge');
+
+            if (cAll) cAll.innerText = allCount;
+            if (cTrakt) cTrakt.innerText = traktCount;
+            if (cPlex) cPlex.innerText = plexCount;
+            if (cRatings) cRatings.innerText = ratingCount;
+            if (badge) badge.innerText = `${allCount} Discrepanc${allCount === 1 ? 'y' : 'ies'}`;
+        }
+
+        function filterReconcile(filterType, tabBtn) {
+            reconcileActiveFilter = filterType;
+            document.querySelectorAll('.reconcile-tab').forEach(b => {
+                b.style.background = '#1e293b';
+                b.style.color = '#e2e8f0';
+                b.style.border = '1px solid #334155';
+            });
+            if (tabBtn) {
+                tabBtn.style.background = '#0284c7';
+                tabBtn.style.color = '#fff';
+                tabBtn.style.border = 'none';
+            }
+            renderDiscrepanciesTable();
+        }
+
+        function renderDiscrepanciesTable() {
+            const tbody = document.getElementById('reconcile-tbody');
+            if (!tbody) return;
+
+            let items = reconcileDiffItems;
+            if (reconcileActiveFilter !== 'all') {
+                items = items.filter(i => i.status === reconcileActiveFilter);
+            }
+
+            if (items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:28px;color:#10b981;font-weight:500;">✓ In sync! No discrepancies found in this category.</td></tr>';
+                updateSelectedCount();
+                return;
+            }
+
+            let html = '';
+            for (const item of items) {
+                const isChecked = reconcileSelectedIds.has(item.id);
+                const titleStr = item.type === 'episode'
+                    ? `${item.series_title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} &bull; ${item.title}`
+                    : `${item.title} (${item.year || 'N/A'})`;
+
+                let plexStatusHtml = '';
+                if (item.plex_watched) {
+                    plexStatusHtml = '<span style="color:#10b981;font-weight:600;">✓ Watched</span>';
+                } else {
+                    plexStatusHtml = '<span style="color:#64748b;">Unwatched</span>';
+                }
+                if (item.plex_rating !== null && item.plex_rating !== undefined) {
+                    plexStatusHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#facc15;padding:1px 5px;border-radius:4px;font-size:11px;">★ ${item.plex_rating}</span>`;
+                }
+
+                let traktStatusHtml = '';
+                if (item.trakt_watched) {
+                    traktStatusHtml = '<span style="color:#10b981;font-weight:600;">✓ Watched</span>';
+                } else {
+                    traktStatusHtml = '<span style="color:#64748b;">Unwatched</span>';
+                }
+                if (item.trakt_rating !== null && item.trakt_rating !== undefined) {
+                    traktStatusHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#facc15;padding:1px 5px;border-radius:4px;font-size:11px;">★ ${item.trakt_rating}</span>`;
+                }
+
+                let actionBadge = '';
+                if (item.action_recommended === 'mark_plex_watched') {
+                    actionBadge = '<span style="background:#065f46;color:#a7f3d0;border:1px solid #059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">&rarr; Mark Plex</span>';
+                } else if (item.action_recommended === 'sync_to_trakt') {
+                    actionBadge = '<span style="background:#1e3a8a;color:#93c5fd;border:1px solid #2563eb;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">&rarr; Push Trakt</span>';
+                } else {
+                    actionBadge = '<span style="background:#78350f;color:#fde68a;border:1px solid #d97706;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Sync Rating</span>';
+                }
+
+                html += `
+                <tr style="border-bottom: 1px solid #1e293b;">
+                    <td style="text-align:center;padding:10px 14px;">
+                        <input type="checkbox" class="reconcile-item-cb" data-id="${item.id}" ${isChecked ? 'checked' : ''} onchange="onReconcileItemCheckboxChange(this)" />
+                    </td>
+                    <td style="padding:10px 14px;color:#f8fafc;font-weight:500;font-size:13px;">${titleStr}</td>
+                    <td style="padding:10px 14px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 6px;border-radius:4px;font-size:11px;text-transform:uppercase;">${item.type}</span></td>
+                    <td style="padding:10px 14px;font-size:13px;">${plexStatusHtml}</td>
+                    <td style="padding:10px 14px;font-size:13px;">${traktStatusHtml}</td>
+                    <td style="padding:10px 14px;">${actionBadge}</td>
+                </tr>
+                `;
+            }
+
+            tbody.innerHTML = html;
+            updateSelectedCount();
+        }
+
+        function toggleSelectAllReconcile(masterCb) {
+            const isChecked = masterCb.checked;
+            let items = reconcileDiffItems;
+            if (reconcileActiveFilter !== 'all') {
+                items = items.filter(i => i.status === reconcileActiveFilter);
+            }
+            items.forEach(item => {
+                if (isChecked) reconcileSelectedIds.add(item.id);
+                else reconcileSelectedIds.delete(item.id);
+            });
+            renderDiscrepanciesTable();
+        }
+
+        function onReconcileItemCheckboxChange(cb) {
+            const id = cb.dataset.id;
+            if (cb.checked) reconcileSelectedIds.add(id);
+            else reconcileSelectedIds.delete(id);
+            updateSelectedCount();
+        }
+
+        function updateSelectedCount() {
+            const countEl = document.getElementById('reconcile-selected-count');
+            const syncBtn = document.getElementById('reconcile-selected-btn');
+            const count = reconcileSelectedIds.size;
+            if (countEl) countEl.innerText = count;
+            if (syncBtn) {
+                syncBtn.disabled = count === 0;
+                syncBtn.innerText = `⚡ Sync Selected (${count})`;
+            }
+        }
+
+        async function executeSelectedReconcile() {
+            const ids = Array.from(reconcileSelectedIds);
+            if (ids.length === 0) return;
+            await runReconciliation({ item_ids: ids });
+        }
+
+        async function executeAllReconcile() {
+            if (reconcileDiffItems.length === 0) {
+                alert('No discrepancies to reconcile.');
+                return;
+            }
+            if (!confirm(`Reconcile all ${reconcileDiffItems.length} discrepancies between media server and Trakt?`)) return;
+            await runReconciliation({ direction: 'all' });
+        }
+
+        async function quickReconcileTraktToPlex(btn) {
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = 'Syncing...';
+            }
+            try {
+                const url = isDemo ? '/api/sync/reconcile?demo=true' : '/api/sync/reconcile';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ direction: 'trakt_to_plex' }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (btn) {
+                        btn.innerText = `✓ Synced (${data.reconciled || 0})`;
+                        btn.style.background = '#059669';
+                    }
+                    const badge = document.getElementById('reconcile-diff-badge');
+                    if (badge) {
+                        const cur = parseInt(badge.innerText, 10) || 0;
+                        badge.innerText = Math.max(0, cur - (data.reconciled || 0));
+                    }
+                    setTimeout(() => {
+                        if (btn) {
+                            btn.innerText = '⚡ Quick Sync (Trakt → Plex)';
+                            btn.style.background = '#10b981';
+                            btn.disabled = false;
+                        }
+                    }, 2500);
+                } else {
+                    const err = await res.json();
+                    alert('Reconciliation failed: ' + (err.detail || 'Error'));
+                    if (btn) {
+                        btn.innerText = 'Error';
+                        btn.style.background = '#ef4444';
+                        btn.disabled = false;
+                    }
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function runReconciliation(payload) {
+            const pBox = document.getElementById('reconcile-progress-box');
+            const pBar = document.getElementById('reconcile-progress-bar');
+            const pMsg = document.getElementById('reconcile-progress-msg');
+            const pStats = document.getElementById('reconcile-progress-stats');
+            const syncBtn = document.getElementById('reconcile-selected-btn');
+            const allBtn = document.getElementById('reconcile-all-btn');
+
+            if (pBox) pBox.style.display = 'block';
+            if (pBar) pBar.style.width = '10%';
+            if (pMsg) pMsg.innerText = 'Starting reconciliation...';
+            if (pStats) pStats.innerText = 'Processing';
+            if (syncBtn) syncBtn.disabled = true;
+            if (allBtn) allBtn.disabled = true;
+
+            try {
+                const url = isDemo ? '/api/sync/reconcile?demo=true' : '/api/sync/reconcile';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (pBar) pBar.style.width = '100%';
+                    if (pMsg) pMsg.innerText = `Reconciliation completed: ${data.reconciled || 0} succeeded, ${data.failed || 0} failed.`;
+                    if (pStats) pStats.innerText = '100%';
+                    setTimeout(async () => {
+                        if (pBox) pBox.style.display = 'none';
+                        await fetchDiscrepancies(false);
+                    }, 2000);
+                } else {
+                    const err = await res.json();
+                    if (pMsg) pMsg.innerText = 'Reconciliation error: ' + (err.detail || 'Failed');
+                    if (pBar) pBar.style.background = '#ef4444';
+                }
+            } catch (e) {
+                if (pMsg) pMsg.innerText = 'Network error: ' + e.message;
+                if (pBar) pBar.style.background = '#ef4444';
+            } finally {
+                if (allBtn) allBtn.disabled = false;
             }
         }
 

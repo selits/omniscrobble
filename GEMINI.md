@@ -52,16 +52,20 @@ This document defines the architectural rules, security boundaries, and developm
   - Managed in `requirements.txt`.
 - **Test Protocol:**
   - Always run unit tests with:
+
     ```bash
     .venv/bin/pytest
     ```
+
   - All unit tests in `tests/test_scrobbler.py` must pass with 0 failures before completing any code changes or committing.
   - When adding new features or endpoints, add corresponding unit tests using `pytest` and `httpx.ASGITransport` / `starlette.testclient`.
 - **Secret Detection & Leak Prevention Protocol:**
   - Before proposing any commit or pushing, always verify that zero secrets, personal infrastructure hostnames, or tokens are leaked using `gitleaks`:
+
     ```bash
     docker run --rm -v $(pwd):/path zricethezav/gitleaks:latest detect --source="/path" --verbose
     ```
+
     or locally via `gitleaks detect`.
   - The GitHub Actions CI workflow (`.github/workflows/ci.yml`) runs `gitleaks-action` on every push and PR to block accidental secret leaks.
 

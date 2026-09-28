@@ -2242,7 +2242,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v1.4.0" in html
+    assert "v1.5.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -3674,6 +3674,433 @@ def test_systemd_service_file_consistency():
     content = service_path.read_text(encoding="utf-8")
     assert "Omniscrobble" in content
     assert "ExecStart=%h/plex-trakt-webhook/.venv/bin/python main.py" in content
+
+
+@pytest.mark.asyncio
+async def test_plex_api_client_operations():
+    """Verify PlexApiClient configuration, connection checks, library parsing, and scrobbling."""
+    from app.clients.plex_api_client import PlexApiClient
+
+    # 1. Unconfigured client
+    unconf = PlexApiClient(base_url="", token="")
+    assert not unconf.is_configured()
+    conn = await unconf.check_connection()
+    assert conn["status"] == "unconfigured"
+    assert await unconf.get_library_sections() == []
+    assert await unconf.get_movies("1") == []
+    assert await unconf.get_episodes("2") == []
+    assert not await unconf.mark_as_watched("123")
+    assert not await unconf.set_user_rating("123", 8.0)
+
+    # 2. Mock HTTP transport for configured client
+    async def mock_handler(request: httpx.Request):
+        url_str = str(request.url)
+        if "/identity" in url_str:
+            return httpx.Response(200, json={"MediaContainer": {"machineIdentifier": "test-uuid-123", "version": "1.40.1"}})
+        elif "/library/sections/1/all" in url_str:
+            return httpx.Response(200, json={
+                "MediaContainer": {
+                    "Metadata": [
+                        {
+                            "ratingKey": "1001",
+                            "title": "Inception",
+                            "year": 2010,
+                            "viewCount": 0,
+                            "Guid": [{"id": "imdb://tt1375666"}, {"id": "tmdb://27205"}],
+                            "userRating": 9.0,
+                        },
+                        {
+                            "ratingKey": "1002",
+                            "title": "Interstellar",
+                            "year": 2014,
+                            "viewCount": 2,
+                            "Guid": [{"id": "imdb://tt0816692"}],
+                        }
+                    ]
+                }
+            })
+        elif "/library/sections/2/all" in url_str:
+            return httpx.Response(200, json={
+                "MediaContainer": {
+                    "Metadata": [
+                        {
+                            "ratingKey": "2001",
+                            "grandparentTitle": "Severance",
+                            "grandparentRatingKey": "2000",
+                            "parentIndex": 1,
+                            "index": 1,
+                            "title": "Good News About Hell",
+                            "year": 2022,
+                            "viewCount": 1,
+                            "Guid": [{"id": "imdb://tt11280740"}],
+                        }
+                    ]
+                }
+            })
+        elif "/library/sections" in url_str:
+            return httpx.Response(200, json={
+                "MediaContainer": {
+                    "Directory": [
+                        {"key": "1", "title": "Movies", "type": "movie", "uuid": "sec-1"},
+                        {"key": "2", "title": "TV Shows", "type": "show", "uuid": "sec-2"},
+                        {"key": "3", "title": "Music", "type": "artist", "uuid": "sec-3"},
+                    ]
+                }
+            })
+        elif "/:/scrobble" in url_str:
+            return httpx.Response(200, text="OK")
+        elif "/:/unscrobble" in url_str:
+            return httpx.Response(200, text="OK")
+        elif "/:/rate" in url_str:
+            return httpx.Response(200, text="OK")
+        return httpx.Response(404)
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(mock_handler))
+    plex = PlexApiClient(base_url="http://mock-plex:32400", token="mock-token-xyz", client=mock_client)
+    assert plex.is_configured()
+
+    # Connection check
+    conn_info = await plex.check_connection()
+    assert conn_info["status"] == "connected"
+    assert conn_info["machine_identifier"] == "test-uuid-123"
+
+    # Sections check
+    sections = await plex.get_library_sections()
+    assert len(sections) == 2
+    assert sections[0]["title"] == "Movies" and sections[0]["type"] == "movie"
+    assert sections[1]["title"] == "TV Shows" and sections[1]["type"] == "show"
+
+    # Movies check
+    movies = await plex.get_movies("1")
+    assert len(movies) == 2
+    assert movies[0]["rating_key"] == "1001"
+    assert movies[0]["title"] == "Inception"
+    assert not movies[0]["is_watched"]
+    assert movies[0]["ids"]["imdb"] == "tt1375666"
+    assert movies[1]["rating_key"] == "1002"
+    assert movies[1]["is_watched"]
+
+    # Episodes check
+    episodes = await plex.get_episodes("2")
+    assert len(episodes) == 1
+    assert episodes[0]["rating_key"] == "2001"
+    assert episodes[0]["series_title"] == "Severance"
+    assert episodes[0]["season"] == 1
+    assert episodes[0]["episode"] == 1
+    assert episodes[0]["is_watched"]
+
+    # Actions check
+    assert await plex.mark_as_watched("1001")
+    assert await plex.mark_as_unwatched("1002")
+    assert await plex.set_user_rating("1001", 9.5)
+
+
+@pytest.mark.asyncio
+async def test_trakt_reverse_sync_fetch_methods():
+    """Verify TraktClient reverse sync methods (watched movies, watched shows, ratings)."""
+    from app.clients.trakt_client import TraktClient
+
+    async def mock_trakt_handler(request: httpx.Request):
+        url = str(request.url)
+        if "/sync/watched/movies" in url:
+            return httpx.Response(200, json=[
+                {
+                    "plays": 1,
+                    "last_watched_at": "2025-01-01T00:00:00.000Z",
+                    "movie": {"title": "Inception", "year": 2010, "ids": {"imdb": "tt1375666", "tmdb": 27205}},
+                }
+            ])
+        elif "/sync/watched/shows" in url:
+            return httpx.Response(200, json=[
+                {
+                    "plays": 1,
+                    "show": {"title": "Severance", "year": 2022, "ids": {"imdb": "tt11280740"}},
+                    "seasons": [
+                        {
+                            "number": 1,
+                            "episodes": [
+                                {"number": 1, "plays": 1, "last_watched_at": "2025-01-01T00:00:00.000Z"}
+                            ]
+                        }
+                    ]
+                }
+            ])
+        elif "/sync/ratings/movies" in url:
+            return httpx.Response(200, json=[
+                {
+                    "rating": 10,
+                    "movie": {"title": "Inception", "year": 2010, "ids": {"imdb": "tt1375666"}},
+                }
+            ])
+        return httpx.Response(404)
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(mock_trakt_handler))
+    t = TraktClient(Config, client=mock_client)
+    t.access_token = "mock-token"
+
+    watched_movies = await t.get_watched_movies()
+    assert len(watched_movies) == 1
+    assert watched_movies[0]["movie"]["title"] == "Inception"
+
+    watched_shows = await t.get_watched_shows()
+    assert len(watched_shows) == 1
+    assert watched_shows[0]["show"]["title"] == "Severance"
+
+    ratings = await t.get_ratings("movies")
+    assert len(ratings) == 1
+    assert ratings[0]["rating"] == 10
+
+
+def test_loop_prevention_manager():
+    """Verify thread-safe LoopPreventionManager suppression, TTL expiration, and clearing."""
+    from app.services.loop_prevention import LoopPreventionManager
+    import time
+
+    lp = LoopPreventionManager(default_ttl=1.0)
+    assert not lp.is_ignored("1234")
+    assert not lp.is_ignored("")
+    assert lp.get_active_count() == 0
+
+    lp.ignore("1234", ttl=0.2)
+    assert lp.is_ignored("1234")
+    assert lp.get_active_count() == 1
+
+    # Wait for expiration
+    time.sleep(0.25)
+    assert not lp.is_ignored("1234")
+    assert lp.get_active_count() == 0
+
+    # Clear functionality
+    lp.ignore("5678", ttl=60.0)
+    assert lp.is_ignored("5678")
+    lp.clear()
+    assert not lp.is_ignored("5678")
+
+
+@pytest.mark.asyncio
+async def test_webhook_echo_loop_suppression():
+    """Verify that incoming webhooks containing suppressed keys or GUIDs are ignored by loop prevention."""
+    from app.services.loop_prevention import loop_prevention
+    from app.plex_parser import ParsedMedia
+    from app.main import process_media_event
+
+    loop_prevention.clear()
+
+    # Case 1: Unsuppressed event proceeds
+    unsuppressed = ParsedMedia(
+        event="media.scrobble",
+        username="test_user",
+        media_type="movie",
+        title="Test Movie",
+        year=2024,
+        rating_key="99901",
+        ids={"imdb": "tt999001"},
+        progress=100.0,
+    )
+    # Temporarily mark Trakt unauthenticated so it returns not authenticated rather than loop prevention
+    # But when we suppress:
+    loop_prevention.ignore("99901", ttl=60.0)
+    res = await process_media_event(unsuppressed, endpoint_name="webhook")
+    assert res["status"] == "ignored"
+    assert res["reason"] == "loop_prevention"
+    assert res["key"] == "99901"
+
+    # Case 2: Suppressed by external GUID
+    loop_prevention.clear()
+    loop_prevention.ignore("tt999001", ttl=60.0)
+    res2 = await process_media_event(unsuppressed, endpoint_name="webhook")
+    assert res2["status"] == "ignored"
+    assert res2["reason"] == "loop_prevention"
+
+    loop_prevention.clear()
+
+
+@pytest.mark.asyncio
+async def test_reverse_sync_manager_scan_and_reconciliation():
+    """Verify ReverseSyncManager discrepancy detection and selective sync execution."""
+    from app.services.reverse_sync_manager import ReverseSyncManager
+    from app.clients.plex_api_client import PlexApiClient
+    from app.clients.trakt_client import TraktClient
+    from app.services.loop_prevention import LoopPreventionManager
+
+    # Mock Plex client
+    scrobbled_keys = []
+    rated_keys = []
+
+    async def mock_plex_handler(request: httpx.Request):
+        url = str(request.url)
+        if "/identity" in url:
+            return httpx.Response(200, json={"MediaContainer": {"machineIdentifier": "test-uuid"}})
+        elif "/library/sections/1/all" in url:
+            return httpx.Response(200, json={
+                "MediaContainer": {
+                    "Metadata": [
+                        {
+                            "ratingKey": "101",
+                            "title": "Dune",
+                            "year": 2021,
+                            "viewCount": 0,
+                            "Guid": [{"id": "imdb://tt1160419"}],
+                            "userRating": None,
+                        },
+                        {
+                            "ratingKey": "102",
+                            "title": "Blade Runner 2049",
+                            "year": 2017,
+                            "viewCount": 1,
+                            "Guid": [{"id": "imdb://tt1856101"}],
+                            "userRating": 9.0,
+                        }
+                    ]
+                }
+            })
+        elif "/library/sections" in url:
+            return httpx.Response(200, json={
+                "MediaContainer": {
+                    "Directory": [{"key": "1", "title": "Movies", "type": "movie"}]
+                }
+            })
+        elif "/:/scrobble" in url:
+            key = request.url.params.get("key")
+            scrobbled_keys.append(key)
+            return httpx.Response(200, text="OK")
+        elif "/:/rate" in url:
+            key = request.url.params.get("key")
+            rated_keys.append(key)
+            return httpx.Response(200, text="OK")
+        return httpx.Response(404)
+
+    # Mock Trakt client
+    history_synced = []
+
+    async def mock_trakt_handler(request: httpx.Request):
+        url = str(request.url)
+        if "/sync/watched/movies" in url:
+            # Trakt has watched "Dune" (which Plex has unwatched)
+            # Trakt does NOT have watched "Blade Runner 2049" (which Plex has watched)
+            return httpx.Response(200, json=[
+                {
+                    "plays": 1,
+                    "movie": {"title": "Dune", "year": 2021, "ids": {"imdb": "tt1160419"}},
+                }
+            ])
+        elif "/sync/watched/shows" in url:
+            return httpx.Response(200, json=[])
+        elif "/sync/ratings/movies" in url:
+            return httpx.Response(200, json=[])
+        elif "/sync/history" in url:
+            history_synced.append(json.loads(request.content))
+            return httpx.Response(201, json={"added": {"movies": 1}})
+        return httpx.Response(200, json=[])
+
+    plex_client = PlexApiClient(
+        base_url="http://mock-plex:32400",
+        token="token",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(mock_plex_handler))
+    )
+    trakt_client = TraktClient(
+        Config,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(mock_trakt_handler))
+    )
+    trakt_client.access_token = "mock-trakt-token"
+    lp = LoopPreventionManager()
+
+    mgr = ReverseSyncManager(plex_client=plex_client, trakt_client=trakt_client, loop_prevention_mgr=lp)
+
+    # 1. Status check
+    status = await mgr.get_status()
+    assert status["configured"]
+    assert status["plex_connected"]
+    assert status["trakt_authenticated"]
+
+    # 2. Scan discrepancies
+    diff = await mgr.scan_discrepancies(force=True)
+    assert len(diff) == 2
+
+    # Check "Dune" discrepancy (watched on Trakt, unwatched on Plex -> trakt_only)
+    dune_diff = next(d for d in diff if d["title"] == "Dune")
+    assert dune_diff["status"] == "trakt_only"
+    assert dune_diff["action_recommended"] == "mark_plex_watched"
+    assert dune_diff["rating_key"] == "101"
+
+    # Check "Blade Runner 2049" discrepancy (watched on Plex, unwatched on Trakt -> plex_only)
+    br_diff = next(d for d in diff if d["title"] == "Blade Runner 2049")
+    assert br_diff["status"] == "plex_only"
+    assert br_diff["action_recommended"] == "sync_to_trakt"
+    assert br_diff["rating_key"] == "102"
+
+    # 3. Execute reconciliation (trakt_to_plex: mark Dune as watched on Plex)
+    res = await mgr.execute_reconciliation(direction="trakt_to_plex")
+    assert res["status"] == "success"
+    assert res["reconciled"] == 1
+    assert "101" in scrobbled_keys
+    # Verify loop prevention suppressed key 101 during the call
+    assert lp.is_ignored("101")
+
+    # 4. Execute remaining reconciliation (plex_to_trakt: push Blade Runner 2049 to Trakt)
+    res2 = await mgr.execute_reconciliation(direction="plex_to_trakt")
+    assert res2["status"] == "success"
+    assert res2["reconciled"] == 1
+    assert len(history_synced) == 1
+    assert history_synced[0]["movies"][0]["title"] == "Blade Runner 2049"
+
+
+def test_sync_api_endpoints_and_admin_security():
+    """Verify /api/sync/* endpoints with admin authentication gating and demo mode simulation."""
+    client = TestClient(app)
+
+    # 1. Unauthenticated diff request is rejected
+    res = client.get("/api/sync/diff")
+    if Config.WEBHOOK_SECRET:
+        assert res.status_code == 401
+
+    # 2. Authenticated status endpoint
+    res_status = client.get("/api/sync/status")
+    assert res_status.status_code == 200
+    data = res_status.json()
+    assert "configured" in data
+    assert "interval_minutes" in data
+
+    # 3. Demo mode diff returns simulated discrepancies without admin token
+    res_demo = client.get("/api/sync/diff?demo=true")
+    assert res_demo.status_code == 200
+    demo_diff = res_demo.json()
+    assert demo_diff["status"] == "ok"
+    assert len(demo_diff["diff"]) == 4
+
+    # 4. Admin authenticated diff request
+    headers = {"x-webhook-secret": Config.WEBHOOK_SECRET} if Config.WEBHOOK_SECRET else {}
+    res_diff = client.get("/api/sync/diff", headers=headers)
+    assert res_diff.status_code == 200
+    assert "diff" in res_diff.json()
+
+    # 5. Demo reconcile execution
+    res_rec = client.post("/api/sync/reconcile?demo=true", json={"direction": "all"})
+    assert res_rec.status_code == 200
+    assert res_rec.json()["status"] == "success"
+
+    # 6. Progress endpoint
+    res_prog = client.get("/api/sync/progress")
+    assert res_prog.status_code == 200
+    assert "in_progress" in res_prog.json()
+
+
+def test_dashboard_reconciliation_elements():
+    """Verify dashboard HTML includes Two-Way Reconciliation card and modal dialog."""
+    client = TestClient(app)
+
+    res = client.get("/")
+    assert res.status_code == 200
+    html_content = res.text
+    assert "Two-Way Library Reconciliation" in html_content
+    assert 'id="reconcile-modal"' in html_content
+    assert "reconcile-diff-badge" in html_content
+
+    # In demo mode
+    res_demo = client.get("/demo")
+    assert res_demo.status_code == 200
+    assert "Two-Way Library Reconciliation" in res_demo.text
+
 
 
 

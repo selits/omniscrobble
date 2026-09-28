@@ -31,6 +31,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     demo_users = demo_mgr.get_demo_users()
     demo_logs = demo_mgr.get_demo_logs(lines=60)
     demo_stats = demo_mgr.get_demo_stats()
+    demo_reconciliation = demo_mgr.get_demo_reconciliation()
     sonarr_catalog = demo_mgr.SONARR_CATALOG
 
     # 2. Render initial static HTML template variables
@@ -200,6 +201,38 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     </div>
     """
 
+    reconcile_card_html = f"""
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#10b981;font-size:12px;font-weight:600;">● Plex API Connected</span>
+                <span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Every 30m</span>
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Bi-directional sync matches watched history and ratings between your media server and Trakt with automatic echo-loop suppression.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div>
+                <div style="font-size:14px;font-weight:600;color:#f8fafc;display:flex;align-items:center;gap:6px;">
+                    <span>Pending Discrepancies</span>
+                    <span id="reconcile-diff-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 8px;border-radius:9999px;font-size:12px;font-weight:700;">{len(demo_reconciliation)}</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:4px;">
+                    Ratings sync: Enabled &bull; Startup sync: Active
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>
+                <button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; Plex)</button>
+            </div>
+        </div>
+    </div>
+    """
+
     backup_card_html = f"""
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
@@ -323,6 +356,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{STAT_COLLECTIONS}}': str(demo_stats['collections']),
         '{{WEBHOOK_CARD}}': webhook_html_section,
         '{{COWATCH_CARD}}': cowatch_card_html,
+        '{{RECONCILIATION_CARD}}': reconcile_card_html,
         '{{BACKUP_CARD}}': backup_card_html,
         '{{MANUAL_SCROBBLE_BTN}}': '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔍 Manual Scrobble</button>',
         '{{RETRY_QUEUE_BTN}}': '',
@@ -345,12 +379,14 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     (function() {{
         const initialShows = {json.dumps(demo_shows)};
         const initialEvents = {json.dumps(demo_events)};
+        const initialReconciliation = {json.dumps(demo_reconciliation)};
         const sonarrCatalog = {json.dumps(sonarr_catalog)};
         const demoLogs = {json.dumps(demo_logs)};
 
         const clientState = {{
             shows: [...initialShows],
             events: [...initialEvents],
+            reconciliation: [...initialReconciliation],
             movies_enabled: false,
             playback: {json.dumps(demo_playback)}
         }};
@@ -514,6 +550,39 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     }},
                     result: {{ status: 'ok', mode: 'simulated' }}
                 }});
+            }}
+
+            // 12. Two-Way Library Reconciliation Endpoints
+            if (path.endsWith('/api/sync/status')) {{
+                return jsonResp({{
+                    configured: true,
+                    plex_configured: true,
+                    plex_connected: true,
+                    trakt_authenticated: true,
+                    diff_count: clientState.reconciliation.length,
+                    interval_minutes: 30,
+                    sync_on_startup: true,
+                    sync_ratings: true
+                }});
+            }}
+            if (path.endsWith('/api/sync/diff')) {{
+                return jsonResp({{ status: 'ok', diff: clientState.reconciliation, count: clientState.reconciliation.length }});
+            }}
+            if (path.endsWith('/api/sync/reconcile')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                let count = clientState.reconciliation.length;
+                if (body.item_ids && Array.isArray(body.item_ids)) {{
+                    clientState.reconciliation = clientState.reconciliation.filter(i => !body.item_ids.includes(i.id));
+                    count = body.item_ids.length;
+                }} else {{
+                    clientState.reconciliation = [];
+                }}
+                const badge = document.getElementById('reconcile-diff-badge');
+                if (badge) badge.innerText = clientState.reconciliation.length;
+                return jsonResp({{ status: 'success', total: count, reconciled: count, failed: 0, items: [] }});
+            }}
+            if (path.endsWith('/api/sync/progress')) {{
+                return jsonResp({{ in_progress: false, status: 'idle', total: 0, current: 0, success: 0, failed: 0 }});
             }}
 
             return jsonResp({{ status: 'ok', mode: 'simulated' }});

@@ -18,6 +18,7 @@ A lightweight, modern Python service that receives media server webhooks (Plex, 
 
 ## 🌟 Features
 
+- **Two-Way Synchronization & Library Reconciliation**: Bi-directional matching of watched history and ratings between media servers (Plex) and Trakt (`/api/sync/*`), interactive discrepancy diff table with 1-click or selective reconciliation, automated periodic background sync, and smart TTL-based scrobble loop prevention.
 - **Universal Webhook Ingestion**: Native webhook support for **Plex** (`/webhook`), **Jellyfin** (`/webhook/jellyfin`), and **Emby** (`/webhook/emby`), standardizing metadata, provider IDs (IMDb, TMDb, TVDb), and playback states into a unified scrobble pipeline.
 - **Granular Scrobble Thresholds**: Configurable media-specific thresholds — set `EPISODE_SCROBBLE_THRESHOLD=80` for TV episodes (allowing credit skipping) and `MOVIE_SCROBBLE_THRESHOLD=90` for feature films (preventing premature scrobbles during climaxes).
 - **Mobile Progressive Web App (PWA) & OLED Theme**: Fully installable PWA with offline service worker caching, dynamic SVG app icons, and an instant True-Black OLED dark mode toggle (`🌙 OLED`).
@@ -139,6 +140,13 @@ SONARR_URL=http://localhost:8989
 SONARR_API_KEY=your_sonarr_api_key_here
 RADARR_URL=http://localhost:7878
 RADARR_API_KEY=your_radarr_api_key_here
+
+# (Optional) Two-Way Reverse Sync & Library Reconciliation (Trakt -> Plex)
+PLEX_URL=http://<your-server-ip-or-domain>:32400
+PLEX_TOKEN=your_plex_token_here
+REVERSE_SYNC_INTERVAL=0
+REVERSE_SYNC_ON_STARTUP=false
+REVERSE_SYNC_RATINGS=true
 ```
 
 ---
@@ -148,18 +156,20 @@ RADARR_API_KEY=your_radarr_api_key_here
 You can authenticate either through your web browser or from the command line:
 
 #### Option A: Via Web Browser (Recommended)
+
 1. Start the server (see background/systemd setup below).
 2. Open **`http://<server-ip>:<PORT>/auth`** in your browser.
 3. The page will fetch your 8-character activation code. Click the link to **`https://trakt.tv/activate`**, enter the code, and click **Authorize**.
 4. The page will automatically detect approval and redirect to your dashboard!
 
 #### Option B: Via Terminal / CLI
+
 ```bash
 .venv/bin/python auth.py
 ```
+
 1. Open the activation URL displayed, enter the 8-character code, and authorize.
 2. The script will save your tokens to `trakt_tokens.json`.
-
 
 ---
 
@@ -168,14 +178,19 @@ You can authenticate either through your web browser or from the command line:
 When deploying on a remote Linux server, VPS, or containerized hosting environment where Plex runs inside an isolated container, follow these guidelines:
 
 ### 1. Select an Available Port
+
 Choose an available port on your host (e.g. `8080`, or your provider's assigned port). Confirm it is free:
+
 ```bash
 ss -tuln | grep <PORT>
 ```
+
 *(If it returns empty, the port is free to use).*
 
 ### 2. Network Configuration: Why `0.0.0.0` is Required
+
 In `.env`, always set:
+
 ```ini
 SERVER_HOST=0.0.0.0
 SERVER_PORT=<PORT>
@@ -188,28 +203,35 @@ If set to `127.0.0.1`, the service will only accept connections from the host an
 Choose one of the methods below to keep the scrobbler running in the background and ensure it automatically restarts if the server reboots:
 
 #### Option A: systemd User Service (Recommended for Linux Servers & VPS)
+
 Linux servers and non-root environments support user-level `systemd` services without needing `sudo`. This automatically restarts the service on server boot and recovers from crashes.
 
 1. Copy the provided service file to your systemd user directory:
+
    ```bash
    mkdir -p ~/.config/systemd/user
    cp plex-trakt.service ~/.config/systemd/user/omniscrobble.service
    ```
+
    *(Note: The service file defaults to `%h/omniscrobble` or `%h/plex-trakt-webhook`. Running `./upgrade.sh` automatically configures `WorkingDirectory` and `ExecStart` for your exact directory).*
 
 2. Enable lingering so the service starts on boot without requiring an active SSH session:
+
    ```bash
    loginctl enable-linger $USER
    ```
+
    *(On many managed Linux hosts, lingering is typically enabled by default).*
 
 3. Reload systemd, enable, and start the service:
+
    ```bash
    systemctl --user daemon-reload
    systemctl --user enable --now omniscrobble.service
    ```
 
 4. **Useful management commands:**
+
    ```bash
    # Check service status
    systemctl --user status omniscrobble.service
@@ -225,9 +247,12 @@ Linux servers and non-root environments support user-level `systemd` services wi
 ---
 
 #### Option B: Cron `@reboot` (Fallback for Environments without systemd)
+
 If your host does not support user systemd services:
+
 1. Run `crontab -e`.
 2. Add the following line at the end (adjusting the path to your repository):
+
    ```bash
    @reboot /home/<username>/omniscrobble/start.sh >> /home/<username>/omniscrobble/server.log 2>&1 &
    ```
@@ -235,6 +260,7 @@ If your host does not support user systemd services:
 ---
 
 #### Option C: Running with Screen (Manual / Temporary)
+
 If you only want to run it during testing without surviving server reboots:
 
 ```bash
@@ -252,17 +278,22 @@ screen -S plex-trakt
 ---
 
 #### Option D: Docker & Docker Compose
+
 If you prefer running in a container:
 
 1. Configure your `.env` file (set `TRAKT_TOKENS_FILE=/app/data/trakt_tokens.json`).
 2. Start the service with Docker Compose:
+
    ```bash
    docker compose up -d
    ```
+
 3. Check container logs and built-in health check:
+
    ```bash
    docker compose logs -f
    ```
+
    *(Data is persisted in the `./data` volume, and the container runs under a hardened, non-root `appuser`)*.
 
 ---
@@ -272,6 +303,7 @@ If you prefer running in a container:
 ## 🔗 Adding Webhooks to Media Servers
 
 ### Plex Media Server
+
 1. Open **Plex Web** (`https://app.plex.tv/desktop`).
 2. Go to **Settings (wrench icon) &rarr; Webhooks** (under Account settings).
 3. Click **Add Webhook** and enter your endpoint:
@@ -280,6 +312,7 @@ If you prefer running in a container:
 4. Click **Save Changes**.
 
 ### Jellyfin Media Server
+
 1. In your Jellyfin Server Dashboard, navigate to **Plugins &rarr; Catalog**.
 2. Find and install the official **Webhook** plugin, then restart Jellyfin.
 3. Open **Dashboard &rarr; Plugins &rarr; Webhook**, and click **Add Generic Webhook**.
@@ -289,6 +322,7 @@ If you prefer running in a container:
 5. Click **Save**.
 
 ### Emby Media Server
+
 1. In your Emby Server Dashboard, navigate to **Settings &rarr; Webhooks**.
 2. Click **Add Webhook** and select **Generic Webhook**.
 3. Configure the webhook destination:
@@ -330,19 +364,25 @@ If you prefer running in a container:
 | **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
 | **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist (Admin only). |
 | **`/api/test/webhook`** | `POST` | **Synthetic Webhook Simulator**: Test and simulate server events with dry-run or live Trakt sync (Admin only). |
+| **`/api/sync/status`** | `GET` | **Sync Diagnostics**: Connection status for media server, last scan/sync timestamps, and operational flags. |
+| **`/api/sync/diff`** | `GET` | **Library Discrepancy Diff**: Scan and list watched status and rating differences between Trakt and Plex (Admin only). |
+| **`/api/sync/reconcile`** | `POST` | **Execute Reconciliation**: Reconcile selected items or entire library bi-directionally (Admin only). |
+| **`/api/sync/progress`** | `GET` | **Sync Progress**: Real-time progress percentage and item counts for active batch sync jobs. |
 | **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
 | **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
-
 
 ---
 
 ## 👥 Watch Together & Multi-User Accounts
 
 ### 1. The Co-Watching Dilemma
+
 When couples, roommates, or families watch TV shows together on a shared living room Plex profile, only the primary profile's Trakt account traditionally gets updated. If you try to scrobble everything, your partner's Trakt account gets polluted with shows you watched alone.
 
 ### 2. The Solution: Intelligent Dual-Sync
+
 **Omniscrobble** solves this with an integrated **Watch Together Engine**:
+
 - **Shared Shows Whitelist**: Define shows you watch together (e.g., *The Bear*, *Severance*, *Succession*). Shows configured in `.env` are automatically merged with dynamic dashboard additions in `data/cowatch_shows.json` on startup.
 - **Automatic Matching**: When you finish an episode of a shared show on your Plex profile, it automatically marks as watched on **both** your Trakt account and your partner's Trakt account.
 - **Solo Shows Untouched**: Solo shows, anime, or personal binge sessions are tracked strictly on your own profile.
@@ -353,18 +393,23 @@ When couples, roommates, or families watch TV shows together on a shared living 
 - **Sonarr Live Autocomplete**: As you type show names into the dashboard, it queries your Sonarr library in real-time, automatically filtering out already whitelisted shows for instant 1-click addition.
 
 ### 3. Setting Up Watch Together
+
 1. Add your partner's username in `.env`:
+
    ```ini
    CO_WATCH_USER=partner_username
    CO_WATCH_SHOWS=The Bear, Severance, House of the Dragon
    CO_WATCH_PLAYERS=Living Room Apple TV, Main TV
    CO_WATCH_MOVIES=false
    ```
+
 2. Link their Trakt account by opening `http://<server>:<PORT>/auth?user=partner_username` and entering their Trakt activation code.
 3. Done! Shows in your whitelist will now automatically scrobble to both accounts seamlessly.
 
 ### 4. Sonarr & Radarr Integration
+
 Connect Sonarr and Radarr to supercharge your dashboard and collection tracking:
+
 1. **Live Co-Watch Autocomplete**:
    Add your Sonarr credentials to `.env`:
 
@@ -375,11 +420,66 @@ Connect Sonarr and Radarr to supercharge your dashboard and collection tracking:
 
    Now when adding shows to your shared list on the dashboard, matching series from your Sonarr library will autocomplete automatically with years and status badges, excluding shows you've already added!
 2. **Direct Webhooks for Trakt Collection**:
-   * In Sonarr: Go to **Settings &rarr; Connect &rarr; Add Webhook**.
-   * URL: `http://<server>:<PORT>/sonarr` (or `http://<server>:<PORT>/sonarr?token=YOUR_SECRET` if `WEBHOOK_SECRET` is set).
-   * Triggers: Check **On Download** and **On Upgrade**.
-   * Click **Test** and **Save**. Your Trakt collection will now update the moment Sonarr imports a download!
-   * (Radarr is also supported using `http://<server>:<PORT>/radarr`).
+   - In Sonarr: Go to **Settings &rarr; Connect &rarr; Add Webhook**.
+   - URL: `http://<server>:<PORT>/sonarr` (or `http://<server>:<PORT>/sonarr?token=YOUR_SECRET` if `WEBHOOK_SECRET` is set).
+   - Triggers: Check **On Download** and **On Upgrade**.
+   - Click **Test** and **Save**. Your Trakt collection will now update the moment Sonarr imports a download!
+   - (Radarr is also supported using `http://<server>:<PORT>/radarr`).
+
+---
+
+## 🔄 Two-Way Synchronization & Library Reconciliation
+
+Standard scrobbling is one-directional (Media Server $\to$ Trakt). When you watch a movie in theaters, on Netflix, on an airplane, or via a mobile app, you mark it as watched on Trakt—leaving your local Plex library showing it as "Unwatched".
+
+**Omniscrobble v1.5.0** introduces a bi-directional reconciliation engine that bridges your local media server library with your Trakt cloud history:
+
+### 1. How Reconciliation Works
+
+- **Direct Media Server API (`PlexApiClient`)**: Connects securely to your Plex server via `PLEX_URL` and `PLEX_TOKEN`.
+- **Intelligent GUID Matching**: Compares Trakt watched history (`/sync/watched/movies`, `/sync/watched/shows`) against your media server library sections, resolving titles accurately using IMDb (`imdb://tt...`), TMDb (`tmdb://...`), and TVDb identifiers.
+- **Discrepancy Categorization**:
+  - `Trakt Only`: Watched in Trakt cloud history, but marked unwatched on Plex.
+  - `Plex Only`: Watched on your media server, but missing from Trakt history.
+  - `Rating Mismatch`: Rated on both platforms but with different values (e.g. 8/10 on Plex vs. 9/10 on Trakt).
+
+### 2. Smart Loop Prevention Architecture
+
+When Omniscrobble calls Plex to mark an item as watched, Plex normally fires an outgoing `media.scrobble` webhook. Without safeguards, this would create an infinite scrobble ping-pong loop.
+
+Omniscrobble features a built-in, thread-safe `LoopPreventionManager`:
+
+- Tracks synchronized media IDs and rating keys in an in-memory cache with an automated TTL (default 60s).
+- Webhooks matching recently synchronized items are dropped immediately before entering the scrobble pipeline.
+- Cleans expired cache entries automatically to ensure subsequent organic plays are scrobbled normally.
+
+### 3. Interactive Web Dashboard UI
+
+The web dashboard includes a dedicated **Library Reconciliation** card and interactive modal:
+
+- **1-Click Scan**: View real-time discrepancy counts and connection status.
+- **Interactive Diff Modal (`#reconcile-modal`)**: Filter discrepancies by category (`All`, `Trakt Only`, `Plex Only`, `Rating Mismatch`).
+- **Selective Syncing**: Select specific items via checkboxes or click **"Sync All"** / **"Quick Reconcile (Trakt ➔ Plex)"**.
+- **Live Progress Bar**: Polled in real-time (`GET /api/sync/progress`) showing batch progress, percentage, and success/failure tallies.
+
+### 4. Reverse Sync Configuration
+
+Enable two-way synchronization in your `.env`:
+
+```ini
+# Direct Plex Media Server Connection
+PLEX_URL=http://<your-server-ip-or-domain>:32400
+PLEX_TOKEN=your_plex_token_here
+
+# Automated periodic reconciliation in seconds (0 = manual via UI only, 21600 = every 6 hours)
+REVERSE_SYNC_INTERVAL=0
+
+# Run reconciliation scan & sync automatically on service startup
+REVERSE_SYNC_ON_STARTUP=false
+
+# Reconcile numerical/star ratings alongside watched status
+REVERSE_SYNC_RATINGS=true
+```
 
 ---
 
@@ -388,6 +488,7 @@ Connect Sonarr and Radarr to supercharge your dashboard and collection tracking:
 **Omniscrobble** includes a built-in, thread-safe Prometheus metrics registry exporting directly on `/metrics` (enabled via `PROMETHEUS_METRICS_ENABLED=true`).
 
 ### Prometheus Scrape Configuration
+
 Add the following to your `prometheus.yml`:
 
 ```yaml
@@ -414,6 +515,7 @@ scrape_configs:
 ### 📜 Authenticated System Log Viewer
 
 The web dashboard includes an integrated, real-time terminal log viewer accessible via the **"📜 View Logs"** button in the System Operations card (protected by the `WEBHOOK_SECRET` admin authorization gate):
+
 - **Live Search & Filtering**: Filter logs in real-time by keyword, show title, or log level (`ALL`, `ERROR`, `WARNING`, `INFO`).
 - **Dual Log Source**: Automatically queries `journalctl --user -u plex-trakt` when running as a systemd user service on Linux, with transparent fallback to an in-memory 1,000-line `RingBufferLogHandler` for containerized (Docker) and local development.
 - **Strict Privacy Redaction**: Automatically sanitizes sensitive tokens, query parameters (`?token=...`), Bearer authorization headers, and webhook secrets from all emitted log lines.
@@ -424,13 +526,17 @@ The web dashboard includes an integrated, real-time terminal log viewer accessib
 ## 🛡️ Persistent Offline Queue & Disaster Recovery
 
 ### 1. Resilient Offline Queue (SQLite)
+
 If Trakt experiences API downtime (HTTP 5xx), rate limits (HTTP 429), or your server temporarily loses internet connectivity:
+
 - The service automatically enqueues the failed scrobble, rating, or collection event into `data/queue.db`.
 - A background worker attempts to drain the queue at regular intervals (`QUEUE_RETRY_INTERVAL`, default 300s) with exponential backoff.
 - The web dashboard displays live queue depth and allows 1-click **"Retry Queue Now"** or **"Clear Queue"** directly from the UI.
 
 ### 2. 1-Click System Backup & Restore
+
 Safeguard your multi-user tokens, offline retry database, and watch-together configuration without manual file copying:
+
 - **Download Backup**: Click **"Download Backup (.zip)"** on the dashboard or request `GET /api/backup` (Admin only) to receive a timestamped archive.
 - **Restore Backup**: Drag and drop your `.zip` archive or send `POST /api/restore` (Admin only). The server automatically applies Zip Slip security path validation, unpacks the configuration, and refreshes active Trakt clients without rebooting.
 
@@ -439,12 +545,16 @@ Safeguard your multi-user tokens, offline retry database, and watch-together con
 ## 🗃️ Library Filtering & Trakt Collection Sync
 
 ### 1. Library Section Filtering
+
 Prevent personal or non-commercial media from polluting your Trakt history:
+
 - `ALLOWED_LIBRARIES`: Comma-separated whitelist (e.g. `Movies, 4K Movies, TV Shows`). Only webhooks from these sections are processed.
 - `EXCLUDED_LIBRARIES`: Comma-separated blacklist (e.g. `Home Videos, Fitness, Personal Recordings`). Any webhook matching an excluded library is discarded immediately.
 
 ### 2. Trakt Collection Sync
+
 When `SYNC_COLLECTION=true`, newly added media (`library.new` events) automatically syncs to Trakt's collection (`/sync/collection`):
+
 - Technical media specifications are parsed and submitted to Trakt:
   - **Resolution**: `4k`, `1080p`, `720p`, `480p`, `sd`
   - **Audio Codec**: `dolby_truehd`, `dts_hd_ma`, `dolby_digital_plus`, `aac`, `flac`, etc.
@@ -462,6 +572,7 @@ Deliver real-time alerts whenever a movie or episode is scrobbled, rated, or add
 - **Pushover**: Set `PUSHOVER_USER_KEY` and `PUSHOVER_API_TOKEN` for native push alerts on iOS and Android.
 
 Toggles:
+
 - `NOTIFY_ON_SCROBBLE=true`: Alerts on finished playback (`media.scrobble` / `scrobble_stop`).
 - `NOTIFY_ON_RATE=true`: Alerts when rating media in Plex.
 - `NOTIFY_ON_COLLECTION=true`: Alerts when new media is added to your collection.
@@ -471,20 +582,27 @@ Toggles:
 ## 💡 Troubleshooting & FAQ
 
 ### 1. `422 Unprocessable Content`
+
 Plex sends webhooks with `filename="payload.json"` multipart file parts. The scrobbler is already built to handle both file streams and standard form fields. If you see this error, ensure you have pulled the latest code from GitHub.
 
 ### 2. `Trakt 409 Conflict/Already scrobbled` in logs
+
 This is normal and expected! When you finish an episode, Plex sends `media.scrobble` (marking it as watched). Immediately afterward, Plex closes the player and fires `media.stop`. Trakt simply informs the scrobbler that the media was already scrobbled. The service logs this as an informational event and returns `200 OK`.
 
 ### 3. `"message":"Progress is XX%. Use stop to scrobble."`
+
 Trakt considers any playback past 80% to be completed. If you pause a video after 80%, calling `/scrobble/pause` causes Trakt to return this message. The scrobbler automatically checks `SCROBBLE_THRESHOLD` and routes late pauses to `/scrobble/stop`.
 
 ### 4. How to verify the service is running
+
 Run a quick health check from your terminal:
+
 ```bash
 curl http://localhost:8080/health
 ```
+
 Expected response:
+
 ```json
 {"status":"healthy","authenticated":true,"trakt_user":"your_trakt_username","allowed_users":["your_plex_username"],"scrobble_mode":"scrobble","webhook_secret_enabled":false}
 ```
@@ -500,14 +618,17 @@ omniscrobble/
 ├── app/
 │   ├── clients/             # External API integrations
 │   │   ├── trakt_client.py  # Trakt OAuth device flow, scrobbling, ratings, collection sync & search
+│   │   ├── plex_api_client.py # Direct Plex Media Server REST API client for watch status & ratings
 │   │   └── sonarr_client.py # Sonarr/Radarr API client, webhook parsers & resolution mapping
 │   ├── services/            # Core business logic services
 │   │   ├── cowatch_manager.py  # Watch Together whitelist & dual-scrobble rules engine
 │   │   ├── demo_manager.py     # Air-gapped mock playback, stats, and activity generator
 │   │   ├── log_manager.py      # Systemd journalctl reader, in-memory ring buffer & secret redaction
+│   │   ├── loop_prevention.py  # Thread-safe TTL cache for echo loop suppression
 │   │   ├── notifier.py         # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover)
 │   │   ├── playback_manager.py # Active streaming sessions & dashboard cards
 │   │   ├── queue_manager.py    # Persistent SQLite offline retry queue & background worker
+│   │   ├── reverse_sync_manager.py # Bi-directional library reconciliation & reverse sync engine
 │   │   └── user_manager.py     # Multi-user account client cache & token persistence
 │   ├── templates/           # Clean, externalized HTML/CSS/JS dashboard and auth views
 │   │   ├── dashboard.html   # Main real-time status dashboard view
@@ -530,7 +651,7 @@ omniscrobble/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (101 tests)
+└── tests/                   # Comprehensive pytest test suite (111 tests)
 ```
 
 ---
@@ -544,12 +665,15 @@ Omniscrobble is developed with a modular multi-platform architecture. Current an
   - Universal Webhook Ingestion for Jellyfin & Emby.
   - Media-specific granular scrobble thresholds (`EPISODE_SCROBBLE_THRESHOLD=80`, `MOVIE_SCROBBLE_THRESHOLD=90`).
   - Mobile Progressive Web App (PWA) & True-Black OLED Dark Mode.
-- **v1.5.0 (Milestone 2 — Up Next)**:
-  - Live Webhook Payload Inspector & Debugger with simulated replay.
-  - Interactive Filter Rule Tester with instant pass/drop reasoning.
-- **v1.6.0 (Milestone 3)**:
-  - Dynamic In-App Configuration Editor (adjust thresholds, library exclusions, and notifications without restarting).
-  - Trakt Historical Backfill & Bi-directional Library Synchronization.
+- **v1.5.0 (Milestone 2 — Completed)**:
+  - Direct Media Server REST API client (`PlexApiClient`) for bi-directional communication.
+  - Two-Way Library Reconciliation & Reverse Watch/Rating Sync Engine (`ReverseSyncManager`).
+  - Thread-safe Scrobble Loop Prevention architecture (`LoopPreventionManager`) with TTL suppression cache.
+  - Interactive Dashboard Reconciliation Card & Discrepancy Diff Modal (`#reconcile-modal`) with selective sync, filter tabs, and live progress bar.
+  - Automated startup sync and background periodic reconciliation worker.
+- **v1.6.0 (Milestone 3 — Up Next)**:
+  - Trakt Watchlist ➔ Sonarr & Radarr Auto-Downloader (`arr_bridge.py`).
+  - Multi-server ecosystem dashboard.
 - **Future Horizons (Post-v1.6.0)**:
   - Multi-tracker dispatch to **Simkl** (universal movies, shows, and anime tracker).
   - Anime tracking integration with **MyAnimeList** and **AniList**.
@@ -563,7 +687,9 @@ To update your installation to the latest release on your server or host:
 ```bash
 ./upgrade.sh
 ```
+
 This automated script:
+
 1. Fetches the latest code from GitHub (`git fetch && git reset --hard origin/main`).
 2. Updates dependencies in your virtual environment (`.venv`).
 3. Refreshes and enables the `systemd` user service unit (`systemctl --user enable plex-trakt`).

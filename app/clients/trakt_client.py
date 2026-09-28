@@ -16,14 +16,20 @@ logger = logging.getLogger("trakt_client")
 
 
 class TraktClient:
-    def __init__(self, config: type[Config] = Config, tokens_file: Optional[Path] = None):
+    def __init__(
+        self,
+        config: type[Config] = Config,
+        tokens_file: Optional[Path] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ):
         self.config = config
         self.client_id = config.TRAKT_CLIENT_ID
         self.client_secret = config.TRAKT_CLIENT_SECRET
         self.api_url = config.TRAKT_API_URL
         self.tokens_file = tokens_file if tokens_file is not None else config.TRAKT_TOKENS_FILE
         self._tokens: Optional[dict[str, Any]] = None
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: Optional[httpx.AsyncClient] = client
+        self.access_token: Optional[str] = None
 
     def get_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -66,11 +72,15 @@ class TraktClient:
         logger.info(f"Successfully saved Trakt tokens to {self.tokens_file}")
 
     def is_authenticated(self) -> bool:
+        if self.access_token:
+            return True
         tokens = self.load_tokens()
         return bool(tokens and tokens.get("access_token"))
 
     def get_token_info(self) -> dict[str, Any]:
         """Return token status, health, and remaining days until auto-renewal."""
+        if self.access_token:
+            return {"status": "healthy", "healthy": True, "days_remaining": 90}
         tokens = self.load_tokens()
         if not tokens or not tokens.get("access_token"):
             return {"status": "none", "healthy": False, "days_remaining": 0}
@@ -103,6 +113,8 @@ class TraktClient:
         }
 
     async def get_valid_token(self) -> Optional[str]:
+        if self.access_token:
+            return self.access_token
         tokens = self.load_tokens()
         if not tokens:
             return None
@@ -246,6 +258,25 @@ class TraktClient:
         url = f"{self.api_url}/sync/watchlist"
         return await self._post_authenticated(url, watchlist_payload)
 
+    async def get_watched_movies(self) -> list[dict[str, Any]]:
+        """GET /sync/watched/movies - Fetch user's entire watched movies history from Trakt."""
+        url = f"{self.api_url}/sync/watched/movies"
+        res = await self._get_authenticated(url)
+        return res if isinstance(res, list) else []
+
+    async def get_watched_shows(self) -> list[dict[str, Any]]:
+        """GET /sync/watched/shows - Fetch user's entire watched TV shows history from Trakt."""
+        url = f"{self.api_url}/sync/watched/shows"
+        res = await self._get_authenticated(url)
+        return res if isinstance(res, list) else []
+
+    async def get_ratings(self, media_type: Optional[str] = None) -> list[dict[str, Any]]:
+        """GET /sync/ratings/{type} - Fetch user's star ratings from Trakt."""
+        subpath = f"/{media_type}" if media_type in ("movies", "shows", "seasons", "episodes") else ""
+        url = f"{self.api_url}/sync/ratings{subpath}"
+        res = await self._get_authenticated(url)
+        return res if isinstance(res, list) else []
+
 
     async def get_user_settings(self) -> Optional[dict[str, Any]]:
         """GET /users/settings - Retrieve authenticated user profile information."""
@@ -358,3 +389,44 @@ class TraktClient:
                 return {"error": res.text, "status": res.status_code}
 
         return {"error": "Trakt rate limit exceeded after retries", "status": 429}
+
+    async def _get_authenticated(
+        self, url: str, params: Optional[dict[str, Any]] = None, retry_auth: bool = True
+    ) -> Any:
+        client = self.get_client()
+
+        for attempt in range(3):
+            headers = await self._get_headers(authenticated=True)
+            try:
+                res = await client.get(url, headers=headers, params=params)
+            except httpx.RequestError as exc:
+                logger.error(f"HTTP error contacting Trakt at {url}: {exc}")
+                return {"error": str(exc), "status": 503}
+
+            if res.status_code == 200:
+                return res.json()
+            elif res.status_code == 401 and retry_auth:
+                logger.warning("Trakt 401 Unauthorized encountered on GET. Attempting token refresh...")
+                refreshed = await self.refresh_token()
+                if refreshed:
+                    return await self._get_authenticated(url, params=params, retry_auth=False)
+                else:
+                    return {"error": "Authentication failed (token refresh failed)", "status": 401}
+            elif res.status_code == 429:
+                retry_after_raw = res.headers.get("Retry-After", "1")
+                try:
+                    retry_after = int(retry_after_raw)
+                except ValueError:
+                    retry_after = 1
+                wait_time = min(max(retry_after, 1), 5)
+                logger.warning(
+                    f"Trakt rate limit (429) on {url}. Waiting {wait_time}s (attempt {attempt + 1}/3)..."
+                )
+                await asyncio.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"Trakt API GET error ({res.status_code}) on {url}: {res.text}")
+                return {"error": res.text, "status": res.status_code}
+
+        return {"error": "Trakt rate limit exceeded after retries", "status": 429}
+

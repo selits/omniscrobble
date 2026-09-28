@@ -36,6 +36,9 @@ from app.services.queue_manager import QueueManager, process_queue
 from app.services.user_manager import user_mgr
 from app.services.demo_manager import demo_mgr
 from app.services.log_manager import log_mgr
+from app.clients.plex_api_client import PlexApiClient
+from app.services.loop_prevention import loop_prevention
+from app.services.reverse_sync_manager import reverse_sync_mgr
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
@@ -51,6 +54,7 @@ logger = logging.getLogger("plex_trakt_scrobbler")
 trakt = TraktClient(Config)
 sonarr = SonarrClient()
 user_mgr.set_default_client(trakt)
+reverse_sync_mgr.set_trakt_client(trakt)
 queue_mgr = QueueManager(Config.QUEUE_DB_FILE)
 
 SERVER_START_TIME = time.time()
@@ -133,6 +137,7 @@ def is_admin_request(request: Request) -> bool:
 
 
 queue_worker_task: Optional[asyncio.Task] = None
+reverse_sync_worker_task: Optional[asyncio.Task] = None
 
 
 async def queue_worker_loop():
@@ -150,10 +155,33 @@ async def queue_worker_loop():
             logger.error(f"Error in background queue retry worker: {e}")
 
 
+async def reverse_sync_worker_loop():
+    """Background worker periodically executing reverse sync reconciliation if enabled."""
+    if Config.REVERSE_SYNC_INTERVAL <= 0:
+        return
+    interval_seconds = max(60, Config.REVERSE_SYNC_INTERVAL * 60)
+    logger.info(f"Reverse sync worker started (running every {Config.REVERSE_SYNC_INTERVAL}m)...")
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            if reverse_sync_mgr.is_configured() and not reverse_sync_mgr._is_syncing:
+                logger.info("Periodic reverse sync worker: scanning for discrepancies...")
+                diff = await reverse_sync_mgr.scan_discrepancies()
+                if diff:
+                    logger.info(f"Periodic reverse sync worker: reconciling {len(diff)} items...")
+                    await reverse_sync_mgr.execute_reconciliation(direction="trakt_to_plex")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic reverse sync worker: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global queue_worker_task
+    global queue_worker_task, reverse_sync_worker_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
+    if Config.REVERSE_SYNC_INTERVAL > 0 and reverse_sync_mgr.plex.is_configured():
+        reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
 
     # Startup self-diagnostics check
     token_info = trakt.get_token_info()
@@ -174,6 +202,12 @@ async def lifespan(app: FastAPI):
         logger.info("Startup Diagnostics: Trakt Collection sync enabled for library.new events.")
     if sonarr.is_configured:
         logger.info(f"Startup Diagnostics: Sonarr integration enabled ({Config.SONARR_URL}).")
+    if reverse_sync_mgr.plex.is_configured():
+        logger.info(f"Startup Diagnostics: Plex API direct connection configured ({Config.PLEX_URL}).")
+        if Config.REVERSE_SYNC_ON_STARTUP:
+            asyncio.create_task(reverse_sync_mgr.run_startup_sync())
+    if Config.REVERSE_SYNC_INTERVAL > 0 and reverse_sync_mgr.plex.is_configured():
+        logger.info(f"Startup Diagnostics: Reverse sync interval active ({Config.REVERSE_SYNC_INTERVAL}m).")
 
     yield
     if queue_worker_task:
@@ -182,12 +216,19 @@ async def lifespan(app: FastAPI):
             await queue_worker_task
         except asyncio.CancelledError:
             pass
+    if reverse_sync_worker_task:
+        reverse_sync_worker_task.cancel()
+        try:
+            await reverse_sync_worker_task
+        except asyncio.CancelledError:
+            pass
+    await reverse_sync_mgr.plex.close()
     await trakt.close()
     await user_mgr.close_all()
     await notifier.close()
 
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -315,6 +356,17 @@ async def extract_webhook_payload(request: Request, endpoint_name: str = "webhoo
 
 
 async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook") -> dict[str, Any]:
+    # Loop Prevention: suppress bounce-back echo webhooks from media servers
+    if parsed.rating_key and loop_prevention.is_ignored(parsed.rating_key):
+        logger.info(f"Loop prevention: suppressing echo event '{parsed.event}' for rating_key {parsed.rating_key} ({parsed.title})")
+        metrics_registry.record_request(endpoint_name, 200)
+        return {"status": "ignored", "reason": "loop_prevention", "key": parsed.rating_key}
+    for id_val in (parsed.ids or {}).values():
+        if id_val and loop_prevention.is_ignored(str(id_val)):
+            logger.info(f"Loop prevention: suppressing echo event '{parsed.event}' for ID {id_val} ({parsed.title})")
+            metrics_registry.record_request(endpoint_name, 200)
+            return {"status": "ignored", "reason": "loop_prevention", "key": str(id_val)}
+
     active_client = user_mgr.get_client(parsed.username)
     if not active_client.is_authenticated():
         active_client = trakt
@@ -840,7 +892,7 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>"""
 
 SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v1.4.0';
+const CACHE_NAME = 'omniscrobble-v1.5.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -1373,6 +1425,51 @@ def update_cowatch_settings(payload: CowatchSettingsRequest, request: Request):
     if payload.co_watch_movies is not None:
         cowatch_mgr.set_cowatch_movies(payload.co_watch_movies)
     return {"status": "ok", "co_watch_movies": cowatch_mgr.config.CO_WATCH_MOVIES}
+
+
+class ReconcileRequest(BaseModel):
+    item_ids: Optional[list[str]] = None
+    direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt"
+
+
+@app.get("/api/sync/status")
+async def get_sync_status(request: Request):
+    """Return status of two-way sync and media server direct connection."""
+    is_demo = request.query_params.get("demo") == "true"
+    return await reverse_sync_mgr.get_status(demo=is_demo)
+
+
+@app.get("/api/sync/diff")
+async def get_sync_diff(request: Request, force: bool = False):
+    """Scan and return discrepancies between media server and Trakt."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {"status": "ok", "diff": demo_mgr.get_demo_reconciliation(), "count": len(demo_mgr.get_demo_reconciliation())}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    diff = await reverse_sync_mgr.scan_discrepancies(force=force)
+    return {"status": "ok", "diff": diff, "count": len(diff)}
+
+
+@app.post("/api/sync/reconcile")
+async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
+    """Execute two-way reconciliation for discrepancies."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return await reverse_sync_mgr.execute_reconciliation(demo=True)
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    res = await reverse_sync_mgr.execute_reconciliation(
+        item_ids=payload.item_ids,
+        direction=payload.direction,
+    )
+    return res
+
+
+@app.get("/api/sync/progress")
+async def get_sync_progress(request: Request):
+    """Poll reconciliation progress."""
+    return reverse_sync_mgr._sync_progress
 
 
 class TestWebhookRequest(BaseModel):
@@ -2016,6 +2113,77 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     </div>
     """
 
+    # Two-Way Library Reconciliation Card
+    sync_status = await reverse_sync_mgr.get_status() if not is_demo else {
+        "configured": True,
+        "plex_configured": True,
+        "plex_connected": True,
+        "trakt_authenticated": True,
+        "diff_count": 4,
+        "interval_minutes": 0,
+        "sync_on_startup": False,
+        "sync_ratings": True,
+    }
+
+    plex_cfg = sync_status.get("plex_configured", False)
+    plex_conn = sync_status.get("plex_connected", False)
+    diff_count = sync_status.get("diff_count", 0)
+    int_mins = sync_status.get("interval_minutes", 0)
+    auto_sync_badge = f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Every {int_mins}m</span>' if int_mins > 0 else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Manual</span>'
+
+    if plex_cfg:
+        status_color = "#10b981" if plex_conn else "#f59e0b"
+        status_label = "Connected" if plex_conn else "Unreachable"
+        reconcile_card_html = f"""
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                    <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
+                </h3>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="color:{status_color};font-size:12px;font-weight:600;">● Plex API {status_label}</span>
+                    {auto_sync_badge}
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+                Bi-directional sync matches watched history and ratings between your media server and Trakt with automatic echo-loop suppression.
+            </p>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                <div>
+                    <div style="font-size:14px;font-weight:600;color:#f8fafc;display:flex;align-items:center;gap:6px;">
+                        <span>Pending Discrepancies</span>
+                        <span id="reconcile-diff-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 8px;border-radius:9999px;font-size:12px;font-weight:700;">{diff_count}</span>
+                    </div>
+                    <div style="font-size:12px;color:#94a3b8;margin-top:4px;">
+                        Ratings sync: {'Enabled' if sync_status.get('sync_ratings') else 'Disabled'} &bull; Startup sync: {'Active' if sync_status.get('sync_on_startup') else 'Off'}
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    {f'<button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Review Discrepancies</button>'}
+                    {f'<button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; Plex)</button>' if is_admin else ''}
+                </div>
+            </div>
+        </div>
+        """
+    else:
+        reconcile_card_html = f"""
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                    <span>🔄</span> Two-Way Library Reconciliation
+                </h3>
+                <span style="color:#94a3b8;font-size:12px;">● Direct API Not Configured</span>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;line-height:1.5;">
+                Enable direct media server reconciliation to pull watched history and user ratings from Trakt back to your media server with loop prevention.
+            </p>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <span>Set <code>PLEX_URL</code> and <code>PLEX_TOKEN</code> in your <code>.env</code> file to activate two-way reconciliation.</span>
+                <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+            </div>
+        </div>
+        """
+
     backup_card_html = f"""
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
@@ -2074,6 +2242,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{STAT_COLLECTIONS}}': str(stats_data.get('collections', 0)),
         '{{WEBHOOK_CARD}}': webhook_html_section,
         '{{COWATCH_CARD}}': cowatch_card_html,
+        '{{RECONCILIATION_CARD}}': reconcile_card_html,
         '{{BACKUP_CARD}}': backup_card_html,
         '{{MANUAL_SCROBBLE_BTN}}': manual_scrobble_btn_html,
         '{{RETRY_QUEUE_BTN}}': (f'<button onclick="retryQueue()" class="btn-sm" style="background:#d97706;color:#fff;font-weight:600;">🔄 Retry Queue ({pending_queue})</button>' if pending_queue > 0 else ''),
