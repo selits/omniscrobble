@@ -57,6 +57,13 @@ This document defines the architectural rules, security boundaries, and developm
     ```
   - All unit tests in `tests/test_scrobbler.py` must pass with 0 failures before completing any code changes or committing.
   - When adding new features or endpoints, add corresponding unit tests using `pytest` and `httpx.ASGITransport` / `starlette.testclient`.
+- **Secret Detection & Leak Prevention Protocol:**
+  - Before proposing any commit or pushing, always verify that zero secrets, personal infrastructure hostnames, or tokens are leaked using `gitleaks`:
+    ```bash
+    docker run --rm -v $(pwd):/path zricethezav/gitleaks:latest detect --source="/path" --verbose
+    ```
+    or locally via `gitleaks detect`.
+  - The GitHub Actions CI workflow (`.github/workflows/ci.yml`) runs `gitleaks-action` on every push and PR to block accidental secret leaks.
 
 ---
 
@@ -102,6 +109,7 @@ This document defines the architectural rules, security boundaries, and developm
   - Multi-stage / hardened `Dockerfile` running as non-root user `appuser`.
   - Persistent data mounted at `./data:/app/data`.
   - Includes a built-in Docker `HEALTHCHECK` targeting `/health`.
-- **Continuous Integration:**
+- **Continuous Integration & Automated Secret Scanning:**
   - GitHub Actions workflow defined in `.github/workflows/ci.yml`.
+  - Runs automated Gitleaks secret scanning on all commits, branches, and PRs.
   - Runs linting and `pytest` on push and pull requests.

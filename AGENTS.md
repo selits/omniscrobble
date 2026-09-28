@@ -18,5 +18,6 @@ All autonomous and pair-programming AI agents (Gemini, Claude, Copilot, Cursor, 
 4. **Scrub Personal Infrastructure:**
    - Never commit real mediaserver/server hostnames, personal domain names, high-range ports, passwords, or personal credentials.
    - Always use generic placeholders: `<your-server-ip-or-domain>`, `<PORT>`, `your_trakt_client_id_here`.
-5. **Quality Gates:**
+5. **Quality Gates & Secret Detection:**
    - Always run unit tests with `.venv/bin/pytest`. All tests must pass with 0 failures before proposing any commit.
+   - Always verify zero secret leaks using `gitleaks detect` (or `docker run --rm -v $(pwd):/path zricethezav/gitleaks:latest detect --source="/path"`) before proposing any commit.
