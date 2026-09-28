@@ -1,0 +1,1611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plex to Trakt Scrobbler</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { max-width: 100%; overflow-x: hidden; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 32px 20px; }
+        .container { max-width: 1000px; margin: 0 auto; width: 100%; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #1e293b; gap: 12px; flex-wrap: wrap; }
+        .title { font-size: 24px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 12px; }
+        .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .card { background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid #334155; }
+        .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #e2e8f0; }
+        #stream-title { word-break: break-word; }
+        .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+        .info-item { background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155; }
+        .info-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+        .info-value { font-size: 15px; font-weight: 600; margin: 4px 0 2px 0; color: #f1f5f9; }
+        .webhook-row { display: flex; gap: 8px; }
+        .cowatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+        .cowatch-form-row { display: flex; gap: 8px; position: relative; }
+        .activity-header { padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .activity-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { background: #0f172a; padding: 12px 16px; font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; border-bottom: 1px solid #334155; }
+        .btn-sm { background: #334155; border: none; color: #e2e8f0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s, opacity 0.15s; }
+        .btn-sm:hover { opacity: 0.9; }
+        .btn-copy { background: #0284c7; color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+        .btn-copy:hover { opacity: 0.9; }
+        .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
+        @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
+        .modal-dialog-sm { max-width: 400px; display: block; }
+        .modal-dialog-md { max-width: 560px; }
+        .modal-dialog-lg { max-width: 850px; background: #0f172a; padding: 24px; }
+        .search-form-row { display: flex; gap: 8px; }
+        .logs-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+        .logs-filter-group { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 220px; }
+        .logs-status-group { display: flex; align-items: center; gap: 12px; }
+        .scrobble-item { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .footer { margin-top: 24px; padding-top: 18px; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; color: #64748b; font-size: 12px; flex-wrap: wrap; gap: 8px; }
+
+        /* Responsive Breakpoints for Mobile Viewports (<= 640px) */
+        @media (max-width: 640px) {
+            body { padding: 16px 12px; }
+            .header { margin-bottom: 16px; padding-bottom: 14px; flex-direction: column; align-items: flex-start; gap: 12px; }
+            .header .title { font-size: 20px; }
+            .header-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
+            .card { padding: 16px 14px; margin-bottom: 16px; border-radius: 10px; }
+            .card h3 { font-size: 15px; }
+            .info-grid { grid-template-columns: 1fr; gap: 10px; }
+            .info-item { padding: 12px 14px; }
+            .webhook-row { flex-direction: column; align-items: stretch; gap: 8px; }
+            .webhook-row .btn-copy { width: 100%; text-align: center; padding: 12px; min-height: 42px; display: flex; align-items: center; justify-content: center; }
+            .cowatch-grid { grid-template-columns: 1fr; gap: 16px; }
+            .cowatch-form-row { flex-direction: column; align-items: stretch; }
+            .cowatch-form-row button { width: 100%; padding: 10px; font-size: 13px; }
+            .activity-header { padding: 14px 12px; flex-direction: column; align-items: flex-start; gap: 10px; }
+            .activity-header h3 { font-size: 15px; }
+            .activity-actions { width: 100%; gap: 6px; }
+            table th, table td { padding: 8px 10px !important; font-size: 12px !important; }
+            .modal-dialog { padding: 18px 14px; width: 95%; max-height: 90vh; }
+            .search-form-row { flex-direction: column; align-items: stretch; }
+            .search-form-row button { width: 100%; padding: 11px; }
+            .scrobble-item { flex-direction: column; align-items: stretch; gap: 10px; }
+            .scrobble-item button { width: 100%; text-align: center; padding: 10px; }
+            .logs-toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
+            .logs-filter-group { width: 100%; min-width: unset; flex-wrap: wrap; gap: 6px; }
+            .logs-filter-group input { min-width: 140px; }
+            .logs-status-group { width: 100%; justify-content: space-between; }
+            #logs-terminal { min-height: 220px !important; font-size: 11px !important; padding: 10px !important; }
+            .footer { flex-direction: column; align-items: center; text-align: center; gap: 12px; }
+        }
+    </style>
+
+    <!-- GitHub Pages Client-Side Simulation Engine -->
+    <script>
+    (function() {
+        const initialShows = ["Fallout", "Fargo", "House of the Dragon", "Severance", "Sh\u014dgun", "Silo", "Slow Horses", "Succession", "Ted Lasso", "The Bear", "The Last of Us", "The White Lotus"];
+        const initialEvents = [{"timestamp": "2026-09-28 09:33:56", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 08:59:56", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 08:12:56", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 06:27:56", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 04:17:56", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 01:37:56", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
+        const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "The Bear", "year": 2022, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Slow Horses", "year": 2022, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Fargo", "year": 2014, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "Ted Lasso", "year": 2020, "status": "ended"}, {"title": "Silo", "year": 2023, "status": "continuing"}, {"title": "House of the Dragon", "year": 2022, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
+        const demoLogs = ["Sep 28 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 28 08:15:32 mediaserver python[5678]: 2026-09-28 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'The Bear S03E01 - Tomorrow' by user 'demo_viewer'", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for The Bear S03E01", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'The Bear S03E01 - Tomorrow' (progress: 100.0%)", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:55:01 mediaserver python[5678]: 2026-09-28 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 28 08:55:02 mediaserver python[5678]: 2026-09-28 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 28 09:02:45 mediaserver python[5678]: 2026-09-28 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 09:18:20 mediaserver python[5678]: 2026-09-28 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 28 09:18:21 mediaserver python[5678]: 2026-09-28 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
+
+        const clientState = {
+            shows: [...initialShows],
+            events: [...initialEvents],
+            movies_enabled: false,
+            playback: {"state": "playing", "title": "Severance S02E01 - Hello, Kier", "username": "demo_viewer", "player": "Living Room Apple TV", "device": "tvOS 18.2", "progress": 68.4, "trakt_url": "https://trakt.tv/search?q=Severance"}
+        };
+
+        const origFetch = window.fetch;
+        window.fetch = async function(resource, init = {}) {
+            const urlStr = typeof resource === 'string' ? resource : resource.url;
+            const url = new URL(urlStr, window.location.href);
+            const path = url.pathname;
+            const method = (init.method || 'GET').toUpperCase();
+
+            // If not /api/, let it pass through
+            if (!path.includes('/api/')) {
+                return origFetch(resource, init);
+            }
+
+            // Simulated network latency
+            await new Promise(r => setTimeout(r, 60));
+
+            const jsonResp = (data, status = 200) => {
+                return new Response(JSON.stringify(data), {
+                    status: status,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            };
+
+            // 1. Playback status
+            if (path.endsWith('/api/playback')) {
+                return jsonResp({
+                    active_sessions: [clientState.playback],
+                    recently_finished: null
+                });
+            }
+
+            // 2. Events list
+            if (path.endsWith('/api/events')) {
+                return jsonResp({ events: clientState.events });
+            }
+
+            // 3. Clear events
+            if (path.endsWith('/api/events/clear')) {
+                clientState.events = [];
+                return jsonResp({ status: 'cleared' });
+            }
+
+            // 4. Co-Watch Shows
+            if (path.endsWith('/api/cowatch/shows')) {
+                if (method === 'POST') {
+                    const body = init.body ? JSON.parse(init.body) : {};
+                    const show = (body.show || '').trim();
+                    if (show && !clientState.shows.some(s => s.toLowerCase() === show.toLowerCase())) {
+                        clientState.shows.push(show);
+                        clientState.shows.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                    }
+                    return jsonResp({ status: 'ok', shows: clientState.shows });
+                }
+                if (method === 'DELETE') {
+                    const show = url.searchParams.get('show') || '';
+                    clientState.shows = clientState.shows.filter(s => s.toLowerCase() !== show.toLowerCase());
+                    return jsonResp({ status: 'ok', shows: clientState.shows });
+                }
+            }
+
+            // 5. Co-Watch Settings (Toggle Movies)
+            if (path.endsWith('/api/cowatch/settings')) {
+                if (method === 'POST') {
+                    const body = init.body ? JSON.parse(init.body) : {};
+                    if (body.co_watch_movies !== undefined) {
+                        clientState.movies_enabled = body.co_watch_movies;
+                    }
+                    return jsonResp({ status: 'ok', co_watch_movies: clientState.movies_enabled });
+                }
+            }
+
+            // 6. Sonarr Series Search / Autocomplete
+            if (path.endsWith('/api/sonarr/shows')) {
+                const q = (url.searchParams.get('q') || '').toLowerCase().trim();
+                const exclude = clientState.shows.map(s => s.toLowerCase());
+                let matches = sonarrCatalog.filter(s => !exclude.includes(s.title.toLowerCase()));
+                if (q) {
+                    matches = matches.filter(s => s.title.toLowerCase().includes(q));
+                }
+                return jsonResp({ configured: true, shows: matches.slice(0, 8) });
+            }
+
+            // 7. System Logs Viewer
+            if (path.endsWith('/api/logs')) {
+                const lines = parseInt(url.searchParams.get('lines')) || 50;
+                return jsonResp({
+                    source: 'systemd journalctl (simulated)',
+                    logs: demoLogs.slice(-lines)
+                });
+            }
+
+            // 8. Trakt Catalog Search
+            if (path.endsWith('/api/search')) {
+                const q = (url.searchParams.get('query') || '').toLowerCase().trim();
+                const catalog = [
+                    { type: 'show', show: { title: 'Severance', year: 2022, overview: 'Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.', ids: { tmdb: 1128074 } } },
+                    { type: 'show', show: { title: 'The Bear', year: 2022, overview: 'A young chef from the fine dining world comes home to Chicago to run his family Italian beef sandwich shop.', ids: { tmdb: 1445277 } } },
+                    { type: 'movie', movie: { title: 'Dune: Part Two', year: 2024, overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.', ids: { tmdb: 693134 } } },
+                    { type: 'show', show: { title: 'Fallout', year: 2024, overview: 'In a future post-apocalyptic Los Angeles, citizens must live in underground bunkers to protect themselves from radiation and mutants.', ids: { tmdb: 106379 } } },
+                    { type: 'show', show: { title: 'Yellowstone', year: 2018, overview: 'A ranching family in Montana faces off against others encroaching on their land.', ids: { tmdb: 73586 } } }
+                ];
+                let results = catalog.filter(c => !q || (c.show ? c.show.title : c.movie.title).toLowerCase().includes(q));
+                if (!results.length && q) {
+                    const titleCased = q.charAt(0).toUpperCase() + q.slice(1);
+                    results = [{ type: 'show', show: { title: titleCased, year: 2025, overview: 'Simulated Trakt search result.', ids: { tmdb: 100000 } } }];
+                }
+                return jsonResp({ results: results });
+            }
+
+            // 9. Manual Scrobble & Watchlist
+            if (path.endsWith('/api/scrobble/manual') || path.endsWith('/api/watchlist') || path.endsWith('/api/cowatch/sync')) {
+                return jsonResp({ status: 'success', result: { added: { movies: 1, episodes: 1 } } });
+            }
+
+            // 10. Queue Retry & Clear
+            if (path.endsWith('/api/queue/retry') || path.endsWith('/api/queue/clear')) {
+                return jsonResp({ status: 'ok', pending_count: 0 });
+            }
+
+            // 11. Synthetic Test Webhook
+            if (path.endsWith('/api/test/webhook')) {
+                const body = init.body ? JSON.parse(init.body) : {};
+                const isEpisode = body.media_type === 'episode';
+                const showTitle = body.show_title || (isEpisode ? 'Synthetic Test Show' : null);
+                const isCowatch = isEpisode
+                    ? (showTitle && clientState.shows.some(s => s.toLowerCase() === showTitle.toLowerCase()))
+                    : clientState.movies_enabled;
+
+                const newEvent = {
+                    timestamp: new Date().toLocaleTimeString(),
+                    user: "demo_viewer",
+                    event: body.event || "media.scrobble",
+                    action: `${(body.event || 'media.scrobble').replace('media.', '')} (100.0%)`,
+                    title: isEpisode ? `${showTitle} S${String(body.season || 1).padStart(2, '0')}E${String(body.episode || 1).padStart(2, '0')}` : (body.title || 'Synthetic Movie'),
+                    type: body.media_type || 'episode',
+                    show_title: showTitle,
+                    progress: "100.0%",
+                    result_status: "ok",
+                    cowatch_status: {
+                        synced: isCowatch,
+                        reason: isCowatch ? "Shared show whitelist match" : "Solo show",
+                        target: "demo_partner"
+                    }
+                };
+                clientState.events.unshift(newEvent);
+
+                return jsonResp({
+                    status: 'success',
+                    parsed: {
+                        title: newEvent.title,
+                        media_type: newEvent.type,
+                        show_title: showTitle
+                    },
+                    cowatch: {
+                        eligible: isCowatch,
+                        reason: isCowatch ? 'Shared show whitelist match' : 'Solo show',
+                        partner: 'demo_partner'
+                    },
+                    result: { status: 'ok', mode: 'simulated' }
+                });
+            }
+
+            return jsonResp({ status: 'ok', mode: 'simulated' });
+        };
+    })();
+    </script>
+    
+</head>
+<body>
+    <div class="container">
+        <div style="background:linear-gradient(90deg, #1e3a8a, #0284c7);color:#ffffff;padding:12px 18px;border-radius:10px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);flex-wrap:wrap;gap:10px;"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:20px;">🎭</span><div><strong style="color:#ffffff;font-size:14px;">Live Interactive Demo:</strong><span style="color:#e0f2fe;font-size:13px;margin-left:6px;">Experience the Plex to Trakt Webhook Scrobbler dashboard live in your browser. All interactions are simulated client-side with zero server dependencies.</span></div></div><a href="https://github.com/selits/plex-trakt-webhook" style="background:rgba(255,255,255,0.2);color:#ffffff;text-decoration:none;padding:6px 14px;border-radius:6px;font-weight:600;font-size:12px;transition:background 0.15s;display:inline-flex;align-items:center;gap:6px;" onmouseover="this.style.background='rgba(255,255,255,0.3)'" onmouseout="this.style.background='rgba(255,255,255,0.2)'">⭐ View on GitHub &rarr;</a></div>
+        <div class="header">
+            <div class="title">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ed1c24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="#ed1c24"/></svg>
+                Plex &rarr; Trakt Scrobbler
+            </div>
+            <div class="header-actions">
+                <span style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">● Connected as @demo_viewer &bull; Demo</span>
+                <span style="font-size:12px;color:#38bdf8;background:#1e293b;border:1px solid #334155;padding:4px 10px;border-radius:6px;font-weight:600;">👑 Demo Admin</span>
+                <a href="https://github.com/selits/plex-trakt-webhook" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:5px;">⭐ Star on GitHub</a>
+            </div>
+        </div>
+
+        
+        <div id="active-playback-card" class="card" style="border-left: 4px solid #10b981; margin-bottom: 24px; display: block;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                <div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                        <span id="stream-pulse-indicator" class="pulse-indicator" style="background:#10b981;"></span>
+                        <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#10b981;" id="stream-state-badge">Currently Streaming</span>
+                        <span style="font-size:12px; color:#94a3b8;" id="stream-user-device">• demo_viewer on Living Room Apple TV (tvOS 18.2)</span>
+                    </div>
+                    <h2 style="margin:4px 0 8px 0; font-size:18px; color:#f8fafc;" id="stream-title">Severance S02E01 - Hello, Kier</h2>
+                </div>
+                <div id="stream-actions">
+                    <a id="stream-trakt-link" href="https://trakt.tv/search?q=Severance" target="_blank" rel="noopener" class="btn-sm" style="background:#334155; color:#38bdf8; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
+                </div>
+            </div>
+            <div style="margin-top:12px;">
+                <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:6px;">
+                    <span>Playback Progress</span>
+                    <span id="stream-progress-text" style="font-weight:600; color:#f8fafc;">68.4% • 18m left</span>
+                </div>
+                <div style="background:#0f172a; border-radius:9999px; height:8px; overflow:hidden; border:1px solid #334155;">
+                    <div id="stream-progress-bar" style="background:#10b981; height:100%; width:68.4%; border-radius:9999px; transition: width 0.4s ease;"></div>
+                </div>
+            </div>
+        </div>
+    
+
+        <div class="card">
+            <h3>Server & Account Configuration</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Trakt Connection</div>
+                    <div class="info-value">@demo_viewer</div>
+                    <div><span style="color:#10b981;font-size:12px;">● Healthy • Auto-renews in 84d</span></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Plex Users & Libraries</div>
+                    <div class="info-value">demo_viewer, demo_partner</div>
+                    <div style="font-size:12px;color:#94a3b8;">Libs: Movies, TV Shows, Anime &bull; Coll: On</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Server Health</div>
+                    <div class="info-value">🟢 Online</div>
+                    <div style="font-size:12px;color:#94a3b8;">Uptime: 14d 8h 22m &bull; <span style="color:#94a3b8;">Queue: 0 pending</span> &bull; <span>Alerts: Discord, Telegram</span></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Playback Activity</div>
+                    <div class="info-value">🍿 1428 Scrobble(s)</div>
+                    <div style="font-size:12px;color:#94a3b8;">🎬 312 &bull; 📺 1064 &bull; ⭐ 52 &bull; 📦 148 coll</div>
+                </div>
+            </div>
+            
+    <div style="margin-top: 18px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div class="info-label">Plex Webhook URL</div>
+            <span style="color:#10b981;font-size:11px;font-weight:600;">✓ Admin Unlocked</span>
+        </div>
+        <div class="webhook-row">
+            <input type="text" readonly id="webhook-url-input" value="https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
+                   style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#38bdf8;font-family:monospace;font-size:13px;outline:none;" />
+            <button onclick="copyWebhookUrl()" id="copy-btn" class="btn-copy">
+                📋 Copy URL
+            </button>
+        </div>
+        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Integrations: Sonarr (<code>/sonarr</code>), Radarr (<code>/radarr</code>).</div>
+    </div>
+    
+        </div>
+
+        
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>👥</span> Watch Together & Multi-User Accounts
+            </h3>
+            <span style="background:#0f172a;border:1px solid #334155;color:#38bdf8;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">
+                Partner: @demo_partner
+            </span>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Dual-scrobble watched shows to your partner's Trakt account automatically, without syncing your solo shows.
+        </p>
+        <div class="cowatch-grid">
+            <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                        <span>Shared Shows Whitelist</span>
+                        <span id="cowatch-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">12</span>
+                    </div>
+                    <input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:110px;" />
+                </div>
+                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:180px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                    <span class="cowatch-chip" data-title="fallout" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Fallout<button data-show="Fallout" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Fallout" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="fargo" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Fargo<button data-show="Fargo" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Fargo" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="house of the dragon" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">House of the Dragon<button data-show="House of the Dragon" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove House of the Dragon" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="severance" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Severance<button data-show="Severance" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Severance" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="shōgun" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Shōgun<button data-show="Shōgun" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Shōgun" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="silo" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Silo<button data-show="Silo" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Silo" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="slow horses" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Slow Horses<button data-show="Slow Horses" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Slow Horses" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="succession" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Succession<button data-show="Succession" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Succession" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="ted lasso" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Ted Lasso<button data-show="Ted Lasso" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Ted Lasso" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the bear" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The Bear<button data-show="The Bear" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The Bear" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the last of us" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The Last of Us<button data-show="The Last of Us" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The Last of Us" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the white lotus" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The White Lotus<button data-show="The White Lotus" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The White Lotus" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span>
+                </div>
+                <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
+                    <div class="cowatch-form-row">
+                        <div style="flex:1;position:relative;">
+                            <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Yellowstone, Severance)..."
+                                   style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                                   oninput="onCowatchShowInput(this.value)"
+                                   onfocus="onCowatchShowInput(this.value)"
+                                   autocomplete="off"
+                                   data-lpignore="true"
+                                   data-1p-ignore="true"
+                                   onkeydown="if(event.key==='Enter')addCowatchShow()" />
+                            <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
+                        </div>
+                        <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;">+ Add Show</button>
+                    </div>
+                </form>
+                <div style="margin-top:4px;">
+                    <span style="color:#10b981;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px;">✓ Connected to Sonarr (type to search library)</span>
+                </div>
+                <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <span>Movies: <strong id="cowatch-movies-status">Disabled</strong></span>
+                    <button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies (Enable)</button>
+                    <span> &bull; Devices: <strong>Living Room Apple TV</strong></span>
+                </div>
+            </div>
+            <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;">Linked Trakt Accounts</div>
+                    <button onclick="alert('In real mode, this connects secondary Trakt accounts via OAuth.')" class="btn-sm" style="background:#334155;color:#38bdf8;">+ Link Account</button>
+                </div>
+                <div>
+                    
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-weight:600;color:#f8fafc;font-size:13px;">@demo_viewer</span>
+                <span style="background:#1e3a8a;color:#93c5fd;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">Default</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="color:#10b981;font-size:12px;font-weight:500;">● Connected</span>
+            </div>
+        </div>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-weight:600;color:#f8fafc;font-size:13px;">@demo_partner</span>
+                <span style="background:#701a75;color:#f5d0fe;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">Partner</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="color:#10b981;font-size:12px;font-weight:500;">● Connected</span>
+            </div>
+        </div>
+    
+                </div>
+            </div>
+        </div>
+    </div>
+    
+
+        
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>💾</span> System Operations & Observability
+            </h3>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button onclick="openLogsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;">📜 View Logs</button>
+                <a href="https://github.com/selits/plex-trakt-webhook#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Export or restore your configuration, multi-user Trakt tokens, co-watch whitelist, and inspect live service logs.
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+            <button onclick="alert('In real mode, this downloads a timestamped backup zip with your tokens and settings.')" class="btn-sm" style="background:#0284c7;color:#fff;padding:8px 16px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:pointer;border:none;">
+                💾 Download Backup (.zip)
+            </button>
+            <button onclick="alert('In real mode, this restores your configuration and SQLite retry database from a zip backup.')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                📤 Restore Backup (.zip)
+            </button>
+            <button onclick="openTestWebhookModal()" class="btn-sm" style="background:#4338ca;color:#fff;border:1px solid #6366f1;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                🧪 Test Webhook
+            </button>
+        </div>
+    </div>
+    
+
+        <div class="card" style="padding: 0; overflow: hidden;">
+            <div class="activity-header">
+                <h3 style="margin: 0;">Live Activity & Scrobble History</h3>
+                <div class="activity-actions">
+                    <button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔍 Manual Scrobble</button>
+                    
+                    <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh(this)"> Auto-refresh (30s)
+                    </label>
+                    <button onclick="fetchEvents()" class="btn-sm">Refresh</button>
+                    <button onclick="clearHistory()" class="btn-sm" style="color:#f87171;">Clear</button>
+                </div>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Media Title</th>
+                            <th>Type</th>
+                            <th>Plex User</th>
+                            <th>Action</th>
+                            <th>Trakt Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="events-tbody">
+                        
+        <tr style="border-bottom: 1px solid #334155;">
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 09:33:56</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Severance S02E01 - Hello, Kier</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">demo_viewer</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">play (68.4%) (68.4%)</span></td>
+            <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Hello, Kier&quot;, &quot;year&quot;: 2025, &quot;season&quot;: 2, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt11280740&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+        </tr>
+        
+        <tr style="border-bottom: 1px solid #334155;">
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 08:59:56</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">The Bear S03E01 - Tomorrow</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">demo_viewer</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">scrobble (100.0%) (100.0%)</span></td>
+            <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Tomorrow&quot;, &quot;year&quot;: 2024, &quot;season&quot;: 3, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt27984852&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+        </tr>
+        
+        <tr style="border-bottom: 1px solid #334155;">
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 08:12:56</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Dune: Part Two (2024)</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">demo_viewer</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">rate (9/10) (9/10)</span></td>
+            <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;movie&quot;, &quot;title&quot;: &quot;Dune: Part Two&quot;, &quot;year&quot;: 2024, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt15239678&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+        </tr>
+        
+        <tr style="border-bottom: 1px solid #334155;">
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 06:27:56</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Succession S04E03 - Connor&#x27;s Wedding</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">demo_partner</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">scrobble (100.0%) (100.0%)</span></td>
+            <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Connor&#x27;s Wedding&quot;, &quot;year&quot;: 2023, &quot;season&quot;: 4, &quot;episode&quot;: 3, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt19363162&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+        </tr>
+        
+        <tr style="border-bottom: 1px solid #334155;">
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 04:17:56</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Slow Horses S04E01 - Identity Theft</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">demo_viewer</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">scrobble (100.0%) (100.0%)</span></td>
+            <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Identity Theft&quot;, &quot;year&quot;: 2024, &quot;season&quot;: 4, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt21876404&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+        </tr>
+        
+        <tr style="border-bottom: 1px solid #334155;">
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 01:37:56</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Shōgun S01E01 - Anjin</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">demo_viewer</td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">pause (42.1%) (42.1%)</span></td>
+            <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Anjin&quot;, &quot;year&quot;: 2024, &quot;season&quot;: 1, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt8888322&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+        </tr>
+        
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="color: #94a3b8; font-weight: 500;">Plex &rarr; Trakt Scrobbler</span>
+                <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v1.3.0</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;">
+                <a href="https://github.com/selits/plex-trakt-webhook" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color='#f8fafc'" onmouseout="this.style.color='#94a3b8'">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    GitHub
+                </a>
+                <a href="https://github.com/selits/plex-trakt-webhook/releases" target="_blank" rel="noopener noreferrer" style="color: #64748b; text-decoration: none; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color='#f8fafc'" onmouseout="this.style.color='#64748b'">
+                    Releases
+                </a>
+                <a href="https://github.com/selits/plex-trakt-webhook#readme" target="_blank" rel="noopener noreferrer" style="color: #64748b; text-decoration: none; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color='#f8fafc'" onmouseout="this.style.color='#64748b'">
+                    Docs
+                </a>
+                <a href="https://github.com/selits/plex-trakt-webhook" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;font-weight:600;">GitHub Repository &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Unlock Modal -->
+    <div id="unlock-modal" onclick="if(event.target===this)closeUnlockModal()">
+        <div class="modal-dialog modal-dialog-sm">
+            <h3 style="margin-top:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                <span>🔓</span> Unlock Admin Access
+            </h3>
+            <p style="color:#94a3b8;font-size:13px;margin:8px 0 16px;line-height:1.5;">
+                Enter your <code>WEBHOOK_SECRET</code> from your <code>.env</code> file to reveal webhook URLs and unlock administration features.
+            </p>
+            <form id="unlock-form" onsubmit="event.preventDefault();submitUnlock();" autocomplete="off" style="margin:0;">
+                <input type="password" id="admin-secret-input" name="admin_secret" placeholder="Enter webhook secret..."
+                       autocomplete="current-password"
+                       style="width:100%;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:10px 12px;color:#f8fafc;font-size:14px;box-sizing:border-box;margin-bottom:12px;outline:none;" />
+                <div id="unlock-error" style="color:#ef4444;font-size:12px;margin-bottom:12px;display:none;"></div>
+                <div style="display:flex;justify-content:flex-end;gap:8px;">
+                    <button type="button" onclick="closeUnlockModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
+                    <button type="submit" id="unlock-submit-btn" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Unlock</button>
+                </div>
+            </form>
+            <div style="margin-top:16px;padding-top:14px;border-top:1px solid #334155;font-size:12px;color:#94a3b8;text-align:center;">
+                Just exploring? <a href="/demo" style="color:#38bdf8;text-decoration:none;font-weight:600;">Try Demo Mode &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Scrobble Modal -->
+    <div id="scrobble-modal" onclick="if(event.target===this)closeScrobbleModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>🍿</span> Manual Scrobble to Trakt
+                </h3>
+                <button onclick="closeScrobbleModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Search Trakt's global database to quickly mark any movie or show as watched in your history.
+            </p>
+            <form onsubmit="event.preventDefault();executeTraktSearch();" autocomplete="off" style="margin:0 0 16px 0;">
+                <div class="search-form-row">
+                    <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, The Bear)..."
+                           autocomplete="off"
+                           data-lpignore="true"
+                           data-1p-ignore="true"
+                           style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:10px 12px;color:#f8fafc;font-size:14px;outline:none;" />
+                    <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:10px 16px;">Search</button>
+                </div>
+            </form>
+            <div id="scrobble-search-loading" style="display:none;color:#38bdf8;font-size:13px;text-align:center;padding:12px;">
+                Searching Trakt catalog...
+            </div>
+            <div id="scrobble-search-results" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:8px;max-height:360px;padding-right:4px;">
+                <div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Server Logs Modal -->
+    <div id="logs-modal" onclick="if(event.target===this)closeLogsModal()">
+        <div class="modal-dialog modal-dialog-lg">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>📜</span> Server Logs
+                    </h3>
+                    <span id="logs-source-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">Loading...</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <button onclick="fetchLogs()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;">🔄 Refresh</button>
+                    <button onclick="copyLogsToClipboard()" id="copy-logs-btn" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;">📋 Copy</button>
+                    <button onclick="closeLogsModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;padding:4px 10px;font-size:14px;font-weight:700;">&times;</button>
+                </div>
+            </div>
+            <div class="logs-toolbar">
+                <div class="logs-filter-group">
+                    <input type="text" id="logs-search-input" placeholder="Filter logs (e.g. error, webhook, show title)..." oninput="filterLogs()" style="flex:1;background:#020617;border:1px solid #334155;border-radius:6px;padding:6px 12px;color:#f8fafc;font-size:12px;outline:none;" />
+                    <select id="logs-level-select" onchange="filterLogs()" style="background:#020617;border:1px solid #334155;border-radius:6px;padding:6px 10px;color:#f8fafc;font-size:12px;outline:none;">
+                        <option value="ALL">All Levels</option>
+                        <option value="ERROR">Errors Only</option>
+                        <option value="WARNING">Warnings &amp; Errors</option>
+                        <option value="INFO">Info &amp; Above</option>
+                    </select>
+                </div>
+                <div class="logs-status-group">
+                    <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="logs-tail-checkbox" checked> Auto-scroll bottom
+                    </label>
+                    <span id="logs-count-label" style="font-size:12px;color:#64748b;">0 lines</span>
+                </div>
+            </div>
+            <div id="logs-terminal" style="flex:1;background:#020617;border:1px solid #1e293b;border-radius:8px;padding:14px;overflow-y:auto;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Liberation Mono',monospace;font-size:12px;line-height:1.6;color:#cbd5e1;white-space:pre-wrap;word-break:break-all;min-height:300px;">
+                Loading logs...
+            </div>
+        </div>
+    </div>
+
+    <!-- Synthetic Test Webhook Modal -->
+    <div id="test-modal" onclick="if(event.target===this)closeTestWebhookModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>🧪</span> Synthetic Webhook Simulator
+                </h3>
+                <button onclick="closeTestWebhookModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Simulate an incoming Plex webhook to test event parsing, co-watch eligibility checks, and real-time activity logging safely.
+            </p>
+            <form onsubmit="event.preventDefault();submitTestWebhook();" style="margin:0;display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;gap:10px;">
+                    <div style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Event Type</label>
+                        <select id="test-event-select" style="width:100%;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;">
+                            <option value="media.scrobble">media.scrobble (Watched)</option>
+                            <option value="media.play">media.play (Started)</option>
+                            <option value="media.pause">media.pause (Paused)</option>
+                            <option value="media.stop">media.stop (Stopped)</option>
+                        </select>
+                    </div>
+                    <div style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Media Type</label>
+                        <select id="test-type-select" onchange="toggleTestMediaFields(this.value)" style="width:100%;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;">
+                            <option value="episode">Episode (TV Show)</option>
+                            <option value="movie">Movie</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="test-show-row">
+                    <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Series Title</label>
+                    <input type="text" id="test-show-input" value="Lanterns" placeholder="e.g. Lanterns, Severance" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;" />
+                </div>
+
+                <div style="display:flex;gap:10px;">
+                    <div style="flex:2;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Item Title</label>
+                        <input type="text" id="test-title-input" value="Episode 7" placeholder="Episode title or Movie name" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;" />
+                    </div>
+                    <div id="test-season-col" style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Season</label>
+                        <input type="number" id="test-season-input" value="1" min="1" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;" />
+                    </div>
+                    <div id="test-episode-col" style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Episode</label>
+                        <input type="number" id="test-episode-input" value="7" min="1" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;" />
+                    </div>
+                </div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;margin-top:4px;">
+                    <div>
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;">Dry-Run Simulation</div>
+                        <div style="font-size:11px;color:#94a3b8;">Verifies logic and displays in dashboard without calling external Trakt API</div>
+                    </div>
+                    <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="test-execute-trakt"> Execute Trakt
+                    </label>
+                </div>
+
+                <div id="test-result-box" style="display:none;background:#020617;border:1px solid #334155;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;color:#cbd5e1;max-height:120px;overflow-y:auto;"></div>
+
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+                    <button type="button" onclick="closeTestWebhookModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Close</button>
+                    <button type="submit" id="test-submit-btn" class="btn-sm" style="background:#4338ca;color:#fff;font-weight:600;padding:8px 16px;">▶ Run Simulation</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const isAdmin = true;
+        const isDemo = true;
+        let refreshTimer = null;
+
+        function copyWebhookUrl() {
+            const input = document.getElementById('webhook-url-input');
+            if (!input) return;
+            const btn = document.getElementById('copy-btn');
+            const showSuccess = () => {
+                if (!btn) return;
+                const orig = btn.innerHTML;
+                btn.innerHTML = '✓ Copied!';
+                btn.style.background = '#10b981';
+                setTimeout(() => {
+                    btn.innerHTML = orig;
+                    btn.style.background = '#0284c7';
+                }, 2000);
+            };
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(input.value).then(showSuccess).catch(() => {
+                    input.select();
+                    document.execCommand('copy');
+                    showSuccess();
+                });
+            } else {
+                input.select();
+                document.execCommand('copy');
+                showSuccess();
+            }
+        }
+
+        // Clean query token from browser address bar once cookie is saved
+        if (window.location.search && window.location.search.includes('token=')) {
+            try {
+                window.history.replaceState({}, document.title, window.location.pathname);
+            } catch (e) {}
+        }
+
+        function openUnlockModal() {
+            const modal = document.getElementById('unlock-modal');
+            modal.style.display = 'flex';
+            const input = document.getElementById('admin-secret-input');
+            input.value = '';
+            document.getElementById('unlock-error').style.display = 'none';
+            setTimeout(() => input.focus(), 50);
+        }
+
+        function closeUnlockModal() {
+            document.getElementById('unlock-modal').style.display = 'none';
+        }
+
+        async function submitUnlock() {
+            const secret = document.getElementById('admin-secret-input').value.trim();
+            const errDiv = document.getElementById('unlock-error');
+            const btn = document.getElementById('unlock-submit-btn');
+            if (!secret) return;
+            errDiv.style.display = 'none';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Unlocking...';
+            }
+            try {
+                const res = await fetch('/api/admin/unlock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: secret })
+                });
+                if (res.ok) {
+                    window.location.href = window.location.pathname;
+                } else {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = 'Unlock';
+                    }
+                    const data = await res.json();
+                    errDiv.textContent = data.detail || 'Invalid secret token';
+                    errDiv.style.display = 'block';
+                }
+            } catch (e) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Unlock';
+                }
+                errDiv.textContent = 'Connection error: ' + e.message;
+                errDiv.style.display = 'block';
+            }
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeUnlockModal();
+                closeScrobbleModal();
+                closeLogsModal();
+                closeTestWebhookModal();
+                const box = document.getElementById('sonarr-suggestions');
+                if (box) box.style.display = 'none';
+            }
+        });
+
+        async function lockAdmin() {
+            await fetch('/api/admin/lock', { method: 'POST' });
+            window.location.href = window.location.pathname;
+        }
+
+        function openManualScrobbleModal() {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            document.getElementById('scrobble-modal').style.display = 'flex';
+            const input = document.getElementById('scrobble-search-input');
+            input.value = '';
+            document.getElementById('scrobble-search-results').innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>';
+            setTimeout(() => input.focus(), 50);
+        }
+
+        function closeScrobbleModal() {
+            document.getElementById('scrobble-modal').style.display = 'none';
+        }
+
+        async function executeTraktSearch() {
+            const query = document.getElementById('scrobble-search-input').value.trim();
+            if (!query) return;
+            const loading = document.getElementById('scrobble-search-loading');
+            const resultsContainer = document.getElementById('scrobble-search-results');
+            loading.style.display = 'block';
+            resultsContainer.innerHTML = '';
+
+            try {
+                const url = isDemo ? '/api/search?demo=true&query=' + encodeURIComponent(query) : '/api/search?query=' + encodeURIComponent(query);
+                const res = await fetch(url);
+                loading.style.display = 'none';
+                if (!res.ok) throw new Error('Search failed');
+                const data = await res.json();
+                renderSearchResults(data.results);
+            } catch (err) {
+                loading.style.display = 'none';
+                resultsContainer.innerHTML = '<div style="color:#ef4444;text-align:center;padding:12px;">' + err.message + '</div>';
+            }
+        }
+
+        function renderSearchResults(results) {
+            const container = document.getElementById('scrobble-search-results');
+            if (!results || results.length === 0) {
+                container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">No results found on Trakt.</div>';
+                return;
+            }
+            let html = '';
+            for (const item of results) {
+                const type = item.type || (item.movie ? 'movie' : 'show');
+                const media = item.movie || item.show || item;
+                const title = media.title;
+                const year = media.year ? `(${media.year})` : '';
+                const payloadData = {
+                    media_type: type,
+                    title: media.title,
+                    year: media.year,
+                    ids: media.ids || {}
+                };
+                const mediaJson = encodeURIComponent(JSON.stringify(payloadData));
+
+                html += `
+                <div class="scrobble-item">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <span style="background:#334155;color:#93c5fd;font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;">${type}</span>
+                            <span style="font-weight:600;color:#f8fafc;font-size:14px;">${title} ${year}</span>
+                        </div>
+                        ${media.overview ? `<p style="color:#94a3b8;font-size:12px;margin:4px 0 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${media.overview}</p>` : ''}
+                    </div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <button onclick="submitAddToWatchlist('${mediaJson}', this)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;white-space:nowrap;padding:8px 12px;" title="Add to Trakt Watchlist">
+                            🔖 Watchlist
+                        </button>
+                        <button onclick="submitManualScrobble('${mediaJson}', this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;white-space:nowrap;padding:8px 12px;">
+                            ✓ Mark Watched
+                        </button>
+                    </div>
+                </div>`;
+            }
+            container.innerHTML = html;
+        }
+
+        async function submitAddToWatchlist(mediaJsonEncoded, btn) {
+            try {
+                const payload = JSON.parse(decodeURIComponent(mediaJsonEncoded));
+                btn.disabled = true;
+                btn.innerHTML = 'Adding...';
+                const url = isDemo ? '/api/watchlist?demo=true' : '/api/watchlist';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    btn.innerHTML = '✓ Watchlisted!';
+                    btn.style.background = '#059669';
+                } else {
+                    const err = await res.json();
+                    btn.innerHTML = 'Error';
+                    btn.style.background = '#ef4444';
+                    btn.disabled = false;
+                    alert('Failed to add to watchlist: ' + (err.detail || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                btn.disabled = false;
+            }
+        }
+
+        async function submitManualScrobble(mediaJsonEncoded, btn) {
+            try {
+                const payload = JSON.parse(decodeURIComponent(mediaJsonEncoded));
+                btn.disabled = true;
+                btn.innerHTML = 'Syncing...';
+                const url = isDemo ? '/api/scrobble/manual?demo=true' : '/api/scrobble/manual';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    btn.innerHTML = '✓ Watched!';
+                    btn.style.background = '#059669';
+                    fetchEvents();
+                    fetchPlayback();
+                    setTimeout(() => closeScrobbleModal(), 1200);
+                } else {
+                    const err = await res.json();
+                    btn.innerHTML = 'Error';
+                    btn.style.background = '#ef4444';
+                    alert('Failed to scrobble: ' + (err.detail || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function fetchPlayback() {
+            try {
+                const url = isDemo ? '/api/playback?demo=true' : '/api/playback';
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    renderPlayback(data);
+                }
+            } catch (e) {
+                console.error('Error fetching playback:', e);
+            }
+        }
+
+        function renderPlayback(data) {
+            const card = document.getElementById('active-playback-card');
+            if (!card) return;
+            const sessions = data.active_sessions || [];
+            if (sessions.length > 0) {
+                const s = sessions[0];
+                card.style.display = 'block';
+                card.style.borderLeftColor = s.state === 'playing' ? '#10b981' : '#f59e0b';
+                document.getElementById('stream-state-badge').textContent = s.state === 'playing' ? 'Currently Streaming' : 'Paused';
+                document.getElementById('stream-state-badge').style.color = s.state === 'playing' ? '#10b981' : '#f59e0b';
+                const devStr = (isAdmin && s.player) ? (` on ${s.player}${s.device ? ' (' + s.device + ')' : ''}`) : '';
+                document.getElementById('stream-user-device').textContent = `• ${s.username}${devStr}`;
+                document.getElementById('stream-title').textContent = s.title;
+                document.getElementById('stream-trakt-link').href = s.trakt_url || 'https://trakt.tv';
+                const progText = s.remaining_str ? `${s.progress.toFixed(1)}% • ${s.remaining_str}` : `${s.progress.toFixed(1)}%`;
+                document.getElementById('stream-progress-text').textContent = progText;
+                document.getElementById('stream-progress-bar').style.width = `${s.progress}%`;
+                document.getElementById('stream-progress-bar').style.background = s.state === 'playing' ? '#10b981' : '#f59e0b';
+            } else if (data.recently_finished) {
+                const f = data.recently_finished;
+                card.style.display = 'block';
+                card.style.borderLeftColor = '#38bdf8';
+                document.getElementById('stream-state-badge').textContent = 'Recently Finished';
+                document.getElementById('stream-state-badge').style.color = '#38bdf8';
+                const indicator = document.getElementById('stream-pulse-indicator');
+                if (indicator) indicator.style.background = '#38bdf8';
+                const fDevStr = (isAdmin && f.player) ? (` on ${f.player}`) : '';
+                document.getElementById('stream-user-device').textContent = `• ${f.username}${fDevStr}`;
+                document.getElementById('stream-title').textContent = f.title;
+                document.getElementById('stream-trakt-link').href = f.trakt_url || 'https://trakt.tv';
+                document.getElementById('stream-progress-text').textContent = '100.0% • Finished';
+                document.getElementById('stream-progress-bar').style.width = '100%';
+                document.getElementById('stream-progress-bar').style.background = '#38bdf8';
+            } else {
+                card.style.display = 'none';
+            }
+        }
+
+        function renderRows(events) {
+            const tbody = document.getElementById('events-tbody');
+            const colSpan = isAdmin ? 7 : 6;
+            if (!events || events.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>`;
+                return;
+            }
+            let html = '';
+            for (const ev of events) {
+                const color = (ev.result_status === 'ok' || ev.result_status === 200 || ev.result_status === 201) ? '#10b981' : '#f59e0b';
+                let actionBtns = '';
+                if (isAdmin) {
+                    if (ev.show_title) {
+                        const showEnc = encodeURIComponent(ev.show_title);
+                        if (ev.is_cowatch_show) {
+                            actionBtns += `<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>`;
+                        } else {
+                            actionBtns += `<button data-show="${showEnc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Add show to co-watch whitelist">+ Co-Watch</button>`;
+                        }
+                    }
+                    if (ev.media_payload) {
+                        const mediaEnc = encodeURIComponent(JSON.stringify(ev.media_payload));
+                        actionBtns += `<button onclick="quickSyncPartner('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Sync to partner">+ Sync Partner</button>`;
+                    }
+                }
+                const actionCol = isAdmin ? `<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;">${actionBtns}</td>` : '';
+
+                let statusBadgeHtml = `<span style="color:${color};font-weight:600;font-size:13px;">${escapeHtml(ev.result_status)}</span>`;
+                if (ev.cowatch_status) {
+                    if (ev.cowatch_status.synced) {
+                        const targetTxt = ev.cowatch_status.target ? `@${ev.cowatch_status.target}` : 'partner';
+                        const reasonTxt = escapeHtml(ev.cowatch_status.reason || 'Synced');
+                        statusBadgeHtml += ` <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to ${targetTxt}: ${reasonTxt}">👥 Co-Watched</span>`;
+                    } else if (ev.cowatch_status.reason && (String(ev.action).includes('mark_watched') || String(ev.action).includes('scrobble_stop') || String(ev.action).includes('stop') || String(ev.action).includes('test_webhook'))) {
+                        const reasonTxt = escapeHtml(ev.cowatch_status.reason);
+                        statusBadgeHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: ${reasonTxt}">👥 Solo</span>`;
+                    }
+                }
+
+                html += `
+                <tr style="border-bottom: 1px solid #334155;">
+                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${ev.timestamp}</td>
+                    <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">${escapeHtml(ev.title)}</td>
+                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">${ev.type}</span></td>
+                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${escapeHtml(ev.user)}</td>
+                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">${escapeHtml(ev.action)} (${ev.progress})</span></td>
+                    <td style="padding:12px 16px;">${statusBadgeHtml}</td>
+                    ${actionCol}
+                </tr>`;
+            }
+            tbody.innerHTML = html;
+        }
+
+        async function fetchEvents() {
+            try {
+                const url = isDemo ? '/api/events?demo=true' : '/api/events';
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    renderRows(data.events);
+                }
+            } catch (e) {
+                console.error('Error fetching live events:', e);
+            }
+            fetchPlayback();
+        }
+
+        async function retryQueue() {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            if (isDemo) {
+                alert('Demo mode: queue retry simulated (0 pending items).');
+                return;
+            }
+            try {
+                const res = await fetch('/api/queue/retry', { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                }
+            } catch (e) {
+                console.error('Error retrying queue:', e);
+            }
+        }
+
+        async function clearHistory() {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            if (confirm('Clear all recent activity logs?')) {
+                const url = isDemo ? '/api/events/clear?demo=true' : '/api/events/clear';
+                await fetch(url, { method: 'POST' });
+                fetchEvents();
+            }
+        }
+
+        function toggleAutoRefresh(cb) {
+            if (cb.checked) {
+                localStorage.setItem('plex_trakt_auto_refresh', 'true');
+                refreshTimer = setInterval(fetchEvents, 30000);
+            } else {
+                localStorage.setItem('plex_trakt_auto_refresh', 'false');
+                if (refreshTimer) clearInterval(refreshTimer);
+                refreshTimer = null;
+            }
+        }
+
+        let sonarrDebounceTimer = null;
+        async function onCowatchShowInput(val) {
+            clearTimeout(sonarrDebounceTimer);
+            const box = document.getElementById('sonarr-suggestions');
+            if (!box) return;
+            if (!val || val.trim().length < 1) {
+                box.style.display = 'none';
+                return;
+            }
+            sonarrDebounceTimer = setTimeout(async () => {
+                try {
+                    const url = isDemo ? '/api/sonarr/shows?demo=true&q=' + encodeURIComponent(val.trim()) : '/api/sonarr/shows?q=' + encodeURIComponent(val.trim());
+                    const res = await fetch(url);
+                    if (!res.ok) { box.style.display = 'none'; return; }
+                    const data = await res.json();
+                    if (!data.configured || !data.shows || data.shows.length === 0) {
+                        box.style.display = 'none';
+                        return;
+                    }
+                    box.innerHTML = data.shows.map(s => {
+                        const yr = s.year ? ` (${s.year})` : '';
+                        const st = s.status ? ` • <span style="color:#94a3b8;font-size:11px;">${s.status}</span>` : '';
+                        const encTitle = encodeURIComponent(s.title);
+                        const safeTitle = escapeHtml(s.title);
+                        return `<div data-title="${encTitle}" onclick="selectSonarrShow(decodeURIComponent(this.dataset.title))" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #334155;color:#f8fafc;display:flex;justify-content:space-between;align-items:center;" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='transparent'">
+                            <div><strong>${safeTitle}</strong><span style="color:#94a3b8;font-size:12px;">${yr}</span>${st}</div>
+                            <span style="color:#38bdf8;font-size:11px;font-weight:600;">+ Select</span>
+                        </div>`;
+                    }).join('');
+                    box.style.display = 'block';
+                } catch (e) {
+                    box.style.display = 'none';
+                }
+            }, 200);
+        }
+
+        function escapeHtml(str) {
+            return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+
+        function filterCowatchChips(query) {
+            const q = (query || '').toLowerCase().trim();
+            const chips = document.querySelectorAll('.cowatch-chip');
+            chips.forEach(chip => {
+                const title = chip.getAttribute('data-title') || '';
+                chip.style.display = (!q || title.includes(q)) ? 'inline-flex' : 'none';
+            });
+        }
+
+        function renderCowatchChips(shows) {
+            const container = document.getElementById('cowatch-chips-container');
+            const countBadge = document.getElementById('cowatch-count-badge');
+            if (!container) return;
+            if (countBadge) countBadge.textContent = shows ? shows.length : 0;
+            if (!shows || shows.length === 0) {
+                container.innerHTML = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>';
+                return;
+            }
+            const sorted = [...shows].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+            container.innerHTML = sorted.map(s => {
+                const enc = encodeURIComponent(s);
+                const safeTitle = escapeHtml(s);
+                return `<span class="cowatch-chip" data-title="${safeTitle.toLowerCase()}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">
+                    ${safeTitle}
+                    <button data-show="${enc}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove ${safeTitle}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#f87171'">&times;</button>
+                </span>`;
+            }).join('');
+            const filterInput = document.getElementById('cowatch-filter-input');
+            if (filterInput && filterInput.value) {
+                filterCowatchChips(filterInput.value);
+            }
+        }
+
+        function selectSonarrShow(title) {
+            const input = document.getElementById('cowatch-show-input');
+            const box = document.getElementById('sonarr-suggestions');
+            if (input) input.value = title;
+            if (box) box.style.display = 'none';
+            addCowatchShow();
+        }
+
+        document.addEventListener('click', (e) => {
+            const box = document.getElementById('sonarr-suggestions');
+            const input = document.getElementById('cowatch-show-input');
+            if (box && e.target !== input && !box.contains(e.target)) {
+                box.style.display = 'none';
+            }
+        });
+
+        async function addCowatchShow() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const input = document.getElementById('cowatch-show-input');
+            const showName = input ? input.value.trim() : '';
+            if (!showName) return;
+            try {
+                const url = isDemo ? '/api/cowatch/shows?demo=true' : '/api/cowatch/shows';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ show: showName })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (input) input.value = '';
+                    renderCowatchChips(data.shows);
+                } else {
+                    const err = await res.json();
+                    alert('Failed to add show: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function removeCowatchShow(showName) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (!confirm(`Remove "${showName}" from shared shows?`)) return;
+            try {
+                const url = isDemo ? '/api/cowatch/shows?demo=true&show=' + encodeURIComponent(showName) : '/api/cowatch/shows?show=' + encodeURIComponent(showName);
+                const res = await fetch(url, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    renderCowatchChips(data.shows);
+                } else {
+                    const err = await res.json();
+                    alert('Failed to remove show: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function quickAddShow(showName, btn) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            btn.disabled = true;
+            btn.textContent = 'Adding...';
+            try {
+                const url = isDemo ? '/api/cowatch/shows?demo=true' : '/api/cowatch/shows';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ show: showName })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    btn.textContent = '✓ Added';
+                    btn.style.background = '#059669';
+                    renderCowatchChips(data.shows);
+                } else {
+                    btn.textContent = 'Error';
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                btn.textContent = 'Error';
+                btn.disabled = false;
+            }
+        }
+
+        async function quickSyncPartner(payloadEnc, btn) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (isDemo) {
+                btn.textContent = '✓ Synced';
+                btn.style.background = '#059669';
+                btn.disabled = true;
+                return;
+            }
+            btn.disabled = true;
+            btn.textContent = 'Syncing...';
+            try {
+                const payload = JSON.parse(decodeURIComponent(payloadEnc));
+                const res = await fetch('/api/cowatch/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    btn.textContent = '✓ Synced';
+                    btn.style.background = '#059669';
+                } else {
+                    const err = await res.json();
+                    alert('Sync failed: ' + (err.detail || 'Error'));
+                    btn.textContent = 'Error';
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                btn.textContent = 'Error';
+            }
+        }
+
+        function promptLinkAccount() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (isDemo) {
+                alert('Demo mode: linking simulated.');
+                return;
+            }
+            const uname = prompt('Enter Plex username to link a Trakt account for:');
+            if (uname && uname.trim()) {
+                window.location.href = '/auth?user=' + encodeURIComponent(uname.trim());
+            }
+        }
+
+        async function uploadBackup(input) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (isDemo) {
+                alert('Demo mode: backup restore simulated successfully.');
+                input.value = '';
+                return;
+            }
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            if (!confirm(`Restore system configuration and tokens from "${file.name}"? This will overwrite existing tokens and configuration.`)) {
+                input.value = '';
+                return;
+            }
+            const formData = new FormData();
+            formData.append('backup_file', file);
+            try {
+                const res = await fetch('/api/restore', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (res.ok) {
+                    alert('✓ Backup successfully restored!');
+                    window.location.reload();
+                } else {
+                    const err = await res.json();
+                    alert('Restore failed: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Restore error: ' + e.message);
+            }
+            input.value = '';
+        }
+
+        let allRawLogs = [];
+
+        function openLogsModal() {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            const modal = document.getElementById('logs-modal');
+            if (modal) modal.style.display = 'flex';
+            fetchLogs();
+        }
+
+        function closeLogsModal() {
+            const modal = document.getElementById('logs-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function fetchLogs() {
+            const terminal = document.getElementById('logs-terminal');
+            const badge = document.getElementById('logs-source-badge');
+            if (!terminal) return;
+            try {
+                const url = isDemo ? '/api/logs?demo=true' : '/api/logs';
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (badge) {
+                        badge.textContent = data.source === 'journalctl' ? 'journalctl --user' : (data.source.includes('demo') ? 'simulated journal' : 'app buffer');
+                    }
+                    allRawLogs = data.lines || [];
+                    filterLogs();
+                } else if (res.status === 401) {
+                    closeLogsModal();
+                    openUnlockModal();
+                } else {
+                    terminal.innerHTML = '<span style="color:#ef4444;">Failed to load logs from server.</span>';
+                }
+            } catch (e) {
+                terminal.innerHTML = '<span style="color:#ef4444;">Network error fetching logs: ' + escapeHtml(e.message) + '</span>';
+            }
+        }
+
+        function filterLogs() {
+            const searchInput = document.getElementById('logs-search-input');
+            const levelSelect = document.getElementById('logs-level-select');
+            const terminal = document.getElementById('logs-terminal');
+            const countLabel = document.getElementById('logs-count-label');
+            const autoScroll = document.getElementById('logs-tail-checkbox');
+            if (!terminal) return;
+
+            const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+            const level = levelSelect ? levelSelect.value : 'ALL';
+
+            const filtered = allRawLogs.filter(line => {
+                const lower = line.toLowerCase();
+                if (query && !lower.includes(query)) return false;
+                if (level === 'ERROR') return lower.includes('[error]') || lower.includes('error:');
+                if (level === 'WARNING') return lower.includes('[warning]') || lower.includes('warning:') || lower.includes('[error]') || lower.includes('error:');
+                if (level === 'INFO') return lower.includes('[info]') || lower.includes('[warning]') || lower.includes('[error]');
+                return true;
+            });
+
+            if (countLabel) countLabel.textContent = `${filtered.length} lines`;
+
+            if (filtered.length === 0) {
+                terminal.innerHTML = '<span style="color:#64748b;font-style:italic;">No log lines matched filter criteria.</span>';
+                return;
+            }
+
+            terminal.innerHTML = filtered.map(line => {
+                const safe = escapeHtml(line);
+                if (safe.includes('[ERROR]') || safe.includes('ERROR:')) {
+                    return `<div style="color:#f87171;">${safe}</div>`;
+                }
+                if (safe.includes('[WARNING]') || safe.includes('WARNING:')) {
+                    return `<div style="color:#fbbf24;">${safe}</div>`;
+                }
+                if (safe.includes('[INFO]')) {
+                    return `<div style="color:#e2e8f0;"><span style="color:#38bdf8;">[INFO]</span>${safe.replace('[INFO]', '')}</div>`;
+                }
+                return `<div>${safe}</div>`;
+            }).join('');
+
+            if (autoScroll && autoScroll.checked) {
+                terminal.scrollTop = terminal.scrollHeight;
+            }
+        }
+
+        function copyLogsToClipboard() {
+            const btn = document.getElementById('copy-logs-btn');
+            const text = allRawLogs.join('\n');
+            if (!navigator.clipboard) {
+                alert('Clipboard API not available');
+                return;
+            }
+            navigator.clipboard.writeText(text).then(() => {
+                if (!btn) return;
+                const orig = btn.innerHTML;
+                btn.innerHTML = '✓ Copied!';
+                btn.style.background = '#10b981';
+                setTimeout(() => {
+                    btn.innerHTML = orig;
+                    btn.style.background = '#0284c7';
+                }, 2000);
+            }).catch(err => {
+                alert('Failed to copy: ' + err);
+            });
+        }
+
+        function openTestWebhookModal() {
+            if (!isAdmin && !isDemo) { openUnlockModal(); return; }
+            const modal = document.getElementById('test-modal');
+            if (modal) modal.style.display = 'flex';
+        }
+
+        function closeTestWebhookModal() {
+            const modal = document.getElementById('test-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function toggleTestMediaFields(type) {
+            const showRow = document.getElementById('test-show-row');
+            const sCol = document.getElementById('test-season-col');
+            const eCol = document.getElementById('test-episode-col');
+            if (type === 'movie') {
+                if (showRow) showRow.style.display = 'none';
+                if (sCol) sCol.style.display = 'none';
+                if (eCol) eCol.style.display = 'none';
+            } else {
+                if (showRow) showRow.style.display = 'block';
+                if (sCol) sCol.style.display = 'block';
+                if (eCol) eCol.style.display = 'block';
+            }
+        }
+
+        async function submitTestWebhook() {
+            const btn = document.getElementById('test-submit-btn');
+            const resBox = document.getElementById('test-result-box');
+            const eventVal = document.getElementById('test-event-select').value;
+            const typeVal = document.getElementById('test-type-select').value;
+            const showTitle = document.getElementById('test-show-input').value.trim();
+            const titleVal = document.getElementById('test-title-input').value.trim();
+            const seasonVal = parseInt(document.getElementById('test-season-input').value) || 1;
+            const episodeVal = parseInt(document.getElementById('test-episode-input').value) || 1;
+            const execTrakt = document.getElementById('test-execute-trakt').checked;
+
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Simulating...';
+            }
+            if (resBox) resBox.style.display = 'none';
+
+            try {
+                if (isDemo) {
+                    if (resBox) {
+                        resBox.style.display = 'block';
+                        resBox.innerHTML = '<span style="color:#10b981;">✓ Simulated webhook passed in Demo mode.</span>';
+                    }
+                    if (btn) { btn.disabled = false; btn.textContent = '▶ Run Simulation'; }
+                    return;
+                }
+                const res = await fetch('/api/test/webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event: eventVal,
+                        media_type: typeVal,
+                        title: titleVal || (typeVal === 'movie' ? 'Synthetic Movie' : 'Synthetic Episode'),
+                        show_title: typeVal === 'episode' ? showTitle : null,
+                        season: seasonVal,
+                        episode: episodeVal,
+                        execute_trakt: execTrakt
+                    })
+                });
+                const data = await res.json();
+                if (btn) { btn.disabled = false; btn.textContent = '▶ Run Simulation'; }
+                if (resBox) {
+                    resBox.style.display = 'block';
+                    const cw = data.cowatch || {};
+                    const cwColor = cw.eligible ? '#10b981' : '#f59e0b';
+                    resBox.innerHTML = `<div>Status: <strong style="color:#10b981;">${data.status}</strong></div>` +
+                        `<div>Parsed: ${escapeHtml(data.parsed.title)} (${data.parsed.media_type})</div>` +
+                        `<div>Co-Watch: <span style="color:${cwColor};font-weight:600;">${cw.eligible ? 'Eligible' : 'Not Eligible'}</span> &bull; ${escapeHtml(cw.reason || '')}</div>`;
+                }
+                fetchEvents();
+            } catch (e) {
+                if (btn) { btn.disabled = false; btn.textContent = '▶ Run Simulation'; }
+                if (resBox) {
+                    resBox.style.display = 'block';
+                    resBox.innerHTML = `<span style="color:#ef4444;">Error: ${escapeHtml(e.message)}</span>`;
+                }
+            }
+        }
+
+        async function toggleCowatchMovies() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const statusEl = document.getElementById('cowatch-movies-status');
+            const btn = document.getElementById('cowatch-movies-btn');
+            const currentEnabled = statusEl ? statusEl.textContent.trim().toLowerCase() === 'enabled' : false;
+            const newTarget = !currentEnabled;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Updating...';
+            }
+            try {
+                const url = isDemo ? '/api/cowatch/settings?demo=true' : '/api/cowatch/settings';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ co_watch_movies: newTarget })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const isNowEnabled = data.co_watch_movies;
+                    if (statusEl) statusEl.textContent = isNowEnabled ? 'Enabled' : 'Disabled';
+                    if (btn) {
+                        btn.textContent = `Toggle Movies (${isNowEnabled ? 'Disable' : 'Enable'})`;
+                        btn.disabled = false;
+                    }
+                } else {
+                    alert('Failed to update co-watch movie settings');
+                    if (btn) btn.disabled = false;
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        if (localStorage.getItem('plex_trakt_auto_refresh') === 'true') {
+            const toggle = document.getElementById('auto-refresh-toggle');
+            if (toggle) toggle.checked = true;
+            refreshTimer = setInterval(fetchEvents, 30000);
+        }
+    </script>
+</body>
+</html>

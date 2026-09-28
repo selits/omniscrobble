@@ -1,6 +1,7 @@
 # Plex to Trakt Webhook Scrobbler
 
 [![CI](https://github.com/selits/plex-trakt-webhook/actions/workflows/ci.yml/badge.svg)](https://github.com/selits/plex-trakt-webhook/actions/workflows/ci.yml)
+[![Live Demo](https://img.shields.io/badge/demo-live_preview-blue?logo=github&style=flat)](https://selits.github.io/plex-trakt-webhook/)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ed.svg?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
@@ -31,7 +32,7 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Interactive Synthetic Webhook Testing**: Built-in modal and endpoint (`POST /api/test/webhook`) to simulate Plex playback events (playing, paused, scrobble), verify filter rules, inspect co-watching eligibility reasons, and optionally execute live Trakt history and partner dual-sync.
 - **Mobile-First Responsive Web Design**: Fully responsive layout designed for all screen sizes (desktop, tablet, and mobile devices like Android and iOS phones) with fluid grids, touch-friendly scrolling, and compact modal dialogs.
 - **Sonarr & Radarr Integrations**: Real-time autocomplete for TV series from your Sonarr library (automatically excluding shows already in your whitelist) plus direct webhook endpoints (`/sonarr`, `/radarr`) for instant Trakt collection sync upon download import.
-- **Interactive Air-Gapped Demo Mode (`/demo`)**: Explore a fully populated, authenticated dashboard view with realistic mock playback (*Severance S02E01* on Apple TV 4K), 1,428 scrobbles, activity history, linked multi-user accounts, and Co-Watch configuration with zero risk to disk storage or Trakt credentials.
+- **Interactive Air-Gapped Demo & Live GitHub Pages Preview**: Explore a fully populated, authenticated dashboard view with realistic mock playback (*Severance S02E01* on Apple TV 4K), 1,428 scrobbles, activity history, linked multi-user accounts, and Co-Watch configuration with zero risk to disk storage or Trakt credentials. Test it locally via `/demo` or try the zero-install live demo hosted on [GitHub Pages](https://selits.github.io/plex-trakt-webhook/).
 - **Authenticated System Log Viewer**: Inspect live service logs directly from the dashboard via an interactive terminal modal with level filtering (`ALL`, `ERROR`, `WARNING`, `INFO`), keyword search, auto-scroll, and copy-to-clipboard, backed by `journalctl` on Linux systemd and an in-memory ring buffer fallback with automatic secret redaction.
 - **Dashboard Admin Security & Screenshot Privacy Shield**: Public visitors see a hardened, privacy-shielded view (masked usernames, completely masked partner account `@●●●●●●●●`, masked server hostname/port `http://●●●●●●●●:●●●●/webhook?token=●●●●●●●●` for safe screenshots, and locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
@@ -287,7 +288,7 @@ If you prefer running in a container:
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
 | **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt profiles, active stream status, co-watch whitelist, and live activity. |
-| **`/demo`** | `GET` | **Demo Dashboard**: Air-gapped preview environment showcasing full dashboard with realistic mock data and zero secret exposure. |
+| **`/demo`** | `GET` | **Demo Dashboard**: Air-gapped preview environment showcasing full dashboard with realistic mock data and zero secret exposure. Hosted live at [selits.github.io/plex-trakt-webhook](https://selits.github.io/plex-trakt-webhook/). |
 | **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based OAuth activation (support `?user=username` for multi-user linking). |
 | **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback, rating, scrobble, and library additions. |
 | **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token health telemetry. |
@@ -497,13 +498,18 @@ plex-trakt-webhook/
 │   ├── main.py              # FastAPI application, route handlers & template rendering
 │   ├── metrics.py           # Thread-safe Prometheus metrics registry & exposition formatter
 │   └── plex_parser.py       # Plex multipart/JSON webhook parsing & media models
+├── docs/                    # GitHub Pages static interactive demo deployment
+│   ├── index.html           # Standalone dashboard demo with client-side API simulator
+│   └── .nojekyll            # Bypass Jekyll processing on GitHub Pages
+├── scripts/                 # Maintenance and build utilities
+│   └── generate_static_demo.py # Compiles dashboard template & mock datasets into static demo
 ├── main.py                  # Backward-compatible service entrypoint (Uvicorn)
 ├── auth.py                  # Standalone CLI device code authentication tool
 ├── plex-trakt.service       # systemd user service unit
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (90 tests)
+└── tests/                   # Comprehensive pytest test suite (91 tests)
 ```
 
 ---

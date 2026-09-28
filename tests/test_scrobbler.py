@@ -2974,3 +2974,51 @@ def test_cowatch_settings_unauthorized():
         assert res_ok.json()["status"] == "ok"
 
 
+def test_static_github_pages_demo_generation(tmp_path):
+    """Verify scripts/generate_static_demo.py generates a valid standalone GitHub Pages demo."""
+    import re
+    from pathlib import Path
+    from app.main import APP_VERSION
+    from scripts.generate_static_demo import generate_static_demo
+
+    # 1. Test generation to temporary directory
+    demo_file = generate_static_demo(output_dir=tmp_path)
+    assert demo_file.is_file()
+    assert (tmp_path / ".nojekyll").is_file()
+
+    content = demo_file.read_text(encoding="utf-8")
+    assert "Live Interactive Demo" in content
+    assert APP_VERSION in content
+    assert "👑 Demo Admin" in content
+    assert "● Connected as @demo_viewer" in content
+    assert "window.fetch = async function" in content
+    assert "/api/playback" in content
+    assert "/api/events" in content
+    assert "/api/cowatch/shows" in content
+    assert "/api/sonarr/shows" in content
+    assert "/api/logs" in content
+    assert "/api/search" in content
+    assert "/api/test/webhook" in content
+
+    # Verify no unreplaced template placeholders
+    unreplaced = re.findall(r"\{\{[A-Z_]+\}\}", content)
+    assert not unreplaced, f"Found unreplaced template variables in static demo: {unreplaced}"
+
+    # Verify balanced curly braces in scripts to ensure no syntax errors
+    scripts = re.findall(r"<script(?:\s+[^>]*)?>(.*?)</script>", content, re.DOTALL)
+    assert len(scripts) >= 2
+    for idx, s in enumerate(scripts):
+        open_count = s.count("{")
+        close_count = s.count("}")
+        assert open_count == close_count, f"Script {idx} in static demo has unbalanced braces: open={open_count}, close={close_count}"
+
+    # 2. Verify docs/index.html in repo exists and is valid
+    repo_docs_index = Path(__file__).resolve().parent.parent / "docs" / "index.html"
+    assert repo_docs_index.is_file(), "docs/index.html does not exist in repository"
+    repo_content = repo_docs_index.read_text(encoding="utf-8")
+    assert "Live Interactive Demo" in repo_content
+    assert APP_VERSION in repo_content
+    assert not re.findall(r"\{\{[A-Z_]+\}\}", repo_content)
+
+
+
