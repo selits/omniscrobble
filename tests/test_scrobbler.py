@@ -2242,7 +2242,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v1.5.0" in html
+    assert "v1.6.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -4100,6 +4100,357 @@ def test_dashboard_reconciliation_elements():
     res_demo = client.get("/demo")
     assert res_demo.status_code == 200
     assert "Two-Way Library Reconciliation" in res_demo.text
+
+
+@pytest.mark.asyncio
+async def test_sonarr_client_unit():
+    """Unit test SonarrClient methods with MockTransport."""
+    from app.clients.sonarr_client import SonarrClient
+
+    def handler(request: httpx.Request):
+        url = str(request.url)
+        if "/api/v3/system/status" in url:
+            return httpx.Response(200, json={"version": "4.0.0.1234"})
+        elif "/api/v3/rootfolder" in url:
+            return httpx.Response(200, json=[{"path": "/tv", "freeSpace": 1000000000}])
+        elif "/api/v3/qualityprofile" in url:
+            return httpx.Response(200, json=[{"id": 1, "name": "HD-1080p"}])
+        elif "/api/v3/series/lookup" in url:
+            return httpx.Response(200, json=[{"title": "Severance", "year": 2022, "tvdbId": 12345}])
+        elif request.method == "GET" and "/api/v3/series" in url:
+            return httpx.Response(200, json=[{"title": "Severance", "tvdbId": 12345, "id": 1}])
+        elif request.method == "POST" and "/api/v3/series" in url:
+            return httpx.Response(201, json={"title": "The Bear", "tvdbId": 67890, "id": 2})
+        return httpx.Response(404, json={"error": "Not Found"})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://sonarr.local")
+    sc = SonarrClient(base_url="http://sonarr.local", api_key="test_key", client=mock_client)
+
+    assert sc.is_configured is True
+
+    # 1. check_connection
+    conn = await sc.check_connection()
+    assert conn["status"] == "connected"
+    assert conn["version"] == "4.0.0.1234"
+
+    # 2. get_root_folders
+    folders = await sc.get_root_folders()
+    assert len(folders) == 1
+    assert folders[0]["path"] == "/tv"
+
+    # 3. get_quality_profiles
+    profiles = await sc.get_quality_profiles()
+    assert len(profiles) == 1
+    assert profiles[0]["id"] == 1
+
+    # 4. lookup_series
+    lookup = await sc.lookup_series("tvdb:12345")
+    assert len(lookup) == 1
+    assert lookup[0]["title"] == "Severance"
+
+    # 5. has_series
+    has_by_id = await sc.has_series(tvdb_id=12345)
+    assert has_by_id is True
+    has_by_title = await sc.has_series(title="Severance")
+    assert has_by_title is True
+    has_missing = await sc.has_series(tvdb_id=99999, title="Unknown Show")
+    assert has_missing is False
+
+    # 6. add_series
+    added = await sc.add_series({"title": "The Bear", "tvdbId": 67890}, quality_profile_id=1, root_folder_path="/tv")
+    assert added is not None
+    assert added["success"] is True
+    assert added["data"]["id"] == 2
+
+    await sc.close()
+
+
+@pytest.mark.asyncio
+async def test_radarr_client_unit():
+    """Unit test RadarrClient methods with MockTransport."""
+    from app.clients.radarr_client import RadarrClient
+
+    def handler(request: httpx.Request):
+        url = str(request.url)
+        if "/api/v3/system/status" in url:
+            return httpx.Response(200, json={"version": "5.0.0.8000"})
+        elif "/api/v3/rootfolder" in url:
+            return httpx.Response(200, json=[{"path": "/movies", "freeSpace": 5000000000}])
+        elif "/api/v3/qualityprofile" in url:
+            return httpx.Response(200, json=[{"id": 1, "name": "HD-1080p"}])
+        elif "/api/v3/movie/lookup" in url:
+            return httpx.Response(200, json=[{"title": "Dune: Part Two", "year": 2024, "tmdbId": 693134}])
+        elif request.method == "GET" and "/api/v3/movie" in url:
+            return httpx.Response(200, json=[{"title": "Dune: Part Two", "tmdbId": 693134, "id": 1}])
+        elif request.method == "POST" and "/api/v3/movie" in url:
+            return httpx.Response(201, json={"title": "Gladiator II", "tmdbId": 558449, "id": 2})
+        return httpx.Response(404, json={"error": "Not Found"})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://radarr.local")
+    rc = RadarrClient(base_url="http://radarr.local", api_key="test_key", client=mock_client)
+
+    assert rc.is_configured is True
+
+    # 1. check_connection
+    conn = await rc.check_connection()
+    assert conn["status"] == "connected"
+    assert conn["version"] == "5.0.0.8000"
+
+    # 2. get_movies
+    movies = await rc.get_movies()
+    assert len(movies) == 1
+    assert movies[0]["title"] == "Dune: Part Two"
+
+    # 3. get_root_folders
+    folders = await rc.get_root_folders()
+    assert len(folders) == 1
+    assert folders[0]["path"] == "/movies"
+
+    # 4. get_quality_profiles
+    profiles = await rc.get_quality_profiles()
+    assert len(profiles) == 1
+    assert profiles[0]["id"] == 1
+
+    # 5. lookup_movie
+    lookup = await rc.lookup_movie("tmdb:693134")
+    assert len(lookup) == 1
+    assert lookup[0]["title"] == "Dune: Part Two"
+
+    # 6. has_movie
+    has_by_id = await rc.has_movie(tmdb_id=693134)
+    assert has_by_id is True
+    has_by_title = await rc.has_movie(title="Dune: Part Two")
+    assert has_by_title is True
+    has_missing = await rc.has_movie(tmdb_id=999999, title="Unknown Movie")
+    assert has_missing is False
+
+    # 7. add_movie
+    added = await rc.add_movie({"title": "Gladiator II", "tmdbId": 558449}, quality_profile_id=1, root_folder_path="/movies")
+    assert added is not None
+    assert added["success"] is True
+    assert added["data"]["id"] == 2
+
+    await rc.close()
+
+
+@pytest.mark.asyncio
+async def test_arr_bridge_watchlist_sync_full():
+    """Unit test ArrBridgeManager.sync_watchlist() with mocked Trakt, Sonarr, and Radarr clients."""
+    from app.services.arr_bridge import ArrBridgeManager
+    from app.clients.sonarr_client import SonarrClient
+    from app.clients.radarr_client import RadarrClient
+
+    # Mock Sonarr: has "Severance" (tvdb: 12345), missing "The Bear" (tvdb: 67890)
+    def sonarr_handler(request: httpx.Request):
+        url = str(request.url)
+        if "/api/v3/system/status" in url:
+            return httpx.Response(200, json={"version": "4.0.9"})
+        elif "/api/v3/series/lookup" in url:
+            return httpx.Response(200, json=[{"title": "The Bear", "year": 2022, "tvdbId": 67890, "seasons": []}])
+        elif request.method == "GET" and "/api/v3/series" in url:
+            return httpx.Response(200, json=[{"title": "Severance", "tvdbId": 12345}])
+        elif "/api/v3/rootfolder" in url:
+            return httpx.Response(200, json=[{"path": "/data/tv"}])
+        elif "/api/v3/qualityprofile" in url:
+            return httpx.Response(200, json=[{"id": 1, "name": "HD-1080p"}])
+        elif request.method == "POST" and "/api/v3/series" in url:
+            return httpx.Response(201, json={"title": "The Bear", "tvdbId": 67890, "id": 10})
+        return httpx.Response(404, json={"error": "Not Found"})
+
+    # Mock Radarr: has "Dune: Part Two" (tmdb: 693134), missing "Gladiator II" (tmdb: 558449)
+    def radarr_handler(request: httpx.Request):
+        url = str(request.url)
+        if "/api/v3/system/status" in url:
+            return httpx.Response(200, json={"version": "5.9.1"})
+        elif "/api/v3/movie/lookup" in url:
+            return httpx.Response(200, json=[{"title": "Gladiator II", "year": 2024, "tmdbId": 558449}])
+        elif request.method == "GET" and "/api/v3/movie" in url:
+            return httpx.Response(200, json=[{"title": "Dune: Part Two", "tmdbId": 693134}])
+        elif "/api/v3/rootfolder" in url:
+            return httpx.Response(200, json=[{"path": "/data/movies"}])
+        elif "/api/v3/qualityprofile" in url:
+            return httpx.Response(200, json=[{"id": 1, "name": "HD-1080p"}])
+        elif request.method == "POST" and "/api/v3/movie" in url:
+            return httpx.Response(201, json={"title": "Gladiator II", "tmdbId": 558449, "id": 20})
+        return httpx.Response(404, json={"error": "Not Found"})
+
+    sonarr_c = SonarrClient(
+        base_url="http://sonarr.local", api_key="k",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(sonarr_handler), base_url="http://sonarr.local")
+    )
+    radarr_c = RadarrClient(
+        base_url="http://radarr.local", api_key="k",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(radarr_handler), base_url="http://radarr.local")
+    )
+
+    # Mock Trakt
+    class MockTraktClient:
+        def is_authenticated(self):
+            return True
+
+        async def get_watchlist(self, media_type: str = "movies"):
+            if media_type == "movies":
+                return [
+                    {"movie": {"title": "Dune: Part Two", "year": 2024, "ids": {"tmdb": 693134}}},
+                    {"movie": {"title": "Gladiator II", "year": 2024, "ids": {"tmdb": 558449}}},
+                ]
+            else:
+                return [
+                    {"show": {"title": "Severance", "year": 2022, "ids": {"tvdb": 12345}}},
+                    {"show": {"title": "The Bear", "year": 2022, "ids": {"tvdb": 67890}}},
+                ]
+
+    bridge = ArrBridgeManager(
+        sonarr_client=sonarr_c,
+        radarr_client=radarr_c,
+        trakt_client=MockTraktClient(),
+    )
+
+    res = await bridge.sync_watchlist()
+    assert res["added"]["movies"] == 1
+    assert res["skipped"]["movies"] == 1
+    assert res["added"]["shows"] == 1
+    assert res["skipped"]["shows"] == 1
+    assert len(res["errors"]) == 0
+
+    # Test unauthenticated Trakt
+    class UnauthTraktClient:
+        def is_authenticated(self):
+            return False
+
+    bridge.set_trakt_client(UnauthTraktClient())
+    unauth_res = await bridge.sync_watchlist()
+    assert unauth_res["success"] is False
+    assert "not authenticated" in unauth_res["error"]
+
+    # Test demo mode
+    demo_res = await bridge.sync_watchlist(demo=True)
+    assert demo_res["added"]["movies"] >= 1
+    assert demo_res["added"]["shows"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_arr_bridge_ecosystem_and_status():
+    """Verify get_status and get_ecosystem_status reporting."""
+    from app.services.arr_bridge import arr_bridge
+
+    # Demo status
+    demo_status = await arr_bridge.get_status(demo=True)
+    assert demo_status["configured"] is True
+    assert demo_status["sonarr_connected"] is True
+    assert demo_status["radarr_connected"] is True
+    assert demo_status["sonarr_series_count"] == 48
+    assert demo_status["radarr_movies_count"] == 215
+
+    # Demo ecosystem
+    demo_eco = await arr_bridge.get_ecosystem_status(demo=True)
+    assert demo_eco["healthy_count"] == 6
+    assert demo_eco["total_count"] == 6
+    server_ids = [s["id"] for s in demo_eco["servers"]]
+    assert "plex" in server_ids
+    assert "jellyfin" in server_ids
+    assert "emby" in server_ids
+    assert "trakt" in server_ids
+    assert "sonarr" in server_ids
+    assert "radarr" in server_ids
+
+    # Live ecosystem
+    live_eco = await arr_bridge.get_ecosystem_status(demo=False)
+    assert "servers" in live_eco
+    assert len(live_eco["servers"]) >= 4
+
+
+def test_arr_api_endpoints_and_auth():
+    """Test /api/arr/status, /api/arr/sync, and /api/ecosystem routes."""
+    client = TestClient(app)
+
+    # 1. /api/arr/status
+    res = client.get("/api/arr/status")
+    assert res.status_code == 200
+    assert "configured" in res.json()
+
+    res_demo = client.get("/api/arr/status?demo=true")
+    assert res_demo.status_code == 200
+    assert res_demo.json()["sonarr_series_count"] == 48
+
+    # 2. /api/ecosystem
+    res_eco = client.get("/api/ecosystem")
+    assert res_eco.status_code == 200
+    assert "servers" in res_eco.json()
+
+    res_eco_demo = client.get("/api/ecosystem?demo=true")
+    assert res_eco_demo.status_code == 200
+    assert res_eco_demo.json()["healthy_count"] == 6
+
+    # 3. /api/arr/sync
+    # Demo execution allowed without auth
+    res_sync_demo = client.post("/api/arr/sync?demo=true")
+    assert res_sync_demo.status_code == 200
+    assert "added" in res_sync_demo.json()
+
+    # Non-demo requires admin
+    if Config.WEBHOOK_SECRET:
+        res_sync_unauth = client.post("/api/arr/sync")
+        assert res_sync_unauth.status_code == 401
+
+        # Admin authorized
+        headers = {"x-webhook-secret": Config.WEBHOOK_SECRET}
+        res_sync_auth = client.post("/api/arr/sync", headers=headers)
+        assert res_sync_auth.status_code == 200
+
+
+def test_dashboard_arr_and_ecosystem_cards():
+    """Verify Multi-Server Ecosystem and Arr Bridge cards appear on dashboard."""
+    client = TestClient(app)
+
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.text
+    assert "Multi-Server Ecosystem" in html
+    assert "Content Bridge" in html
+    assert 'id="arr-modal"' in html
+
+    res_demo = client.get("/demo")
+    assert res_demo.status_code == 200
+    assert "Multi-Server Ecosystem" in res_demo.text
+    assert "Content Bridge" in res_demo.text
+
+
+def test_notifier_arr_add_action():
+    """Verify Notifier formats and handles arr_add action."""
+    from app.services.notifier import Notifier
+    from app.plex_parser import ParsedMedia
+
+    notifier_inst = Notifier(Config)
+
+    media = ParsedMedia(
+        raw_payload={},
+        event="arr.add",
+        media_type="movie",
+        title="Gladiator II",
+        year=2024,
+        username="Radarr",
+    )
+
+    payload = notifier_inst.build_discord_payload(media, "arr_add")
+    assert "embeds" in payload
+    embed = payload["embeds"][0]
+    assert "Gladiator II (2024)" in embed["title"]
+    assert embed["color"] == 0x2ECC71
+    assert "Added to **Radarr** from Trakt Watchlist" in embed["description"]
+
+    # Also test show
+    show_media = ParsedMedia(
+        raw_payload={},
+        event="arr.add",
+        media_type="show",
+        title="Severance",
+        year=2022,
+        username="Sonarr",
+    )
+    show_payload = notifier_inst.build_discord_payload(show_media, "arr_add")
+    assert "Added to **Sonarr** from Trakt Watchlist" in show_payload["embeds"][0]["description"]
+
 
 
 

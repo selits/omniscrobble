@@ -101,11 +101,19 @@ class Config:
     CO_WATCH_MOVIES: bool = os.getenv("CO_WATCH_MOVIES", "false").lower() in ("true", "1", "yes")
     CO_WATCH_DATA_FILE: Path = BASE_DIR / "data" / "cowatch_shows.json"
 
-    # Sonarr & Radarr Integrations
+    # Sonarr & Radarr Integrations & Watchlist Automation
     SONARR_URL: str = os.getenv("SONARR_URL", "").strip().rstrip("/")
     SONARR_API_KEY: str = os.getenv("SONARR_API_KEY", "").strip()
     RADARR_URL: str = os.getenv("RADARR_URL", "").strip().rstrip("/")
     RADARR_API_KEY: str = os.getenv("RADARR_API_KEY", "").strip()
+    AUTO_ADD_FROM_WATCHLIST: bool = os.getenv("AUTO_ADD_FROM_WATCHLIST", "false").lower() in ("true", "1", "yes")
+    SEARCH_ON_ADD: bool = os.getenv("SEARCH_ON_ADD", "true").lower() in ("true", "1", "yes")
+    ARR_WATCHLIST_INTERVAL: int = int(os.getenv("ARR_WATCHLIST_INTERVAL", "0"))
+    SONARR_QUALITY_PROFILE_ID: Optional[int] = int(os.getenv("SONARR_QUALITY_PROFILE_ID", "").strip()) if os.getenv("SONARR_QUALITY_PROFILE_ID", "").strip() else None
+    SONARR_ROOT_FOLDER: Optional[str] = os.getenv("SONARR_ROOT_FOLDER", "").strip() or None
+    RADARR_QUALITY_PROFILE_ID: Optional[int] = int(os.getenv("RADARR_QUALITY_PROFILE_ID", "").strip()) if os.getenv("RADARR_QUALITY_PROFILE_ID", "").strip() else None
+    RADARR_ROOT_FOLDER: Optional[str] = os.getenv("RADARR_ROOT_FOLDER", "").strip() or None
+    ARR_NOTIFY_ON_ADD: bool = os.getenv("ARR_NOTIFY_ON_ADD", "true").lower() in ("true", "1", "yes")
 
     # Two-Way Synchronization & Reverse Sync (Trakt -> Media Server)
     PLEX_URL: str = os.getenv("PLEX_URL", "").strip().rstrip("/")

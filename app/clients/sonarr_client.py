@@ -57,9 +57,16 @@ def map_arr_media_type(quality_val: Any) -> str:
 
 
 class SonarrClient:
-    def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ):
         self.base_url = (base_url or Config.SONARR_URL).rstrip("/")
         self.api_key = api_key or Config.SONARR_API_KEY
+        self._external_client = client
+        self._internal_client: Optional[httpx.AsyncClient] = None
         self._cached_series: list[dict[str, Any]] = []
         self._cache_timestamp: float = 0.0
         self._cache_ttl: float = 300.0  # 5 minutes in-memory cache
@@ -67,6 +74,45 @@ class SonarrClient:
     @property
     def is_configured(self) -> bool:
         return bool(self.base_url and self.api_key)
+
+    def get_client(self) -> httpx.AsyncClient:
+        if self._external_client is not None:
+            return self._external_client
+        if self._internal_client is None or self._internal_client.is_closed:
+            self._internal_client = httpx.AsyncClient(timeout=15.0)
+        return self._internal_client
+
+    async def close(self) -> None:
+        if self._internal_client and not self._internal_client.is_closed:
+            await self._internal_client.aclose()
+            self._internal_client = None
+
+    def _get_headers(self) -> dict[str, str]:
+        return {
+            "X-Api-Key": self.api_key,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+    async def check_connection(self) -> dict[str, Any]:
+        """Verify connectivity with Sonarr and return system status details."""
+        if not self.is_configured:
+            return {"status": "unconfigured", "message": "Sonarr URL or API key not configured"}
+
+        url = f"{self.base_url}/api/v3/system/status"
+        client = self.get_client()
+        try:
+            resp = await client.get(url, headers=self._get_headers())
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "status": "connected",
+                    "app_name": data.get("appName", "Sonarr"),
+                    "version": data.get("version", "unknown"),
+                }
+            return {"status": "error", "message": f"Sonarr HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     async def get_series(
         self, client: Optional[httpx.AsyncClient] = None, force_refresh: bool = False
@@ -79,24 +125,17 @@ class SonarrClient:
         if not force_refresh and self._cached_series and (now - self._cache_timestamp < self._cache_ttl):
             return self._cached_series
 
-        headers = {
-            "X-Api-Key": self.api_key,
-            "Accept": "application/json",
-        }
         url = f"{self.base_url}/api/v3/series"
+        active_client = client or self.get_client()
 
         try:
-            if client:
-                resp = await client.get(url, headers=headers, timeout=10.0)
-            else:
-                async with httpx.AsyncClient() as c:
-                    resp = await c.get(url, headers=headers, timeout=10.0)
-
+            resp = await active_client.get(url, headers=self._get_headers())
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, list):
                     simplified = [
                         {
+                            "id": s.get("id"),
                             "title": s.get("title", ""),
                             "year": s.get("year"),
                             "tvdbId": s.get("tvdbId"),
@@ -142,6 +181,122 @@ class SonarrClient:
         ]
         results = starts_with + contains
         return results[:limit]
+
+    async def get_root_folders(self) -> list[dict[str, Any]]:
+        """Fetch available root storage folders from Sonarr."""
+        if not self.is_configured:
+            return []
+        url = f"{self.base_url}/api/v3/rootfolder"
+        client = self.get_client()
+        try:
+            resp = await client.get(url, headers=self._get_headers())
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Error fetching root folders from Sonarr: {e}")
+        return []
+
+    async def get_quality_profiles(self) -> list[dict[str, Any]]:
+        """Fetch available quality profiles from Sonarr."""
+        if not self.is_configured:
+            return []
+        url = f"{self.base_url}/api/v3/qualityprofile"
+        client = self.get_client()
+        try:
+            resp = await client.get(url, headers=self._get_headers())
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Error fetching quality profiles from Sonarr: {e}")
+        return []
+
+    async def lookup_series(self, term: str) -> list[dict[str, Any]]:
+        """Look up series in Sonarr using term (tvdbId, imdbId, or title search)."""
+        if not self.is_configured or not term:
+            return []
+        url = f"{self.base_url}/api/v3/series/lookup"
+        client = self.get_client()
+        try:
+            resp = await client.get(url, headers=self._get_headers(), params={"term": term})
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"Error looking up series in Sonarr for term {term}: {e}")
+        return []
+
+    async def has_series(
+        self,
+        tvdb_id: Optional[int] = None,
+        imdb_id: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> bool:
+        """Check if series already exists in Sonarr library."""
+        series_list = await self.get_series()
+        clean_imdb = imdb_id.lower() if imdb_id else None
+        clean_title = title.strip().lower() if title else None
+
+        for s in series_list:
+            if tvdb_id and s.get("tvdbId") and int(s["tvdbId"]) == int(tvdb_id):
+                return True
+            if clean_imdb and s.get("imdbId") and str(s["imdbId"]).lower() == clean_imdb:
+                return True
+            if clean_title and s.get("title", "").strip().lower() == clean_title:
+                return True
+        return False
+
+    async def add_series(
+        self,
+        series_data: dict[str, Any],
+        root_folder_path: Optional[str] = None,
+        quality_profile_id: Optional[int] = None,
+        monitored: bool = True,
+        search_for_missing_episodes: bool = True,
+    ) -> dict[str, Any]:
+        """Add a TV series to Sonarr library."""
+        if not self.is_configured:
+            return {"success": False, "error": "Sonarr not configured"}
+
+        # Determine root folder
+        r_path = root_folder_path or Config.SONARR_ROOT_FOLDER
+        if not r_path:
+            folders = await self.get_root_folders()
+            if folders:
+                r_path = folders[0].get("path")
+        if not r_path:
+            return {"success": False, "error": "No root folder available in Sonarr"}
+
+        # Determine quality profile
+        qp_id = quality_profile_id or Config.SONARR_QUALITY_PROFILE_ID
+        if not qp_id:
+            profiles = await self.get_quality_profiles()
+            if profiles:
+                qp_id = profiles[0].get("id")
+        if not qp_id:
+            return {"success": False, "error": "No quality profile available in Sonarr"}
+
+        payload = dict(series_data)
+        payload["rootFolderPath"] = r_path
+        payload["qualityProfileId"] = qp_id
+        payload["monitored"] = monitored
+        payload["seasonFolder"] = True
+        payload["addOptions"] = {
+            "searchForMissingEpisodes": search_for_missing_episodes,
+        }
+
+        url = f"{self.base_url}/api/v3/series"
+        client = self.get_client()
+        try:
+            resp = await client.post(url, headers=self._get_headers(), json=payload)
+            if resp.status_code in (200, 201):
+                self.clear_cache()
+                return {"success": True, "data": resp.json()}
+            return {"success": False, "error": f"Sonarr HTTP {resp.status_code}: {resp.text}"}
+        except Exception as e:
+            logger.error(f"Failed to add series to Sonarr: {e}")
+            return {"success": False, "error": str(e)}
 
     def clear_cache(self) -> None:
         self._cached_series = []

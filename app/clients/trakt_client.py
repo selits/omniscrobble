@@ -277,6 +277,13 @@ class TraktClient:
         res = await self._get_authenticated(url)
         return res if isinstance(res, list) else []
 
+    async def get_watchlist(self, media_type: str = "movies") -> list[dict[str, Any]]:
+        """GET /sync/watchlist/{type} - Fetch user's Trakt watchlist items (movies or shows)."""
+        subpath = f"/{media_type}" if media_type in ("movies", "shows", "seasons", "episodes") else "/movies"
+        url = f"{self.api_url}/sync/watchlist{subpath}"
+        res = await self._get_authenticated(url)
+        return res if isinstance(res, list) else []
+
 
     async def get_user_settings(self) -> Optional[dict[str, Any]]:
         """GET /users/settings - Retrieve authenticated user profile information."""

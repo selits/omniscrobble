@@ -56,7 +56,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -115,7 +115,7 @@
     <script>
     (function() {
         const initialShows = ["Fallout", "Fargo", "House of the Dragon", "Severance", "Sh\u014dgun", "Silo", "Slow Horses", "Succession", "Ted Lasso", "The Bear", "The Last of Us", "The White Lotus"];
-        const initialEvents = [{"timestamp": "2026-09-28 15:56:11", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:22:11", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 14:35:11", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 12:50:11", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 10:40:11", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 08:00:11", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
+        const initialEvents = [{"timestamp": "2026-09-28 16:23:05", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:49:05", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:02:05", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 13:17:05", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 11:07:05", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 08:27:05", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
         const initialReconciliation = [{"id": "movie:101", "type": "movie", "title": "Interstellar", "series_title": null, "season": null, "episode": null, "year": 2014, "rating_key": "101", "ids": {"imdb": "tt0816692", "tmdb": "157336"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}, {"id": "movie:102", "type": "movie", "title": "Dune: Part Two", "series_title": null, "season": null, "episode": null, "year": 2024, "rating_key": "102", "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "status": "rating_mismatch", "plex_watched": true, "trakt_watched": true, "plex_rating": 8.0, "trakt_rating": 9, "action_recommended": "sync_rating_to_plex"}, {"id": "episode:201", "type": "episode", "title": "Tomorrow", "series_title": "The Bear", "season": 3, "episode": 1, "year": 2024, "rating_key": "201", "ids": {"imdb": "tt27984852"}, "status": "plex_only", "plex_watched": true, "trakt_watched": false, "plex_rating": null, "trakt_rating": null, "action_recommended": "sync_to_trakt"}, {"id": "episode:202", "type": "episode", "title": "Felina", "series_title": "Breaking Bad", "season": 5, "episode": 16, "year": 2013, "rating_key": "202", "ids": {"imdb": "tt2301451"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}];
         const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "The Bear", "year": 2022, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Slow Horses", "year": 2022, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Fargo", "year": 2014, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "Ted Lasso", "year": 2020, "status": "ended"}, {"title": "Silo", "year": 2023, "status": "continuing"}, {"title": "House of the Dragon", "year": 2022, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
         const demoLogs = ["Sep 28 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 28 08:15:32 mediaserver python[5678]: 2026-09-28 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'The Bear S03E01 - Tomorrow' by user 'demo_viewer'", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for The Bear S03E01", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'The Bear S03E01 - Tomorrow' (progress: 100.0%)", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:55:01 mediaserver python[5678]: 2026-09-28 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 28 08:55:02 mediaserver python[5678]: 2026-09-28 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 28 09:02:45 mediaserver python[5678]: 2026-09-28 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 09:18:20 mediaserver python[5678]: 2026-09-28 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 28 09:18:21 mediaserver python[5678]: 2026-09-28 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
@@ -322,6 +322,63 @@
                 return jsonResp({ in_progress: false, status: 'idle', total: 0, current: 0, success: 0, failed: 0 });
             }
 
+            // 13. Content Bridge & *Arr Automation Endpoints
+            if (path.endsWith('/api/arr/status')) {
+                return jsonResp({
+                    configured: true,
+                    sonarr_configured: true,
+                    sonarr_connected: true,
+                    sonarr_version: "4.0.9",
+                    sonarr_series_count: 48,
+                    radarr_configured: true,
+                    radarr_connected: true,
+                    radarr_version: "5.9.1",
+                    radarr_movies_count: 215,
+                    auto_add_enabled: true,
+                    search_on_add: true,
+                    interval_seconds: 1800,
+                    last_sync_time: Math.floor(Date.now() / 1000) - 900,
+                    is_syncing: false,
+                    last_result: {
+                        added: { movies: 1, shows: 1 },
+                        skipped: { movies: 2, shows: 2 },
+                        items: [
+                            { title: "Gladiator II", year: 2024, type: "movie", status: "added", app: "Radarr" },
+                            { title: "Dune: Part Two", year: 2024, type: "movie", status: "skipped", reason: "Already in Radarr", app: "Radarr" },
+                            { title: "Alien: Earth", year: 2025, type: "show", status: "added", app: "Sonarr" },
+                            { title: "Severance", year: 2022, type: "show", status: "skipped", reason: "Already in Sonarr", app: "Sonarr" }
+                        ]
+                    }
+                });
+            }
+            if (path.endsWith('/api/arr/sync')) {
+                return jsonResp({
+                    status: 'success',
+                    added: { movies: 1, shows: 1 },
+                    skipped: { movies: 2, shows: 2 },
+                    items: [
+                        { title: "Gladiator II", year: 2024, type: "movie", status: "added", app: "Radarr" },
+                        { title: "Dune: Part Two", year: 2024, type: "movie", status: "skipped", reason: "Already in Radarr", app: "Radarr" },
+                        { title: "Alien: Earth", year: 2025, type: "show", status: "added", app: "Sonarr" },
+                        { title: "Severance", year: 2022, type: "show", status: "skipped", reason: "Already in Sonarr", app: "Sonarr" }
+                    ]
+                });
+            }
+            if (path.endsWith('/api/ecosystem')) {
+                return jsonResp({
+                    healthy_count: 6,
+                    total_count: 6,
+                    servers: [
+                        { id: "plex", name: "Plex Media Server", category: "Media Server", status: "connected", badge: "Online", version: "1.40.5", details: "Local Server (Port 32400)", icon: "plex" },
+                        { id: "jellyfin", name: "Jellyfin", category: "Media Server", status: "available", badge: "Ready", version: "10.9.11", details: "Webhook Ingestion Active", icon: "jellyfin" },
+                        { id: "emby", name: "Emby Server", category: "Media Server", status: "available", badge: "Ready", version: "4.8.8", details: "Webhook Ingestion Active", icon: "emby" },
+                        { id: "trakt", name: "Trakt.tv", category: "Tracker", status: "connected", badge: "Authenticated", version: "API v2", details: "Connected as @demo_viewer (84 days left)", icon: "trakt" },
+                        { id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" },
+                        { id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }
+                    ]
+                });
+            }
+
             return jsonResp({ status: 'ok', mode: 'simulated' });
         };
     })();
@@ -440,6 +497,134 @@
     </div>
     
         </div>
+
+        
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🌐</span> Multi-Server Ecosystem
+            </h3>
+            <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                6/6 Services Healthy
+            </span>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            Unified operational topology across all media servers, Trakt scrobble tracker, and automated media acquisition engines.
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🔶</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Plex Media Server</div>
+                            <div style="font-size:11px;color:#64748b;">Media Server</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Local Server (Port 32400)</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🟣</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Jellyfin</div>
+                            <div style="font-size:11px;color:#64748b;">Media Server</div>
+                        </div>
+                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🟢</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Emby Server</div>
+                            <div style="font-size:11px;color:#64748b;">Media Server</div>
+                        </div>
+                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🔴</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Trakt.tv</div>
+                            <div style="font-size:11px;color:#64748b;">Tracker</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (84 days left)</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">📺</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Sonarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">48 Series Monitored</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🍿</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Radarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">215 Movies Monitored</div>
+            </div>
+        </div>
+    </div>
+    
+
+        
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🎬</span> Content Bridge & *Arr Watchlist Automation
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Auto-Add: Every 30m</span>
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Radarr and Sonarr with automatic search and notification dispatch.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+                    <span style="color:#38bdf8;">📺 Sonarr</span><span style="color:#10b981;font-weight:600;">48 Series</span>
+                </span>
+                <span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+                    <span style="color:#f59e0b;">🍿 Radarr</span><span style="color:#10b981;font-weight:600;">215 Movies</span>
+                </span>
+                <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>Enabled</strong> &bull; Alerts: <strong>On</strong></span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button onclick="triggerArrWatchlistSync(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Sync Watchlist Now</button>
+                <button onclick="openArrModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;">📋 View Log</button>
+            </div>
+        </div>
+    </div>
+    
 
         
     <div class="card">
@@ -612,7 +797,7 @@
                     <tbody id="events-tbody">
                         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:56:11</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 16:23:05</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Severance S02E01 - Hello, Kier</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -622,7 +807,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:22:11</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:49:05</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">The Bear S03E01 - Tomorrow</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -632,7 +817,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 14:35:11</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:02:05</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Dune: Part Two (2024)</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -642,7 +827,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 12:50:11</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 13:17:05</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Succession S04E03 - Connor&#x27;s Wedding</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_partner</span></div></td>
@@ -652,7 +837,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 10:40:11</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 11:07:05</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Slow Horses S04E01 - Identity Theft</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -662,7 +847,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 08:00:11</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 08:27:05</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Shōgun S01E01 - Anjin</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -679,7 +864,7 @@
         <div class="footer">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="color: #94a3b8; font-weight: 500;">Omniscrobble</span>
-                <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v1.5.0</span>
+                <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v1.6.0</span>
             </div>
             <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;">
                 <a href="https://github.com/selits/omniscrobble" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color='#f8fafc'" onmouseout="this.style.color='#94a3b8'">
@@ -931,6 +1116,30 @@
                     <button type="button" id="reconcile-selected-btn" onclick="executeSelectedReconcile()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;" disabled>⚡ Sync Selected</button>
                     <button type="button" id="reconcile-all-btn" onclick="executeAllReconcile()" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Reconcile All</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Arr Watchlist Automation Modal -->
+    <div id="arr-modal" onclick="if(event.target===this)closeArrModal()">
+        <div class="modal-dialog modal-dialog-lg">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>🎬</span> Watchlist Acquisition History
+                    </h3>
+                    <span id="arr-modal-status-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">Ready</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <button onclick="triggerArrWatchlistSync()" id="arr-modal-sync-btn" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Sync Watchlist Now</button>
+                    <button onclick="closeArrModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;padding:4px 10px;font-size:14px;font-weight:700;">&times;</button>
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Recent movies and TV shows detected in your Trakt Watchlist and dispatched to Radarr and Sonarr.
+            </p>
+            <div id="arr-modal-content" style="flex:1;overflow-y:auto;max-height:400px;display:flex;flex-direction:column;gap:8px;">
+                <div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Loading watchlist status...</div>
             </div>
         </div>
     </div>
@@ -2132,6 +2341,116 @@
                 if (pBar) pBar.style.background = '#ef4444';
             } finally {
                 if (allBtn) allBtn.disabled = false;
+            }
+        }
+
+        // Arr Watchlist Automation & Ecosystem
+        function openArrModal() {
+            const modal = document.getElementById('arr-modal');
+            if (modal) modal.style.display = 'flex';
+            fetchArrStatus();
+        }
+
+        function closeArrModal() {
+            const modal = document.getElementById('arr-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function fetchArrStatus() {
+            const container = document.getElementById('arr-modal-content');
+            const badge = document.getElementById('arr-modal-status-badge');
+            try {
+                const url = isDemo ? '/api/arr/status?demo=true' : '/api/arr/status';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Failed to fetch status');
+                const data = await res.json();
+                renderArrModalContent(data);
+                if (badge) {
+                    badge.innerText = data.is_syncing ? 'Syncing...' : 'Ready';
+                    badge.style.color = data.is_syncing ? '#f59e0b' : '#38bdf8';
+                }
+            } catch (err) {
+                if (container) container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Failed to load Arr status: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderArrModalContent(data) {
+            const container = document.getElementById('arr-modal-content');
+            if (!container) return;
+            const res = data.last_result;
+            if (!res || !res.items || res.items.length === 0) {
+                container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">No items processed in the most recent sync. Click "Sync Watchlist Now" to poll Trakt.</div>';
+                return;
+            }
+
+            let htmlStr = '';
+            for (const item of res.items) {
+                const isAdded = item.status === 'added';
+                const stColor = isAdded ? '#10b981' : '#94a3b8';
+                const stBg = isAdded ? '#064e3b' : '#1e293b';
+                const stBorder = isAdded ? '#059669' : '#334155';
+                const stText = isAdded ? 'Added' : (item.reason || 'Skipped');
+                const appName = item.app || (item.type === 'movie' ? 'Radarr' : 'Sonarr');
+                const yearStr = item.year ? ` (${item.year})` : '';
+                const typeIcon = item.type === 'movie' ? '🍿' : '📺';
+
+                htmlStr += `
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span>${typeIcon}</span>
+                        <div>
+                            <strong style="color:#f8fafc;font-size:13px;">${escapeHtml(item.title)}${yearStr}</strong>
+                            <div style="color:#64748b;font-size:11px;">Target: ${escapeHtml(appName)} &bull; ${item.type || 'media'}</div>
+                        </div>
+                    </div>
+                    <span style="background:${stBg};border:1px solid ${stBorder};color:${stColor};font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;">
+                        ${escapeHtml(stText)}
+                    </span>
+                </div>
+                `;
+            }
+            container.innerHTML = htmlStr;
+        }
+
+        async function triggerArrWatchlistSync(btn) {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            const modalBtn = document.getElementById('arr-modal-sync-btn');
+            const targetBtn = btn || modalBtn;
+            const origText = targetBtn ? targetBtn.innerHTML : '';
+            if (targetBtn) {
+                targetBtn.disabled = true;
+                targetBtn.innerHTML = '⚡ Syncing...';
+            }
+
+            try {
+                const url = isDemo ? '/api/arr/sync?demo=true' : '/api/arr/sync';
+                const res = await fetch(url, { method: 'POST' });
+                if (res.status === 401) {
+                    openUnlockModal();
+                    return;
+                }
+                const data = await res.json();
+                if (targetBtn) {
+                    targetBtn.innerHTML = '✓ Synced!';
+                    targetBtn.style.background = '#059669';
+                }
+                setTimeout(() => {
+                    if (targetBtn) {
+                        targetBtn.innerHTML = origText;
+                        targetBtn.style.background = '#10b981';
+                        targetBtn.disabled = false;
+                    }
+                }, 2000);
+                fetchArrStatus();
+            } catch (err) {
+                alert('Sync failed: ' + err.message);
+                if (targetBtn) {
+                    targetBtn.innerHTML = origText;
+                    targetBtn.disabled = false;
+                }
             }
         }
 

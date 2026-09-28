@@ -18,6 +18,7 @@ logger = logging.getLogger("notifier")
 DISCORD_COLOR_SCROBBLE = 0xED1C24  # Trakt Red
 DISCORD_COLOR_RATE = 0xF5A623      # Gold
 DISCORD_COLOR_COLLECTION = 0x00A8E8 # Cyan / Trakt Collection Blue
+DISCORD_COLOR_ARR = 0x2ECC71        # Emerald Green / Acquisition
 
 
 def format_media_title(media: ParsedMedia) -> str:
@@ -103,6 +104,14 @@ class Notifier:
             if media.video_resolution or media.audio_codec:
                 specs = " • ".join(filter(None, [media.video_resolution, media.audio_codec]))
                 fields.append({"name": "Specs", "value": specs.upper(), "inline": True})
+        elif action == "arr_add":
+            color = DISCORD_COLOR_ARR
+            description = f"Added to **{media.username or 'Media Downloader'}** from Trakt Watchlist"
+            fields = [
+                {"name": "Status", "value": "📥 Monitored & Added", "inline": True},
+                {"name": "App", "value": media.username or "Arr", "inline": True},
+                {"name": "Type", "value": type_str, "inline": True},
+            ]
         else:
             color = DISCORD_COLOR_SCROBBLE
             progress_val = f"{media.progress:.1f}%" if media.progress is not None else "100.0%"
@@ -156,6 +165,14 @@ class Notifier:
                 f"🎬 <b>{title_str}</b>\n"
                 f"👤 <b>User:</b> <code>{user_str}</code>\n"
                 f"{specs_str}"
+                f"🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
+            )
+        elif action == "arr_add":
+            app_str = html.escape(media.username or "Arr")
+            text = (
+                f"📥 <b>Added to {app_str}</b>\n\n"
+                f"🎬 <b>{title_str}</b>\n"
+                f"👤 <b>Source:</b> <code>Trakt Watchlist</code>\n"
                 f"🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
             )
         else:
@@ -260,6 +277,9 @@ class Notifier:
         elif action == "collection":
             msg = f"Added {title_str} to Trakt Collection"
             headers["Tags"] = "cd,package,trakt"
+        elif action == "arr_add":
+            msg = f"Added {title_str} to {media.username or 'Arr'} from Trakt Watchlist"
+            headers["Tags"] = "inbox_tray,movie_camera"
         else:
             msg = f"Scrobbled {title_str} ({media.progress:.1f}% watched) by {media.username}"
             headers["Tags"] = "movie_camera,popcorn,trakt"
@@ -291,6 +311,8 @@ class Notifier:
             msg = f"⭐ Rated {media.rating or 10}/10 by {media.username}"
         elif action == "collection":
             msg = f"📥 Added to Trakt Collection by {media.username or 'Server'}"
+        elif action == "arr_add":
+            msg = f"📥 Added {title_str} to {media.username or 'Arr'} from Trakt Watchlist"
         else:
             msg = f"🍿 Scrobbled to Trakt ({media.progress:.1f}% watched) by {media.username}"
 
@@ -328,6 +350,9 @@ class Notifier:
                 return
         elif action == "collection":
             if not self.config.NOTIFY_ON_COLLECTION:
+                return
+        elif action == "arr_add":
+            if not getattr(self.config, "ARR_NOTIFY_ON_ADD", True):
                 return
         else:
             return

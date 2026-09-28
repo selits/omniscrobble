@@ -56,7 +56,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -174,6 +174,10 @@
             </div>
             {{WEBHOOK_CARD}}
         </div>
+
+        {{ECOSYSTEM_CARD}}
+
+        {{ARR_BRIDGE_CARD}}
 
         {{COWATCH_CARD}}
 
@@ -469,6 +473,30 @@
                     <button type="button" id="reconcile-selected-btn" onclick="executeSelectedReconcile()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;" disabled>⚡ Sync Selected</button>
                     <button type="button" id="reconcile-all-btn" onclick="executeAllReconcile()" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Reconcile All</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Arr Watchlist Automation Modal -->
+    <div id="arr-modal" onclick="if(event.target===this)closeArrModal()">
+        <div class="modal-dialog modal-dialog-lg">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>🎬</span> Watchlist Acquisition History
+                    </h3>
+                    <span id="arr-modal-status-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">Ready</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <button onclick="triggerArrWatchlistSync()" id="arr-modal-sync-btn" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Sync Watchlist Now</button>
+                    <button onclick="closeArrModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;padding:4px 10px;font-size:14px;font-weight:700;">&times;</button>
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Recent movies and TV shows detected in your Trakt Watchlist and dispatched to Radarr and Sonarr.
+            </p>
+            <div id="arr-modal-content" style="flex:1;overflow-y:auto;max-height:400px;display:flex;flex-direction:column;gap:8px;">
+                <div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Loading watchlist status...</div>
             </div>
         </div>
     </div>
@@ -1670,6 +1698,116 @@
                 if (pBar) pBar.style.background = '#ef4444';
             } finally {
                 if (allBtn) allBtn.disabled = false;
+            }
+        }
+
+        // Arr Watchlist Automation & Ecosystem
+        function openArrModal() {
+            const modal = document.getElementById('arr-modal');
+            if (modal) modal.style.display = 'flex';
+            fetchArrStatus();
+        }
+
+        function closeArrModal() {
+            const modal = document.getElementById('arr-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function fetchArrStatus() {
+            const container = document.getElementById('arr-modal-content');
+            const badge = document.getElementById('arr-modal-status-badge');
+            try {
+                const url = isDemo ? '/api/arr/status?demo=true' : '/api/arr/status';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Failed to fetch status');
+                const data = await res.json();
+                renderArrModalContent(data);
+                if (badge) {
+                    badge.innerText = data.is_syncing ? 'Syncing...' : 'Ready';
+                    badge.style.color = data.is_syncing ? '#f59e0b' : '#38bdf8';
+                }
+            } catch (err) {
+                if (container) container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Failed to load Arr status: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderArrModalContent(data) {
+            const container = document.getElementById('arr-modal-content');
+            if (!container) return;
+            const res = data.last_result;
+            if (!res || !res.items || res.items.length === 0) {
+                container.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">No items processed in the most recent sync. Click "Sync Watchlist Now" to poll Trakt.</div>';
+                return;
+            }
+
+            let htmlStr = '';
+            for (const item of res.items) {
+                const isAdded = item.status === 'added';
+                const stColor = isAdded ? '#10b981' : '#94a3b8';
+                const stBg = isAdded ? '#064e3b' : '#1e293b';
+                const stBorder = isAdded ? '#059669' : '#334155';
+                const stText = isAdded ? 'Added' : (item.reason || 'Skipped');
+                const appName = item.app || (item.type === 'movie' ? 'Radarr' : 'Sonarr');
+                const yearStr = item.year ? ` (${item.year})` : '';
+                const typeIcon = item.type === 'movie' ? '🍿' : '📺';
+
+                htmlStr += `
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span>${typeIcon}</span>
+                        <div>
+                            <strong style="color:#f8fafc;font-size:13px;">${escapeHtml(item.title)}${yearStr}</strong>
+                            <div style="color:#64748b;font-size:11px;">Target: ${escapeHtml(appName)} &bull; ${item.type || 'media'}</div>
+                        </div>
+                    </div>
+                    <span style="background:${stBg};border:1px solid ${stBorder};color:${stColor};font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;">
+                        ${escapeHtml(stText)}
+                    </span>
+                </div>
+                `;
+            }
+            container.innerHTML = htmlStr;
+        }
+
+        async function triggerArrWatchlistSync(btn) {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            const modalBtn = document.getElementById('arr-modal-sync-btn');
+            const targetBtn = btn || modalBtn;
+            const origText = targetBtn ? targetBtn.innerHTML : '';
+            if (targetBtn) {
+                targetBtn.disabled = true;
+                targetBtn.innerHTML = '⚡ Syncing...';
+            }
+
+            try {
+                const url = isDemo ? '/api/arr/sync?demo=true' : '/api/arr/sync';
+                const res = await fetch(url, { method: 'POST' });
+                if (res.status === 401) {
+                    openUnlockModal();
+                    return;
+                }
+                const data = await res.json();
+                if (targetBtn) {
+                    targetBtn.innerHTML = '✓ Synced!';
+                    targetBtn.style.background = '#059669';
+                }
+                setTimeout(() => {
+                    if (targetBtn) {
+                        targetBtn.innerHTML = origText;
+                        targetBtn.style.background = '#10b981';
+                        targetBtn.disabled = false;
+                    }
+                }, 2000);
+                fetchArrStatus();
+            } catch (err) {
+                alert('Sync failed: ' + err.message);
+                if (targetBtn) {
+                    targetBtn.innerHTML = origText;
+                    targetBtn.disabled = false;
+                }
             }
         }
 
