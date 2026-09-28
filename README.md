@@ -18,6 +18,8 @@ A lightweight, modern Python service that receives media server webhooks (Plex, 
 
 ## 🌟 Features
 
+- **Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to Sonarr and Radarr for automated media acquisition, intelligent deduplication against existing libraries, automated root folder/quality profile discovery, and immediate download searches.
+- **Multi-Server Ecosystem Dashboard**: Real-time multi-service observability widget monitoring live connectivity, library counts, latency, and operational health across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr.
 - **Two-Way Synchronization & Library Reconciliation**: Bi-directional matching of watched history and ratings between media servers (Plex) and Trakt (`/api/sync/*`), interactive discrepancy diff table with 1-click or selective reconciliation, automated periodic background sync, and smart TTL-based scrobble loop prevention.
 - **Universal Webhook Ingestion**: Native webhook support for **Plex** (`/webhook`), **Jellyfin** (`/webhook/jellyfin`), and **Emby** (`/webhook/emby`), standardizing metadata, provider IDs (IMDb, TMDb, TVDb), and playback states into a unified scrobble pipeline.
 - **Granular Scrobble Thresholds**: Configurable media-specific thresholds — set `EPISODE_SCROBBLE_THRESHOLD=80` for TV episodes (allowing credit skipping) and `MOVIE_SCROBBLE_THRESHOLD=90` for feature films (preventing premature scrobbles during climaxes).
@@ -140,6 +142,16 @@ SONARR_URL=http://localhost:8989
 SONARR_API_KEY=your_sonarr_api_key_here
 RADARR_URL=http://localhost:7878
 RADARR_API_KEY=your_radarr_api_key_here
+
+# (Optional) Content Bridge & Watchlist Auto-Acquisition
+AUTO_ADD_FROM_WATCHLIST=false
+SEARCH_ON_ADD=true
+ARR_WATCHLIST_INTERVAL=3600
+ARR_NOTIFY_ON_ADD=true
+SONARR_QUALITY_PROFILE_ID=
+SONARR_ROOT_FOLDER=
+RADARR_QUALITY_PROFILE_ID=
+RADARR_ROOT_FOLDER=
 
 # (Optional) Two-Way Reverse Sync & Library Reconciliation (Trakt -> Plex)
 PLEX_URL=http://<your-server-ip-or-domain>:32400
@@ -368,6 +380,9 @@ If you prefer running in a container:
 | **`/api/sync/diff`** | `GET` | **Library Discrepancy Diff**: Scan and list watched status and rating differences between Trakt and Plex (Admin only). |
 | **`/api/sync/reconcile`** | `POST` | **Execute Reconciliation**: Reconcile selected items or entire library bi-directionally (Admin only). |
 | **`/api/sync/progress`** | `GET` | **Sync Progress**: Real-time progress percentage and item counts for active batch sync jobs. |
+| **`/api/arr/status`** | `GET` | **Content Bridge Status**: Live connection diagnostics and library counts for Sonarr and Radarr. |
+| **`/api/arr/sync`** | `POST` | **Watchlist Sync**: Trigger on-demand sync of Trakt watchlist items to Sonarr and Radarr (Admin only). |
+| **`/api/ecosystem`** | `GET` | **Ecosystem Health**: Multi-server status overview across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr. |
 | **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
 | **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
 
@@ -479,6 +494,57 @@ REVERSE_SYNC_ON_STARTUP=false
 
 # Reconcile numerical/star ratings alongside watched status
 REVERSE_SYNC_RATINGS=true
+```
+
+---
+
+## 📥 Content Bridge & *Arr Automation
+
+Manually finding movies and TV shows across your media download stack is tedious. **Omniscrobble v1.6.0** introduces a high-performance **Content Bridge** that directly connects your personal Trakt Watchlist (`/sync/watchlist/movies`, `/sync/watchlist/shows`) to **Radarr** and **Sonarr**.
+
+### 1. How the Content Bridge Works
+
+- **Trakt Watchlist Ingestion**: Scans your authenticated Trakt account's watchlist for newly bookmarked movies and TV series.
+- **Intelligent Metadata Lookup**:
+  - For movies, queries Radarr's lookup API using TMDb IDs (`/api/v3/movie/lookup?term=tmdb:...`).
+  - For TV shows, queries Sonarr's lookup API using TVDb IDs (`/api/v3/series/lookup?term=tvdb:...`).
+- **Deduplication Engine**: Checks whether the item already exists in your Radarr or Sonarr library before submitting an addition, preventing duplicate requests and unnecessary processing.
+- **Auto Root Folder & Quality Profile Resolution**:
+  - Automatically selects configured defaults (`RADARR_ROOT_FOLDER`, `SONARR_ROOT_FOLDER`, `RADARR_QUALITY_PROFILE_ID`, `SONARR_QUALITY_PROFILE_ID`).
+  - If unset, automatically queries the active instance for available root folders and profiles and picks the first valid storage location.
+- **Immediate Acquisition Search**: Adds the media with `monitored: true` and triggers immediate indexer search when `SEARCH_ON_ADD=true`.
+- **Multi-Channel Dispatch**: Broadcasts rich addition alerts to Discord, Telegram, Ntfy, or Pushover with custom styling and direct Trakt links.
+
+### 2. Multi-Server Ecosystem Dashboard
+
+The web dashboard features an interactive **Multi-Server Ecosystem** widget (`GET /api/ecosystem`) and **Content Bridge** status card:
+
+- **Live Server Health**: Instant status indicator dots (Online / Offline), version reporting, and round-trip latency metrics for Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr.
+- **Dedicated Watchlist Sync Modal (`#arr-modal`)**: View server connection statuses, root storage paths, active quality profiles, and a 1-click **"Sync Watchlist Now"** button.
+- **Background Periodic Worker**: Automatically polls and syncs your Trakt watchlist at a configurable interval (`ARR_WATCHLIST_INTERVAL`, default 3600 seconds; set to `0` to disable background worker).
+
+### 3. Content Bridge Configuration
+
+Enable watchlist automation and acquisition search in your `.env`:
+
+```ini
+# Enable automated Trakt watchlist monitoring
+AUTO_ADD_FROM_WATCHLIST=true
+
+# Trigger immediate indexer search upon adding media
+SEARCH_ON_ADD=true
+
+# Polling interval in seconds (3600 = 1 hour, 0 = manual via UI only)
+ARR_WATCHLIST_INTERVAL=3600
+
+# Dispatch notifications when media is added
+ARR_NOTIFY_ON_ADD=true
+
+# (Optional) Explicit Quality Profile IDs and Root Folder Paths
+SONARR_QUALITY_PROFILE_ID=1
+SONARR_ROOT_FOLDER=/tv
+RADARR_QUALITY_PROFILE_ID=1
+RADARR_ROOT_FOLDER=/movies
 ```
 
 ---
@@ -619,8 +685,10 @@ omniscrobble/
 │   ├── clients/             # External API integrations
 │   │   ├── trakt_client.py  # Trakt OAuth device flow, scrobbling, ratings, collection sync & search
 │   │   ├── plex_api_client.py # Direct Plex Media Server REST API client for watch status & ratings
-│   │   └── sonarr_client.py # Sonarr/Radarr API client, webhook parsers & resolution mapping
+│   │   ├── sonarr_client.py # Sonarr REST API client for TV series & download imports
+│   │   └── radarr_client.py # Radarr REST API client for movies, quality profiles & root folders
 │   ├── services/            # Core business logic services
+│   │   ├── arr_bridge.py       # Content Bridge manager for Trakt watchlist sync & ecosystem health
 │   │   ├── cowatch_manager.py  # Watch Together whitelist & dual-scrobble rules engine
 │   │   ├── demo_manager.py     # Air-gapped mock playback, stats, and activity generator
 │   │   ├── log_manager.py      # Systemd journalctl reader, in-memory ring buffer & secret redaction
@@ -651,7 +719,7 @@ omniscrobble/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (111 tests)
+└── tests/                   # Comprehensive pytest test suite (118 tests)
 ```
 
 ---
@@ -671,11 +739,16 @@ Omniscrobble is developed with a modular multi-platform architecture. Current an
   - Thread-safe Scrobble Loop Prevention architecture (`LoopPreventionManager`) with TTL suppression cache.
   - Interactive Dashboard Reconciliation Card & Discrepancy Diff Modal (`#reconcile-modal`) with selective sync, filter tabs, and live progress bar.
   - Automated startup sync and background periodic reconciliation worker.
-- **v1.6.0 (Milestone 3 — Up Next)**:
-  - Trakt Watchlist ➔ Sonarr & Radarr Auto-Downloader (`arr_bridge.py`).
-  - Multi-server ecosystem dashboard.
-- **Future Horizons (Post-v1.6.0)**:
+- **v1.6.0 (Milestone 3 — Completed)**:
+  - Trakt Watchlist ➔ Sonarr & Radarr Content Bridge (`arr_bridge.py`, `radarr_client.py`).
+  - Automated lookup, deduplication, root folder resolution, and acquisition search.
+  - Multi-server ecosystem dashboard (`/api/ecosystem`) with live health checks across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr.
+  - Dedicated Watchlist Sync modal (`#arr-modal`) with 1-click execution and real-time status telemetry.
+  - Multi-channel notification support (`arr_add` action) with custom Discord embeds and mobile push alerts.
+- **v1.7.0 (Milestone 4 — Up Next)**:
+  - Dynamic In-App Configuration Editor (adjust thresholds, library exclusions, and notifications without restarting).
   - Multi-tracker dispatch to **Simkl** (universal movies, shows, and anime tracker).
+- **Future Horizons**:
   - Anime tracking integration with **MyAnimeList** and **AniList**.
 
 ---

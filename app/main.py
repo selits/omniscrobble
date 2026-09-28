@@ -37,8 +37,10 @@ from app.services.user_manager import user_mgr
 from app.services.demo_manager import demo_mgr
 from app.services.log_manager import log_mgr
 from app.clients.plex_api_client import PlexApiClient
+from app.clients.radarr_client import RadarrClient
 from app.services.loop_prevention import loop_prevention
 from app.services.reverse_sync_manager import reverse_sync_mgr
+from app.services.arr_bridge import arr_bridge
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
@@ -53,8 +55,10 @@ logger = logging.getLogger("plex_trakt_scrobbler")
 
 trakt = TraktClient(Config)
 sonarr = SonarrClient()
+radarr = RadarrClient()
 user_mgr.set_default_client(trakt)
 reverse_sync_mgr.set_trakt_client(trakt)
+arr_bridge.set_trakt_client(trakt)
 queue_mgr = QueueManager(Config.QUEUE_DB_FILE)
 
 SERVER_START_TIME = time.time()
@@ -176,12 +180,35 @@ async def reverse_sync_worker_loop():
             logger.error(f"Error in periodic reverse sync worker: {e}")
 
 
+arr_watchlist_worker_task: Optional[asyncio.Task] = None
+
+
+async def arr_watchlist_worker_loop():
+    """Background worker periodically polling Trakt Watchlist and adding missing items to Sonarr/Radarr."""
+    if not Config.AUTO_ADD_FROM_WATCHLIST or Config.ARR_WATCHLIST_INTERVAL <= 0:
+        return
+    interval_seconds = max(60, Config.ARR_WATCHLIST_INTERVAL)
+    logger.info(f"Arr watchlist automation worker started (running every {interval_seconds}s)...")
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            if (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured) and not arr_bridge._is_syncing:
+                logger.info("Periodic Arr watchlist worker: checking Trakt watchlist...")
+                await arr_bridge.sync_watchlist()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic Arr watchlist worker: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global queue_worker_task, reverse_sync_worker_task
+    global queue_worker_task, reverse_sync_worker_task, arr_watchlist_worker_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
     if Config.REVERSE_SYNC_INTERVAL > 0 and reverse_sync_mgr.plex.is_configured():
         reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
+    if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
+        arr_watchlist_worker_task = asyncio.create_task(arr_watchlist_worker_loop())
 
     # Startup self-diagnostics check
     token_info = trakt.get_token_info()
@@ -202,6 +229,10 @@ async def lifespan(app: FastAPI):
         logger.info("Startup Diagnostics: Trakt Collection sync enabled for library.new events.")
     if sonarr.is_configured:
         logger.info(f"Startup Diagnostics: Sonarr integration enabled ({Config.SONARR_URL}).")
+    if radarr.is_configured:
+        logger.info(f"Startup Diagnostics: Radarr integration enabled ({Config.RADARR_URL}).")
+    if Config.AUTO_ADD_FROM_WATCHLIST:
+        logger.info(f"Startup Diagnostics: Watchlist acquisition enabled (interval: {Config.ARR_WATCHLIST_INTERVAL}s).")
     if reverse_sync_mgr.plex.is_configured():
         logger.info(f"Startup Diagnostics: Plex API direct connection configured ({Config.PLEX_URL}).")
         if Config.REVERSE_SYNC_ON_STARTUP:
@@ -222,13 +253,21 @@ async def lifespan(app: FastAPI):
             await reverse_sync_worker_task
         except asyncio.CancelledError:
             pass
+    if arr_watchlist_worker_task:
+        arr_watchlist_worker_task.cancel()
+        try:
+            await arr_watchlist_worker_task
+        except asyncio.CancelledError:
+            pass
     await reverse_sync_mgr.plex.close()
+    await arr_bridge.sonarr.close()
+    await arr_bridge.radarr.close()
     await trakt.close()
     await user_mgr.close_all()
     await notifier.close()
 
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -892,7 +931,7 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>"""
 
 SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v1.5.0';
+const CACHE_NAME = 'omniscrobble-v1.6.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -1470,6 +1509,31 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
 async def get_sync_progress(request: Request):
     """Poll reconciliation progress."""
     return reverse_sync_mgr._sync_progress
+
+
+@app.get("/api/arr/status")
+async def get_arr_status(request: Request):
+    """Return status of Sonarr, Radarr, and Trakt Watchlist automation bridge."""
+    is_demo = request.query_params.get("demo") == "true"
+    return await arr_bridge.get_status(demo=is_demo)
+
+
+@app.post("/api/arr/sync")
+async def trigger_arr_sync(request: Request):
+    """Trigger a synchronization of the Trakt Watchlist to Sonarr & Radarr."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return await arr_bridge.sync_watchlist(demo=True)
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return await arr_bridge.sync_watchlist()
+
+
+@app.get("/api/ecosystem")
+async def get_ecosystem_status(request: Request):
+    """Return live status matrix for all connected media servers, tracker, and arr engines."""
+    is_demo = request.query_params.get("demo") == "true"
+    return await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex)
 
 
 class TestWebhookRequest(BaseModel):
@@ -2215,6 +2279,171 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     </div>
     """
 
+    # Multi-Server Ecosystem Health Card
+    eco_data = await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex)
+    eco_servers = eco_data.get("servers", [])
+    eco_healthy = eco_data.get("healthy_count", 0)
+    eco_total = eco_data.get("total_count", len(eco_servers))
+
+    eco_cards_html = ""
+    for srv in eco_servers:
+        st = srv.get("status", "unknown")
+        if st == "connected":
+            st_color = "#10b981"
+            st_bg = "#064e3b"
+            st_border = "#059669"
+        elif st == "available":
+            st_color = "#38bdf8"
+            st_bg = "#0c4a6e"
+            st_border = "#0284c7"
+        elif st == "error":
+            st_color = "#f87171"
+            st_bg = "#7f1d1d"
+            st_border = "#dc2626"
+        else:
+            st_color = "#94a3b8"
+            st_bg = "#1e293b"
+            st_border = "#334155"
+
+        srv_icon = "🎬"
+        sid = srv.get("id", "")
+        if sid == "plex":
+            srv_icon = "🔶"
+        elif sid == "jellyfin":
+            srv_icon = "🟣"
+        elif sid == "emby":
+            srv_icon = "🟢"
+        elif sid == "trakt":
+            srv_icon = "🔴"
+        elif sid == "sonarr":
+            srv_icon = "📺"
+        elif sid == "radarr":
+            srv_icon = "🍿"
+
+        eco_cards_html += f"""
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:16px;">{srv_icon}</span>
+                    <div>
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;">{html.escape(srv.get('name', ''))}</div>
+                        <div style="font-size:11px;color:#64748b;">{html.escape(srv.get('category', ''))}</div>
+                    </div>
+                </div>
+                <span style="background:{st_bg};border:1px solid {st_border};color:{st_color};font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">
+                    {html.escape(srv.get('badge', st.capitalize()))}
+                </span>
+            </div>
+            <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
+                {html.escape(srv.get('details', ''))}
+            </div>
+        </div>
+        """
+
+    ecosystem_card_html = f"""
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🌐</span> Multi-Server Ecosystem
+            </h3>
+            <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                {eco_healthy}/{eco_total} Services Healthy
+            </span>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            Unified operational topology across all media servers, Trakt scrobble tracker, and automated media acquisition engines.
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
+            {eco_cards_html}
+        </div>
+    </div>
+    """
+
+    # Arr Watchlist Automation Bridge Card
+    arr_status = await arr_bridge.get_status(demo=is_demo)
+    arr_cfg = arr_status.get("configured", False)
+    sonarr_cfg = arr_status.get("sonarr_configured", False)
+    sonarr_conn = arr_status.get("sonarr_connected", False)
+    radarr_cfg = arr_status.get("radarr_configured", False)
+    radarr_conn = arr_status.get("radarr_connected", False)
+    auto_add_on = arr_status.get("auto_add_enabled", False)
+    arr_interval = arr_status.get("interval_seconds", 1800)
+    int_mins = max(1, arr_interval // 60) if arr_interval else 0
+
+    if arr_cfg:
+        auto_badge = (
+            f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Auto-Add: Every {int_mins}m</span>'
+            if auto_add_on
+            else '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Auto-Add: Manual</span>'
+        )
+
+        sonarr_desc = f"{arr_status.get('sonarr_series_count', 0)} Series" if sonarr_conn else ("Connected" if sonarr_conn else "Offline" if sonarr_cfg else "Disabled")
+        radarr_desc = f"{arr_status.get('radarr_movies_count', 0)} Movies" if radarr_conn else ("Connected" if radarr_conn else "Offline" if radarr_cfg else "Disabled")
+
+        sonarr_pill = (
+            f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#38bdf8;">📺 Sonarr</span><span style="color:#10b981;font-weight:600;">{sonarr_desc}</span></span>'
+            if sonarr_cfg
+            else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">📺 Sonarr: Off</span>'
+        )
+
+        radarr_pill = (
+            f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#f59e0b;">🍿 Radarr</span><span style="color:#10b981;font-weight:600;">{radarr_desc}</span></span>'
+            if radarr_cfg
+            else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">🍿 Radarr: Off</span>'
+        )
+
+        sync_btn_html = (
+            '<button onclick="triggerArrWatchlistSync(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Sync Watchlist Now</button>'
+            if is_admin
+            else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Sync Watchlist</button>'
+        )
+
+        arr_bridge_card_html = f"""
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                    <span>🎬</span> Content Bridge & *Arr Watchlist Automation
+                </h3>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    {auto_badge}
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+                Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Radarr and Sonarr with automatic search and notification dispatch.
+            </p>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    {sonarr_pill}
+                    {radarr_pill}
+                    <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>{'Enabled' if arr_status.get('search_on_add') else 'Disabled'}</strong> &bull; Alerts: <strong>{'On' if Config.ARR_NOTIFY_ON_ADD else 'Off'}</strong></span>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    {sync_btn_html}
+                    <button onclick="openArrModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;">📋 View Log</button>
+                </div>
+            </div>
+        </div>
+        """
+    else:
+        arr_bridge_card_html = f"""
+        <div class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                    <span>🎬</span> Content Bridge & *Arr Automation
+                </h3>
+                <span style="color:#94a3b8;font-size:12px;">● Not Configured</span>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;line-height:1.5;">
+                Connect Trakt Watchlists directly to Sonarr and Radarr. When you add movies or shows to your Trakt Watchlist, Omniscrobble automatically looks them up and queues them for acquisition.
+            </p>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <span>Set <code>SONARR_URL</code>, <code>SONARR_API_KEY</code>, <code>RADARR_URL</code>, or <code>RADARR_API_KEY</code> in your <code>.env</code> file.</span>
+                <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+            </div>
+        </div>
+        """
+
     stats_data = demo_mgr.get_demo_stats() if is_demo else scrobble_stats
 
     rendered = DASHBOARD_HTML
@@ -2241,6 +2470,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{STAT_RATINGS}}': str(stats_data['ratings']),
         '{{STAT_COLLECTIONS}}': str(stats_data.get('collections', 0)),
         '{{WEBHOOK_CARD}}': webhook_html_section,
+        '{{ECOSYSTEM_CARD}}': ecosystem_card_html,
+        '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,
         '{{BACKUP_CARD}}': backup_card_html,

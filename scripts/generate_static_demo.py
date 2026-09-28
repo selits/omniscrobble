@@ -261,6 +261,134 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     </div>
     """
 
+    ecosystem_card_html = """
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🌐</span> Multi-Server Ecosystem
+            </h3>
+            <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                6/6 Services Healthy
+            </span>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            Unified operational topology across all media servers, Trakt scrobble tracker, and automated media acquisition engines.
+        </p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🔶</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Plex Media Server</div>
+                            <div style="font-size:11px;color:#64748b;">Media Server</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Local Server (Port 32400)</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🟣</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Jellyfin</div>
+                            <div style="font-size:11px;color:#64748b;">Media Server</div>
+                        </div>
+                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🟢</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Emby Server</div>
+                            <div style="font-size:11px;color:#64748b;">Media Server</div>
+                        </div>
+                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🔴</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Trakt.tv</div>
+                            <div style="font-size:11px;color:#64748b;">Tracker</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (84 days left)</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">📺</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Sonarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">48 Series Monitored</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🍿</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Radarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">215 Movies Monitored</div>
+            </div>
+        </div>
+    </div>
+    """
+
+    arr_bridge_card_html = """
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🎬</span> Content Bridge & *Arr Watchlist Automation
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Auto-Add: Every 30m</span>
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Radarr and Sonarr with automatic search and notification dispatch.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+                    <span style="color:#38bdf8;">📺 Sonarr</span><span style="color:#10b981;font-weight:600;">48 Series</span>
+                </span>
+                <span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;">
+                    <span style="color:#f59e0b;">🍿 Radarr</span><span style="color:#10b981;font-weight:600;">215 Movies</span>
+                </span>
+                <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>Enabled</strong> &bull; Alerts: <strong>On</strong></span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button onclick="triggerArrWatchlistSync(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Sync Watchlist Now</button>
+                <button onclick="openArrModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;">📋 View Log</button>
+            </div>
+        </div>
+    </div>
+    """
+
     webhook_html_section = """
     <div style="margin-top: 18px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
@@ -355,6 +483,8 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{STAT_RATINGS}}': str(demo_stats['ratings']),
         '{{STAT_COLLECTIONS}}': str(demo_stats['collections']),
         '{{WEBHOOK_CARD}}': webhook_html_section,
+        '{{ECOSYSTEM_CARD}}': ecosystem_card_html,
+        '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,
         '{{BACKUP_CARD}}': backup_card_html,
@@ -583,6 +713,63 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             }}
             if (path.endsWith('/api/sync/progress')) {{
                 return jsonResp({{ in_progress: false, status: 'idle', total: 0, current: 0, success: 0, failed: 0 }});
+            }}
+
+            // 13. Content Bridge & *Arr Automation Endpoints
+            if (path.endsWith('/api/arr/status')) {{
+                return jsonResp({{
+                    configured: true,
+                    sonarr_configured: true,
+                    sonarr_connected: true,
+                    sonarr_version: "4.0.9",
+                    sonarr_series_count: 48,
+                    radarr_configured: true,
+                    radarr_connected: true,
+                    radarr_version: "5.9.1",
+                    radarr_movies_count: 215,
+                    auto_add_enabled: true,
+                    search_on_add: true,
+                    interval_seconds: 1800,
+                    last_sync_time: Math.floor(Date.now() / 1000) - 900,
+                    is_syncing: false,
+                    last_result: {{
+                        added: {{ movies: 1, shows: 1 }},
+                        skipped: {{ movies: 2, shows: 2 }},
+                        items: [
+                            {{ title: "Gladiator II", year: 2024, type: "movie", status: "added", app: "Radarr" }},
+                            {{ title: "Dune: Part Two", year: 2024, type: "movie", status: "skipped", reason: "Already in Radarr", app: "Radarr" }},
+                            {{ title: "Alien: Earth", year: 2025, type: "show", status: "added", app: "Sonarr" }},
+                            {{ title: "Severance", year: 2022, type: "show", status: "skipped", reason: "Already in Sonarr", app: "Sonarr" }}
+                        ]
+                    }}
+                }});
+            }}
+            if (path.endsWith('/api/arr/sync')) {{
+                return jsonResp({{
+                    status: 'success',
+                    added: {{ movies: 1, shows: 1 }},
+                    skipped: {{ movies: 2, shows: 2 }},
+                    items: [
+                        {{ title: "Gladiator II", year: 2024, type: "movie", status: "added", app: "Radarr" }},
+                        {{ title: "Dune: Part Two", year: 2024, type: "movie", status: "skipped", reason: "Already in Radarr", app: "Radarr" }},
+                        {{ title: "Alien: Earth", year: 2025, type: "show", status: "added", app: "Sonarr" }},
+                        {{ title: "Severance", year: 2022, type: "show", status: "skipped", reason: "Already in Sonarr", app: "Sonarr" }}
+                    ]
+                }});
+            }}
+            if (path.endsWith('/api/ecosystem')) {{
+                return jsonResp({{
+                    healthy_count: 6,
+                    total_count: 6,
+                    servers: [
+                        {{ id: "plex", name: "Plex Media Server", category: "Media Server", status: "connected", badge: "Online", version: "1.40.5", details: "Local Server (Port 32400)", icon: "plex" }},
+                        {{ id: "jellyfin", name: "Jellyfin", category: "Media Server", status: "available", badge: "Ready", version: "10.9.11", details: "Webhook Ingestion Active", icon: "jellyfin" }},
+                        {{ id: "emby", name: "Emby Server", category: "Media Server", status: "available", badge: "Ready", version: "4.8.8", details: "Webhook Ingestion Active", icon: "emby" }},
+                        {{ id: "trakt", name: "Trakt.tv", category: "Tracker", status: "connected", badge: "Authenticated", version: "API v2", details: "Connected as @demo_viewer (84 days left)", icon: "trakt" }},
+                        {{ id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" }},
+                        {{ id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }}
+                    ]
+                }});
             }}
 
             return jsonResp({{ status: 'ok', mode: 'simulated' }});
