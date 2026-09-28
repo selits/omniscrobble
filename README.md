@@ -37,7 +37,7 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Dashboard Admin Security & Screenshot Privacy Shield**: Public visitors see a hardened, privacy-shielded view (masked usernames, completely masked partner account `@●●●●●●●●`, masked server hostname/port `http://●●●●●●●●:●●●●/webhook?token=●●●●●●●●` for safe screenshots, and locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
 - **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
 - **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, recent activity logs with optional 30s auto-refresh, and a repository footer with live version badge.
-- **Remote Server & Docker Ready**: Tested and optimized for containerized environments (Docker, VPS, Remote Servers) with non-root security, healthchecks, and `env_file` auto-loading.
+- **Docker & Remote Server Ready**: Tested and optimized for containerized, VPS, and remote Linux environments with non-root security, healthchecks, and `env_file` auto-loading.
 
 ---
 
@@ -153,14 +153,10 @@ You can authenticate either through your web browser or from the command line:
 
 ## 🌐 Deploying on a Remote Linux Server or VPS
 
-Because Plex on modern remote servers (like remote Linux servers or VPS) runs inside an isolated container, follow these specific guidelines:
+When deploying on a remote Linux server, VPS, or containerized hosting environment where Plex runs inside an isolated container, follow these guidelines:
 
-### 1. Find an Open Assigned Port
-Choose an available port on your host (e.g. 8080, or your provider's assigned port). Run:
-```bash
-app-ports show
-```
-Pick any port for an app you **do not use** (e.g. 8080). Confirm it's free:
+### 1. Select an Available Port
+Choose an available port on your host (e.g. `8080`, or your provider's assigned port). Confirm it is free:
 ```bash
 ss -tuln | grep <PORT>
 ```
@@ -180,7 +176,7 @@ If set to `127.0.0.1`, the service will only accept connections from the host an
 Choose one of the methods below to keep the scrobbler running in the background and ensure it automatically restarts if the server reboots:
 
 #### Option A: systemd User Service (Recommended for Linux Servers & VPS)
-Modern remote servers (like remote Linux servers or VPS) and Linux servers support user-level `systemd` services without needing `sudo`. This automatically restarts the service on server boot and recovers from crashes.
+Linux servers and non-root environments support user-level `systemd` services without needing `sudo`. This automatically restarts the service on server boot and recovers from crashes.
 
 1. Copy the provided service file to your systemd user directory:
    ```bash

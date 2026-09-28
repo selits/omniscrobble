@@ -16,7 +16,7 @@ All autonomous and pair-programming AI agents (Gemini, Claude, Copilot, Cursor, 
 3. **No Direct Commits to Main:**
    - Always develop in dedicated feature or fix branches (`feature/...`, `fix/...`, `docs/...`).
 4. **Scrub Personal Infrastructure:**
-   - Never commit real mediaserver hostnames (`*.example.com`), high-range ports, passwords, or personal credentials.
+   - Never commit real mediaserver/server hostnames, personal domain names, high-range ports, passwords, or personal credentials.
    - Always use generic placeholders: `<your-server-ip-or-domain>`, `<PORT>`, `your_trakt_client_id_here`.
 5. **Quality Gates:**
    - Always run unit tests with `.venv/bin/pytest`. All tests must pass with 0 failures before proposing any commit.

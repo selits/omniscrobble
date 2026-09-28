@@ -11,7 +11,7 @@ This document defines the architectural rules, security boundaries, and developm
     `selits <selits@users.noreply.github.com>`
   - Never commit using a personal email address.
 - **Scrubbing Personal Infrastructure:**
-  - Never commit real mediaserver hostnames (`*.example.com`), personal server names, assigned high-range ports, or user credentials.
+  - Never commit real mediaserver/server hostnames, personal domain names, assigned high-range ports, or user credentials.
   - Always use generic documentation placeholders: `<your-server-ip-or-domain>`, `<PORT>`, `your_trakt_client_id_here`.
   - Personal setup guides and credentials belong in the user's local Obsidian vault, **not** in this repository.
 - **Sensitive Files:**
