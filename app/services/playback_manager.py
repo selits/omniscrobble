@@ -51,6 +51,8 @@ class PlaybackManager:
             "year": media.year,
             "state": state,  # "playing" or "paused"
             "progress": round(media.progress, 1),
+            "duration_ms": media.duration_ms,
+            "view_offset_ms": media.view_offset_ms,
             "updated_at": time.time(),
             "trakt_url": trakt_url,
             "ids": media.ids,
@@ -81,6 +83,7 @@ class PlaybackManager:
             "progress": round(media.progress, 1),
             "finished_at": time.time(),
             "trakt_url": trakt_url,
+            "remaining_str": "Finished",
         }
         self.recently_finished = finished_entry
         return finished_entry
@@ -94,6 +97,26 @@ class PlaybackManager:
                 self.sessions.pop(key, None)
                 continue
             item = dict(s)
+
+            # Estimate real-time playback progress when streaming
+            dur_ms = s.get("duration_ms")
+            offset_ms = s.get("view_offset_ms")
+            if dur_ms and offset_ms is not None and dur_ms > 0:
+                dur_sec = dur_ms / 1000.0
+                offset_sec = offset_ms / 1000.0
+                if s.get("state") == "playing":
+                    elapsed = max(0.0, now - s.get("updated_at", now))
+                    current_sec = min(dur_sec, offset_sec + elapsed)
+                    est_prog = min(99.0, max(0.0, (current_sec / dur_sec) * 100.0))
+                    item["progress"] = round(est_prog, 1)
+                    rem_sec = max(0.0, dur_sec - current_sec)
+                    rem_min = int(round(rem_sec / 60.0))
+                    item["remaining_str"] = f"{rem_min}m left"
+                else:
+                    rem_sec = max(0.0, dur_sec - offset_sec)
+                    rem_min = int(round(rem_sec / 60.0))
+                    item["remaining_str"] = f"{rem_min}m left (paused)"
+
             if not is_admin:
                 item["username"] = mask_username_simple(item["username"])
                 item["player"] = ""

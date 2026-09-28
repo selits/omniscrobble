@@ -24,10 +24,12 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **Multi-Channel Push Notifications**: Delivers real-time rich embeds to Discord, messages to Telegram, and lightweight push alerts to Ntfy or Pushover upon scrobbles, ratings, and collection additions.
 - **Homelab Observability & Prometheus Metrics**: Built-in `/metrics` endpoint exporting standard Prometheus exposition metrics (request counts, scrobble status, queue depth, active playback sessions, uptime) for Grafana monitoring.
 - **1-Click System Backup & Restore**: Export and restore a timestamped `.zip` archive containing your OAuth tokens, SQLite retry database, and co-watch settings directly from the dashboard.
-- **Live Playback Observability**: Real-time animated dashboard card showing active streams (`▶ Currently Streaming` / `⏸ Paused`), progress bar, device names, and recently finished media.
-- **Integrated Manual Scrobble Tool**: Search Trakt's global catalog directly from the dashboard and mark any missed movie or episode as watched with one click.
+- **Live Playback Observability & Remaining Time**: Real-time animated dashboard card showing active streams (`▶ Currently Streaming` / `⏸ Paused`), client-side clock drift interpolation, dynamic time remaining (`"24m left"`, `"24m left (paused)"`), progress bar, device names, and recently finished media.
+- **Integrated Manual Scrobble & Trakt Watchlist**: Search Trakt's global catalog directly from the dashboard to mark any missed movie or episode as watched (`POST /api/scrobble/manual`) or bookmark upcoming titles to your Trakt watchlist (`POST /api/watchlist`) with 1 click.
 - **Multi-User Trakt Support**: Link separate Trakt accounts for different Plex users (`/auth?user=username`), allowing household members sharing the server to scrobble to their own profiles.
-- **Watch Together (Co-Watching) Engine**: Automatically dual-scrobbles watched TV shows or movies to your partner's Trakt account when you watch together, while leaving solo shows untracked. Manage shared shows directly from your phone or desktop with interactive tag chips.
+- **Watch Together (Co-Watching) Engine**: Automatically dual-scrobbles watched TV shows or movies to your partner's Trakt account when you watch together, while leaving solo shows untracked. Manage shared shows directly from your phone or desktop with interactive tag chips, dynamic movie toggle, automatic `.env` merging, and live `👥 Co-Watched` / `👥 Solo` activity badges.
+- **Interactive Synthetic Webhook Testing**: Built-in modal and endpoint (`POST /api/test/webhook`) to simulate Plex playback events (playing, paused, scrobble), verify filter rules, inspect co-watching eligibility reasons, and optionally execute live Trakt history and partner dual-sync.
+- **Mobile-First Responsive Web Design**: Fully responsive layout designed for all screen sizes (desktop, tablet, and mobile devices like Android and iOS phones) with fluid grids, touch-friendly scrolling, and compact modal dialogs.
 - **Sonarr & Radarr Integrations**: Real-time autocomplete for TV series from your Sonarr library (automatically excluding shows already in your whitelist) plus direct webhook endpoints (`/sonarr`, `/radarr`) for instant Trakt collection sync upon download import.
 - **Interactive Air-Gapped Demo Mode (`/demo`)**: Explore a fully populated, authenticated dashboard view with realistic mock playback (*Severance S02E01* on Apple TV 4K), 1,428 scrobbles, activity history, linked multi-user accounts, and Co-Watch configuration with zero risk to disk storage or Trakt credentials.
 - **Authenticated System Log Viewer**: Inspect live service logs directly from the dashboard via an interactive terminal modal with level filtering (`ALL`, `ERROR`, `WARNING`, `INFO`), keyword search, auto-scroll, and copy-to-clipboard, backed by `journalctl` on Linux systemd and an in-memory ring buffer fallback with automatic secret redaction.
@@ -296,6 +298,7 @@ If you prefer running in a container:
 | **`/api/playback`** | `GET` | **Active Streams**: Returns real-time streaming sessions and recently finished media. |
 | **`/api/search`** | `GET` | **Trakt Search**: Search movies and shows across Trakt's global database (Admin only). |
 | **`/api/scrobble/manual`** | `POST` | **Manual Scrobble**: 1-click manual history scrobble for any movie or episode (Admin only). |
+| **`/api/watchlist`** | `POST` | **Trakt Watchlist**: 1-click bookmark movie or TV show to your Trakt watchlist (Admin only). |
 | **`/api/queue`** | `GET` | **Offline Queue**: View pending items, retry counts, and error diagnostics in the SQLite queue. |
 | **`/api/queue/retry`** | `POST` | **Retry Queue**: Trigger immediate background processing of pending queue items (Admin only). |
 | **`/api/queue/clear`** | `POST` | **Clear Queue**: Purge pending or failed queue items (Admin only). |
@@ -303,8 +306,10 @@ If you prefer running in a container:
 | **`/api/restore`** | `POST` | **Restore Backup**: Upload and restore a `.zip` backup archive with Zip Slip security verification (Admin only). |
 | **`/api/cowatch`** | `GET` | **Co-Watch Status**: Returns shared shows list, configuration, and linked user profiles. |
 | **`/api/cowatch/shows`** | `POST` / `DELETE` | **Shared Shows Manager**: Add or remove TV shows from the Watch Together whitelist (Admin only). |
+| **`/api/cowatch/settings`** | `POST` | **Co-Watch Settings**: Dynamically toggle movie co-watching or update runtime settings (Admin only). |
 | **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
 | **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist, automatically excluding already whitelisted shows (Admin only). |
+| **`/api/test/webhook`** | `POST` | **Synthetic Webhook Simulator**: Test and simulate Plex events with dry-run or live Trakt sync (Admin only). |
 | **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
 | **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
 
@@ -318,11 +323,12 @@ When couples, roommates, or families watch TV shows together on a shared living 
 
 ### 2. The Solution: Intelligent Dual-Sync
 `plex-trakt-webhook` solves this with an integrated **Watch Together Engine**:
-- **Shared Shows Whitelist**: Define shows you watch together (e.g., *The Bear*, *Severance*, *Succession*).
+- **Shared Shows Whitelist**: Define shows you watch together (e.g., *The Bear*, *Severance*, *Succession*). Shows configured in `.env` are automatically merged with dynamic dashboard additions in `data/cowatch_shows.json` on startup.
 - **Automatic Matching**: When you finish an episode of a shared show on your Plex profile, it automatically marks as watched on **both** your Trakt account and your partner's Trakt account.
 - **Solo Shows Untouched**: Solo shows, anime, or personal binge sessions are tracked strictly on your own profile.
 - **Device Filtering (`CO_WATCH_PLAYERS`)**: Optional rule to only trigger dual-scrobble when playing on shared devices (e.g. `Living Room Apple TV`), preventing dual-sync when you watch in bed on your phone.
-- **Movie Co-Watching (`CO_WATCH_MOVIES`)**: Toggle whether all finished movies dual-sync to your partner.
+- **Movie Co-Watching (`CO_WATCH_MOVIES`)**: Toggle whether all finished movies dual-sync to your partner either via `.env` or dynamically using the dashboard's **"Toggle Movies"** button (`POST /api/cowatch/settings`) with zero service restarts.
+- **Interactive Activity Badges**: The activity feed highlights whitelisted shows with `✓ Co-Watching` and offers 1-click `+ Co-Watch` buttons for unlisted shows. Completed items display `👥 Co-Watched` (with partner name and sync reason) or `👥 Solo` (explaining why co-watching was skipped, such as device filter or show whitelist).
 - **Mobile-Friendly Web Dashboard**: Add or remove shared shows with interactive tag chips (`[ The Bear ✕ ]`) or click `[+ Co-Watch]` in the activity feed with 0 server restarts.
 - **Sonarr Live Autocomplete**: As you type show names into the dashboard, it queries your Sonarr library in real-time, automatically filtering out already whitelisted shows for instant 1-click addition.
 
@@ -497,7 +503,7 @@ plex-trakt-webhook/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (74 tests)
+└── tests/                   # Comprehensive pytest test suite (90 tests)
 ```
 
 ---
