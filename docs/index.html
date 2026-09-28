@@ -56,7 +56,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -115,13 +115,15 @@
     <script>
     (function() {
         const initialShows = ["Fallout", "Fargo", "House of the Dragon", "Severance", "Sh\u014dgun", "Silo", "Slow Horses", "Succession", "Ted Lasso", "The Bear", "The Last of Us", "The White Lotus"];
-        const initialEvents = [{"timestamp": "2026-09-28 14:20:28", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 13:46:28", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 12:59:28", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 11:14:28", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 09:04:28", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 06:24:28", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
+        const initialEvents = [{"timestamp": "2026-09-28 15:56:11", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:22:11", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 14:35:11", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 12:50:11", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 10:40:11", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 08:00:11", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
+        const initialReconciliation = [{"id": "movie:101", "type": "movie", "title": "Interstellar", "series_title": null, "season": null, "episode": null, "year": 2014, "rating_key": "101", "ids": {"imdb": "tt0816692", "tmdb": "157336"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}, {"id": "movie:102", "type": "movie", "title": "Dune: Part Two", "series_title": null, "season": null, "episode": null, "year": 2024, "rating_key": "102", "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "status": "rating_mismatch", "plex_watched": true, "trakt_watched": true, "plex_rating": 8.0, "trakt_rating": 9, "action_recommended": "sync_rating_to_plex"}, {"id": "episode:201", "type": "episode", "title": "Tomorrow", "series_title": "The Bear", "season": 3, "episode": 1, "year": 2024, "rating_key": "201", "ids": {"imdb": "tt27984852"}, "status": "plex_only", "plex_watched": true, "trakt_watched": false, "plex_rating": null, "trakt_rating": null, "action_recommended": "sync_to_trakt"}, {"id": "episode:202", "type": "episode", "title": "Felina", "series_title": "Breaking Bad", "season": 5, "episode": 16, "year": 2013, "rating_key": "202", "ids": {"imdb": "tt2301451"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}];
         const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "The Bear", "year": 2022, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Slow Horses", "year": 2022, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Fargo", "year": 2014, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "Ted Lasso", "year": 2020, "status": "ended"}, {"title": "Silo", "year": 2023, "status": "continuing"}, {"title": "House of the Dragon", "year": 2022, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
         const demoLogs = ["Sep 28 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 28 08:15:32 mediaserver python[5678]: 2026-09-28 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'The Bear S03E01 - Tomorrow' by user 'demo_viewer'", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for The Bear S03E01", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'The Bear S03E01 - Tomorrow' (progress: 100.0%)", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:55:01 mediaserver python[5678]: 2026-09-28 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 28 08:55:02 mediaserver python[5678]: 2026-09-28 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 28 09:02:45 mediaserver python[5678]: 2026-09-28 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 09:18:20 mediaserver python[5678]: 2026-09-28 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 28 09:18:21 mediaserver python[5678]: 2026-09-28 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
 
         const clientState = {
             shows: [...initialShows],
             events: [...initialEvents],
+            reconciliation: [...initialReconciliation],
             movies_enabled: false,
             playback: {"state": "playing", "title": "Severance S02E01 - Hello, Kier", "username": "demo_viewer", "player": "Living Room Apple TV", "device": "tvOS 18.2", "progress": 68.4, "trakt_url": "https://trakt.tv/search?q=Severance"}
         };
@@ -285,6 +287,39 @@
                     },
                     result: { status: 'ok', mode: 'simulated' }
                 });
+            }
+
+            // 12. Two-Way Library Reconciliation Endpoints
+            if (path.endsWith('/api/sync/status')) {
+                return jsonResp({
+                    configured: true,
+                    plex_configured: true,
+                    plex_connected: true,
+                    trakt_authenticated: true,
+                    diff_count: clientState.reconciliation.length,
+                    interval_minutes: 30,
+                    sync_on_startup: true,
+                    sync_ratings: true
+                });
+            }
+            if (path.endsWith('/api/sync/diff')) {
+                return jsonResp({ status: 'ok', diff: clientState.reconciliation, count: clientState.reconciliation.length });
+            }
+            if (path.endsWith('/api/sync/reconcile')) {
+                const body = init.body ? JSON.parse(init.body) : {};
+                let count = clientState.reconciliation.length;
+                if (body.item_ids && Array.isArray(body.item_ids)) {
+                    clientState.reconciliation = clientState.reconciliation.filter(i => !body.item_ids.includes(i.id));
+                    count = body.item_ids.length;
+                } else {
+                    clientState.reconciliation = [];
+                }
+                const badge = document.getElementById('reconcile-diff-badge');
+                if (badge) badge.innerText = clientState.reconciliation.length;
+                return jsonResp({ status: 'success', total: count, reconciled: count, failed: 0, items: [] });
+            }
+            if (path.endsWith('/api/sync/progress')) {
+                return jsonResp({ in_progress: false, status: 'idle', total: 0, current: 0, success: 0, failed: 0 });
             }
 
             return jsonResp({ status: 'ok', mode: 'simulated' });
@@ -492,6 +527,38 @@
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#10b981;font-size:12px;font-weight:600;">● Plex API Connected</span>
+                <span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Every 30m</span>
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            Bi-directional sync matches watched history and ratings between your media server and Trakt with automatic echo-loop suppression.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div>
+                <div style="font-size:14px;font-weight:600;color:#f8fafc;display:flex;align-items:center;gap:6px;">
+                    <span>Pending Discrepancies</span>
+                    <span id="reconcile-diff-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 8px;border-radius:9999px;font-size:12px;font-weight:700;">4</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:4px;">
+                    Ratings sync: Enabled &bull; Startup sync: Active
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>
+                <button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; Plex)</button>
+            </div>
+        </div>
+    </div>
+    
+
+        
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                 <span>💾</span> System Operations & Observability
             </h3>
             <div style="display:flex;gap:8px;align-items:center;">
@@ -545,7 +612,7 @@
                     <tbody id="events-tbody">
                         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 14:20:28</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:56:11</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Severance S02E01 - Hello, Kier</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -555,7 +622,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 13:46:28</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:22:11</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">The Bear S03E01 - Tomorrow</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -565,7 +632,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 12:59:28</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 14:35:11</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Dune: Part Two (2024)</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -575,7 +642,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 11:14:28</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 12:50:11</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Succession S04E03 - Connor&#x27;s Wedding</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_partner</span></div></td>
@@ -585,7 +652,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 09:04:28</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 10:40:11</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Slow Horses S04E01 - Identity Theft</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -595,7 +662,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 06:24:28</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 08:00:11</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Shōgun S01E01 - Anjin</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -612,7 +679,7 @@
         <div class="footer">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="color: #94a3b8; font-weight: 500;">Omniscrobble</span>
-                <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v1.4.0</span>
+                <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v1.5.0</span>
             </div>
             <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;">
                 <a href="https://github.com/selits/omniscrobble" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color='#f8fafc'" onmouseout="this.style.color='#94a3b8'">
@@ -794,6 +861,77 @@
                     <button type="submit" id="test-submit-btn" class="btn-sm" style="background:#4338ca;color:#fff;font-weight:600;padding:8px 16px;">▶ Run Simulation</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Library Reconciliation Modal -->
+    <div id="reconcile-modal" onclick="if(event.target===this)closeReconcileModal()">
+        <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>🔄</span> Two-Way Library Reconciliation
+                    </h3>
+                    <span id="reconcile-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">Loading...</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button onclick="fetchDiscrepancies(true)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;" title="Rescan media server and Trakt">🔄 Rescan</button>
+                    <button onclick="closeReconcileModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Select items to synchronize between Plex Media Server and Trakt. Echo webhooks are suppressed automatically during reconciliation.
+            </p>
+
+            <!-- Filter tabs -->
+            <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('all', this)" style="background:#0284c7;color:#fff;">All (<span id="count-all">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('trakt_only', this)" style="background:#1e293b;border:1px solid #334155;">Trakt Only &bull; Mark Plex (<span id="count-trakt">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('plex_only', this)" style="background:#1e293b;border:1px solid #334155;">Plex Only &bull; Push Trakt (<span id="count-plex">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('rating_mismatch', this)" style="background:#1e293b;border:1px solid #334155;">Ratings (<span id="count-ratings">0</span>)</button>
+            </div>
+
+            <!-- Reconciliation Progress Banner -->
+            <div id="reconcile-progress-box" style="display:none;background:#0f172a;border:1px solid #0284c7;border-radius:8px;padding:12px;margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#e2e8f0;margin-bottom:6px;">
+                    <span id="reconcile-progress-msg" style="font-weight:600;">Reconciling items...</span>
+                    <span id="reconcile-progress-stats">0%</span>
+                </div>
+                <div style="background:#1e293b;border-radius:9999px;height:8px;overflow:hidden;">
+                    <div id="reconcile-progress-bar" style="background:#0284c7;height:100%;width:0%;transition:width 0.3s ease;"></div>
+                </div>
+            </div>
+
+            <!-- Discrepancies Table -->
+            <div class="table-container" style="flex:1;overflow-y:auto;max-height:420px;border:1px solid #334155;border-radius:8px;">
+                <table style="width:100%;">
+                    <thead>
+                        <tr>
+                            <th style="width:36px;text-align:center;"><input type="checkbox" id="reconcile-select-all" onchange="toggleSelectAllReconcile(this)" /></th>
+                            <th>Media Item</th>
+                            <th>Type</th>
+                            <th>Plex Server</th>
+                            <th>Trakt Profile</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reconcile-tbody">
+                        <tr><td colspan="6" style="text-align:center;padding:24px;color:#94a3b8;">Loading library discrepancies...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Footer Actions -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px;">
+                <div style="font-size:12px;color:#94a3b8;">
+                    <span id="reconcile-selected-count">0</span> items selected
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button type="button" onclick="closeReconcileModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
+                    <button type="button" id="reconcile-selected-btn" onclick="executeSelectedReconcile()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;" disabled>⚡ Sync Selected</button>
+                    <button type="button" id="reconcile-all-btn" onclick="executeAllReconcile()" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Reconcile All</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1709,6 +1847,291 @@
                 input.value = input.dataset.plex || '';
                 if (btnPlex) { btnPlex.style.background = '#2563eb'; btnPlex.style.color = '#fff'; btnPlex.style.fontWeight = '600'; }
                 if (instructions) instructions.innerHTML = 'Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Jellyfin (<code>/webhook/jellyfin</code>) &bull; Emby (<code>/webhook/emby</code>) &bull; Sonarr (<code>/sonarr</code>) &bull; Radarr (<code>/radarr</code>).';
+            }
+        }
+
+        // Two-Way Library Reconciliation Logic
+        let reconcileDiffItems = [];
+        let reconcileActiveFilter = 'all';
+        let reconcileSelectedIds = new Set();
+
+        function openReconcileModal(force = false) {
+            const modal = document.getElementById('reconcile-modal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            fetchDiscrepancies(force);
+        }
+
+        function closeReconcileModal() {
+            const modal = document.getElementById('reconcile-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function fetchDiscrepancies(force = false) {
+            const tbody = document.getElementById('reconcile-tbody');
+            const badge = document.getElementById('reconcile-count-badge');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#38bdf8;">Scanning media server & Trakt libraries...</td></tr>';
+            }
+            if (badge) badge.innerText = 'Scanning...';
+
+            try {
+                const url = (isDemo ? '/api/sync/diff?demo=true' : '/api/sync/diff') + (force ? '?force=true' : '');
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    reconcileDiffItems = data.diff || [];
+                    reconcileSelectedIds.clear();
+                    updateReconcileCounts();
+                    renderDiscrepanciesTable();
+                    const cardBadge = document.getElementById('reconcile-diff-badge');
+                    if (cardBadge) cardBadge.innerText = reconcileDiffItems.length;
+                } else {
+                    const err = await res.json();
+                    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:#ef4444;">Failed to scan discrepancies: ${err.detail || 'Error'}</td></tr>`;
+                    if (badge) badge.innerText = 'Error';
+                }
+            } catch (e) {
+                if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:#ef4444;">Error connecting to server: ${e.message}</td></tr>`;
+                if (badge) badge.innerText = 'Error';
+            }
+        }
+
+        function updateReconcileCounts() {
+            const allCount = reconcileDiffItems.length;
+            const traktCount = reconcileDiffItems.filter(i => i.status === 'trakt_only').length;
+            const plexCount = reconcileDiffItems.filter(i => i.status === 'plex_only').length;
+            const ratingCount = reconcileDiffItems.filter(i => i.status === 'rating_mismatch').length;
+
+            const cAll = document.getElementById('count-all');
+            const cTrakt = document.getElementById('count-trakt');
+            const cPlex = document.getElementById('count-plex');
+            const cRatings = document.getElementById('count-ratings');
+            const badge = document.getElementById('reconcile-count-badge');
+
+            if (cAll) cAll.innerText = allCount;
+            if (cTrakt) cTrakt.innerText = traktCount;
+            if (cPlex) cPlex.innerText = plexCount;
+            if (cRatings) cRatings.innerText = ratingCount;
+            if (badge) badge.innerText = `${allCount} Discrepanc${allCount === 1 ? 'y' : 'ies'}`;
+        }
+
+        function filterReconcile(filterType, tabBtn) {
+            reconcileActiveFilter = filterType;
+            document.querySelectorAll('.reconcile-tab').forEach(b => {
+                b.style.background = '#1e293b';
+                b.style.color = '#e2e8f0';
+                b.style.border = '1px solid #334155';
+            });
+            if (tabBtn) {
+                tabBtn.style.background = '#0284c7';
+                tabBtn.style.color = '#fff';
+                tabBtn.style.border = 'none';
+            }
+            renderDiscrepanciesTable();
+        }
+
+        function renderDiscrepanciesTable() {
+            const tbody = document.getElementById('reconcile-tbody');
+            if (!tbody) return;
+
+            let items = reconcileDiffItems;
+            if (reconcileActiveFilter !== 'all') {
+                items = items.filter(i => i.status === reconcileActiveFilter);
+            }
+
+            if (items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:28px;color:#10b981;font-weight:500;">✓ In sync! No discrepancies found in this category.</td></tr>';
+                updateSelectedCount();
+                return;
+            }
+
+            let html = '';
+            for (const item of items) {
+                const isChecked = reconcileSelectedIds.has(item.id);
+                const titleStr = item.type === 'episode'
+                    ? `${item.series_title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} &bull; ${item.title}`
+                    : `${item.title} (${item.year || 'N/A'})`;
+
+                let plexStatusHtml = '';
+                if (item.plex_watched) {
+                    plexStatusHtml = '<span style="color:#10b981;font-weight:600;">✓ Watched</span>';
+                } else {
+                    plexStatusHtml = '<span style="color:#64748b;">Unwatched</span>';
+                }
+                if (item.plex_rating !== null && item.plex_rating !== undefined) {
+                    plexStatusHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#facc15;padding:1px 5px;border-radius:4px;font-size:11px;">★ ${item.plex_rating}</span>`;
+                }
+
+                let traktStatusHtml = '';
+                if (item.trakt_watched) {
+                    traktStatusHtml = '<span style="color:#10b981;font-weight:600;">✓ Watched</span>';
+                } else {
+                    traktStatusHtml = '<span style="color:#64748b;">Unwatched</span>';
+                }
+                if (item.trakt_rating !== null && item.trakt_rating !== undefined) {
+                    traktStatusHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#facc15;padding:1px 5px;border-radius:4px;font-size:11px;">★ ${item.trakt_rating}</span>`;
+                }
+
+                let actionBadge = '';
+                if (item.action_recommended === 'mark_plex_watched') {
+                    actionBadge = '<span style="background:#065f46;color:#a7f3d0;border:1px solid #059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">&rarr; Mark Plex</span>';
+                } else if (item.action_recommended === 'sync_to_trakt') {
+                    actionBadge = '<span style="background:#1e3a8a;color:#93c5fd;border:1px solid #2563eb;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">&rarr; Push Trakt</span>';
+                } else {
+                    actionBadge = '<span style="background:#78350f;color:#fde68a;border:1px solid #d97706;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Sync Rating</span>';
+                }
+
+                html += `
+                <tr style="border-bottom: 1px solid #1e293b;">
+                    <td style="text-align:center;padding:10px 14px;">
+                        <input type="checkbox" class="reconcile-item-cb" data-id="${item.id}" ${isChecked ? 'checked' : ''} onchange="onReconcileItemCheckboxChange(this)" />
+                    </td>
+                    <td style="padding:10px 14px;color:#f8fafc;font-weight:500;font-size:13px;">${titleStr}</td>
+                    <td style="padding:10px 14px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 6px;border-radius:4px;font-size:11px;text-transform:uppercase;">${item.type}</span></td>
+                    <td style="padding:10px 14px;font-size:13px;">${plexStatusHtml}</td>
+                    <td style="padding:10px 14px;font-size:13px;">${traktStatusHtml}</td>
+                    <td style="padding:10px 14px;">${actionBadge}</td>
+                </tr>
+                `;
+            }
+
+            tbody.innerHTML = html;
+            updateSelectedCount();
+        }
+
+        function toggleSelectAllReconcile(masterCb) {
+            const isChecked = masterCb.checked;
+            let items = reconcileDiffItems;
+            if (reconcileActiveFilter !== 'all') {
+                items = items.filter(i => i.status === reconcileActiveFilter);
+            }
+            items.forEach(item => {
+                if (isChecked) reconcileSelectedIds.add(item.id);
+                else reconcileSelectedIds.delete(item.id);
+            });
+            renderDiscrepanciesTable();
+        }
+
+        function onReconcileItemCheckboxChange(cb) {
+            const id = cb.dataset.id;
+            if (cb.checked) reconcileSelectedIds.add(id);
+            else reconcileSelectedIds.delete(id);
+            updateSelectedCount();
+        }
+
+        function updateSelectedCount() {
+            const countEl = document.getElementById('reconcile-selected-count');
+            const syncBtn = document.getElementById('reconcile-selected-btn');
+            const count = reconcileSelectedIds.size;
+            if (countEl) countEl.innerText = count;
+            if (syncBtn) {
+                syncBtn.disabled = count === 0;
+                syncBtn.innerText = `⚡ Sync Selected (${count})`;
+            }
+        }
+
+        async function executeSelectedReconcile() {
+            const ids = Array.from(reconcileSelectedIds);
+            if (ids.length === 0) return;
+            await runReconciliation({ item_ids: ids });
+        }
+
+        async function executeAllReconcile() {
+            if (reconcileDiffItems.length === 0) {
+                alert('No discrepancies to reconcile.');
+                return;
+            }
+            if (!confirm(`Reconcile all ${reconcileDiffItems.length} discrepancies between media server and Trakt?`)) return;
+            await runReconciliation({ direction: 'all' });
+        }
+
+        async function quickReconcileTraktToPlex(btn) {
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = 'Syncing...';
+            }
+            try {
+                const url = isDemo ? '/api/sync/reconcile?demo=true' : '/api/sync/reconcile';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ direction: 'trakt_to_plex' }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (btn) {
+                        btn.innerText = `✓ Synced (${data.reconciled || 0})`;
+                        btn.style.background = '#059669';
+                    }
+                    const badge = document.getElementById('reconcile-diff-badge');
+                    if (badge) {
+                        const cur = parseInt(badge.innerText, 10) || 0;
+                        badge.innerText = Math.max(0, cur - (data.reconciled || 0));
+                    }
+                    setTimeout(() => {
+                        if (btn) {
+                            btn.innerText = '⚡ Quick Sync (Trakt → Plex)';
+                            btn.style.background = '#10b981';
+                            btn.disabled = false;
+                        }
+                    }, 2500);
+                } else {
+                    const err = await res.json();
+                    alert('Reconciliation failed: ' + (err.detail || 'Error'));
+                    if (btn) {
+                        btn.innerText = 'Error';
+                        btn.style.background = '#ef4444';
+                        btn.disabled = false;
+                    }
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        async function runReconciliation(payload) {
+            const pBox = document.getElementById('reconcile-progress-box');
+            const pBar = document.getElementById('reconcile-progress-bar');
+            const pMsg = document.getElementById('reconcile-progress-msg');
+            const pStats = document.getElementById('reconcile-progress-stats');
+            const syncBtn = document.getElementById('reconcile-selected-btn');
+            const allBtn = document.getElementById('reconcile-all-btn');
+
+            if (pBox) pBox.style.display = 'block';
+            if (pBar) pBar.style.width = '10%';
+            if (pMsg) pMsg.innerText = 'Starting reconciliation...';
+            if (pStats) pStats.innerText = 'Processing';
+            if (syncBtn) syncBtn.disabled = true;
+            if (allBtn) allBtn.disabled = true;
+
+            try {
+                const url = isDemo ? '/api/sync/reconcile?demo=true' : '/api/sync/reconcile';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (pBar) pBar.style.width = '100%';
+                    if (pMsg) pMsg.innerText = `Reconciliation completed: ${data.reconciled || 0} succeeded, ${data.failed || 0} failed.`;
+                    if (pStats) pStats.innerText = '100%';
+                    setTimeout(async () => {
+                        if (pBox) pBox.style.display = 'none';
+                        await fetchDiscrepancies(false);
+                    }, 2000);
+                } else {
+                    const err = await res.json();
+                    if (pMsg) pMsg.innerText = 'Reconciliation error: ' + (err.detail || 'Failed');
+                    if (pBar) pBar.style.background = '#ef4444';
+                }
+            } catch (e) {
+                if (pMsg) pMsg.innerText = 'Network error: ' + e.message;
+                if (pBar) pBar.style.background = '#ef4444';
+            } finally {
+                if (allBtn) allBtn.disabled = false;
             }
         }
 

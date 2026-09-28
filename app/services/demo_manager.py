@@ -231,5 +231,78 @@ class DemoManager:
         ]
         return logs[-lines:]
 
+    def get_demo_reconciliation(self) -> list[dict[str, Any]]:
+        """Return simulated library discrepancies for demo mode."""
+        return [
+            {
+                "id": "movie:101",
+                "type": "movie",
+                "title": "Interstellar",
+                "series_title": None,
+                "season": None,
+                "episode": None,
+                "year": 2014,
+                "rating_key": "101",
+                "ids": {"imdb": "tt0816692", "tmdb": "157336"},
+                "status": "trakt_only",
+                "plex_watched": False,
+                "trakt_watched": True,
+                "plex_rating": None,
+                "trakt_rating": 10,
+                "action_recommended": "mark_plex_watched",
+            },
+            {
+                "id": "movie:102",
+                "type": "movie",
+                "title": "Dune: Part Two",
+                "series_title": None,
+                "season": None,
+                "episode": None,
+                "year": 2024,
+                "rating_key": "102",
+                "ids": {"imdb": "tt15239678", "tmdb": "693134"},
+                "status": "rating_mismatch",
+                "plex_watched": True,
+                "trakt_watched": True,
+                "plex_rating": 8.0,
+                "trakt_rating": 9,
+                "action_recommended": "sync_rating_to_plex",
+            },
+            {
+                "id": "episode:201",
+                "type": "episode",
+                "title": "Tomorrow",
+                "series_title": "The Bear",
+                "season": 3,
+                "episode": 1,
+                "year": 2024,
+                "rating_key": "201",
+                "ids": {"imdb": "tt27984852"},
+                "status": "plex_only",
+                "plex_watched": True,
+                "trakt_watched": False,
+                "plex_rating": None,
+                "trakt_rating": None,
+                "action_recommended": "sync_to_trakt",
+            },
+            {
+                "id": "episode:202",
+                "type": "episode",
+                "title": "Felina",
+                "series_title": "Breaking Bad",
+                "season": 5,
+                "episode": 16,
+                "year": 2013,
+                "rating_key": "202",
+                "ids": {"imdb": "tt2301451"},
+                "status": "trakt_only",
+                "plex_watched": False,
+                "trakt_watched": True,
+                "plex_rating": None,
+                "trakt_rating": 10,
+                "action_recommended": "mark_plex_watched",
+            },
+        ]
+
 
 demo_mgr = DemoManager()

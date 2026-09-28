@@ -1,0 +1,16 @@
+{
+  "default": true,
+  "MD013": false,
+  "MD033": {
+    "allowed_elements": [
+      "p",
+      "img",
+      "details",
+      "summary",
+      "sub",
+      "sup",
+      "kbd"
+    ]
+  },
+  "MD041": false
+}

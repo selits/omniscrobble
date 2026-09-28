@@ -4,7 +4,7 @@ All autonomous and pair-programming AI agents (Gemini, Claude, Copilot, Cursor, 
 
 - [**`GEMINI.md`**](./GEMINI.md)
 
-### Key Rules Summary (CRITICAL)
+## Key Rules Summary (CRITICAL)
 
 1. **Git Author Identity:**
    - Every commit must use the GitHub privacy email:
