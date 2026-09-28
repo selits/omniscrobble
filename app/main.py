@@ -185,7 +185,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 REPO_URL = "https://github.com/selits/plex-trakt-webhook"
 
 app = FastAPI(title="Plex Trakt Scrobbler", version=APP_VERSION, lifespan=lifespan)
@@ -196,7 +196,7 @@ MAX_HISTORY = 30
 recent_events: deque[dict[str, Any]] = deque(maxlen=MAX_HISTORY)
 
 
-def log_event(media: ParsedMedia, action: str, result: dict[str, Any]):
+def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_status: Optional[dict[str, Any]] = None):
     if media.media_type == "episode":
         title_str = f"{media.show_title} S{media.season:02d}E{media.episode:02d} - {media.title}"
     else:
@@ -224,6 +224,7 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any]):
         "progress": progress_str,
         "result_status": result.get("status") or ("ok" if not result.get("error") else "error"),
         "raw_result": result,
+        "cowatch_status": cowatch_status,
     }
     recent_events.appendleft(entry)
 
@@ -452,15 +453,25 @@ async def plex_webhook(request: Request):
         else:
             action_taken = f"skipped_{event}"
 
-        log_event(parsed, action_taken, result)
+        # Determine Co-Watching status and trigger dual-sync if event qualifies
+        eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
+        is_sync_trigger = (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.SCROBBLE_THRESHOLD))
+        cowatch_info = None
+
+        if is_sync_trigger:
+            if eligible:
+                cowatch_info = {"synced": True, "reason": reason, "target": Config.CO_WATCH_USER}
+                asyncio.create_task(execute_cowatch_sync(parsed, action_taken))
+            else:
+                cowatch_info = {"synced": False, "reason": reason, "target": Config.CO_WATCH_USER}
+        elif eligible:
+            cowatch_info = {"synced": False, "in_list": True, "reason": reason, "target": Config.CO_WATCH_USER}
+
+        log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
 
         # Trigger outgoing notifications on scrobble or rating
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
             asyncio.create_task(notifier.dispatch(parsed, action_taken))
-
-        # Trigger Co-Watching dual-sync if event qualifies
-        if (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.SCROBBLE_THRESHOLD)) and cowatch_mgr.should_cowatch(parsed):
-            asyncio.create_task(execute_cowatch_sync(parsed, action_taken))
 
         metrics_registry.record_request("webhook", 200)
         return {"status": "success", "event": event, "action": action_taken, "result": result}
@@ -658,6 +669,9 @@ async def health_check():
         "sonarr": {
             "configured": sonarr.is_configured,
         },
+        "radarr": {
+            "endpoint": "/radarr",
+        },
         "uptime": get_uptime_str(),
         "token_health": token_info,
         "stats": scrobble_stats,
@@ -788,9 +802,14 @@ def get_events(request: Request):
                 "show_title": None,
                 "progress": ev.get("progress"),
                 "result_status": ev.get("result_status"),
+                "cowatch_status": None,
             }
             for ev in events
         ]
+    else:
+        for ev in events:
+            show = ev.get("show_title")
+            ev["is_cowatch_show"] = cowatch_mgr.is_cowatch_show(show) if show else False
     return {"events": events}
 
 
@@ -948,6 +967,38 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
     return {"status": "success", "result": res}
 
 
+class WatchlistRequest(BaseModel):
+    media_type: str  # "movie" or "show" or "episode"
+    title: str
+    year: Optional[int] = None
+    ids: dict[str, Any] = {}
+
+
+@app.post("/api/watchlist")
+async def add_to_watchlist(payload: WatchlistRequest, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "success", "result": {"added": {"movies": 1 if payload.media_type == "movie" else 0, "shows": 1 if payload.media_type != "movie" else 0}}}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not trakt.is_authenticated():
+        raise HTTPException(status_code=400, detail="Trakt is not authenticated")
+
+    item: dict[str, Any] = {"title": payload.title}
+    if payload.year:
+        item["year"] = payload.year
+    if payload.ids:
+        item["ids"] = payload.ids
+
+    if payload.media_type == "movie":
+        watchlist_payload = {"movies": [item]}
+    else:
+        watchlist_payload = {"shows": [item]}
+
+    res = await trakt.sync_watchlist(watchlist_payload)
+    if is_temporary_error(res):
+        queue_mgr.enqueue("sync_watchlist", watchlist_payload, error=str(res.get("error", "")))
+    return {"status": "success", "result": res}
+
 
 class AddShowRequest(BaseModel):
     show: str
@@ -1072,6 +1123,104 @@ async def cowatch_manual_sync(payload: CowatchSyncRequest, request: Request):
     if is_temporary_error(res):
         queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
     return {"status": "success", "target_user": target_user, "result": res}
+
+
+class CowatchSettingsRequest(BaseModel):
+    co_watch_movies: Optional[bool] = None
+
+
+@app.post("/api/cowatch/settings")
+def update_cowatch_settings(payload: CowatchSettingsRequest, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "ok", "co_watch_movies": payload.co_watch_movies if payload.co_watch_movies is not None else False}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if payload.co_watch_movies is not None:
+        cowatch_mgr.set_cowatch_movies(payload.co_watch_movies)
+    return {"status": "ok", "co_watch_movies": cowatch_mgr.config.CO_WATCH_MOVIES}
+
+
+class TestWebhookRequest(BaseModel):
+    event: str = "media.scrobble"
+    media_type: str = "episode"
+    title: str = "Synthetic Test Title"
+    show_title: Optional[str] = "Synthetic Test Show"
+    season: Optional[int] = 1
+    episode: Optional[int] = 1
+    year: Optional[int] = 2025
+    progress: float = 100.0
+    execute_trakt: bool = False
+
+
+@app.post("/api/test/webhook")
+async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    username = (Config.PLEX_ALLOWED_USERS[0] if Config.PLEX_ALLOWED_USERS else "admin")
+    mock_payload = {
+        "event": payload.event,
+        "user": True,
+        "Account": {"id": 1, "title": username},
+        "Server": {"title": "SyntheticPlexServer", "uuid": "synthetic-uuid"},
+        "Player": {"title": Config.CO_WATCH_PLAYERS[0] if Config.CO_WATCH_PLAYERS else "Living Room TV", "local": True},
+        "Metadata": {
+            "librarySectionType": "show" if payload.media_type == "episode" else "movie",
+            "type": payload.media_type,
+            "title": payload.title,
+            "year": payload.year,
+            "duration": 3600000,
+            "viewOffset": int(3600000 * (payload.progress / 100.0)),
+            "grandparentTitle": payload.show_title if payload.media_type == "episode" else None,
+            "parentIndex": payload.season if payload.media_type == "episode" else None,
+            "index": payload.episode if payload.media_type == "episode" else None,
+            "Guid": [{"id": "imdb://tt0000001"}],
+        }
+    }
+
+    parsed = parse_plex_webhook(
+        mock_payload,
+        allowed_users=Config.PLEX_ALLOWED_USERS,
+        allowed_libraries=Config.ALLOWED_LIBRARIES,
+        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+    )
+    if not parsed:
+        return {"status": "ignored", "reason": "Filtered or invalid media payload"}
+
+    eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
+    simulated_result: dict[str, Any] = {"status": "ok", "mode": "simulated"}
+
+    if payload.execute_trakt:
+        if trakt.is_authenticated():
+            simulated_result = await trakt.sync_history(parsed.to_trakt_history_payload())
+            if eligible and Config.CO_WATCH_USER:
+                await execute_cowatch_sync(parsed, "test_webhook")
+        else:
+            simulated_result = {"status": "warning", "message": "Trakt not authenticated"}
+
+    action_name = "test_webhook"
+    cw_info = {"synced": eligible and payload.execute_trakt, "reason": reason, "target": Config.CO_WATCH_USER}
+    log_event(parsed, action_name, simulated_result, cowatch_status=cw_info)
+
+    return {
+        "status": "success",
+        "parsed": {
+            "title": parsed.title,
+            "media_type": parsed.media_type,
+            "show_title": parsed.show_title,
+            "season": parsed.season,
+            "episode": parsed.episode,
+            "progress": parsed.progress,
+            "duration_ms": parsed.duration_ms,
+            "view_offset_ms": parsed.view_offset_ms,
+        },
+        "cowatch": {
+            "eligible": eligible,
+            "reason": reason,
+            "partner": Config.CO_WATCH_USER,
+        },
+        "result": simulated_result,
+    }
 
 
 class AdminUnlockRequest(BaseModel):
@@ -1329,11 +1478,26 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 action_buttons = []
                 if show_title:
                     show_esc = urllib.parse.quote(show_title)
-                    action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Always co-watch this show">+ Co-Watch</button>')
+                    if cowatch_mgr.is_cowatch_show(show_title):
+                        action_buttons.append(f'<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>')
+                    else:
+                        action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Add show to co-watch whitelist">+ Co-Watch</button>')
                 if (Config.CO_WATCH_USER or is_demo) and ev.get("media_payload"):
                     media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
-                    action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;" title="Sync to partner">+ Sync Partner</button>')
-                action_col = f'<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;">{"".join(action_buttons)}</td>'
+                    action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
+                action_col = f'<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;">{"".join(action_buttons)}</td>'
+
+            # Trakt Status column: show result + cowatch badge if present
+            status_badge_html = f'<span style="color:{color};font-weight:600;font-size:13px;">{ev["result_status"]}</span>'
+            cw = ev.get("cowatch_status")
+            if cw:
+                if cw.get("synced"):
+                    target_txt = f"@{cw['target']}" if cw.get("target") else "partner"
+                    reason_txt = html.escape(cw.get("reason") or "Synced")
+                    status_badge_html += f' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
+                elif cw.get("reason") and any(x in str(ev.get("action")) for x in ("mark_watched", "scrobble_stop", "stop", "test_webhook")):
+                    reason_txt = html.escape(cw.get("reason"))
+                    status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: {reason_txt}">👥 Solo</span>'
 
             rows += f"""
             <tr style="border-bottom: 1px solid #334155;">
@@ -1342,7 +1506,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['type']}</span></td>
                 <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{u}</td>
                 <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['action']} ({ev['progress']})</span></td>
-                <td style="padding:12px 16px;"><span style="color:{color};font-weight:600;font-size:13px;">{ev['result_status']}</span></td>
+                <td style="padding:12px 16px;">{status_badge_html}</td>
                 {action_col}
             </tr>
             """
@@ -1360,7 +1524,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 📋 Copy URL
             </button>
         </div>
-        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Add this URL in Plex Web: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong>.</div>
+        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Integrations: Sonarr (<code>/sonarr</code>), Radarr (<code>/radarr</code>).</div>
     </div>
     """ if is_admin else f"""
     <div style="margin-top: 18px;">
@@ -1375,7 +1539,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 🔓 Unlock
             </button>
         </div>
-        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Admin authorization required to reveal and copy webhook URL.</div>
+        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Admin authorization required to reveal webhook URL. Integrations: Sonarr (<code>/sonarr</code>), Radarr (<code>/radarr</code>).</div>
     </div>
     """
 
@@ -1399,6 +1563,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         stream_title = s['title']
         stream_url = s['trakt_url']
         stream_prog_text = f"{s['progress']:.1f}%"
+        if s.get("remaining_str"):
+            stream_prog_text += f" • {s['remaining_str']}"
         stream_prog_width = f"{s['progress']}%"
     elif recently_finished:
         f = recently_finished
@@ -1409,7 +1575,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         user_dev = f"• {f['username']}" + (f" on {f['player']}" if (is_admin and f['player']) else "")
         stream_title = f['title']
         stream_url = f['trakt_url']
-        stream_prog_text = "100.0%"
+        stream_prog_text = "100.0% • Finished"
         stream_prog_width = "100%"
     else:
         card_display = "none"
@@ -1575,8 +1741,10 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 </form>
                 <div style="margin-top:4px;">{sonarr_status_note}</div>
                 ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to add or remove shared shows.</div>'}
-                <div style="margin-top:10px;font-size:12px;color:#94a3b8;">
-                    Movies: <strong>{rule_movies_str}</strong>{devices_rule_html}
+                <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <span>Movies: <strong id="cowatch-movies-status">{rule_movies_str}</strong></span>
+                    {f'<button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies ({ "Disable" if Config.CO_WATCH_MOVIES else "Enable" })</button>' if is_admin else ''}
+                    <span>{devices_rule_html}</span>
                 </div>
             </div>
             <div>
@@ -1615,6 +1783,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 📤 Restore Backup (.zip)
                 <input type="file" id="backup-file-input" accept=".zip" onchange="uploadBackup(this)" style="display:none;" />
             </label>
+            <button onclick="openTestWebhookModal()" class="btn-sm" style="background:#4338ca;color:#fff;border:1px solid #6366f1;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                🧪 Test Webhook
+            </button>
             ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin authorization required to download or restore server backups.</div>'}
         </div>
     </div>

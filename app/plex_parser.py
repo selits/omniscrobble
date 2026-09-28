@@ -76,6 +76,8 @@ class ParsedMedia(BaseModel):
     year: Optional[int] = None
     rating: Optional[int] = None
     progress: float = 0.0
+    duration_ms: Optional[int] = None
+    view_offset_ms: Optional[int] = None
     player: Optional[str] = None
     device: Optional[str] = None
     video_resolution: Optional[str] = None
@@ -349,8 +351,13 @@ def parse_plex_webhook(
         return None
 
     # Calculate progress %
-    duration = float(metadata.get("duration", 0))
-    view_offset = float(metadata.get("viewOffset", 0))
+    duration_raw = metadata.get("duration")
+    view_offset_raw = metadata.get("viewOffset") if metadata.get("viewOffset") is not None else payload.get("viewOffset")
+    duration_ms = int(duration_raw) if duration_raw is not None else None
+    view_offset_ms = int(view_offset_raw) if view_offset_raw is not None else None
+
+    duration = float(duration_ms or 0)
+    view_offset = float(view_offset_ms or 0)
     progress = 0.0
     if duration > 0:
         progress = min(100.0, max(0.0, (view_offset / duration) * 100.0))
@@ -404,6 +411,8 @@ def parse_plex_webhook(
             year=metadata.get("year"),
             rating=rating,
             progress=progress,
+            duration_ms=duration_ms,
+            view_offset_ms=view_offset_ms,
             player=player_title,
             device=player_device,
             video_resolution=video_res,
@@ -422,6 +431,8 @@ def parse_plex_webhook(
             year=metadata.get("year"),
             rating=rating,
             progress=progress,
+            duration_ms=duration_ms,
+            view_offset_ms=view_offset_ms,
             player=player_title,
             device=player_device,
             video_resolution=video_res,
@@ -440,6 +451,8 @@ def parse_plex_webhook(
             year=metadata.get("year"),
             rating=rating,
             progress=progress,
+            duration_ms=duration_ms,
+            view_offset_ms=view_offset_ms,
             player=player_title,
             device=player_device,
             video_resolution=video_res,

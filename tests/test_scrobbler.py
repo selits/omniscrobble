@@ -2241,7 +2241,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/plex-trakt-webhook" in html
-    assert "v1.2.0" in html
+    assert "v1.3.0" in html
     assert "https://github.com/selits/plex-trakt-webhook/releases" in html
     assert "https://github.com/selits/plex-trakt-webhook#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -2540,4 +2540,437 @@ def test_dashboard_mobile_responsiveness():
         assert 'class="modal-dialog' in html
         assert 'class="logs-toolbar"' in html
         assert 'class="footer"' in html
+
+
+@pytest.mark.asyncio
+async def test_trakt_sync_watchlist():
+    """Verify TraktClient.sync_watchlist posts payload to /sync/watchlist."""
+    with patch.object(trakt, "_post_authenticated", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"added": {"movies": 1, "shows": 0}}
+        res = await trakt.sync_watchlist({"movies": [{"title": "Dune", "year": 2021}]})
+        mock_post.assert_awaited_once_with(f"{trakt.api_url}/sync/watchlist", {"movies": [{"title": "Dune", "year": 2021}]})
+        assert res["added"]["movies"] == 1
+
+
+def test_watchlist_api_endpoints():
+    """Test POST /api/watchlist for adding movies and shows to Trakt watchlist."""
+    client = TestClient(app)
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_watchlist", new_callable=AsyncMock) as mock_sync:
+        mock_sync.return_value = {"added": {"shows": 1, "movies": 1}}
+
+        # 1. Demo mode
+        resp_demo = client.post("/api/watchlist?demo=true", json={"media_type": "movie", "title": "Inception"})
+        assert resp_demo.status_code == 200
+        assert resp_demo.json()["status"] == "success"
+
+        # 2. Authenticated admin request
+        resp = client.post("/api/watchlist", json={"media_type": "show", "title": "Severance", "year": 2022})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "success"
+        mock_sync.assert_awaited_once()
+
+        # 3. Unauthorized access check when WEBHOOK_SECRET is active
+        orig_secret = Config.WEBHOOK_SECRET
+        try:
+            Config.WEBHOOK_SECRET = "secret_pass_123"
+            resp_unauth = client.post("/api/watchlist", json={"media_type": "movie", "title": "Dune"})
+            assert resp_unauth.status_code == 401
+
+            resp_auth = client.post("/api/watchlist?token=secret_pass_123", json={"media_type": "movie", "title": "Dune"})
+            assert resp_auth.status_code == 200
+        finally:
+            Config.WEBHOOK_SECRET = orig_secret
+
+
+def test_cowatch_settings_and_movie_toggle():
+    """Test POST /api/cowatch/settings to dynamically toggle movie co-watching."""
+    client = TestClient(app)
+    orig_movies = cowatch_mgr.config.CO_WATCH_MOVIES
+    try:
+        # Enable movies
+        resp_enable = client.post("/api/cowatch/settings", json={"co_watch_movies": True})
+        assert resp_enable.status_code == 200
+        assert resp_enable.json()["co_watch_movies"] is True
+        assert cowatch_mgr.config.CO_WATCH_MOVIES is True
+
+        # Disable movies
+        resp_disable = client.post("/api/cowatch/settings", json={"co_watch_movies": False})
+        assert resp_disable.status_code == 200
+        assert resp_disable.json()["co_watch_movies"] is False
+        assert cowatch_mgr.config.CO_WATCH_MOVIES is False
+    finally:
+        cowatch_mgr.set_cowatch_movies(orig_movies)
+
+
+def test_cowatch_env_merging(tmp_path):
+    """Verify CowatchManager merges .env CO_WATCH_SHOWS into existing JSON file."""
+    shows_file = tmp_path / "cowatch_shows.json"
+    shows_file.write_text(json.dumps(["Existing Show A", "Existing Show B"]))
+
+    cfg = MagicMock()
+    cfg.CO_WATCH_DATA_FILE = shows_file
+    cfg.CO_WATCH_SHOWS = ["Env Show 1", "Existing Show A"]
+    cfg.CO_WATCH_USER = "partner"
+    cfg.CO_WATCH_MOVIES = False
+    cfg.CO_WATCH_PLAYERS = []
+
+    mgr = CowatchManager(config=cfg)
+    shows = mgr.get_shows()
+    assert "Existing Show A" in shows
+    assert "Existing Show B" in shows
+    assert "Env Show 1" in shows
+    assert len(shows) == 3
+
+
+def test_cowatch_eligibility_reasons():
+    """Verify check_cowatch_eligibility returns accurate boolean and informative reason strings."""
+    cfg = MagicMock()
+    cfg.CO_WATCH_USER = "jane"
+    cfg.CO_WATCH_SHOWS = ["Lanterns", "Animal Control"]
+    cfg.CO_WATCH_MOVIES = False
+    cfg.CO_WATCH_PLAYERS = ["Apple TV", "Living Room"]
+
+    mgr = CowatchManager(config=cfg)
+
+    # 1. Partner self playback
+    media_self = ParsedMedia(
+        event="media.scrobble", username="jane", media_type="episode",
+        title="Ep 1", show_title="Lanterns", progress=100.0, player="Apple TV"
+    )
+    eligible, reason = mgr.check_cowatch_eligibility(media_self)
+    assert not eligible
+    assert "partner" in reason.lower()
+
+    # 2. Player not allowed
+    media_wrong_player = ParsedMedia(
+        event="media.scrobble", username="selits", media_type="episode",
+        title="Ep 1", show_title="Lanterns", progress=100.0, player="Bedroom Phone"
+    )
+    eligible, reason = mgr.check_cowatch_eligibility(media_wrong_player)
+    assert not eligible
+    assert "CO_WATCH_PLAYERS" in reason
+
+    # 3. Eligible show
+    media_ok_show = ParsedMedia(
+        event="media.scrobble", username="selits", media_type="episode",
+        title="Ep 1", show_title="Lanterns (2025)", progress=100.0, player="Apple TV"
+    )
+    eligible, reason = mgr.check_cowatch_eligibility(media_ok_show)
+    assert eligible
+    assert "Shared show" in reason
+
+    # 4. Solo show not in list
+    media_solo_show = ParsedMedia(
+        event="media.scrobble", username="selits", media_type="episode",
+        title="Ep 1", show_title="Breaking Bad", progress=100.0, player="Apple TV"
+    )
+    eligible, reason = mgr.check_cowatch_eligibility(media_solo_show)
+    assert not eligible
+    assert "not in shared whitelist" in reason
+
+    # 5. Movie disabled vs enabled
+    media_movie = ParsedMedia(
+        event="media.scrobble", username="selits", media_type="movie",
+        title="Inception", progress=100.0, player="Apple TV"
+    )
+    eligible, reason = mgr.check_cowatch_eligibility(media_movie)
+    assert not eligible
+    assert "disabled" in reason.lower()
+
+    mgr.set_cowatch_movies(True)
+    eligible, reason = mgr.check_cowatch_eligibility(media_movie)
+    assert eligible
+    assert "enabled" in reason.lower()
+
+
+def test_playback_interpolation_and_remaining():
+    """Verify PlaybackManager real-time progress interpolation and remaining time calculation."""
+    pm = PlaybackManager()
+    media = ParsedMedia(
+        event="media.play",
+        username="selits",
+        media_type="episode",
+        show_title="Lanterns",
+        season=1,
+        episode=7,
+        title="Episode 7",
+        duration_ms=3600000,     # 60 minutes
+        view_offset_ms=1800000,  # 30 minutes in (50%)
+        progress=50.0,
+    )
+
+    # 1. Start playback
+    pm.update_playback(media, state="playing")
+    sessions = pm.get_active_sessions(is_admin=True)
+    assert len(sessions) == 1
+    s = sessions[0]
+    assert s["state"] == "playing"
+    assert s["progress"] >= 50.0
+    assert "left" in s["remaining_str"]
+
+    # 2. Pause playback
+    media_paused = media.model_copy(update={"event": "media.pause", "view_offset_ms": 2700000, "progress": 75.0})
+    pm.update_playback(media_paused, state="paused")
+    sessions_paused = pm.get_active_sessions(is_admin=True)
+    assert sessions_paused[0]["state"] == "paused"
+    assert "(paused)" in sessions_paused[0]["remaining_str"]
+
+    # 3. Stop playback
+    pm.stop_playback(media_paused)
+    assert pm.get_active_count() == 0
+    recent = pm.get_recently_finished(is_admin=True)
+    assert recent is not None
+    assert recent["title"] == "Lanterns S01E07 - Episode 7"
+    assert recent["remaining_str"] == "Finished"
+
+
+def test_synthetic_test_webhook():
+    """Test POST /api/test/webhook for dry-run simulation and recent event generation."""
+    client = TestClient(app)
+
+    payload = {
+        "event": "media.scrobble",
+        "media_type": "episode",
+        "title": "Synthetic Episode",
+        "show_title": "Lanterns",
+        "season": 1,
+        "episode": 7,
+        "progress": 100.0,
+        "execute_trakt": False,
+    }
+    resp = client.post("/api/test/webhook", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["parsed"]["show_title"] == "Lanterns"
+    assert data["parsed"]["duration_ms"] == 3600000
+    assert "eligible" in data["cowatch"]
+
+    # Verify event was recorded in recent_events
+    events_resp = client.get("/api/events")
+    assert events_resp.status_code == 200
+    events = events_resp.json()["events"]
+    assert any("Lanterns S01E07" in e["title"] for e in events)
+
+
+def test_health_includes_radarr():
+    """Verify /health reports Radarr integration info alongside Sonarr."""
+    client = TestClient(app)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "radarr" in data
+    assert data["radarr"]["endpoint"] == "/radarr"
+    assert "sonarr" in data
+
+
+@pytest.mark.asyncio
+async def test_process_queue_sync_watchlist():
+    """Verify that queued sync_watchlist events are properly dequeued and sent to Trakt."""
+    queue_mgr.clear_queue()
+    watchlist_payload = {"movies": [{"title": "Inception", "year": 2010}]}
+    queue_mgr.enqueue("sync_watchlist", watchlist_payload, username="default")
+    assert queue_mgr.get_pending_count() == 1
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_watchlist", new_callable=AsyncMock) as mock_sync:
+        mock_sync.return_value = {"added": {"movies": 1}}
+
+        stats = await process_queue(trakt, queue_mgr)
+        assert stats["succeeded"] >= 1
+        assert queue_mgr.get_pending_count() == 0
+        mock_sync.assert_awaited_once_with(watchlist_payload)
+
+
+def test_watchlist_transient_error_enqueues():
+    """Verify POST /api/watchlist enqueues the payload if Trakt returns a transient HTTP error."""
+    client = TestClient(app)
+    queue_mgr.clear_queue()
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_watchlist", new_callable=AsyncMock) as mock_sync:
+        mock_sync.return_value = {"error": "Service Unavailable", "status_code": 503}
+
+        res = client.post("/api/watchlist", json={"media_type": "movie", "title": "Interstellar", "year": 2014})
+        assert res.status_code == 200
+        assert queue_mgr.get_pending_count() == 1
+        pending = queue_mgr.get_pending()
+        assert pending[0]["event_type"] == "sync_watchlist"
+        assert pending[0]["payload"]["movies"][0]["title"] == "Interstellar"
+
+    queue_mgr.clear_queue()
+
+
+@pytest.mark.asyncio
+async def test_synthetic_test_webhook_execute_trakt():
+    """Verify POST /api/test/webhook with execute_trakt=True syncs history and triggers co-watch."""
+    client = TestClient(app)
+
+    payload = {
+        "event": "media.scrobble",
+        "media_type": "episode",
+        "title": "Lanterns S01E07",
+        "show_title": "Lanterns",
+        "season": 1,
+        "episode": 7,
+        "progress": 100.0,
+        "execute_trakt": True,
+    }
+
+    mock_partner_client = MagicMock()
+    mock_partner_client.is_authenticated.return_value = True
+    mock_partner_client.sync_history = AsyncMock(return_value={"added": {"episodes": 1}})
+
+    def fake_get_client(uname=None):
+        if uname == "partner":
+            return mock_partner_client
+        return trakt
+
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(cowatch_mgr, "is_cowatch_show", return_value=True), \
+         patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_sync, \
+         patch.object(user_mgr, "get_client", side_effect=fake_get_client):
+        mock_sync.return_value = {"added": {"episodes": 1}}
+
+        resp = client.post("/api/test/webhook", json=payload)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "success"
+        assert data["cowatch"]["eligible"] is True
+        assert mock_sync.called
+        assert mock_partner_client.sync_history.called
+
+
+def test_synthetic_test_webhook_unauthorized():
+    """Verify POST /api/test/webhook requires admin authentication when WEBHOOK_SECRET is set."""
+    client = TestClient(app)
+    payload = {"event": "media.scrobble", "media_type": "movie", "title": "Test Movie"}
+
+    with patch.object(Config, "WEBHOOK_SECRET", "secret_admin_key"):
+        # Unauthenticated -> 401
+        res_unauth = client.post("/api/test/webhook", json=payload)
+        assert res_unauth.status_code == 401
+
+        # Query param ?token= -> 200
+        res_token = client.post("/api/test/webhook?token=secret_admin_key", json=payload)
+        assert res_token.status_code == 200
+
+        # Admin cookie -> 200
+        client.cookies.set("admin_token", "secret_admin_key")
+        res_cookie = client.post("/api/test/webhook", json=payload)
+        assert res_cookie.status_code == 200
+        client.cookies.clear()
+
+
+def test_radarr_webhook_collection_sync():
+    """Verify Radarr download webhooks sync movie to Trakt collection and increment stats."""
+    client = TestClient(app)
+    dl_payload = {
+        "eventType": "Download",
+        "movie": {
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "tmdbId": 693134,
+            "imdbId": "tt15239678",
+        },
+        "movieFile": {
+            "quality": "WEBDL-2160p",
+        },
+    }
+
+    initial_collections = scrobble_stats.get("collections", 0)
+
+    with patch.object(Config, "WEBHOOK_SECRET", ""), \
+         patch.object(Config, "SYNC_COLLECTION", True), \
+         patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "sync_collection", new_callable=AsyncMock) as mock_sync, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+
+        mock_sync.return_value = {"added": {"movies": 1}}
+
+        res = client.post("/radarr", json=dl_payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["action"] == "collection"
+        assert mock_sync.called
+        call_arg = mock_sync.call_args[0][0]
+        assert call_arg["movies"][0]["title"] == "Dune: Part Two"
+        assert call_arg["movies"][0]["resolution"] == "uhd_4k"
+        assert scrobble_stats["collections"] == initial_collections + 1
+
+
+def test_webhook_records_cowatch_status_and_privacy():
+    """Verify live webhooks record cowatch_status in events and respect privacy masking."""
+    client = TestClient(app)
+    recent_events.clear()
+
+    payload = {
+        "event": "media.scrobble",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Metadata": {
+            "librarySectionType": "show",
+            "type": "episode",
+            "title": "Forks",
+            "grandparentTitle": "The Bear",
+            "parentIndex": 2,
+            "index": 7,
+            "duration": 2000000,
+            "viewOffset": 1950000,
+        },
+    }
+
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(Config, "WEBHOOK_SECRET", "privacy_token"), \
+         patch.object(cowatch_mgr, "is_cowatch_show", return_value=True), \
+         patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop:
+
+        mock_stop.return_value = {"action": "scrobble"}
+
+        res = client.post("/webhook?token=privacy_token", data={"payload": json.dumps(payload)})
+        assert res.status_code == 200
+        assert len(recent_events) >= 1
+        ev = recent_events[0]
+        assert ev.get("cowatch_status") is not None
+        assert ev["cowatch_status"]["synced"] is True
+        assert ev["cowatch_status"]["target"] == "partner"
+
+        # 1. Non-admin request to /api/events should have cowatch_status masked (None)
+        client.cookies.clear()
+        res_unauth_events = client.get("/api/events")
+        assert res_unauth_events.status_code == 200
+        unauth_ev = res_unauth_events.json()["events"][0]
+        assert unauth_ev["cowatch_status"] is None
+        assert unauth_ev["show_title"] is None
+        assert unauth_ev["user"] == "se****"
+
+        # 2. Admin request to /api/events reveals cowatch_status and show_title
+        client.cookies.set("admin_token", "privacy_token")
+        res_admin_events = client.get("/api/events")
+        assert res_admin_events.status_code == 200
+        admin_ev = res_admin_events.json()["events"][0]
+        assert admin_ev["cowatch_status"] is not None
+        assert admin_ev["cowatch_status"]["synced"] is True
+        assert admin_ev["is_cowatch_show"] is True
+        client.cookies.clear()
+
+
+def test_cowatch_settings_unauthorized():
+    """Verify POST /api/cowatch/settings enforces admin authorization when WEBHOOK_SECRET is active."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # Without credentials -> 401
+        res_denied = client.post("/api/cowatch/settings", json={"co_watch_movies": True})
+        assert res_denied.status_code == 401
+
+        # With credentials -> 200
+        res_ok = client.post("/api/cowatch/settings?token=admin_secret", json={"co_watch_movies": True})
+        assert res_ok.status_code == 200
+        assert res_ok.json()["status"] == "ok"
+
 
