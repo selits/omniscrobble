@@ -241,6 +241,11 @@ class TraktClient:
         url = f"{self.api_url}/sync/collection"
         return await self._post_authenticated(url, collection_payload)
 
+    async def sync_watchlist(self, watchlist_payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /sync/watchlist - Add movies, shows, or seasons/episodes to user's Trakt watchlist."""
+        url = f"{self.api_url}/sync/watchlist"
+        return await self._post_authenticated(url, watchlist_payload)
+
 
     async def get_user_settings(self) -> Optional[dict[str, Any]]:
         """GET /users/settings - Retrieve authenticated user profile information."""

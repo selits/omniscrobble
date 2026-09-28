@@ -24,20 +24,26 @@ class CowatchManager:
         self._load_shows()
 
     def _load_shows(self) -> None:
-        """Load configured shows from persistent JSON file or initial config."""
+        """Load configured shows from persistent JSON file and merge with initial config."""
+        loaded: list[str] = []
         if self.data_file.exists():
             try:
                 with open(self.data_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    if isinstance(data, list) and data:
-                        self._shows = [s.strip() for s in data if s and s.strip()]
-                        return
+                    if isinstance(data, list):
+                        loaded = [s.strip() for s in data if s and s.strip()]
             except Exception as e:
                 logger.error(f"Error loading co-watch shows from {self.data_file}: {e}")
 
-        # Fallback to config default if persistent file is empty or missing
-        self._shows = [s.strip() for s in self.config.CO_WATCH_SHOWS if s and s.strip()]
-        if self._shows:
+        # Merge with config.CO_WATCH_SHOWS so .env additions are always honored
+        env_shows = [s.strip() for s in self.config.CO_WATCH_SHOWS if s and s.strip()]
+        combined = list(loaded)
+        for s in env_shows:
+            if not any(x.lower() == s.lower() for x in combined):
+                combined.append(s)
+
+        self._shows = combined
+        if env_shows and len(combined) != len(loaded):
             self._save_shows()
 
     def _save_shows(self) -> None:
@@ -70,6 +76,12 @@ class CowatchManager:
         logger.info(f"Removed '{show_name}' from co-watch shows list.")
         return list(self._shows)
 
+    def set_cowatch_movies(self, enabled: bool) -> bool:
+        """Toggle movie co-watching dynamically."""
+        self.config.CO_WATCH_MOVIES = enabled
+        logger.info(f"Co-watching movies setting updated to: {enabled}")
+        return self.config.CO_WATCH_MOVIES
+
     def _normalize(self, text: str) -> str:
         """Strip remake years e.g. '(2024)', special punctuation, and lowercase."""
         cleaned = re.sub(r"\s*[\(\[]\d{4}[\)\]]", "", text)
@@ -86,15 +98,15 @@ class CowatchManager:
                 return True
         return False
 
-    def should_cowatch(self, media: ParsedMedia) -> bool:
-        """Determine if an incoming event should trigger dual-scrobbling."""
+    def check_cowatch_eligibility(self, media: ParsedMedia) -> tuple[bool, str]:
+        """Check if an event should co-watch, returning (eligible, reason)."""
         target_user = self.config.CO_WATCH_USER
         if not target_user:
-            return False
+            return False, "Target user not configured"
 
         # If the event came directly from the co-watch user, don't duplicate back to them
         if media.username.strip().lower() == target_user.strip().lower():
-            return False
+            return False, "Self playback by partner"
 
         # Player/Device whitelist check (if configured)
         if self.config.CO_WATCH_PLAYERS:
@@ -102,21 +114,28 @@ class CowatchManager:
             media_player = (media.player or "").lower()
             media_device = (media.device or "").lower()
             if not any(p in (media_player, media_device) for p in allowed_players):
-                logger.debug(
-                    f"Skipping co-watch: Player '{media.player}' not in CO_WATCH_PLAYERS: {self.config.CO_WATCH_PLAYERS}"
-                )
-                return False
+                player_name = media.player or media.device or "Unknown"
+                return False, f"Device '{player_name}' not in CO_WATCH_PLAYERS"
 
         # Movie check
         if media.media_type == "movie":
-            return self.config.CO_WATCH_MOVIES
+            if self.config.CO_WATCH_MOVIES:
+                return True, "Movie co-watching enabled"
+            return False, "Movie co-watching disabled"
 
         # Episode check
         if media.media_type == "episode":
             show_name = media.show_title or media.title
-            return self.is_cowatch_show(show_name)
+            if self.is_cowatch_show(show_name):
+                return True, f"Shared show: {show_name}"
+            return False, f"'{show_name}' not in shared whitelist"
 
-        return False
+        return False, f"Unsupported media type: {media.media_type}"
+
+    def should_cowatch(self, media: ParsedMedia) -> bool:
+        """Determine if an incoming event should trigger dual-scrobbling."""
+        eligible, _ = self.check_cowatch_eligibility(media)
+        return eligible
 
     def get_status(self) -> dict[str, Any]:
         """Return the current co-watching status summary."""

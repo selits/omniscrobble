@@ -34,7 +34,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -276,6 +276,78 @@
         </div>
     </div>
 
+    <!-- Synthetic Test Webhook Modal -->
+    <div id="test-modal" onclick="if(event.target===this)closeTestWebhookModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>🧪</span> Synthetic Webhook Simulator
+                </h3>
+                <button onclick="closeTestWebhookModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Simulate an incoming Plex webhook to test event parsing, co-watch eligibility checks, and real-time activity logging safely.
+            </p>
+            <form onsubmit="event.preventDefault();submitTestWebhook();" style="margin:0;display:flex;flex-direction:column;gap:12px;">
+                <div style="display:flex;gap:10px;">
+                    <div style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Event Type</label>
+                        <select id="test-event-select" style="width:100%;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;">
+                            <option value="media.scrobble">media.scrobble (Watched)</option>
+                            <option value="media.play">media.play (Started)</option>
+                            <option value="media.pause">media.pause (Paused)</option>
+                            <option value="media.stop">media.stop (Stopped)</option>
+                        </select>
+                    </div>
+                    <div style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Media Type</label>
+                        <select id="test-type-select" onchange="toggleTestMediaFields(this.value)" style="width:100%;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;">
+                            <option value="episode">Episode (TV Show)</option>
+                            <option value="movie">Movie</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="test-show-row">
+                    <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Series Title</label>
+                    <input type="text" id="test-show-input" value="Lanterns" placeholder="e.g. Lanterns, Severance" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;" />
+                </div>
+
+                <div style="display:flex;gap:10px;">
+                    <div style="flex:2;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Item Title</label>
+                        <input type="text" id="test-title-input" value="Episode 7" placeholder="Episode title or Movie name" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;" />
+                    </div>
+                    <div id="test-season-col" style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Season</label>
+                        <input type="number" id="test-season-input" value="1" min="1" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;" />
+                    </div>
+                    <div id="test-episode-col" style="flex:1;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Episode</label>
+                        <input type="number" id="test-episode-input" value="7" min="1" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:13px;outline:none;" />
+                    </div>
+                </div>
+
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#0f172a;border:1px solid #334155;border-radius:6px;margin-top:4px;">
+                    <div>
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;">Dry-Run Simulation</div>
+                        <div style="font-size:11px;color:#94a3b8;">Verifies logic and displays in dashboard without calling external Trakt API</div>
+                    </div>
+                    <label style="font-size:12px;color:#94a3b8;cursor:pointer;display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="test-execute-trakt"> Execute Trakt
+                    </label>
+                </div>
+
+                <div id="test-result-box" style="display:none;background:#020617;border:1px solid #334155;border-radius:6px;padding:10px;font-family:monospace;font-size:12px;color:#cbd5e1;max-height:120px;overflow-y:auto;"></div>
+
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+                    <button type="button" onclick="closeTestWebhookModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Close</button>
+                    <button type="submit" id="test-submit-btn" class="btn-sm" style="background:#4338ca;color:#fff;font-weight:600;padding:8px 16px;">▶ Run Simulation</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         const isAdmin = {{IS_ADMIN_JS}};
         const isDemo = {{IS_DEMO_JS}};
@@ -370,6 +442,8 @@
             if (e.key === 'Escape') {
                 closeUnlockModal();
                 closeScrobbleModal();
+                closeLogsModal();
+                closeTestWebhookModal();
                 const box = document.getElementById('sonarr-suggestions');
                 if (box) box.style.display = 'none';
             }
@@ -446,12 +520,44 @@
                         </div>
                         ${media.overview ? `<p style="color:#94a3b8;font-size:12px;margin:4px 0 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${media.overview}</p>` : ''}
                     </div>
-                    <button onclick="submitManualScrobble('${mediaJson}', this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;white-space:nowrap;padding:8px 12px;">
-                        ✓ Mark Watched
-                    </button>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        <button onclick="submitAddToWatchlist('${mediaJson}', this)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;white-space:nowrap;padding:8px 12px;" title="Add to Trakt Watchlist">
+                            🔖 Watchlist
+                        </button>
+                        <button onclick="submitManualScrobble('${mediaJson}', this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;white-space:nowrap;padding:8px 12px;">
+                            ✓ Mark Watched
+                        </button>
+                    </div>
                 </div>`;
             }
             container.innerHTML = html;
+        }
+
+        async function submitAddToWatchlist(mediaJsonEncoded, btn) {
+            try {
+                const payload = JSON.parse(decodeURIComponent(mediaJsonEncoded));
+                btn.disabled = true;
+                btn.innerHTML = 'Adding...';
+                const url = isDemo ? '/api/watchlist?demo=true' : '/api/watchlist';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    btn.innerHTML = '✓ Watchlisted!';
+                    btn.style.background = '#059669';
+                } else {
+                    const err = await res.json();
+                    btn.innerHTML = 'Error';
+                    btn.style.background = '#ef4444';
+                    btn.disabled = false;
+                    alert('Failed to add to watchlist: ' + (err.detail || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                btn.disabled = false;
+            }
         }
 
         async function submitManualScrobble(mediaJsonEncoded, btn) {
@@ -509,7 +615,8 @@
                 document.getElementById('stream-user-device').textContent = `• ${s.username}${devStr}`;
                 document.getElementById('stream-title').textContent = s.title;
                 document.getElementById('stream-trakt-link').href = s.trakt_url || 'https://trakt.tv';
-                document.getElementById('stream-progress-text').textContent = `${s.progress.toFixed(1)}%`;
+                const progText = s.remaining_str ? `${s.progress.toFixed(1)}% • ${s.remaining_str}` : `${s.progress.toFixed(1)}%`;
+                document.getElementById('stream-progress-text').textContent = progText;
                 document.getElementById('stream-progress-bar').style.width = `${s.progress}%`;
                 document.getElementById('stream-progress-bar').style.background = s.state === 'playing' ? '#10b981' : '#f59e0b';
             } else if (data.recently_finished) {
@@ -524,7 +631,7 @@
                 document.getElementById('stream-user-device').textContent = `• ${f.username}${fDevStr}`;
                 document.getElementById('stream-title').textContent = f.title;
                 document.getElementById('stream-trakt-link').href = f.trakt_url || 'https://trakt.tv';
-                document.getElementById('stream-progress-text').textContent = '100.0%';
+                document.getElementById('stream-progress-text').textContent = '100.0% • Finished';
                 document.getElementById('stream-progress-bar').style.width = '100%';
                 document.getElementById('stream-progress-bar').style.background = '#38bdf8';
             } else {
@@ -546,22 +653,39 @@
                 if (isAdmin) {
                     if (ev.show_title) {
                         const showEnc = encodeURIComponent(ev.show_title);
-                        actionBtns += `<button data-show="${showEnc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Always co-watch this show">+ Co-Watch</button>`;
+                        if (ev.is_cowatch_show) {
+                            actionBtns += `<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>`;
+                        } else {
+                            actionBtns += `<button data-show="${showEnc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Add show to co-watch whitelist">+ Co-Watch</button>`;
+                        }
                     }
                     if (ev.media_payload) {
                         const mediaEnc = encodeURIComponent(JSON.stringify(ev.media_payload));
                         actionBtns += `<button onclick="quickSyncPartner('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Sync to partner">+ Sync Partner</button>`;
                     }
                 }
-                const actionCol = isAdmin ? `<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;">${actionBtns}</td>` : '';
+                const actionCol = isAdmin ? `<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;">${actionBtns}</td>` : '';
+
+                let statusBadgeHtml = `<span style="color:${color};font-weight:600;font-size:13px;">${escapeHtml(ev.result_status)}</span>`;
+                if (ev.cowatch_status) {
+                    if (ev.cowatch_status.synced) {
+                        const targetTxt = ev.cowatch_status.target ? `@${ev.cowatch_status.target}` : 'partner';
+                        const reasonTxt = escapeHtml(ev.cowatch_status.reason || 'Synced');
+                        statusBadgeHtml += ` <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to ${targetTxt}: ${reasonTxt}">👥 Co-Watched</span>`;
+                    } else if (ev.cowatch_status.reason && (String(ev.action).includes('mark_watched') || String(ev.action).includes('scrobble_stop') || String(ev.action).includes('stop') || String(ev.action).includes('test_webhook'))) {
+                        const reasonTxt = escapeHtml(ev.cowatch_status.reason);
+                        statusBadgeHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: ${reasonTxt}">👥 Solo</span>`;
+                    }
+                }
+
                 html += `
                 <tr style="border-bottom: 1px solid #334155;">
                     <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${ev.timestamp}</td>
-                    <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">${ev.title}</td>
+                    <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">${escapeHtml(ev.title)}</td>
                     <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">${ev.type}</span></td>
-                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${ev.user}</td>
-                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">${ev.action} (${ev.progress})</span></td>
-                    <td style="padding:12px 16px;"><span style="color:${color};font-weight:600;font-size:13px;">${ev.result_status}</span></td>
+                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${escapeHtml(ev.user)}</td>
+                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">${escapeHtml(ev.action)} (${ev.progress})</span></td>
+                    <td style="padding:12px 16px;">${statusBadgeHtml}</td>
                     ${actionCol}
                 </tr>`;
             }
@@ -967,6 +1091,126 @@
             }).catch(err => {
                 alert('Failed to copy: ' + err);
             });
+        }
+
+        function openTestWebhookModal() {
+            if (!isAdmin && !isDemo) { openUnlockModal(); return; }
+            const modal = document.getElementById('test-modal');
+            if (modal) modal.style.display = 'flex';
+        }
+
+        function closeTestWebhookModal() {
+            const modal = document.getElementById('test-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function toggleTestMediaFields(type) {
+            const showRow = document.getElementById('test-show-row');
+            const sCol = document.getElementById('test-season-col');
+            const eCol = document.getElementById('test-episode-col');
+            if (type === 'movie') {
+                if (showRow) showRow.style.display = 'none';
+                if (sCol) sCol.style.display = 'none';
+                if (eCol) eCol.style.display = 'none';
+            } else {
+                if (showRow) showRow.style.display = 'block';
+                if (sCol) sCol.style.display = 'block';
+                if (eCol) eCol.style.display = 'block';
+            }
+        }
+
+        async function submitTestWebhook() {
+            const btn = document.getElementById('test-submit-btn');
+            const resBox = document.getElementById('test-result-box');
+            const eventVal = document.getElementById('test-event-select').value;
+            const typeVal = document.getElementById('test-type-select').value;
+            const showTitle = document.getElementById('test-show-input').value.trim();
+            const titleVal = document.getElementById('test-title-input').value.trim();
+            const seasonVal = parseInt(document.getElementById('test-season-input').value) || 1;
+            const episodeVal = parseInt(document.getElementById('test-episode-input').value) || 1;
+            const execTrakt = document.getElementById('test-execute-trakt').checked;
+
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Simulating...';
+            }
+            if (resBox) resBox.style.display = 'none';
+
+            try {
+                if (isDemo) {
+                    if (resBox) {
+                        resBox.style.display = 'block';
+                        resBox.innerHTML = '<span style="color:#10b981;">✓ Simulated webhook passed in Demo mode.</span>';
+                    }
+                    if (btn) { btn.disabled = false; btn.textContent = '▶ Run Simulation'; }
+                    return;
+                }
+                const res = await fetch('/api/test/webhook', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event: eventVal,
+                        media_type: typeVal,
+                        title: titleVal || (typeVal === 'movie' ? 'Synthetic Movie' : 'Synthetic Episode'),
+                        show_title: typeVal === 'episode' ? showTitle : null,
+                        season: seasonVal,
+                        episode: episodeVal,
+                        execute_trakt: execTrakt
+                    })
+                });
+                const data = await res.json();
+                if (btn) { btn.disabled = false; btn.textContent = '▶ Run Simulation'; }
+                if (resBox) {
+                    resBox.style.display = 'block';
+                    const cw = data.cowatch || {};
+                    const cwColor = cw.eligible ? '#10b981' : '#f59e0b';
+                    resBox.innerHTML = `<div>Status: <strong style="color:#10b981;">${data.status}</strong></div>` +
+                        `<div>Parsed: ${escapeHtml(data.parsed.title)} (${data.parsed.media_type})</div>` +
+                        `<div>Co-Watch: <span style="color:${cwColor};font-weight:600;">${cw.eligible ? 'Eligible' : 'Not Eligible'}</span> &bull; ${escapeHtml(cw.reason || '')}</div>`;
+                }
+                fetchEvents();
+            } catch (e) {
+                if (btn) { btn.disabled = false; btn.textContent = '▶ Run Simulation'; }
+                if (resBox) {
+                    resBox.style.display = 'block';
+                    resBox.innerHTML = `<span style="color:#ef4444;">Error: ${escapeHtml(e.message)}</span>`;
+                }
+            }
+        }
+
+        async function toggleCowatchMovies() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const statusEl = document.getElementById('cowatch-movies-status');
+            const btn = document.getElementById('cowatch-movies-btn');
+            const currentEnabled = statusEl ? statusEl.textContent.trim().toLowerCase() === 'enabled' : false;
+            const newTarget = !currentEnabled;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Updating...';
+            }
+            try {
+                const url = isDemo ? '/api/cowatch/settings?demo=true' : '/api/cowatch/settings';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ co_watch_movies: newTarget })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const isNowEnabled = data.co_watch_movies;
+                    if (statusEl) statusEl.textContent = isNowEnabled ? 'Enabled' : 'Disabled';
+                    if (btn) {
+                        btn.textContent = `Toggle Movies (${isNowEnabled ? 'Disable' : 'Enable'})`;
+                        btn.disabled = false;
+                    }
+                } else {
+                    alert('Failed to update co-watch movie settings');
+                    if (btn) btn.disabled = false;
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+                if (btn) btn.disabled = false;
+            }
         }
 
         if (localStorage.getItem('plex_trakt_auto_refresh') === 'true') {
