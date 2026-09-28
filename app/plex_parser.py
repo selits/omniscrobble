@@ -84,6 +84,7 @@ class ParsedMedia(BaseModel):
     audio_codec: Optional[str] = None
     audio_channels: Optional[str] = None
     library_section_title: Optional[str] = None
+    server_type: str = "plex"
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
@@ -135,7 +136,7 @@ def test_webhook_endpoint_full_flow():
     # 2. Dashboard
     res_dash = client.get("/")
     assert res_dash.status_code == 200
-    assert "Plex &rarr; Trakt Scrobbler" in res_dash.text
+    assert "Omniscrobble" in res_dash.text
 
     # 3. Webhook call with mocked Trakt responses
     plex_sample = {
@@ -2240,10 +2241,10 @@ def test_dashboard_footer_and_repo_link():
     resp = client.get("/")
     assert resp.status_code == 200
     html = resp.text
-    assert "https://github.com/selits/plex-trakt-webhook" in html
-    assert "v1.3.0" in html
-    assert "https://github.com/selits/plex-trakt-webhook/releases" in html
-    assert "https://github.com/selits/plex-trakt-webhook#readme" in html
+    assert "https://github.com/selits/omniscrobble" in html
+    assert "v1.4.0" in html
+    assert "https://github.com/selits/omniscrobble/releases" in html
+    assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
     assert '<input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh(this)">' in html
 
@@ -2532,6 +2533,8 @@ def test_dashboard_mobile_responsiveness():
         assert "-webkit-overflow-scrolling: touch" in html
 
         # 3. Mobile layout classes
+        assert 'class="title-brand"' in html
+        assert 'class="title-sub"' in html
         assert 'class="cowatch-grid"' in html
         assert 'class="webhook-row"' in html
         assert 'class="activity-header"' in html
@@ -3019,6 +3022,661 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert "Live Interactive Demo" in repo_content
     assert APP_VERSION in repo_content
     assert not re.findall(r"\{\{[A-Z_]+\}\}", repo_content)
+
+
+def test_granular_scrobble_thresholds_logic():
+    """Verify separate episode vs movie scrobble thresholds and Config.get_threshold fallback."""
+    # Defaults
+    assert Config.EPISODE_SCROBBLE_THRESHOLD == 80.0
+    assert Config.MOVIE_SCROBBLE_THRESHOLD == 90.0
+    assert Config.get_threshold("episode") == 80.0
+    assert Config.get_threshold("movie") == 90.0
+    assert Config.get_threshold("other") == Config.SCROBBLE_THRESHOLD
+
+    client = TestClient(app)
+
+    # 1. Episode stopped at 82% -> progress >= 80% -> should scrobble
+    ep_stop_82 = {
+        "event": "media.stop",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {"title": "Living Room Apple TV"},
+        "Metadata": {
+            "librarySectionType": "show",
+            "type": "episode",
+            "title": "Chicanery",
+            "grandparentTitle": "Better Call Saul",
+            "parentIndex": 3,
+            "index": 5,
+            "year": 2017,
+            "duration": 3000000,
+            "viewOffset": 2460000,  # 82.0%
+        },
+    }
+
+    initial_total = scrobble_stats["total"]
+    initial_episodes = scrobble_stats["episodes"]
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "scrobble"}
+
+        res = client.post("/webhook", data={"payload": json.dumps(ep_stop_82)})
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_stop"
+        assert scrobble_stats["total"] == initial_total + 1
+        assert scrobble_stats["episodes"] == initial_episodes + 1
+
+    # 2. Movie stopped at 82% -> progress < 90% -> should NOT scrobble
+    movie_stop_82 = {
+        "event": "media.stop",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {"title": "Living Room Apple TV"},
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "duration": 10000000,
+            "viewOffset": 8200000,  # 82.0%
+        },
+    }
+
+    initial_total = scrobble_stats["total"]
+    initial_movies = scrobble_stats["movies"]
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "pause"}
+
+        res = client.post("/webhook", data={"payload": json.dumps(movie_stop_82)})
+        assert res.status_code == 200
+        assert res.json()["action"] == "playback_stopped"
+        assert scrobble_stats["total"] == initial_total
+        assert scrobble_stats["movies"] == initial_movies
+
+    # 3. Movie stopped at 92% -> progress >= 90% -> should scrobble
+    movie_stop_92 = {
+        "event": "media.stop",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Player": {"title": "Living Room Apple TV"},
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "duration": 10000000,
+            "viewOffset": 9200000,  # 92.0%
+        },
+    }
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "scrobble"}
+
+        res = client.post("/webhook", data={"payload": json.dumps(movie_stop_92)})
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_stop"
+        assert scrobble_stats["total"] == initial_total + 1
+        assert scrobble_stats["movies"] == initial_movies + 1
+
+
+def test_jellyfin_parser_and_webhook():
+    from app.jellyfin_parser import parse_jellyfin_webhook
+    client = TestClient(app)
+
+    # Info GET endpoint
+    info_res = client.get("/webhook/jellyfin")
+    assert info_res.status_code == 200
+    assert "Jellyfin" in info_res.json()["instructions"]
+
+    # 1. Movie playback start
+    jf_movie_payload = {
+        "NotificationType": "PlaybackStart",
+        "NotificationUsername": "selits",
+        "ItemType": "Movie",
+        "Name": "Oppenheimer",
+        "Year": 2023,
+        "RunTimeTicks": 108000000000,  # 180 min
+        "PlaybackPositionTicks": 10800000000,  # 10%
+        "Provider_Ids": {"Imdb": "tt15398776", "Tmdb": "872585"},
+        "DeviceName": "Living Room Shield",
+        "Client": "Jellyfin AndroidTV",
+    }
+
+    parsed = parse_jellyfin_webhook(jf_movie_payload)
+    assert parsed is not None
+    assert parsed.event == "media.play"
+    assert parsed.server_type == "jellyfin"
+    assert parsed.media_type == "movie"
+    assert parsed.title == "Oppenheimer"
+    assert parsed.year == 2023
+    assert parsed.ids["imdb"] == "tt15398776"
+    assert parsed.ids["tmdb"] == 872585
+    assert abs(parsed.progress - 10.0) < 0.1
+
+    # Post to /webhook/jellyfin
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+        mock_start.return_value = {"action": "start"}
+        res = client.post("/webhook/jellyfin", json=jf_movie_payload)
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_start"
+
+    # 2. Episode playback stop at 85% (scrobble_stop)
+    jf_ep_payload = {
+        "NotificationType": "PlaybackStop",
+        "NotificationUsername": "selits",
+        "ItemType": "Episode",
+        "SeriesName": "Succession",
+        "Name": "Connor's Wedding",
+        "SeasonNumber": 4,
+        "EpisodeNumber": 3,
+        "Year": 2023,
+        "RunTimeTicks": 36000000000,
+        "PlaybackPositionTicks": 30600000000,  # 85%
+        "Provider_Ids": {"Imdb": "tt22216852", "Tvdb": "80349"},
+        "DeviceName": "Bedroom Roku",
+    }
+
+    parsed_ep = parse_jellyfin_webhook(jf_ep_payload)
+    assert parsed_ep is not None
+    assert parsed_ep.event == "media.stop"
+    assert parsed_ep.server_type == "jellyfin"
+    assert parsed_ep.media_type == "episode"
+    assert parsed_ep.show_title == "Succession"
+    assert parsed_ep.season == 4
+    assert parsed_ep.episode == 3
+    assert abs(parsed_ep.progress - 85.0) < 0.1
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "scrobble"}
+        res = client.post("/webhook/jellyfin", json=jf_ep_payload)
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_stop"
+
+    # 3. UserDataSaved rating event
+    jf_rate_payload = {
+        "NotificationType": "UserDataSaved",
+        "NotificationUsername": "selits",
+        "ItemType": "Movie",
+        "Name": "Inception",
+        "Year": 2010,
+        "UserData": {"IsFavorite": True},
+        "Provider_Ids": {"Imdb": "tt1375666"},
+    }
+    parsed_rate = parse_jellyfin_webhook(jf_rate_payload)
+    assert parsed_rate is not None
+    assert parsed_rate.event == "media.rate"
+    assert parsed_rate.rating == 10
+
+    # 4. User filtering
+    parsed_ignored = parse_jellyfin_webhook(jf_ep_payload, allowed_users=["other_user"])
+    assert parsed_ignored is None
+
+
+def test_emby_parser_and_webhook():
+    from app.emby_parser import parse_emby_webhook
+    client = TestClient(app)
+
+    # Info GET endpoint
+    info_res = client.get("/webhook/emby")
+    assert info_res.status_code == 200
+    assert "Emby" in info_res.json()["instructions"]
+
+    # 1. Movie playback pause
+    emby_payload = {
+        "Event": "playback.pause",
+        "User": {"Name": "selits"},
+        "Item": {
+            "Type": "Movie",
+            "Name": "Interstellar",
+            "ProductionYear": 2014,
+            "RunTimeTicks": 101400000000,
+            "ProviderIds": {"Imdb": "tt0816692", "Tmdb": "157336"},
+        },
+        "PlaybackInfo": {
+            "PositionTicks": 20280000000,  # 20%
+            "DeviceName": "Living Room TV",
+        },
+    }
+
+    parsed = parse_emby_webhook(emby_payload)
+    assert parsed is not None
+    assert parsed.event == "media.pause"
+    assert parsed.server_type == "emby"
+    assert parsed.media_type == "movie"
+    assert parsed.title == "Interstellar"
+    assert parsed.year == 2014
+    assert parsed.ids["imdb"] == "tt0816692"
+    assert parsed.ids["tmdb"] == 157336
+    assert abs(parsed.progress - 20.0) < 0.1
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_pause", new_callable=AsyncMock) as mock_pause:
+        mock_pause.return_value = {"action": "pause"}
+        res = client.post("/webhook/emby", json=emby_payload)
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_pause"
+
+    # 2. Episode playback stop at 95%
+    emby_ep_payload = {
+        "Event": "playback.stop",
+        "User": {"Name": "selits"},
+        "Item": {
+            "Type": "Episode",
+            "Name": "Pilot",
+            "SeriesName": "Breaking Bad",
+            "ParentIndexNumber": 1,
+            "IndexNumber": 1,
+            "ProductionYear": 2008,
+            "RunTimeTicks": 34800000000,
+            "ProviderIds": {"Tvdb": "81189"},
+        },
+        "PlaybackInfo": {
+            "PositionTicks": 33060000000,  # 95%
+            "DeviceName": "iPad",
+        },
+    }
+
+    parsed_ep = parse_emby_webhook(emby_ep_payload)
+    assert parsed_ep is not None
+    assert parsed_ep.event == "media.stop"
+    assert parsed_ep.server_type == "emby"
+    assert parsed_ep.season == 1
+    assert parsed_ep.episode == 1
+    assert parsed_ep.show_title == "Breaking Bad"
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "scrobble"}
+        res = client.post("/webhook/emby", json=emby_ep_payload)
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_stop"
+
+    # 3. Rating event: item.rate
+    emby_rate_payload = {
+        "Event": "item.rate",
+        "User": {"Name": "selits"},
+        "Item": {
+            "Type": "Movie",
+            "Name": "Arrival",
+            "ProductionYear": 2016,
+            "ProviderIds": {"Imdb": "tt2543164"},
+        },
+        "UserRating": 9,
+    }
+    parsed_rate = parse_emby_webhook(emby_rate_payload)
+    assert parsed_rate is not None
+    assert parsed_rate.event == "media.rate"
+    assert parsed_rate.rating == 9
+
+
+def test_pwa_and_static_assets():
+    client = TestClient(app)
+
+    # Manifest
+    res_manifest = client.get("/manifest.json")
+    assert res_manifest.status_code == 200
+    assert "application/manifest+json" in res_manifest.headers.get("content-type", "")
+    data = res_manifest.json()
+    assert data["name"] == "Omniscrobble"
+    assert data["short_name"] == "Omniscrobble"
+    assert data["display"] == "standalone"
+    assert len(data["icons"]) >= 2
+
+    # Service Worker
+    res_sw = client.get("/sw.js")
+    assert res_sw.status_code == 200
+    assert "javascript" in res_sw.headers.get("content-type", "")
+    assert "omniscrobble" in res_sw.text
+
+    # Icons
+    res_icon192 = client.get("/static/icons/icon-192.svg")
+    assert res_icon192.status_code == 200
+    assert "image/svg+xml" in res_icon192.headers.get("content-type", "")
+    assert "<svg" in res_icon192.text
+
+    res_icon512 = client.get("/static/icons/icon-512.svg")
+    assert res_icon512.status_code == 200
+    assert "image/svg+xml" in res_icon512.headers.get("content-type", "")
+    assert "<svg" in res_icon512.text
+
+
+def test_dashboard_multi_server_tabs_and_oled_theme():
+    client = TestClient(app)
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.text
+
+    # Multi-server tabs
+    assert "switchWebhookTab('plex')" in html
+    assert "switchWebhookTab('jellyfin')" in html
+    assert "switchWebhookTab('emby')" in html
+    assert "/webhook/jellyfin" in html
+    assert "/webhook/emby" in html
+
+    # OLED theme toggle
+    assert "toggleTheme()" in html
+    assert "theme-toggle" in html
+    assert "theme-oled" in html or "omniscrobble_theme" in html
+
+
+def test_jellyfin_and_emby_webhook_security():
+    """Verify webhook token enforcement on Jellyfin and Emby endpoints."""
+    client = TestClient(app)
+    sample_payload = {
+        "NotificationType": "PlaybackStart",
+        "ItemType": "Movie",
+        "Name": "Inception",
+        "Year": 2010,
+    }
+
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret_token_123"):
+        # 1. Jellyfin without token -> 401
+        res = client.post("/webhook/jellyfin", json=sample_payload)
+        assert res.status_code == 401
+
+        # 2. Jellyfin with wrong token -> 401
+        res = client.post("/webhook/jellyfin?token=wrong_token", json=sample_payload)
+        assert res.status_code == 401
+
+        # 3. Jellyfin with valid query token -> 200
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"action": "start"}
+            res = client.post("/webhook/jellyfin?token=super_secret_token_123", json=sample_payload)
+            assert res.status_code == 200
+
+        # 4. Jellyfin alias route /jellyfin with valid header -> 200
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"action": "start"}
+            res = client.post("/jellyfin", json=sample_payload, headers={"x-webhook-secret": "super_secret_token_123"})
+            assert res.status_code == 200
+
+        # 5. Emby without token -> 401
+        emby_sample = {"Event": "playback.start", "Item": {"Type": "Movie", "Name": "Inception"}}
+        res = client.post("/webhook/emby", json=emby_sample)
+        assert res.status_code == 401
+
+        # 6. Emby with valid query token -> 200
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"action": "start"}
+            res = client.post("/webhook/emby?token=super_secret_token_123", json=emby_sample)
+            assert res.status_code == 200
+
+        # 7. Emby alias route /emby with valid header -> 200
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"action": "start"}
+            res = client.post("/emby", json=emby_sample, headers={"x-webhook-secret": "super_secret_token_123"})
+            assert res.status_code == 200
+
+
+def test_granular_thresholds_pause_behavior():
+    """Verify smart pause past threshold respects granular episode (80%) vs movie (90%) thresholds."""
+    client = TestClient(app)
+
+    # 1. Episode paused at 82% (>= 80%) -> triggers scrobble_stop
+    ep_pause_82 = {
+        "event": "media.pause",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Metadata": {
+            "librarySectionType": "show",
+            "type": "episode",
+            "title": "Chicanery",
+            "grandparentTitle": "Better Call Saul",
+            "parentIndex": 3,
+            "index": 5,
+            "duration": 3000000,
+            "viewOffset": 2460000,  # 82%
+        },
+    }
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "scrobble"}
+        res = client.post("/webhook", data={"payload": json.dumps(ep_pause_82)})
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_stop"
+
+    # 2. Episode paused at 75% (< 80%) -> triggers scrobble_pause
+    ep_pause_75 = {
+        "event": "media.pause",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Metadata": {
+            "librarySectionType": "show",
+            "type": "episode",
+            "title": "Chicanery",
+            "grandparentTitle": "Better Call Saul",
+            "parentIndex": 3,
+            "index": 5,
+            "duration": 3000000,
+            "viewOffset": 2250000,  # 75%
+        },
+    }
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_pause", new_callable=AsyncMock) as mock_pause:
+        mock_pause.return_value = {"action": "pause"}
+        res = client.post("/webhook", data={"payload": json.dumps(ep_pause_75)})
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_pause"
+
+    # 3. Movie paused at 85% (< 90% movie threshold) -> triggers scrobble_pause, NOT stop!
+    movie_pause_85 = {
+        "event": "media.pause",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "duration": 10000000,
+            "viewOffset": 8500000,  # 85%
+        },
+    }
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_pause", new_callable=AsyncMock) as mock_pause:
+        mock_pause.return_value = {"action": "pause"}
+        res = client.post("/webhook", data={"payload": json.dumps(movie_pause_85)})
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_pause"
+
+    # 4. Movie paused at 92% (>= 90%) -> triggers scrobble_stop
+    movie_pause_92 = {
+        "event": "media.pause",
+        "user": True,
+        "Account": {"id": 1, "title": "selits"},
+        "Metadata": {
+            "librarySectionType": "movie",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "duration": 10000000,
+            "viewOffset": 9200000,  # 92%
+        },
+    }
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "scrobble"}
+        res = client.post("/webhook", data={"payload": json.dumps(movie_pause_92)})
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_stop"
+
+
+def test_jellyfin_and_emby_filtering_and_edge_cases():
+    """Verify library filtering, non-media events, and safe ticks division in Jellyfin/Emby parsers."""
+    from app.jellyfin_parser import parse_jellyfin_webhook
+    from app.emby_parser import parse_emby_webhook
+
+    # 1. Jellyfin library exclusion
+    jf_payload = {
+        "NotificationType": "PlaybackStart",
+        "ItemType": "Movie",
+        "Name": "Family Vacation",
+        "LibraryName": "Home Videos",
+    }
+    assert parse_jellyfin_webhook(jf_payload, excluded_libraries=["Home Videos"]) is None
+    assert parse_jellyfin_webhook(jf_payload, allowed_libraries=["Movies"]) is None
+
+    # 2. Unsupported Jellyfin media types
+    assert parse_jellyfin_webhook({"NotificationType": "PlaybackStart", "ItemType": "Audio"}) is None
+    assert parse_jellyfin_webhook({"NotificationType": "PlaybackStart", "ItemType": "Book"}) is None
+    assert parse_jellyfin_webhook({"NotificationType": "ServerRestarting"}) is None
+
+    # 3. Missing/zero ticks
+    jf_zero_ticks = {
+        "NotificationType": "PlaybackStart",
+        "ItemType": "Movie",
+        "Name": "Sample Movie",
+        "RunTimeTicks": 0,
+        "PlaybackPositionTicks": 0,
+    }
+    parsed_zero = parse_jellyfin_webhook(jf_zero_ticks)
+    assert parsed_zero is not None
+    assert parsed_zero.progress == 0.0
+
+    # 4. Emby library exclusion
+    emby_payload = {
+        "Event": "playback.start",
+        "Item": {"Type": "Movie", "Name": "Private Clip", "LibraryName": "Private"},
+    }
+    assert parse_emby_webhook(emby_payload, excluded_libraries=["Private"]) is None
+    assert parse_emby_webhook(emby_payload, allowed_libraries=["Main"]) is None
+
+    # 5. Unsupported Emby item types
+    assert parse_emby_webhook({"Event": "playback.start", "Item": {"Type": "Audio"}}) is None
+    assert parse_emby_webhook({"Event": "playback.start", "Item": {"Type": "Photo"}}) is None
+    assert parse_emby_webhook({"Event": "system.restart"}) is None
+
+
+def test_jellyfin_and_emby_offline_queue_on_trakt_temporary_error():
+    """Verify offline retry queue persists failed Jellyfin/Emby scrobbles during Trakt outages."""
+    client = TestClient(app)
+    jf_payload = {
+        "NotificationType": "PlaybackStop",
+        "NotificationUsername": "selits",
+        "ItemType": "Movie",
+        "Name": "Oppenheimer",
+        "Year": 2023,
+        "RunTimeTicks": 100000000000,
+        "PlaybackPositionTicks": 95000000000,  # 95% -> scrobble_stop
+        "ProviderIds": {"Imdb": "tt15398776"},
+    }
+
+    initial_queue_count = queue_mgr.get_pending_count()
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop:
+        # Simulate Trakt 503 outage
+        mock_stop.return_value = {"error": "503 Service Unavailable: Trakt maintenance"}
+
+        res = client.post("/webhook/jellyfin", json=jf_payload)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "success"
+        assert data["action"] == "scrobble_stop"
+
+        # Verify offline queue preserved the event
+        assert queue_mgr.get_pending_count() == initial_queue_count + 1
+        pending = queue_mgr.get_pending()
+        assert any(item["event_type"] == "scrobble_stop" and item.get("username") == "selits" for item in pending)
+
+
+def test_jellyfin_and_emby_cowatch_integration():
+    """Verify Watch Together co-watch dual-sync evaluates properly for Jellyfin & Emby events."""
+    client = TestClient(app)
+    jf_cowatch_payload = {
+        "NotificationType": "PlaybackStop",
+        "NotificationUsername": "selits",
+        "ItemType": "Episode",
+        "SeriesName": "Severance",
+        "Name": "Good News About Hell",
+        "SeasonNumber": 1,
+        "EpisodeNumber": 1,
+        "Year": 2022,
+        "RunTimeTicks": 36000000000,
+        "PlaybackPositionTicks": 34000000000,  # >80%
+    }
+
+    with patch.object(Config, "CO_WATCH_USER", "partner_trakt_user"), \
+         patch.object(cowatch_mgr, "is_cowatch_show", return_value=True), \
+         patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch("app.main.execute_cowatch_sync", new_callable=AsyncMock) as mock_cowatch_sync, \
+         patch.object(notifier, "dispatch", new_callable=AsyncMock):
+        mock_stop.return_value = {"action": "scrobble"}
+
+        res = client.post("/webhook/jellyfin", json=jf_cowatch_payload)
+        assert res.status_code == 200
+        assert res.json()["action"] == "scrobble_stop"
+        mock_cowatch_sync.assert_called_once()
+
+
+def test_opengraph_and_social_metadata():
+    """Verify that the dashboard serves complete OpenGraph and Twitter card social preview meta tags."""
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    assert '<meta property="og:title" content="Omniscrobble' in html
+    assert '<meta property="og:description" content="Watch anywhere. Track everywhere.' in html
+    assert '<meta property="og:image" content="https://selits.github.io/omniscrobble/assets/social-preview.png">' in html
+    assert '<meta property="twitter:card" content="summary_large_image">' in html
+
+
+def test_brand_assets_integrity():
+    """Verify that all generated brand assets exist, are non-empty, and contain valid image headers."""
+    assets_dir = Path(__file__).resolve().parent.parent / "docs" / "assets"
+    expected_assets = [
+        "banner.png",
+        "banner.svg",
+        "icon-512.png",
+        "icon-192.png",
+        "icon.svg",
+        "favicon.png",
+        "favicon.ico",
+        "social-preview.png",
+        "social-preview.svg",
+    ]
+    for asset_name in expected_assets:
+        asset_path = assets_dir / asset_name
+        assert asset_path.exists(), f"Asset {asset_name} is missing from docs/assets/"
+        assert asset_path.stat().st_size > 0, f"Asset {asset_name} is empty"
+
+    # SVG validation
+    icon_svg = (assets_dir / "icon.svg").read_text(encoding="utf-8")
+    assert "<svg" in icon_svg and "</svg>" in icon_svg
+    assert "arrowGradTop" in icon_svg
+
+    # PNG magic bytes check (\x89PNG)
+    for png_name in ["banner.png", "icon-512.png", "icon-192.png", "favicon.png", "social-preview.png"]:
+        header = (assets_dir / png_name).read_bytes()[:8]
+        assert header.startswith(b"\x89PNG"), f"{png_name} does not have valid PNG header"
+
+
+def test_systemd_service_file_consistency():
+    """Verify that the systemd user unit file contains the updated service description."""
+    service_path = Path(__file__).resolve().parent.parent / "plex-trakt.service"
+    assert service_path.exists(), "plex-trakt.service missing"
+    content = service_path.read_text(encoding="utf-8")
+    assert "Omniscrobble" in content
+    assert "ExecStart=%h/plex-trakt-webhook/.venv/bin/python main.py" in content
+
+
+
 
 
 

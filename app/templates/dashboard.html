@@ -3,7 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Plex to Trakt Scrobbler</title>
+    <title>Omniscrobble &mdash; Universal Scrobbler & Webhook Bridge</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Omniscrobble">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.svg">
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon-192.svg">
+    <meta property="og:title" content="Omniscrobble — Universal Media Scrobbler &amp; Webhook Bridge">
+    <meta property="og:description" content="Watch anywhere. Track everywhere. Universal Webhook Bridge for Plex, Jellyfin, and Emby to Trakt.">
+    <meta property="og:image" content="https://selits.github.io/omniscrobble/assets/social-preview.png">
+    <meta property="twitter:card" content="summary_large_image">
+    <script>
+        (function() {
+            var t = localStorage.getItem('omniscrobble_theme');
+            if (t === 'oled') {
+                document.documentElement.classList.add('theme-oled');
+            }
+        })();
+    </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -11,7 +31,9 @@
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 32px 20px; }
         .container { max-width: 1000px; margin: 0 auto; width: 100%; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #1e293b; gap: 12px; flex-wrap: wrap; }
-        .title { font-size: 24px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 12px; }
+        .title { font-size: 24px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .title-brand { display: flex; align-items: center; gap: 10px; }
+        .title-sub { font-size: 13px; font-weight: 500; color: #94a3b8; }
         .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .card { background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid #334155; }
         .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #e2e8f0; }
@@ -49,8 +71,11 @@
         /* Responsive Breakpoints for Mobile Viewports (<= 640px) */
         @media (max-width: 640px) {
             body { padding: 16px 12px; }
-            .header { margin-bottom: 16px; padding-bottom: 14px; flex-direction: column; align-items: flex-start; gap: 12px; }
-            .header .title { font-size: 20px; }
+            .header { margin-bottom: 16px; padding-bottom: 14px; flex-direction: column; align-items: flex-start; gap: 10px; }
+            .header .title { font-size: 20px; flex-direction: column; align-items: flex-start; gap: 2px; }
+            .header .title-brand { font-size: 20px; }
+            .header .title-brand svg { width: 24px; height: 24px; }
+            .header .title-sub { font-size: 11px; margin-left: 34px; color: #94a3b8; }
             .header-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
             .card { padding: 16px 14px; margin-bottom: 16px; border-radius: 10px; }
             .card h3 { font-size: 15px; }
@@ -77,6 +102,13 @@
             #logs-terminal { min-height: 220px !important; font-size: 11px !important; padding: 10px !important; }
             .footer { flex-direction: column; align-items: center; text-align: center; gap: 12px; }
         }
+
+        /* OLED True-Black Theme */
+        html.theme-oled body { background-color: #000000 !important; color: #f4f4f5 !important; }
+        html.theme-oled .card, html.theme-oled .modal-dialog { background: #09090b !important; border-color: #27272a !important; }
+        html.theme-oled .info-item, html.theme-oled .scrobble-item, html.theme-oled th { background: #000000 !important; border-color: #27272a !important; }
+        html.theme-oled .header, html.theme-oled .activity-header { border-color: #27272a !important; }
+        html.theme-oled td, html.theme-oled tr { border-bottom-color: #18181b !important; }
     </style>
 </head>
 <body>
@@ -84,10 +116,30 @@
         {{DEMO_BANNER}}
         <div class="header">
             <div class="title">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ed1c24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="#ed1c24"/></svg>
-                Plex &rarr; Trakt Scrobbler
+                <div class="title-brand">
+                    <svg width="28" height="28" viewBox="0 0 512 512" fill="none" style="flex-shrink:0;">
+                        <defs>
+                            <linearGradient id="headerArrowGradTop" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#38bdf8" />
+                                <stop offset="100%" stop-color="#0284c7" />
+                            </linearGradient>
+                            <linearGradient id="headerArrowGradBottom" x1="0%" y1="100%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#38bdf8" />
+                                <stop offset="100%" stop-color="#0284c7" />
+                            </linearGradient>
+                        </defs>
+                        <path d="M 405 285 C 418 200 360 98 256 98 C 190 98 135 135 110 188 L 86 160 L 98 238 L 174 220 L 148 194 C 168 152 210 126 256 126 C 340 126 388 206 376 280 Z" fill="url(#headerArrowGradTop)" />
+                        <path d="M 107 227 C 94 312 152 414 256 414 C 322 414 377 377 402 324 L 426 352 L 414 274 L 338 292 L 364 318 C 344 360 302 386 256 386 C 172 386 124 306 136 232 Z" fill="url(#headerArrowGradBottom)" />
+                        <circle cx="256" cy="256" r="114" fill="#0f172a" stroke="#334155" stroke-width="12" />
+                        <rect x="182" y="174" width="148" height="164" rx="22" fill="#1e293b" stroke="#475569" stroke-width="6" />
+                        <polygon points="242,216 296,256 242,296" fill="#38bdf8" />
+                    </svg>
+                    <span>Omniscrobble</span>
+                </div>
+                <span class="title-sub">Plex • Jellyfin • Emby &rarr; Trakt</span>
             </div>
             <div class="header-actions">
+                <button type="button" onclick="toggleTheme()" id="theme-toggle-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;cursor:pointer;" title="Toggle OLED Dark Theme">🌙 OLED</button>
                 {{STATUS_BADGE}}
                 {{ADMIN_BTN}}
                 {{DEMO_HEADER_BTN}}
@@ -147,7 +199,7 @@
                             <th>Timestamp</th>
                             <th>Media Title</th>
                             <th>Type</th>
-                            <th>Plex User</th>
+                            <th>User</th>
                             <th>Action</th>
                             <th>Trakt Status</th>
                             {{ACTIONS_HEADER}}
@@ -162,7 +214,7 @@
 
         <div class="footer">
             <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="color: #94a3b8; font-weight: 500;">Plex &rarr; Trakt Scrobbler</span>
+                <span style="color: #94a3b8; font-weight: 500;">Omniscrobble</span>
                 <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v{{APP_VERSION}}</span>
             </div>
             <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;">
@@ -1217,6 +1269,57 @@
             const toggle = document.getElementById('auto-refresh-toggle');
             if (toggle) toggle.checked = true;
             refreshTimer = setInterval(fetchEvents, 30000);
+        }
+
+        // Omniscrobble Theme Toggle (OLED / Slate)
+        function toggleTheme() {
+            const isOled = document.documentElement.classList.toggle('theme-oled');
+            localStorage.setItem('omniscrobble_theme', isOled ? 'oled' : 'slate');
+            const btn = document.getElementById('theme-toggle-btn');
+            if (btn) btn.innerHTML = isOled ? '☀️ Slate' : '🌙 OLED';
+        }
+        if (localStorage.getItem('omniscrobble_theme') === 'oled') {
+            const btn = document.getElementById('theme-toggle-btn');
+            if (btn) btn.innerHTML = '☀️ Slate';
+        }
+
+        // Multi-Server Webhook URL Tab Switching
+        function switchWebhookTab(platform) {
+            const input = document.getElementById('webhook-url-input');
+            const instructions = document.getElementById('webhook-instructions');
+            const btnPlex = document.getElementById('btn-tab-plex');
+            const btnJelly = document.getElementById('btn-tab-jellyfin');
+            const btnEmby = document.getElementById('btn-tab-emby');
+            if (!input) return;
+
+            [btnPlex, btnJelly, btnEmby].forEach(b => {
+                if (b) {
+                    b.style.background = '#1e293b';
+                    b.style.color = '#94a3b8';
+                    b.style.fontWeight = 'normal';
+                }
+            });
+
+            if (platform === 'jellyfin') {
+                input.value = input.dataset.jellyfin || '';
+                if (btnJelly) { btnJelly.style.background = '#2563eb'; btnJelly.style.color = '#fff'; btnJelly.style.fontWeight = '600'; }
+                if (instructions) instructions.innerHTML = 'In Jellyfin: Install the <strong>Webhook plugin</strong> &rarr; Add Generic Destination with this URL &rarr; Select Playback Start, Progress, Stop.';
+            } else if (platform === 'emby') {
+                input.value = input.dataset.emby || '';
+                if (btnEmby) { btnEmby.style.background = '#2563eb'; btnEmby.style.color = '#fff'; btnEmby.style.fontWeight = '600'; }
+                if (instructions) instructions.innerHTML = 'In Emby: Go to <strong>Server Settings &rarr; Webhooks &rarr; Add Webhook</strong> with this URL &rarr; Check Playback events.';
+            } else {
+                input.value = input.dataset.plex || '';
+                if (btnPlex) { btnPlex.style.background = '#2563eb'; btnPlex.style.color = '#fff'; btnPlex.style.fontWeight = '600'; }
+                if (instructions) instructions.innerHTML = 'Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Jellyfin (<code>/webhook/jellyfin</code>) &bull; Emby (<code>/webhook/emby</code>) &bull; Sonarr (<code>/sonarr</code>) &bull; Radarr (<code>/radarr</code>).';
+            }
+        }
+
+        // PWA Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(() => {});
+            });
         }
     </script>
 </body>

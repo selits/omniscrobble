@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 
 class MetricsRegistry:
-    """Thread-safe in-memory Prometheus metrics registry for plex-trakt-webhook."""
+    """Thread-safe in-memory Prometheus metrics registry for Omniscrobble."""
 
     def __init__(self):
         self._lock = threading.Lock()

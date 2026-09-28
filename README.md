@@ -1,24 +1,33 @@
-# Plex to Trakt Webhook Scrobbler
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Omniscrobble Banner" width="750">
+</p>
 
-[![CI](https://github.com/selits/plex-trakt-webhook/actions/workflows/ci.yml/badge.svg)](https://github.com/selits/plex-trakt-webhook/actions/workflows/ci.yml)
-[![Live Demo](https://img.shields.io/badge/demo-live_preview-blue?logo=github&style=flat)](https://selits.github.io/plex-trakt-webhook/)
+# Omniscrobble — Universal Media Scrobbler & Webhook Bridge
+
+> *Watch anywhere. Track everywhere.*
+
+[![CI](https://github.com/selits/omniscrobble/actions/workflows/ci.yml/badge.svg)](https://github.com/selits/omniscrobble/actions/workflows/ci.yml)
+[![Live Demo](https://img.shields.io/badge/demo-live_preview-blue?logo=github&style=flat)](https://selits.github.io/omniscrobble/)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ed.svg?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A lightweight, modern Python service that receives Plex Media Server webhooks and automatically tracks your TV shows and movies, updating playback status in real-time and marking episodes as watched in your Trakt account.
+A lightweight, modern Python service that receives media server webhooks (Plex, Jellyfin, and Emby) and automatically tracks your TV shows and movies, updating playback status in real-time, syncing ratings and collections, and marking media as watched in your Trakt account.
 
 ---
 
 ## 🌟 Features
 
+- **Universal Webhook Ingestion**: Native webhook support for **Plex** (`/webhook`), **Jellyfin** (`/webhook/jellyfin`), and **Emby** (`/webhook/emby`), standardizing metadata, provider IDs (IMDb, TMDb, TVDb), and playback states into a unified scrobble pipeline.
+- **Granular Scrobble Thresholds**: Configurable media-specific thresholds — set `EPISODE_SCROBBLE_THRESHOLD=80` for TV episodes (allowing credit skipping) and `MOVIE_SCROBBLE_THRESHOLD=90` for feature films (preventing premature scrobbles during climaxes).
+- **Mobile Progressive Web App (PWA) & OLED Theme**: Fully installable PWA with offline service worker caching, dynamic SVG app icons, and an instant True-Black OLED dark mode toggle (`🌙 OLED`).
 - **Automatic Show & Movie Tracking**: Synchronizes playback in real-time (`media.play`, `media.pause`, `media.stop`) and automatically marks episodes as viewed in Trakt history upon completion (`media.scrobble`).
-- **Instant Rating Synchronization**: Automatically syncs star and 1–10 numerical ratings set in Plex (`media.rate`) directly to your Trakt profile for movies, episodes, and entire shows (`/sync/ratings`).
+- **Instant Rating Synchronization**: Automatically syncs star and 1–10 numerical ratings set in Plex, Jellyfin, or Emby (`media.rate`) directly to your Trakt profile for movies, episodes, and entire shows (`/sync/ratings`).
 - **Trakt Collection Synchronization**: Automatically syncs newly downloaded or added movies and episodes to your Trakt collection (`library.new` $\to$ `/sync/collection`), recording technical media specifications (resolution, audio codec, audio channels).
 - **Library Section Filtering**: Exclude home video, fitness, or personal libraries (`EXCLUDED_LIBRARIES`) or whitelist specific libraries (`ALLOWED_LIBRARIES`) so private files never pollute your Trakt profile.
-- **Modern GUID Resolution**: Supports Plex's modern metadata agents (`imdb://`, `tmdb://`, `tvdb://`), TV show year matching for remake disambiguation, and fallback title matching.
-- **Robust Multipart Parsing**: Handles Plex's multipart/form-data payloads (both JSON file parts and raw form fields) without validation errors.
-- **Smart Pause Handling**: Automatically finalizes scrobbles if playback is paused past the completion threshold (>=80%), preventing Trakt API 422 warnings.
+- **Modern GUID Resolution**: Supports modern metadata agents (`imdb://`, `tmdb://`, `tvdb://`), TV show year matching for remake disambiguation, and fallback title matching.
+- **Robust Multipart & JSON Parsing**: Handles Plex's multipart/form-data payloads as well as Jellyfin and Emby JSON payloads without validation errors.
+- **Smart Pause Handling**: Automatically finalizes scrobbles if playback is paused past the completion threshold, preventing Trakt API 422 warnings.
 - **Web UI & Device Code OAuth Flow**: Authorize directly in your browser via `/auth` or headlessly via terminal (`python auth.py`) using Trakt's official activation code (`https://trakt.tv/activate`).
 - **Resilient Async Trakt Client**: Built on non-blocking `httpx.AsyncClient` with automatic OAuth token refresh on 401, token health telemetry, and exponential backoff on 429 rate limits.
 - **Persistent Offline Queue & Retry Worker**: Automatically preserves scrobbles, watches, ratings, and collection additions in a local SQLite database during Trakt API downtime or network outages, retrying in the background until successfully synced.
@@ -27,16 +36,16 @@ A lightweight, modern Python service that receives Plex Media Server webhooks an
 - **1-Click System Backup & Restore**: Export and restore a timestamped `.zip` archive containing your OAuth tokens, SQLite retry database, and co-watch settings directly from the dashboard.
 - **Live Playback Observability & Remaining Time**: Real-time animated dashboard card showing active streams (`▶ Currently Streaming` / `⏸ Paused`), client-side clock drift interpolation, dynamic time remaining (`"24m left"`, `"24m left (paused)"`), progress bar, device names, and recently finished media.
 - **Integrated Manual Scrobble & Trakt Watchlist**: Search Trakt's global catalog directly from the dashboard to mark any missed movie or episode as watched (`POST /api/scrobble/manual`) or bookmark upcoming titles to your Trakt watchlist (`POST /api/watchlist`) with 1 click.
-- **Multi-User Trakt Support**: Link separate Trakt accounts for different Plex users (`/auth?user=username`), allowing household members sharing the server to scrobble to their own profiles.
+- **Multi-User Trakt Support**: Link separate Trakt accounts for different media server users (`/auth?user=username`), allowing household members sharing the server to scrobble to their own profiles.
 - **Watch Together (Co-Watching) Engine**: Automatically dual-scrobbles watched TV shows or movies to your partner's Trakt account when you watch together, while leaving solo shows untracked. Manage shared shows directly from your phone or desktop with interactive tag chips, dynamic movie toggle, automatic `.env` merging, and live `👥 Co-Watched` / `👥 Solo` activity badges.
-- **Interactive Synthetic Webhook Testing**: Built-in modal and endpoint (`POST /api/test/webhook`) to simulate Plex playback events (playing, paused, scrobble), verify filter rules, inspect co-watching eligibility reasons, and optionally execute live Trakt history and partner dual-sync.
+- **Interactive Synthetic Webhook Testing**: Built-in modal and endpoint (`POST /api/test/webhook`) to simulate playback events (playing, paused, scrobble), verify filter rules, inspect co-watching eligibility reasons, and optionally execute live Trakt history and partner dual-sync.
 - **Mobile-First Responsive Web Design**: Fully responsive layout designed for all screen sizes (desktop, tablet, and mobile devices like Android and iOS phones) with fluid grids, touch-friendly scrolling, and compact modal dialogs.
 - **Sonarr & Radarr Integrations**: Real-time autocomplete for TV series from your Sonarr library (automatically excluding shows already in your whitelist) plus direct webhook endpoints (`/sonarr`, `/radarr`) for instant Trakt collection sync upon download import.
-- **Interactive Air-Gapped Demo & Live GitHub Pages Preview**: Explore a fully populated, authenticated dashboard view with realistic mock playback (*Severance S02E01* on Apple TV 4K), 1,428 scrobbles, activity history, linked multi-user accounts, and Co-Watch configuration with zero risk to disk storage or Trakt credentials. Test it locally via `/demo` or try the zero-install live demo hosted on [GitHub Pages](https://selits.github.io/plex-trakt-webhook/).
+- **Interactive Air-Gapped Demo & Live GitHub Pages Preview**: Explore a fully populated, authenticated dashboard view with realistic mock playback (*Severance S02E01* on Apple TV 4K), 1,428 scrobbles, activity history, linked multi-user accounts, and Co-Watch configuration with zero risk to disk storage or Trakt credentials. Test it locally via `/demo` or try the zero-install live demo hosted on [GitHub Pages](https://selits.github.io/omniscrobble/).
 - **Authenticated System Log Viewer**: Inspect live service logs directly from the dashboard via an interactive terminal modal with level filtering (`ALL`, `ERROR`, `WARNING`, `INFO`), keyword search, auto-scroll, and copy-to-clipboard, backed by `journalctl` on Linux systemd and an in-memory ring buffer fallback with automatic secret redaction.
 - **Dashboard Admin Security & Screenshot Privacy Shield**: Public visitors see a hardened, privacy-shielded view (masked usernames, completely masked partner account `@●●●●●●●●`, masked server hostname/port `http://●●●●●●●●:●●●●/webhook?token=●●●●●●●●` for safe screenshots, and locked administrative endpoints). Unlock full administrative access and 1-click URL copying anytime with your Webhook Secret.
-- **User Whitelist**: Easily limit scrobbling to your specific Plex username so other family members/friends sharing your server don't overwrite your Trakt history.
-- **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, recent activity logs with optional 30s auto-refresh, and a repository footer with live version badge.
+- **User Whitelist**: Easily limit scrobbling to your specific username so other family members/friends sharing your server don't overwrite your Trakt history.
+- **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, multi-server webhook URL tabs, recent activity logs with optional 30s auto-refresh, and a repository footer with live version badge.
 - **Docker & Remote Server Ready**: Tested and optimized for containerized, VPS, and remote Linux environments with non-root security, healthchecks, and `env_file` auto-loading.
 
 ---
@@ -90,9 +99,11 @@ WEBHOOK_SECRET=your_optional_secret_token
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
 
-# Scrobble behavior
+# Scrobble behavior & granular thresholds
 SCROBBLE_MODE=scrobble
 SCROBBLE_THRESHOLD=80.0
+EPISODE_SCROBBLE_THRESHOLD=80.0
+MOVIE_SCROBBLE_THRESHOLD=90.0
 
 # Trakt Collection Sync (library.new events)
 SYNC_COLLECTION=true
@@ -111,8 +122,9 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 NTFY_URL=https://ntfy.sh/your_topic
 NTFY_AUTH_TOKEN=
-PUSHOVER_USER_KEY=
-PUSHOVER_API_TOKEN=
+PUSHOVER_USER_KEY=your_pushover_user_key_here
+PUSHOVER_API_TOKEN=your_pushover_api_token_here
+PUSHOVER_PRIORITY=0
 NOTIFY_ON_SCROBBLE=true
 NOTIFY_ON_RATE=true
 
@@ -181,9 +193,9 @@ Linux servers and non-root environments support user-level `systemd` services wi
 1. Copy the provided service file to your systemd user directory:
    ```bash
    mkdir -p ~/.config/systemd/user
-   cp plex-trakt.service ~/.config/systemd/user/
+   cp plex-trakt.service ~/.config/systemd/user/omniscrobble.service
    ```
-   *(Note: The service file uses `%h/plex-trakt-webhook`. If your repository folder is named or located differently, adjust `WorkingDirectory` and `ExecStart` inside `~/.config/systemd/user/plex-trakt.service` accordingly).*
+   *(Note: The service file defaults to `%h/omniscrobble` or `%h/plex-trakt-webhook`. Running `./upgrade.sh` automatically configures `WorkingDirectory` and `ExecStart` for your exact directory).*
 
 2. Enable lingering so the service starts on boot without requiring an active SSH session:
    ```bash
@@ -194,20 +206,20 @@ Linux servers and non-root environments support user-level `systemd` services wi
 3. Reload systemd, enable, and start the service:
    ```bash
    systemctl --user daemon-reload
-   systemctl --user enable --now plex-trakt.service
+   systemctl --user enable --now omniscrobble.service
    ```
 
 4. **Useful management commands:**
    ```bash
    # Check service status
-   systemctl --user status plex-trakt.service
+   systemctl --user status omniscrobble.service
 
    # View live logs
-   journalctl --user -u plex-trakt.service -f
+   journalctl --user -u omniscrobble.service -f
 
    # Restart or stop the service
-   systemctl --user restart plex-trakt.service
-   systemctl --user stop plex-trakt.service
+   systemctl --user restart omniscrobble.service
+   systemctl --user stop omniscrobble.service
    ```
 
 ---
@@ -217,7 +229,7 @@ If your host does not support user systemd services:
 1. Run `crontab -e`.
 2. Add the following line at the end (adjusting the path to your repository):
    ```bash
-   @reboot /home/<username>/plex-trakt-webhook/start.sh >> /home/<username>/plex-trakt-webhook/server.log 2>&1 &
+   @reboot /home/<username>/omniscrobble/start.sh >> /home/<username>/omniscrobble/server.log 2>&1 &
    ```
 
 ---
@@ -255,27 +267,34 @@ If you prefer running in a container:
 
 ---
 
-## 🔗 Adding the Webhook in Plex
+---
 
+## 🔗 Adding Webhooks to Media Servers
+
+### Plex Media Server
 1. Open **Plex Web** (`https://app.plex.tv/desktop`).
-2. Go to **Settings (wrench icon) &rarr; Webhooks** (under your Account settings).
-3. Click **Add Webhook**.
-4. Enter your webhook URL:
-   - **Without Webhook Secret**:
-     ```text
-     http://<your-server-ip-or-domain>:<PORT>/webhook
-     ```
-     *(Example: `http://your-server.example.com:8080/webhook`)*
-   - **With Webhook Secret** (if `WEBHOOK_SECRET` is set in `.env`):
-     ```text
-     http://<your-server-ip-or-domain>:<PORT>/webhook?token=YOUR_WEBHOOK_SECRET
-     ```
-   - **For Local PC / Docker on same LAN**:
-     ```text
-     http://<local-lan-ip>:8080/webhook
-     ```
-   > ⚠️ **Important for Remote & Containerized Environments:** Do **not** use `127.0.0.1`! Because Plex runs inside an isolated container, `127.0.0.1` points inside the container itself instead of your server host.
-5. Click **Save Changes**.
+2. Go to **Settings (wrench icon) &rarr; Webhooks** (under Account settings).
+3. Click **Add Webhook** and enter your endpoint:
+   - Without Secret: `http://<your-server-ip-or-domain>:<PORT>/webhook`
+   - With Secret: `http://<your-server-ip-or-domain>:<PORT>/webhook?token=YOUR_WEBHOOK_SECRET`
+4. Click **Save Changes**.
+
+### Jellyfin Media Server
+1. In your Jellyfin Server Dashboard, navigate to **Plugins &rarr; Catalog**.
+2. Find and install the official **Webhook** plugin, then restart Jellyfin.
+3. Open **Dashboard &rarr; Plugins &rarr; Webhook**, and click **Add Generic Webhook**.
+4. Configure the webhook destination:
+   - **Webhook URL**: `http://<your-server-ip-or-domain>:<PORT>/webhook/jellyfin` (or `?token=YOUR_WEBHOOK_SECRET`)
+   - **Notification Type**: Enable `Playback Start`, `Playback Progress`, `Playback Stop`, and `User Data Saved`.
+5. Click **Save**.
+
+### Emby Media Server
+1. In your Emby Server Dashboard, navigate to **Settings &rarr; Webhooks**.
+2. Click **Add Webhook** and select **Generic Webhook**.
+3. Configure the webhook destination:
+   - **Webhook URL**: `http://<your-server-ip-or-domain>:<PORT>/webhook/emby` (or `?token=YOUR_WEBHOOK_SECRET`)
+   - **Events**: Enable `playback.start`, `playback.pause`, `playback.unpause`, `playback.stop`, `item.rate`, and `item.markfavorite`.
+4. Click **Save**.
 
 ---
 
@@ -283,10 +302,14 @@ If you prefer running in a container:
 
 | Endpoint | Method | Description |
 | :--- | :---: | :--- |
-| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt profiles, active stream status, co-watch whitelist, and live activity. |
-| **`/demo`** | `GET` | **Demo Dashboard**: Air-gapped preview environment showcasing full dashboard with realistic mock data and zero secret exposure. Hosted live at [selits.github.io/plex-trakt-webhook](https://selits.github.io/plex-trakt-webhook/). |
-| **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based OAuth activation (support `?user=username` for multi-user linking). |
-| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Receives and processes Plex playback, rating, scrobble, and library additions. |
+| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt profiles, multi-server tabs, active stream status, and activity. |
+| **`/demo`** | `GET` | **Demo Dashboard**: Air-gapped preview environment showcasing full dashboard with realistic mock data. |
+| **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based OAuth activation (supports `?user=username` for multi-user linking). |
+| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Ingests Plex playback, rating, scrobble, and library events. |
+| **`/webhook/jellyfin`** | `POST` / `GET` | **Jellyfin Webhook Endpoint**: Ingests native Jellyfin webhook notifications (start, stop, progress, ratings). |
+| **`/webhook/emby`** | `POST` / `GET` | **Emby Webhook Endpoint**: Ingests native Emby server webhooks. |
+| **`/manifest.json`** | `GET` | **PWA Manifest**: Web App Manifest for mobile and desktop home screen installation. |
+| **`/sw.js`** | `GET` | **PWA Service Worker**: Background asset caching and offline reliability. |
 | **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token health telemetry. |
 | **`/metrics`** | `GET` | **Prometheus Metrics**: Scrape real-time service, playback, and queue metrics in standard exposition format. |
 | **`/api/logs`** | `GET` | **System Logs**: Live service logs from `journalctl` or in-memory ring buffer with automatic secret redaction (Admin only). |
@@ -305,8 +328,8 @@ If you prefer running in a container:
 | **`/api/cowatch/shows`** | `POST` / `DELETE` | **Shared Shows Manager**: Add or remove TV shows from the Watch Together whitelist (Admin only). |
 | **`/api/cowatch/settings`** | `POST` | **Co-Watch Settings**: Dynamically toggle movie co-watching or update runtime settings (Admin only). |
 | **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
-| **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist, automatically excluding already whitelisted shows (Admin only). |
-| **`/api/test/webhook`** | `POST` | **Synthetic Webhook Simulator**: Test and simulate Plex events with dry-run or live Trakt sync (Admin only). |
+| **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist (Admin only). |
+| **`/api/test/webhook`** | `POST` | **Synthetic Webhook Simulator**: Test and simulate server events with dry-run or live Trakt sync (Admin only). |
 | **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
 | **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
 
@@ -319,7 +342,7 @@ If you prefer running in a container:
 When couples, roommates, or families watch TV shows together on a shared living room Plex profile, only the primary profile's Trakt account traditionally gets updated. If you try to scrobble everything, your partner's Trakt account gets polluted with shows you watched alone.
 
 ### 2. The Solution: Intelligent Dual-Sync
-`plex-trakt-webhook` solves this with an integrated **Watch Together Engine**:
+**Omniscrobble** solves this with an integrated **Watch Together Engine**:
 - **Shared Shows Whitelist**: Define shows you watch together (e.g., *The Bear*, *Severance*, *Succession*). Shows configured in `.env` are automatically merged with dynamic dashboard additions in `data/cowatch_shows.json` on startup.
 - **Automatic Matching**: When you finish an episode of a shared show on your Plex profile, it automatically marks as watched on **both** your Trakt account and your partner's Trakt account.
 - **Solo Shows Untouched**: Solo shows, anime, or personal binge sessions are tracked strictly on your own profile.
@@ -362,14 +385,14 @@ Connect Sonarr and Radarr to supercharge your dashboard and collection tracking:
 
 ## 📊 Homelab Observability & Prometheus Metrics
 
-`plex-trakt-webhook` includes a built-in, thread-safe Prometheus metrics registry exporting directly on `/metrics` (enabled via `PROMETHEUS_METRICS_ENABLED=true`).
+**Omniscrobble** includes a built-in, thread-safe Prometheus metrics registry exporting directly on `/metrics` (enabled via `PROMETHEUS_METRICS_ENABLED=true`).
 
 ### Prometheus Scrape Configuration
 Add the following to your `prometheus.yml`:
 
 ```yaml
 scrape_configs:
-  - job_name: 'plex-trakt-webhook'
+  - job_name: 'omniscrobble'
     metrics_path: '/metrics'
     scrape_interval: 15s
     static_configs:
@@ -470,10 +493,10 @@ Expected response:
 
 ## 🏗️ Architecture & Codebase Structure
 
-`plex-trakt-webhook` follows a clean, modular Python package architecture:
+**Omniscrobble** follows a clean, modular Python package architecture:
 
 ```text
-plex-trakt-webhook/
+omniscrobble/
 ├── app/
 │   ├── clients/             # External API integrations
 │   │   ├── trakt_client.py  # Trakt OAuth device flow, scrobbling, ratings, collection sync & search
@@ -493,7 +516,9 @@ plex-trakt-webhook/
 │   ├── config.py            # Centralized environment & directory configuration
 │   ├── main.py              # FastAPI application, route handlers & template rendering
 │   ├── metrics.py           # Thread-safe Prometheus metrics registry & exposition formatter
-│   └── plex_parser.py       # Plex multipart/JSON webhook parsing & media models
+│   ├── plex_parser.py       # Plex multipart/JSON webhook parsing & media models
+│   ├── jellyfin_parser.py   # Jellyfin webhook parsing & provider ID translation
+│   └── emby_parser.py       # Emby server webhook parsing & provider ID translation
 ├── docs/                    # GitHub Pages static interactive demo deployment
 │   ├── index.html           # Standalone dashboard demo with client-side API simulator
 │   └── .nojekyll            # Bypass Jekyll processing on GitHub Pages
@@ -505,8 +530,29 @@ plex-trakt-webhook/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (91 tests)
+└── tests/                   # Comprehensive pytest test suite (101 tests)
 ```
+
+---
+
+## 🗺️ Roadmap & Horizons
+
+Omniscrobble is developed with a modular multi-platform architecture. Current and future development milestones:
+
+- **v1.4.0 (Milestone 1 — Completed)**:
+  - Rebranding to Omniscrobble.
+  - Universal Webhook Ingestion for Jellyfin & Emby.
+  - Media-specific granular scrobble thresholds (`EPISODE_SCROBBLE_THRESHOLD=80`, `MOVIE_SCROBBLE_THRESHOLD=90`).
+  - Mobile Progressive Web App (PWA) & True-Black OLED Dark Mode.
+- **v1.5.0 (Milestone 2 — Up Next)**:
+  - Live Webhook Payload Inspector & Debugger with simulated replay.
+  - Interactive Filter Rule Tester with instant pass/drop reasoning.
+- **v1.6.0 (Milestone 3)**:
+  - Dynamic In-App Configuration Editor (adjust thresholds, library exclusions, and notifications without restarting).
+  - Trakt Historical Backfill & Bi-directional Library Synchronization.
+- **Future Horizons (Post-v1.6.0)**:
+  - Multi-tracker dispatch to **Simkl** (universal movies, shows, and anime tracker).
+  - Anime tracking integration with **MyAnimeList** and **AniList**.
 
 ---
 

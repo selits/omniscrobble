@@ -41,6 +41,22 @@ class Config:
 
     # Minimum watched percentage to mark as viewed (Trakt standard is >= 80%)
     SCROBBLE_THRESHOLD: float = float(os.getenv("SCROBBLE_THRESHOLD", "80.0"))
+    EPISODE_SCROBBLE_THRESHOLD: float = float(
+        os.getenv("EPISODE_SCROBBLE_THRESHOLD", os.getenv("SCROBBLE_THRESHOLD", "80.0"))
+    )
+    MOVIE_SCROBBLE_THRESHOLD: float = float(
+        os.getenv("MOVIE_SCROBBLE_THRESHOLD", os.getenv("SCROBBLE_THRESHOLD", "90.0"))
+    )
+
+    @classmethod
+    def get_threshold(cls, media_type: str) -> float:
+        """Return the scrobble threshold percentage for the given media type."""
+        mt = str(media_type).lower()
+        if mt == "movie":
+            return cls.MOVIE_SCROBBLE_THRESHOLD
+        if mt == "episode":
+            return cls.EPISODE_SCROBBLE_THRESHOLD
+        return cls.SCROBBLE_THRESHOLD
 
     # Outgoing Notifications (Discord, Telegram, Ntfy, Pushover)
     DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
