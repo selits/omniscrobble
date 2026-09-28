@@ -1,5 +1,5 @@
 [Unit]
-Description=Plex to Trakt Webhook Scrobbler
+Description=Omniscrobble - Universal Media Scrobbler for Plex, Jellyfin, and Emby to Trakt
 After=network.target
 
 [Service]

@@ -30,6 +30,8 @@ from app.services.cowatch_manager import cowatch_mgr
 from app.services.notifier import notifier
 from app.services.playback_manager import playback_mgr
 from app.plex_parser import ParsedMedia, parse_plex_webhook
+from app.jellyfin_parser import parse_jellyfin_webhook
+from app.emby_parser import parse_emby_webhook
 from app.services.queue_manager import QueueManager, process_queue
 from app.services.user_manager import user_mgr
 from app.services.demo_manager import demo_mgr
@@ -185,10 +187,10 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "1.3.0"
-REPO_URL = "https://github.com/selits/plex-trakt-webhook"
+APP_VERSION = "1.4.0"
+REPO_URL = "https://github.com/selits/omniscrobble"
 
-app = FastAPI(title="Plex Trakt Scrobbler", version=APP_VERSION, lifespan=lifespan)
+app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
 
 
 # In-memory log of recent webhook events for the status dashboard
@@ -208,6 +210,7 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
     entry = {
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user": media.username,
+        "server": getattr(media, "server_type", "plex"),
         "event": media.event,
         "action": action_str,
         "title": title_str,
@@ -264,80 +267,75 @@ def get_webhook_info():
     }
 
 
-@app.post("/webhook")
-async def plex_webhook(request: Request):
-    """Receives multipart/form-data or json webhook notifications from Plex Media Server."""
+def verify_webhook_token(request: Request, endpoint_name: str = "webhook") -> None:
     if Config.WEBHOOK_SECRET:
         token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
         if not token or not secrets.compare_digest(token, Config.WEBHOOK_SECRET):
-            logger.warning("Rejected unauthorized webhook request: invalid or missing token.")
-            metrics_registry.record_request("webhook", 401)
+            logger.warning(f"Rejected unauthorized {endpoint_name} request: invalid or missing token.")
+            metrics_registry.record_request(endpoint_name, 401)
             raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
 
-    raw_data: Optional[dict[str, Any]] = None
 
+async def extract_webhook_payload(request: Request, endpoint_name: str = "webhook") -> Optional[dict[str, Any]]:
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
-            raw_data = await request.json()
+            return await request.json()
         except Exception as e:
             logger.error(f"Failed to parse raw JSON body: {e}")
-            metrics_registry.record_request("webhook", 400)
+            metrics_registry.record_request(endpoint_name, 400)
             raise HTTPException(status_code=400, detail="Invalid JSON body")
-    else:
-        try:
-            form = await request.form()
-            payload_field = form.get("payload")
-            if payload_field is not None:
-                if hasattr(payload_field, "read"):
-                    content = await payload_field.read()
-                    if isinstance(content, bytes):
-                        content = content.decode("utf-8")
-                    raw_data = json.loads(content)
-                elif isinstance(payload_field, str):
-                    raw_data = json.loads(payload_field)
-                else:
-                    raw_data = json.loads(str(payload_field))
-        except Exception as e:
-            logger.error(f"Failed to parse multipart form data: {e}")
-            metrics_registry.record_request("webhook", 400)
-            raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
-    if not raw_data:
-        metrics_registry.record_request("webhook", 400)
-        raise HTTPException(status_code=400, detail="No payload found in request")
+    try:
+        form = await request.form()
+        payload_field = form.get("payload") or form.get("data")
+        if payload_field is not None:
+            if hasattr(payload_field, "read"):
+                content = await payload_field.read()
+                if isinstance(content, bytes):
+                    content = content.decode("utf-8")
+                return json.loads(content)
+            elif isinstance(payload_field, str):
+                return json.loads(payload_field)
+            else:
+                return json.loads(str(payload_field))
+    except Exception as e:
+        logger.error(f"Failed to parse multipart form data: {e}")
+        metrics_registry.record_request(endpoint_name, 400)
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
-    parsed = parse_plex_webhook(
-        raw_data,
-        allowed_users=Config.PLEX_ALLOWED_USERS,
-        allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
-    )
-    if not parsed:
-        metrics_registry.record_request("webhook", 200)
-        return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
+    try:
+        body = await request.body()
+        if body:
+            return json.loads(body.decode("utf-8"))
+    except Exception:
+        pass
 
-    # Dynamic multi-user client resolution:
-    # 1. Use user-specific Trakt client if authenticated for this Plex user
-    # 2. Fall back to default Trakt client
+    return None
+
+
+async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook") -> dict[str, Any]:
     active_client = user_mgr.get_client(parsed.username)
     if not active_client.is_authenticated():
         active_client = trakt
 
     if not active_client.is_authenticated():
-        logger.warning(f"Trakt is not authenticated for user '{parsed.username}' or default! Run 'python auth.py' or visit /auth to authorize.")
-        metrics_registry.record_request("webhook", 200)
+        logger.warning(
+            f"Trakt is not authenticated for user '{parsed.username}' or default! Run 'python auth.py' or visit /auth to authorize."
+        )
+        metrics_registry.record_request(endpoint_name, 200)
         return {"status": "error", "message": "Trakt not authenticated"}
 
     event = parsed.event
     scrobble_payload = parsed.to_trakt_scrobble_payload()
     result: dict[str, Any] = {}
     action_taken = "none"
+    threshold = Config.get_threshold(parsed.media_type)
 
     try:
         if event == "library.new":
             if not Config.SYNC_COLLECTION:
-                metrics_registry.record_request("webhook", 200)
+                metrics_registry.record_request(endpoint_name, 200)
                 return {"status": "ignored", "reason": "Collection sync is disabled (SYNC_COLLECTION=false)"}
 
             action_taken = "collection"
@@ -354,24 +352,19 @@ async def plex_webhook(request: Request):
             log_event(parsed, action_taken, result)
             if Config.NOTIFY_ON_COLLECTION:
                 asyncio.create_task(notifier.dispatch(parsed, "collection"))
-            metrics_registry.record_request("webhook", 200)
+            metrics_registry.record_request(endpoint_name, 200)
             return {"status": "success", "event": "library.new", "action": "collection", "result": result}
 
         elif event == "media.scrobble":
-            # Plex determined the user watched the show/movie (>90%)
             action_taken = "mark_watched"
             logger.info(f"Marking as watched in Trakt: {parsed.title} for user {parsed.username}")
             playback_mgr.stop_playback(parsed)
 
-            # 1. Stop scrobble with 100% progress
             scrobble_payload["progress"] = 100.0
             scrobble_res = await active_client.scrobble_stop(scrobble_payload)
-
-            # 2. Also sync to history to guarantee item is marked as viewed
             history_res = await active_client.sync_history(parsed.to_trakt_history_payload())
             result = {"scrobble": scrobble_res, "history": history_res}
 
-            # Enqueue to offline retry if transient error occurred
             if is_temporary_error(scrobble_res):
                 queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")), username=parsed.username)
                 metrics_registry.record_scrobble(parsed.media_type, "queued")
@@ -401,7 +394,6 @@ async def plex_webhook(request: Request):
             scrobble_stats["ratings"] += 1
 
         elif Config.SCROBBLE_MODE == "scrobble":
-            # Real-time scrobbling on play, pause, resume, stop
             if event in ("media.play", "media.resume"):
                 action_taken = "scrobble_start"
                 logger.info(f"Scrobble start: {parsed.title} ({parsed.progress:.1f}%)")
@@ -409,9 +401,9 @@ async def plex_webhook(request: Request):
                 result = await active_client.scrobble_start(scrobble_payload)
             elif event == "media.pause":
                 playback_mgr.update_playback(parsed, state="paused")
-                if parsed.progress >= Config.SCROBBLE_THRESHOLD:
+                if parsed.progress >= threshold:
                     action_taken = "scrobble_stop"
-                    logger.info(f"Scrobble stop (paused past threshold): {parsed.title} ({parsed.progress:.1f}%)")
+                    logger.info(f"Scrobble stop (paused past threshold {threshold}%): {parsed.title} ({parsed.progress:.1f}%)")
                     result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
                         queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
@@ -429,9 +421,9 @@ async def plex_webhook(request: Request):
                     result = await active_client.scrobble_pause(scrobble_payload)
             elif event == "media.stop":
                 playback_mgr.stop_playback(parsed)
-                if parsed.progress >= Config.SCROBBLE_THRESHOLD:
+                if parsed.progress >= threshold:
                     action_taken = "scrobble_stop"
-                    logger.info(f"Scrobble stop (watched): {parsed.title} ({parsed.progress:.1f}%)")
+                    logger.info(f"Scrobble stop (watched past threshold {threshold}%): {parsed.title} ({parsed.progress:.1f}%)")
                     result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
                         queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
@@ -445,7 +437,7 @@ async def plex_webhook(request: Request):
                         scrobble_stats["episodes"] += 1
                 else:
                     action_taken = "playback_stopped"
-                    logger.info(f"Playback stopped below threshold: {parsed.title} ({parsed.progress:.1f}%)")
+                    logger.info(f"Playback stopped below threshold {threshold}%: {parsed.title} ({parsed.progress:.1f}%)")
                     if parsed.progress >= 1.0:
                         result = await active_client.scrobble_stop(scrobble_payload)
                     else:
@@ -453,9 +445,8 @@ async def plex_webhook(request: Request):
         else:
             action_taken = f"skipped_{event}"
 
-        # Determine Co-Watching status and trigger dual-sync if event qualifies
         eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
-        is_sync_trigger = (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.SCROBBLE_THRESHOLD))
+        is_sync_trigger = (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= threshold))
         cowatch_info = None
 
         if is_sync_trigger:
@@ -469,11 +460,10 @@ async def plex_webhook(request: Request):
 
         log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
 
-        # Trigger outgoing notifications on scrobble or rating
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
             asyncio.create_task(notifier.dispatch(parsed, action_taken))
 
-        metrics_registry.record_request("webhook", 200)
+        metrics_registry.record_request(endpoint_name, 200)
         return {"status": "success", "event": event, "action": action_taken, "result": result}
 
     except Exception as e:
@@ -492,8 +482,103 @@ async def plex_webhook(request: Request):
             queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e), username=parsed.username)
             metrics_registry.record_scrobble(parsed.media_type, "queued")
         log_event(parsed, action_taken, {"error": str(e), "queued": True})
-        metrics_registry.record_request("webhook", 500)
+        metrics_registry.record_request(endpoint_name, 500)
         return {"status": "error", "error": str(e), "queued": True}
+
+
+@app.post("/webhook")
+async def plex_webhook(request: Request):
+    """Receives multipart/form-data or json webhook notifications from Plex Media Server."""
+    verify_webhook_token(request, "webhook")
+
+    raw_data = await extract_webhook_payload(request, "webhook")
+    if not raw_data:
+        metrics_registry.record_request("webhook", 400)
+        raise HTTPException(status_code=400, detail="No payload found in request")
+
+    parsed = parse_plex_webhook(
+        raw_data,
+        allowed_users=Config.PLEX_ALLOWED_USERS,
+        allowed_libraries=Config.ALLOWED_LIBRARIES,
+        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+    )
+    if not parsed:
+        metrics_registry.record_request("webhook", 200)
+        return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
+
+    return await process_media_event(parsed, endpoint_name="webhook")
+
+
+@app.get("/webhook/jellyfin")
+@app.get("/jellyfin")
+def jellyfin_info():
+    """Information endpoint for Jellyfin Webhook plugin integration."""
+    return {
+        "status": "online",
+        "service": "Omniscrobble Jellyfin Webhook Handler",
+        "method": "POST",
+        "instructions": "In Jellyfin, install the Webhook plugin and configure a Generic Webhook targeting this endpoint (e.g. /webhook/jellyfin or /webhook/jellyfin?token=...).",
+    }
+
+
+@app.post("/webhook/jellyfin")
+@app.post("/jellyfin")
+async def jellyfin_webhook(request: Request):
+    """Receives webhook notifications from Jellyfin Media Server."""
+    verify_webhook_token(request, "webhook_jellyfin")
+
+    raw_data = await extract_webhook_payload(request, "webhook_jellyfin")
+    if not raw_data:
+        metrics_registry.record_request("webhook_jellyfin", 400)
+        raise HTTPException(status_code=400, detail="No payload found in request")
+
+    parsed = parse_jellyfin_webhook(
+        raw_data,
+        allowed_users=Config.PLEX_ALLOWED_USERS,
+        allowed_libraries=Config.ALLOWED_LIBRARIES,
+        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+    )
+    if not parsed:
+        metrics_registry.record_request("webhook_jellyfin", 200)
+        return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
+
+    return await process_media_event(parsed, endpoint_name="webhook_jellyfin")
+
+
+@app.get("/webhook/emby")
+@app.get("/emby")
+def emby_info():
+    """Information endpoint for Emby Server Webhooks integration."""
+    return {
+        "status": "online",
+        "service": "Omniscrobble Emby Webhook Handler",
+        "method": "POST",
+        "instructions": "In Emby, go to Server Settings -> Webhooks -> Add Webhook and point the URL to this endpoint (e.g. /webhook/emby or /webhook/emby?token=...).",
+    }
+
+
+@app.post("/webhook/emby")
+@app.post("/emby")
+async def emby_webhook(request: Request):
+    """Receives webhook notifications from Emby Media Server."""
+    verify_webhook_token(request, "webhook_emby")
+
+    raw_data = await extract_webhook_payload(request, "webhook_emby")
+    if not raw_data:
+        metrics_registry.record_request("webhook_emby", 400)
+        raise HTTPException(status_code=400, detail="No payload found in request")
+
+    parsed = parse_emby_webhook(
+        raw_data,
+        allowed_users=Config.PLEX_ALLOWED_USERS,
+        allowed_libraries=Config.ALLOWED_LIBRARIES,
+        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+    )
+    if not parsed:
+        metrics_registry.record_request("webhook_emby", 200)
+        return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
+
+    return await process_media_event(parsed, endpoint_name="webhook_emby")
 
 
 @app.get("/sonarr")
@@ -658,8 +743,15 @@ async def health_check():
     token_info = trakt.get_token_info()
     return {
         "status": "healthy",
+        "app_name": "Omniscrobble",
+        "version": APP_VERSION,
         "authenticated": trakt.is_authenticated(),
         "trakt_user": profile.get("username") if profile else None,
+        "servers_supported": ["plex", "jellyfin", "emby"],
+        "scrobble_thresholds": {
+            "episode": Config.EPISODE_SCROBBLE_THRESHOLD,
+            "movie": Config.MOVIE_SCROBBLE_THRESHOLD,
+        },
         "allowed_users": Config.PLEX_ALLOWED_USERS or "all",
         "allowed_libraries": Config.ALLOWED_LIBRARIES or "all",
         "excluded_libraries": Config.EXCLUDED_LIBRARIES or "none",
@@ -680,6 +772,149 @@ async def health_check():
         },
         "notifications": notifier.get_status(),
     }
+
+
+OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#090d16" />
+    </linearGradient>
+    <linearGradient id="arrowGradTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+    <linearGradient id="arrowGradBottom" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+    <linearGradient id="highlightGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7dd3fc" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="innerDiscGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <filter id="subtleDrop" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <g filter="url(#subtleDrop)">
+    <!-- Top-Right Clockwise Arrow -->
+    <path d="M 405 285 C 418 200 360 98 256 98 C 190 98 135 135 110 188 L 86 160 L 98 238 L 174 220 L 148 194 C 168 152 210 126 256 126 C 340 126 388 206 376 280 Z" fill="url(#arrowGradTop)" />
+    
+    <!-- Bottom-Left Clockwise Arrow -->
+    <path d="M 107 227 C 94 312 152 414 256 414 C 322 414 377 377 402 324 L 426 352 L 414 274 L 338 292 L 364 318 C 344 360 302 386 256 386 C 172 386 124 306 136 232 Z" fill="url(#arrowGradBottom)" />
+
+    <!-- Motion Echo Arcs -->
+    <path d="M 390 220 C 378 160 326 122 260 122" fill="none" stroke="url(#highlightGrad)" stroke-width="6" stroke-linecap="round" opacity="0.75" />
+    <path d="M 122 292 C 134 352 186 390 252 390" fill="none" stroke="url(#highlightGrad)" stroke-width="6" stroke-linecap="round" opacity="0.75" />
+
+    <!-- Center Disc & Film Frame -->
+    <circle cx="256" cy="256" r="114" fill="url(#innerDiscGrad)" stroke="#334155" stroke-width="5" />
+    <rect x="182" y="174" width="148" height="164" rx="22" fill="#1e293b" stroke="#475569" stroke-width="3.5" />
+
+    <!-- Left Sprockets -->
+    <rect x="193" y="188" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="217" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="247" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="277" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="306" width="14" height="18" rx="3.5" fill="#0f172a" />
+
+    <!-- Right Sprockets -->
+    <rect x="305" y="188" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="217" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="247" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="277" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="306" width="14" height="18" rx="3.5" fill="#0f172a" />
+
+    <!-- Play Button Triangle -->
+    <polygon points="242,216 296,256 242,296" fill="#f8fafc" stroke="#f8fafc" stroke-width="6" stroke-linejoin="round" />
+  </g>
+</svg>"""
+
+SW_JS = """// Omniscrobble PWA Service Worker
+const CACHE_NAME = 'omniscrobble-v1.4.0';
+const STATIC_ASSETS = [
+  '/',
+  '/manifest.json',
+  '/static/icons/icon-192.svg',
+  '/static/icons/icon-512.svg'
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)).catch(() => {})
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+      );
+    })
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(
+    fetch(event.request).catch(() => caches.match(event.request))
+  );
+});
+"""
+
+
+@app.get("/manifest.json")
+def pwa_manifest():
+    """Serves Web App Manifest for mobile installation (PWA)."""
+    manifest = {
+        "name": "Omniscrobble",
+        "short_name": "Omniscrobble",
+        "description": "Universal Scrobbler & Webhook Bridge for Plex, Jellyfin, and Emby to Trakt",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0f172a",
+        "theme_color": "#0f172a",
+        "icons": [
+            {
+                "src": "/static/icons/icon-192.svg",
+                "sizes": "192x192",
+                "type": "image/svg+xml",
+                "purpose": "any maskable"
+            },
+            {
+                "src": "/static/icons/icon-512.svg",
+                "sizes": "512x512",
+                "type": "image/svg+xml",
+                "purpose": "any maskable"
+            }
+        ]
+    }
+    return Response(content=json.dumps(manifest), media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    """Serves PWA service worker script."""
+    return Response(content=SW_JS, media_type="application/javascript")
+
+
+@app.get("/static/icons/icon-192.svg")
+@app.get("/static/icons/icon-512.svg")
+def pwa_icon():
+    """Serves dynamic scalable vector icon for PWA."""
+    return Response(content=OMNISCROBBLE_ICON_SVG, media_type="image/svg+xml")
 
 
 @app.get("/metrics")
@@ -1356,6 +1591,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         status_badge = '<a href="javascript:void(0)" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">Connected as @demo_viewer &bull; Demo</a>'
         admin_btn = '<span style="font-size:12px;color:#38bdf8;background:#1e293b;border:1px solid #334155;padding:4px 10px;border-radius:6px;font-weight:600;">👑 Demo Admin</span>'
         full_webhook_url = "https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
+        full_jellyfin_url = "https://jellyfin.example.com/webhook/jellyfin?token=demo_webhook_secret_xyz"
+        full_emby_url = "https://emby.example.com/webhook/emby?token=demo_webhook_secret_xyz"
         masked_webhook_url = full_webhook_url
         demo_banner = '<div style="background:linear-gradient(90deg, #1e3a8a, #0284c7);color:#ffffff;padding:12px 18px;border-radius:10px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);flex-wrap:wrap;gap:10px;"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🎭</span><div><strong style="color:#ffffff;">Demo Mode Active:</strong><span style="color:#e0f2fe;font-size:13px;margin-left:4px;">Simulated authenticated view with mock information. No real accounts or tokens are exposed.</span></div></div><a href="/" style="background:rgba(255,255,255,0.2);color:#ffffff;text-decoration:none;padding:5px 12px;border-radius:6px;font-weight:600;font-size:12px;transition:background 0.15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.3)\'" onmouseout="this.style.background=\'rgba(255,255,255,0.2)\'">Exit Demo &rarr;</a></div>'
         demo_header_btn = '<a href="/" class="btn-sm" style="background:#0284c7;border:1px solid #38bdf8;color:#ffffff;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:opacity 0.15s;" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Exit demo mode">✕ Exit Demo</a>'
@@ -1451,15 +1688,19 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         else:
             allowed_users_display = "All Users"
 
-        # Base URL for webhook
+        # Base URL for webhooks
         base_url = str(request.base_url).rstrip("/")
         if Config.WEBHOOK_SECRET:
             full_webhook_url = f"{base_url}/webhook?token={Config.WEBHOOK_SECRET}"
+            full_jellyfin_url = f"{base_url}/webhook/jellyfin?token={Config.WEBHOOK_SECRET}"
+            full_emby_url = f"{base_url}/webhook/emby?token={Config.WEBHOOK_SECRET}"
             scheme = request.base_url.scheme or "http"
             port_suffix = ":●●●●" if request.base_url.port else ""
             masked_webhook_url = f"{scheme}://●●●●●●●●{port_suffix}/webhook?token=●●●●●●●●"
         else:
             full_webhook_url = f"{base_url}/webhook"
+            full_jellyfin_url = f"{base_url}/webhook/jellyfin"
+            full_emby_url = f"{base_url}/webhook/emby"
             masked_webhook_url = full_webhook_url
 
     # Events rows
@@ -1467,11 +1708,19 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     rows = ""
     col_span = 7 if is_admin else 6
     if not events_list:
-        rows = f'<tr><td colspan="{col_span}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>'
+        rows = f'<tr><td colspan="{col_span}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex, Jellyfin, or Emby to test!</td></tr>'
     else:
         for ev in events_list:
             color = "#10b981" if ev["result_status"] in ("ok", 200, 201) else "#f59e0b"
             u = ev["user"] if is_admin else mask_username(ev["user"])
+            server_raw = ev.get("server", "plex").lower()
+            if server_raw == "jellyfin":
+                server_badge = '<span style="background:#3b0764;color:#d8b4fe;border:1px solid #7e22ce;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Jellyfin</span>'
+            elif server_raw == "emby":
+                server_badge = '<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Emby</span>'
+            else:
+                server_badge = '<span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span>'
+
             action_col = ""
             if is_admin:
                 show_title = ev.get("show_title")
@@ -1504,7 +1753,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{ev['timestamp']}</td>
                 <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">{ev['title']}</td>
                 <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['type']}</span></td>
-                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{u}</td>
+                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{u}</span></div></td>
                 <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['action']} ({ev['progress']})</span></td>
                 <td style="padding:12px 16px;">{status_badge_html}</td>
                 {action_col}
@@ -1513,23 +1762,30 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
     webhook_html_section = f"""
     <div style="margin-top: 18px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <div class="info-label">Plex Webhook URL</div>
-            <span style="color:#10b981;font-size:11px;font-weight:600;">✓ Admin Unlocked</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+            <div class="info-label">Universal Webhook URLs</div>
+            <div style="display:flex;gap:6px;">
+                <button type="button" onclick="switchWebhookTab('plex')" id="btn-tab-plex" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Plex</button>
+                <button type="button" onclick="switchWebhookTab('jellyfin')" id="btn-tab-jellyfin" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Jellyfin</button>
+                <button type="button" onclick="switchWebhookTab('emby')" id="btn-tab-emby" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Emby</button>
+            </div>
         </div>
         <div class="webhook-row">
             <input type="text" readonly id="webhook-url-input" value="{full_webhook_url}"
+                   data-plex="{full_webhook_url}" data-jellyfin="{full_jellyfin_url}" data-emby="{full_emby_url}"
                    style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#38bdf8;font-family:monospace;font-size:13px;outline:none;" />
             <button onclick="copyWebhookUrl()" id="copy-btn" class="btn-copy">
                 📋 Copy URL
             </button>
         </div>
-        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Integrations: Sonarr (<code>/sonarr</code>), Radarr (<code>/radarr</code>).</div>
+        <div id="webhook-instructions" style="font-size: 12px; color: #94a3b8; margin-top: 6px;">
+            Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Jellyfin (<code>/webhook/jellyfin</code>) &bull; Emby (<code>/webhook/emby</code>) &bull; Sonarr (<code>/sonarr</code>) &bull; Radarr (<code>/radarr</code>).
+        </div>
     </div>
     """ if is_admin else f"""
     <div style="margin-top: 18px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <div class="info-label">Plex Webhook URL</div>
+            <div class="info-label">Universal Webhook URLs (Plex • Jellyfin • Emby)</div>
             <span style="color:#f59e0b;font-size:11px;font-weight:600;">🔒 Secret Masked</span>
         </div>
         <div class="webhook-row">
@@ -1539,7 +1795,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 🔓 Unlock
             </button>
         </div>
-        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Admin authorization required to reveal webhook URL. Integrations: Sonarr (<code>/sonarr</code>), Radarr (<code>/radarr</code>).</div>
+        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Admin authorization required to reveal webhook URLs. Supports Plex, Jellyfin, Emby, Sonarr, and Radarr.</div>
     </div>
     """
 

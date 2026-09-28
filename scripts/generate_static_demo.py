@@ -43,7 +43,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '<div>'
         '<strong style="color:#ffffff;font-size:14px;">Live Interactive Demo:</strong>'
         '<span style="color:#e0f2fe;font-size:13px;margin-left:6px;">'
-        'Experience the Plex to Trakt Webhook Scrobbler dashboard live in your browser. All interactions are simulated client-side with zero server dependencies.'
+        'Experience the Omniscrobble dashboard live in your browser. All interactions are simulated client-side with zero server dependencies.'
         '</span>'
         '</div>'
         '</div>'
@@ -200,7 +200,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     </div>
     """
 
-    backup_card_html = """
+    backup_card_html = f"""
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
@@ -208,7 +208,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             </h3>
             <div style="display:flex;gap:8px;align-items:center;">
                 <button onclick="openLogsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;">📜 View Logs</button>
-                <a href="https://github.com/selits/plex-trakt-webhook#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
+                <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
             </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
@@ -230,18 +230,27 @@ def generate_static_demo(output_dir: Path = None) -> Path:
 
     webhook_html_section = """
     <div style="margin-top: 18px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <div class="info-label">Plex Webhook URL</div>
-            <span style="color:#10b981;font-size:11px;font-weight:600;">✓ Admin Unlocked</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+            <div class="info-label">Universal Webhook URLs</div>
+            <div style="display:flex;gap:6px;">
+                <button type="button" onclick="switchWebhookTab('plex')" id="btn-tab-plex" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Plex</button>
+                <button type="button" onclick="switchWebhookTab('jellyfin')" id="btn-tab-jellyfin" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Jellyfin</button>
+                <button type="button" onclick="switchWebhookTab('emby')" id="btn-tab-emby" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Emby</button>
+            </div>
         </div>
         <div class="webhook-row">
             <input type="text" readonly id="webhook-url-input" value="https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
+                   data-plex="https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
+                   data-jellyfin="https://jellyfin.example.com/webhook/jellyfin?token=demo_webhook_secret_xyz"
+                   data-emby="https://emby.example.com/webhook/emby?token=demo_webhook_secret_xyz"
                    style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#38bdf8;font-family:monospace;font-size:13px;outline:none;" />
             <button onclick="copyWebhookUrl()" id="copy-btn" class="btn-copy">
                 📋 Copy URL
             </button>
         </div>
-        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Integrations: Sonarr (<code>/sonarr</code>), Radarr (<code>/radarr</code>).</div>
+        <div id="webhook-instructions" style="font-size: 12px; color: #94a3b8; margin-top: 6px;">
+            Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Jellyfin (<code>/webhook/jellyfin</code>) &bull; Emby (<code>/webhook/emby</code>) &bull; Sonarr (<code>/sonarr</code>) &bull; Radarr (<code>/radarr</code>).
+        </div>
     </div>
     """
 
@@ -268,12 +277,20 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         if cw and cw.get("synced"):
             status_badge_html += ' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to partner: Shared show whitelist match">👥 Co-Watched</span>'
 
+        server_raw = ev.get("server", "plex").lower()
+        if server_raw == "jellyfin":
+            server_badge = '<span style="background:#3b0764;color:#d8b4fe;border:1px solid #7e22ce;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Jellyfin</span>'
+        elif server_raw == "emby":
+            server_badge = '<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Emby</span>'
+        else:
+            server_badge = '<span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span>'
+
         rows += f"""
         <tr style="border-bottom: 1px solid #334155;">
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{ev['timestamp']}</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">{html.escape(ev['title'])}</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['type']}</span></td>
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{ev['user']}</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{ev['user']}</span></div></td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['action']} ({ev['progress']})</span></td>
             <td style="padding:12px 16px;">{status_badge_html}</td>
             {action_col}
