@@ -38,6 +38,8 @@ from app.services.demo_manager import demo_mgr
 from app.services.log_manager import log_mgr
 from app.clients.plex_api_client import PlexApiClient
 from app.clients.radarr_client import RadarrClient
+from app.clients.simkl_client import SimklClient
+from app.services.multi_tracker import MultiTrackerManager
 from app.services.loop_prevention import loop_prevention
 from app.services.reverse_sync_manager import reverse_sync_mgr
 from app.services.arr_bridge import arr_bridge
@@ -46,6 +48,7 @@ from pathlib import Path
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
 AUTH_LOCKED_HTML = (TEMPLATES_DIR / 'auth_locked.html').read_text(encoding='utf-8')
 AUTH_HTML = (TEMPLATES_DIR / 'auth.html').read_text(encoding='utf-8')
+AUTH_SIMKL_HTML = (TEMPLATES_DIR / 'auth_simkl.html').read_text(encoding='utf-8')
 DASHBOARD_HTML = (TEMPLATES_DIR / 'dashboard.html').read_text(encoding='utf-8')
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +59,8 @@ logger = logging.getLogger("plex_trakt_scrobbler")
 trakt = TraktClient(Config)
 sonarr = SonarrClient()
 radarr = RadarrClient()
+simkl = SimklClient(Config)
+multi_tracker = MultiTrackerManager(Config, simkl_client=simkl)
 user_mgr.set_default_client(trakt)
 reverse_sync_mgr.set_trakt_client(trakt)
 arr_bridge.set_trakt_client(trakt)
@@ -239,6 +244,11 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(reverse_sync_mgr.run_startup_sync())
     if Config.REVERSE_SYNC_INTERVAL > 0 and reverse_sync_mgr.plex.is_configured():
         logger.info(f"Startup Diagnostics: Reverse sync interval active ({Config.REVERSE_SYNC_INTERVAL}m).")
+    if simkl.is_enabled():
+        if simkl.is_authenticated():
+            logger.info(f"Startup Diagnostics: Simkl multi-tracker connected (@{simkl.user_name or 'user'}).")
+        else:
+            logger.info("Startup Diagnostics: Simkl multi-tracker enabled (visit /auth/simkl to link account).")
 
     yield
     if queue_worker_task:
@@ -262,15 +272,33 @@ async def lifespan(app: FastAPI):
     await reverse_sync_mgr.plex.close()
     await arr_bridge.sonarr.close()
     await arr_bridge.radarr.close()
+    await simkl.close()
     await trakt.close()
     await user_mgr.close_all()
     await notifier.close()
 
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
+
+
+async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: str):
+    """Dispatch playback scrobble event asynchronously to Simkl."""
+    if not (simkl.is_enabled() and simkl.is_authenticated()):
+        return
+    try:
+        if event in ("media.play", "media.resume"):
+            await simkl.scrobble_start(parsed, progress=parsed.progress)
+        elif event == "media.pause":
+            await simkl.scrobble_pause(parsed, progress=parsed.progress)
+        elif event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= 80.0):
+            await simkl.scrobble_stop(parsed, progress=parsed.progress)
+        elif event == "media.rate":
+            await simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
+    except Exception as e:
+        logger.warning(f"Simkl dispatch error for {parsed.title}: {e}")
 
 
 # In-memory log of recent webhook events for the status dashboard
@@ -553,6 +581,9 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
 
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
             asyncio.create_task(notifier.dispatch(parsed, action_taken))
+
+        if simkl.is_enabled() and simkl.is_authenticated():
+            asyncio.create_task(execute_simkl_scrobble(parsed, action_taken, event))
 
         metrics_registry.record_request(endpoint_name, 200)
         return {"status": "success", "event": event, "action": action_taken, "result": result}
@@ -931,7 +962,7 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>"""
 
 SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v1.6.0';
+const CACHE_NAME = 'omniscrobble-v1.7.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -1533,7 +1564,7 @@ async def trigger_arr_sync(request: Request):
 async def get_ecosystem_status(request: Request):
     """Return live status matrix for all connected media servers, tracker, and arr engines."""
     is_demo = request.query_params.get("demo") == "true"
-    return await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex)
+    return await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex, simkl_client=simkl)
 
 
 class TestWebhookRequest(BaseModel):
@@ -1684,7 +1715,70 @@ async def auth_poll(payload: DevicePollRequest, request: Request):
         return {"status": "error", "message": str(e)}
 
 
-@app.get("/auth", response_class=HTMLResponse)
+class SimklPollRequest(BaseModel):
+    user_code: str
+
+
+@app.get("/api/simkl/status")
+async def get_simkl_status(request: Request):
+    """Return current connection and authentication status for Simkl."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {
+            "enabled": True,
+            "configured": True,
+            "authenticated": True,
+            "user": "demo_viewer",
+            "account_id": 123456,
+            "timezone": "America/New_York",
+        }
+    status = await simkl.check_connection()
+    status["enabled"] = Config.SIMKL_ENABLED
+    status["configured"] = bool(Config.SIMKL_CLIENT_ID)
+    return status
+
+
+@app.post("/api/simkl/pin")
+async def get_simkl_pin(request: Request):
+    """Obtain a new Device PIN / user_code to authorize Simkl via browser."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    try:
+        data = await simkl.get_device_pin()
+        return data
+    except Exception as e:
+        logger.error(f"Failed to generate Simkl device PIN: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/simkl/poll")
+async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
+    """Poll Simkl to check if the user authorized the device PIN."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    try:
+        res = await simkl.poll_device_pin(payload.user_code)
+        return res
+    except Exception as e:
+        return {"result": "error", "message": str(e)}
+
+
+@app.post("/api/simkl/disconnect")
+async def disconnect_simkl(request: Request):
+    """Disconnect Simkl account and delete saved tokens."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    simkl.delete_tokens()
+    return {"status": "ok", "message": "Simkl disconnected"}
+
+
+@app.get("/auth/simkl", response_class=HTMLResponse)
+async def auth_simkl_page(request: Request):
+    """Render dedicated Simkl authorization page."""
+    if not is_admin_request(request):
+        return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
+    return HTMLResponse(content=AUTH_SIMKL_HTML)
+
 
 @app.get('/auth', response_class=HTMLResponse)
 async def auth_page(request: Request, user: Optional[str] = None):
@@ -2280,7 +2374,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     """
 
     # Multi-Server Ecosystem Health Card
-    eco_data = await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex)
+    eco_data = await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex, simkl_client=simkl)
     eco_servers = eco_data.get("servers", [])
     eco_healthy = eco_data.get("healthy_count", 0)
     eco_total = eco_data.get("total_count", len(eco_servers))
@@ -2315,6 +2409,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             srv_icon = "🟢"
         elif sid == "trakt":
             srv_icon = "🔴"
+        elif sid == "simkl":
+            srv_icon = "✨"
         elif sid == "sonarr":
             srv_icon = "📺"
         elif sid == "radarr":
@@ -2356,6 +2452,70 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
             {eco_cards_html}
+        </div>
+    </div>
+    """
+
+    # Multi-Tracker Architecture Card (Simkl)
+    if is_demo:
+        simkl_status = {
+            "enabled": True,
+            "configured": True,
+            "authenticated": True,
+            "user": "demo_viewer",
+            "account_id": 987654,
+        }
+    else:
+        simkl_status = await simkl.check_connection()
+        simkl_status["enabled"] = Config.SIMKL_ENABLED
+        simkl_status["configured"] = bool(Config.SIMKL_CLIENT_ID)
+
+    simkl_cfg = simkl_status.get("configured", False)
+    simkl_auth = simkl_status.get("authenticated", False)
+    simkl_user = simkl_status.get("user")
+    simkl_disp_user = (simkl_user if is_admin else mask_username(simkl_user)) if simkl_user else "Linked"
+
+    if simkl_auth:
+        simkl_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@{simkl_disp_user})</span>'
+    elif simkl_cfg:
+        simkl_badge = '<span style="background:#1e293b;border:1px solid #eab308;color:#fde047;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● PIN Required</span>'
+    else:
+        simkl_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Optional Tracker</span>'
+
+    simkl_action_btn = ""
+    if is_admin:
+        if simkl_auth:
+            simkl_action_btn = '<button onclick="disconnectSimkl(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect</button>'
+        else:
+            simkl_action_btn = '<button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🔑 Link Simkl Account</button>'
+    else:
+        simkl_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Manage Simkl</button>'
+
+    simkl_card_html = f"""
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>✨</span> Multi-Tracker Architecture &bull; Simkl Integration
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+                {simkl_badge}
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            Broadcast playback scrobbles and ratings across both Trakt and Simkl simultaneously. Perfect for Anime, TV shows, and movie watch histories with decoupled, zero-latency async dispatch.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span>Simkl Dual-Scrobbler: <strong>{"Active" if simkl_auth else "Ready to link" if simkl_cfg else "Disabled in .env"}</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>Zero-Latency Async Task Dispatch: <strong>Enabled</strong></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                {simkl_action_btn}
+                <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">PIN Portal ↗</a>
+            </div>
         </div>
     </div>
     """
@@ -2471,6 +2631,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{STAT_COLLECTIONS}}': str(stats_data.get('collections', 0)),
         '{{WEBHOOK_CARD}}': webhook_html_section,
         '{{ECOSYSTEM_CARD}}': ecosystem_card_html,
+        '{{SIMKL_CARD}}': simkl_card_html,
         '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,

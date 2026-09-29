@@ -56,7 +56,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal, #simkl-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -176,6 +176,8 @@
         </div>
 
         {{ECOSYSTEM_CARD}}
+
+        {{SIMKL_CARD}}
 
         {{ARR_BRIDGE_CARD}}
 
@@ -501,6 +503,24 @@
         </div>
     </div>
 
+    <!-- Simkl Integration Modal -->
+    <div id="simkl-modal" onclick="if(event.target===this)closeSimklModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>✨</span> Simkl Multi-Tracker Settings
+                </h3>
+                <button onclick="closeSimklModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Link your Simkl account to automatically dual-scrobble movies, TV shows, and anime alongside Trakt.
+            </p>
+            <div id="simkl-modal-content" style="display:flex;flex-direction:column;gap:12px;">
+                <div style="color:#94a3b8;text-align:center;padding:20px;font-size:13px;">Checking Simkl status...</div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const isAdmin = {{IS_ADMIN_JS}};
         const isDemo = {{IS_DEMO_JS}};
@@ -597,6 +617,9 @@
                 closeScrobbleModal();
                 closeLogsModal();
                 closeTestWebhookModal();
+                if (typeof closeReconcileModal === 'function') closeReconcileModal();
+                if (typeof closeArrModal === 'function') closeArrModal();
+                if (typeof closeSimklModal === 'function') closeSimklModal();
                 const box = document.getElementById('sonarr-suggestions');
                 if (box) box.style.display = 'none';
             }
@@ -1808,6 +1831,182 @@
                     targetBtn.innerHTML = origText;
                     targetBtn.disabled = false;
                 }
+            }
+        }
+
+        // Simkl Multi-Tracker Functions
+        let simklPollInterval = null;
+
+        function openSimklModal() {
+            const modal = document.getElementById('simkl-modal');
+            if (modal) modal.style.display = 'flex';
+            fetchSimklStatus();
+        }
+
+        function closeSimklModal() {
+            const modal = document.getElementById('simkl-modal');
+            if (modal) modal.style.display = 'none';
+            if (simklPollInterval) {
+                clearInterval(simklPollInterval);
+                simklPollInterval = null;
+            }
+        }
+
+        async function fetchSimklStatus() {
+            const container = document.getElementById('simkl-modal-content');
+            if (!container) return;
+            try {
+                const url = isDemo ? '/api/simkl/status?demo=true' : '/api/simkl/status';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Failed to load status');
+                const data = await res.json();
+                renderSimklModal(data);
+            } catch (err) {
+                container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Failed to load Simkl status: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderSimklModal(data) {
+            const container = document.getElementById('simkl-modal-content');
+            if (!container) return;
+
+            if (data.authenticated) {
+                const userDisp = data.user || 'Linked Account';
+                const accId = data.account_id ? ` (ID: #${escapeHtml(String(data.account_id))})` : '';
+                container.innerHTML = `
+                    <div style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:12px 14px;border-radius:8px;font-size:13px;display:flex;align-items:center;gap:8px;">
+                        <span>✓</span>
+                        <span>Connected to Simkl as <strong>@${escapeHtml(userDisp)}</strong>${accId}</span>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;font-size:13px;line-height:1.6;color:#cbd5e1;">
+                        <div style="font-weight:600;color:#f8fafc;margin-bottom:6px;">Multi-Tracker Features:</div>
+                        <ul style="margin:0;padding-left:20px;color:#94a3b8;">
+                            <li>Simultaneous scrobbling on media playback (start, pause, scrobble)</li>
+                            <li>Multi-type support: Movies, TV Shows, Anime</li>
+                            <li>Two-way rating synchronization</li>
+                            <li>Zero-latency decoupled background dispatch</li>
+                        </ul>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                        <button onclick="startSimklPinFlow()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;">🔄 Re-authenticate PIN</button>
+                        <button onclick="disconnectSimkl()" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;">Disconnect Account</button>
+                    </div>
+                `;
+            } else if (!data.configured) {
+                container.innerHTML = `
+                    <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:14px;font-size:13px;color:#cbd5e1;line-height:1.6;">
+                        <p style="margin:0 0 10px 0;">To connect Simkl, configure your Simkl API client credentials in <code>.env</code>:</p>
+                        <pre style="background:#020617;padding:10px;border-radius:6px;font-size:12px;overflow-x:auto;color:#38bdf8;border:1px solid #1e293b;">SIMKL_CLIENT_ID=your_client_id_here
+SIMKL_ENABLED=true</pre>
+                        <p style="margin:10px 0 0 0;font-size:12px;color:#94a3b8;">Create an app at <a href="https://simkl.com/settings/developer/new" target="_blank" rel="noopener" style="color:#38bdf8;">simkl.com/settings/developer</a> to get your Client ID.</p>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:16px;text-align:center;">
+                        <p style="margin:0 0 14px 0;font-size:13px;color:#cbd5e1;">Click below to generate a quick activation PIN to link your Simkl account without typing passwords.</p>
+                        <button onclick="startSimklPinFlow()" id="simkl-gen-pin-btn" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:10px 20px;font-size:13px;">🔑 Generate Activation PIN</button>
+                    </div>
+                `;
+            }
+        }
+
+        async function startSimklPinFlow() {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            const container = document.getElementById('simkl-modal-content');
+            if (container) {
+                container.innerHTML = '<div style="color:#38bdf8;text-align:center;padding:24px;font-size:13px;">Requesting Device PIN from Simkl...</div>';
+            }
+            try {
+                if (isDemo) {
+                    setTimeout(() => {
+                        renderSimklModal({
+                            authenticated: true,
+                            user: 'demo_viewer',
+                            account_id: 987654,
+                            configured: true,
+                            enabled: true
+                        });
+                    }, 1200);
+                    return;
+                }
+                const res = await fetch('/api/simkl/pin', { method: 'POST' });
+                if (res.status === 401) {
+                    openUnlockModal();
+                    return;
+                }
+                if (!res.ok) throw new Error('Failed to obtain Simkl PIN');
+                const data = await res.json();
+                const userCode = data.user_code;
+                const verifyUrl = data.verification_url || `https://simkl.com/pin?code=${encodeURIComponent(userCode)}`;
+
+                container.innerHTML = `
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:18px;text-align:center;">
+                        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">Enter this PIN code on Simkl:</div>
+                        <div style="font-size:32px;font-weight:700;letter-spacing:4px;color:#38bdf8;margin:10px 0;user-select:all;font-family:monospace;">${escapeHtml(userCode)}</div>
+                        <div style="margin:14px 0 16px;">
+                            <a href="${escapeHtml(verifyUrl)}" target="_blank" rel="noopener" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 16px;text-decoration:none;display:inline-block;">Open Simkl Activation Page ↗</a>
+                        </div>
+                        <div id="simkl-poll-indicator" style="font-size:12px;color:#94a3b8;display:flex;align-items:center;justify-content:center;gap:6px;">
+                            <span class="pulse-indicator"></span> Waiting for approval on Simkl...
+                        </div>
+                    </div>
+                `;
+
+                if (simklPollInterval) clearInterval(simklPollInterval);
+                simklPollInterval = setInterval(async () => {
+                    try {
+                        const pRes = await fetch('/api/simkl/poll', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_code: userCode })
+                        });
+                        const pollData = await pRes.json();
+                        if (pollData.result === 'OK' && pollData.access_token) {
+                            clearInterval(simklPollInterval);
+                            simklPollInterval = null;
+                            container.innerHTML = `
+                                <div style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:16px;border-radius:8px;text-align:center;">
+                                    <div style="font-size:18px;font-weight:700;margin-bottom:6px;">✓ Simkl Connected!</div>
+                                    <div style="font-size:13px;">Your account is linked. Reloading dashboard...</div>
+                                </div>
+                            `;
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 1500);
+                        }
+                    } catch (e) {}
+                }, 4000);
+            } catch (err) {
+                if (container) {
+                    container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Error initiating PIN flow: ${escapeHtml(err.message)}</div>`;
+                }
+            }
+        }
+
+        async function disconnectSimkl(btn) {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            if (!confirm('Are you sure you want to disconnect your Simkl account?')) return;
+            if (isDemo) {
+                alert('Simkl disconnected (Demo simulation)');
+                fetchSimklStatus();
+                return;
+            }
+            try {
+                const res = await fetch('/api/simkl/disconnect', { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    alert('Failed to disconnect Simkl');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
             }
         }
 

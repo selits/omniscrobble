@@ -2242,7 +2242,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v1.6.0" in html
+    assert "v1.7.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -4344,13 +4344,14 @@ async def test_arr_bridge_ecosystem_and_status():
 
     # Demo ecosystem
     demo_eco = await arr_bridge.get_ecosystem_status(demo=True)
-    assert demo_eco["healthy_count"] == 6
-    assert demo_eco["total_count"] == 6
+    assert demo_eco["healthy_count"] == 7
+    assert demo_eco["total_count"] == 7
     server_ids = [s["id"] for s in demo_eco["servers"]]
     assert "plex" in server_ids
     assert "jellyfin" in server_ids
     assert "emby" in server_ids
     assert "trakt" in server_ids
+    assert "simkl" in server_ids
     assert "sonarr" in server_ids
     assert "radarr" in server_ids
 
@@ -4380,7 +4381,7 @@ def test_arr_api_endpoints_and_auth():
 
     res_eco_demo = client.get("/api/ecosystem?demo=true")
     assert res_eco_demo.status_code == 200
-    assert res_eco_demo.json()["healthy_count"] == 6
+    assert res_eco_demo.json()["healthy_count"] == 7
 
     # 3. /api/arr/sync
     # Demo execution allowed without auth
@@ -4450,6 +4451,302 @@ def test_notifier_arr_add_action():
     )
     show_payload = notifier_inst.build_discord_payload(show_media, "arr_add")
     assert "Added to **Sonarr** from Trakt Watchlist" in show_payload["embeds"][0]["description"]
+
+
+# =====================================================================
+# SIMKL & MULTI-TRACKER ARCHITECTURE TESTS (v1.7.0)
+# =====================================================================
+
+@pytest.mark.asyncio
+async def test_simkl_client_token_lifecycle(tmp_path):
+    """Verify Simkl token file persistence, loading, and deletion."""
+    from app.clients.simkl_client import SimklClient
+    from app.config import Config
+
+    test_tokens_file = tmp_path / "simkl_tokens.json"
+    client = SimklClient(
+        client_id="test_simkl_id",
+        client_secret="test_simkl_secret",
+        tokens_file=test_tokens_file,
+    )
+
+    assert client.is_authenticated() is False
+    assert client.get_access_token() is None
+
+    # Save tokens
+    client.save_tokens({"access_token": "simkl_secret_token_123", "token_type": "Bearer"})
+    assert test_tokens_file.exists()
+    assert client.is_authenticated() is True
+    assert client.get_access_token() == "simkl_secret_token_123"
+
+    # Reload from disk in a fresh client
+    client2 = SimklClient(
+        client_id="test_simkl_id",
+        tokens_file=test_tokens_file,
+    )
+    assert client2.is_authenticated() is True
+    assert client2.get_access_token() == "simkl_secret_token_123"
+
+    # Delete tokens
+    client2.delete_tokens()
+    assert not test_tokens_file.exists()
+    assert client2.is_authenticated() is False
+    await client.close()
+    await client2.close()
+
+
+def test_simkl_client_payload_builder():
+    """Verify Simkl JSON payload formatting for movies and TV episodes."""
+    from app.clients.simkl_client import SimklClient
+    from app.plex_parser import ParsedMedia
+
+    client = SimklClient(client_id="test_id")
+
+    # 1. Movie payload
+    movie = ParsedMedia(
+        raw_payload={},
+        event="media.scrobble",
+        media_type="movie",
+        title="Dune: Part Two",
+        year=2024,
+        username="test_user",
+        ids={"imdb": "tt15239678", "tmdb": "693134"},
+    )
+    m_payload = client.build_media_payload(movie)
+    assert "movie" in m_payload
+    assert m_payload["movie"]["title"] == "Dune: Part Two"
+    assert m_payload["movie"]["year"] == 2024
+    assert m_payload["movie"]["ids"]["imdb"] == "tt15239678"
+    assert m_payload["movie"]["ids"]["tmdb"] == "693134"
+
+    # 2. Episode payload
+    ep = ParsedMedia(
+        raw_payload={},
+        event="media.scrobble",
+        media_type="episode",
+        title="Severance",
+        show_title="Severance",
+        season=1,
+        episode=9,
+        year=2022,
+        username="test_user",
+        ids={"tvdb": "371980", "imdb": "tt11280740"},
+    )
+    e_payload = client.build_media_payload(ep)
+    assert "show" in e_payload
+    assert e_payload["show"]["title"] == "Severance"
+    assert e_payload["show"]["year"] == 2022
+    assert e_payload["show"]["ids"]["tvdb"] == "371980"
+    assert "episode" in e_payload
+    assert e_payload["episode"]["season"] == 1
+    assert e_payload["episode"]["number"] == 9
+
+
+@pytest.mark.asyncio
+async def test_simkl_client_device_pin_and_poll(tmp_path):
+    """Verify Simkl OAuth Device PIN flow request and polling."""
+    from app.clients.simkl_client import SimklClient
+    import httpx
+
+    tokens_file = tmp_path / "simkl_test_tokens.json"
+
+    def mock_pin_handler(request: httpx.Request):
+        if "oauth/pin" in str(request.url) and "DEMO-PIN" not in str(request.url):
+            return httpx.Response(
+                200,
+                json={"user_code": "DEMO-PIN", "verification_url": "https://simkl.com/pin/DEMO-PIN", "expires_in": 900},
+            )
+        elif "oauth/pin/DEMO-PIN" in str(request.url):
+            return httpx.Response(
+                200,
+                json={"result": "OK", "access_token": "simkl_access_abc"},
+            )
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(mock_pin_handler)
+    mock_http = httpx.AsyncClient(transport=transport)
+
+    client = SimklClient(client_id="test_client_id", tokens_file=tokens_file, client=mock_http)
+    pin_data = await client.get_device_pin()
+    assert pin_data["user_code"] == "DEMO-PIN"
+    assert "https://simkl.com/pin/DEMO-PIN" in pin_data["verification_url"]
+
+    poll_data = await client.poll_device_pin("DEMO-PIN")
+    assert poll_data["result"] == "OK"
+    assert poll_data["access_token"] == "simkl_access_abc"
+    assert client.is_authenticated() is True
+    assert client.get_access_token() == "simkl_access_abc"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_simkl_client_scrobble_actions(tmp_path):
+    """Verify Simkl scrobble_start, scrobble_pause, and scrobble_stop."""
+    from app.clients.simkl_client import SimklClient
+    from app.plex_parser import ParsedMedia
+    import httpx
+
+    tokens_file = tmp_path / "simkl_tokens.json"
+    client = SimklClient(client_id="test_id", tokens_file=tokens_file)
+    client.save_tokens({"access_token": "valid_token"})
+
+    scrobble_requests = []
+
+    def mock_scrobble_handler(request: httpx.Request):
+        scrobble_requests.append({
+            "url": str(request.url),
+            "headers": dict(request.headers),
+            "body": json.loads(request.content.decode("utf-8")),
+        })
+        return httpx.Response(200, json={"result": "ok"})
+
+    transport = httpx.MockTransport(mock_scrobble_handler)
+    client._client = httpx.AsyncClient(transport=transport)
+
+    media = ParsedMedia(
+        raw_payload={},
+        event="media.play",
+        media_type="movie",
+        title="Gladiator II",
+        year=2024,
+        username="test_user",
+        progress=10.0,
+    )
+
+    # 1. Start
+    res1 = await client.scrobble_start(media, progress=10.0)
+    assert res1.get("status") == "success"
+    assert res1.get("data", {}).get("result") == "ok"
+    assert "scrobble/start" in scrobble_requests[-1]["url"]
+
+    # 2. Pause
+    res2 = await client.scrobble_pause(media, progress=50.0)
+    assert res2.get("status") == "success"
+    assert res2.get("data", {}).get("result") == "ok"
+    assert "scrobble/pause" in scrobble_requests[-1]["url"]
+
+    # 3. Stop
+    res3 = await client.scrobble_stop(media, progress=95.0)
+    assert res3.get("status") == "success"
+    assert res3.get("data", {}).get("result") == "ok"
+    assert "scrobble/stop" in scrobble_requests[-1]["url"]
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_multi_tracker_manager_dispatch():
+    """Verify MultiTrackerManager dual dispatch to Trakt and Simkl."""
+    from app.services.multi_tracker import MultiTrackerManager
+    from app.clients.simkl_client import SimklClient
+    from app.clients.trakt_client import TraktClient
+    from app.config import Config
+    from app.plex_parser import ParsedMedia
+    from unittest.mock import AsyncMock
+
+    mock_trakt = AsyncMock(spec=TraktClient)
+    mock_trakt.is_authenticated.return_value = True
+    mock_trakt.scrobble_stop.return_value = {"action": "scrobble", "trakt_id": 1234}
+    mock_trakt.sync_ratings.return_value = {"added": {"movies": 1}}
+
+    mock_simkl = AsyncMock(spec=SimklClient)
+    mock_simkl.is_authenticated.return_value = True
+    mock_simkl.is_enabled.return_value = True
+    mock_simkl.check_connection.return_value = {"authenticated": True, "enabled": True}
+    mock_simkl.scrobble_stop.return_value = {"result": "ok"}
+    mock_simkl.sync_ratings.return_value = {"result": "ok"}
+
+    mt_mgr = MultiTrackerManager(simkl_client=mock_simkl)
+
+    status = await mt_mgr.get_status()
+    assert "trakt" in status["active_trackers"]
+    assert "simkl" in status["active_trackers"]
+
+    media = ParsedMedia(
+        raw_payload={},
+        event="media.scrobble",
+        media_type="movie",
+        title="Severance",
+        year=2022,
+        username="test_user",
+        progress=95.0,
+    )
+
+    # Scrobble dispatch
+    res = await mt_mgr.dispatch_scrobble(action="stop", media=media, trakt_client=mock_trakt, progress=95.0)
+    assert "trakt" in res
+    assert "simkl" in res
+    assert "simkl" in res["trackers"]
+    mock_trakt.scrobble_stop.assert_awaited_once_with(media, progress=95.0)
+    mock_simkl.scrobble_stop.assert_awaited_once_with(media, progress=95.0)
+
+    # Rating dispatch
+    rate_res = await mt_mgr.dispatch_rating(media=media, trakt_client=mock_trakt, rating=10)
+    assert "trakt" in rate_res
+    assert "simkl" in rate_res
+    assert "simkl" in rate_res["trackers"]
+    mock_trakt.sync_ratings.assert_awaited_once()
+    mock_simkl.sync_ratings.assert_awaited_once_with(media, rating=10)
+
+
+def test_simkl_api_endpoints_and_views():
+    """Verify /api/simkl/status, /api/simkl/pin, /api/simkl/poll, and /auth/simkl routes."""
+    client = TestClient(app)
+
+    # 1. Demo Status
+    demo_resp = client.get("/api/simkl/status?demo=true")
+    assert demo_resp.status_code == 200
+    d_data = demo_resp.json()
+    assert d_data["enabled"] is True
+    assert d_data["configured"] is True
+    assert d_data["authenticated"] is True
+    assert d_data["user"] == "demo_viewer"
+
+    # 2. Live Status (public read)
+    live_resp = client.get("/api/simkl/status")
+    assert live_resp.status_code == 200
+
+    # 3. Auth Simkl page (Admin protected)
+    if Config.WEBHOOK_SECRET:
+        unauth_page = client.get("/auth/simkl")
+        assert unauth_page.status_code == 401
+
+        auth_page = client.get(f"/auth/simkl?token={Config.WEBHOOK_SECRET}")
+        assert auth_page.status_code == 200
+        assert "Simkl" in auth_page.text
+        assert "Device PIN Authorization" in auth_page.text
+    else:
+        auth_page = client.get("/auth/simkl")
+        assert auth_page.status_code == 200
+        assert "Simkl" in auth_page.text
+
+    # 4. Disconnect Simkl route
+    if Config.WEBHOOK_SECRET:
+        unauth_disc = client.post("/api/simkl/disconnect")
+        assert unauth_disc.status_code == 401
+
+        auth_disc = client.post(f"/api/simkl/disconnect?token={Config.WEBHOOK_SECRET}")
+        assert auth_disc.status_code == 200
+        assert auth_disc.json()["status"] == "ok"
+    else:
+        auth_disc = client.post("/api/simkl/disconnect")
+        assert auth_disc.status_code == 200
+        assert auth_disc.json()["status"] == "ok"
+
+
+def test_dashboard_renders_simkl_card():
+    """Verify that the dashboard template renders the Simkl Multi-Tracker card and modal."""
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert "Multi-Tracker Architecture" in html
+    assert "Simkl Integration" in html
+    assert "simkl-modal" in html
+    assert "openSimklModal" in html
+    assert "disconnectSimkl" in html
+
 
 
 

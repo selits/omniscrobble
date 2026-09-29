@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from app.clients.plex_api_client import PlexApiClient
 from app.clients.radarr_client import RadarrClient
+from app.clients.simkl_client import SimklClient
 from app.clients.sonarr_client import SonarrClient
 from app.clients.trakt_client import TraktClient
 from app.config import Config
@@ -125,6 +126,7 @@ class ArrBridgeManager:
         self,
         demo: bool = False,
         plex_client: Optional[PlexApiClient] = None,
+        simkl_client: Optional[SimklClient] = None,
     ) -> dict[str, Any]:
         """Return unified ecosystem health matrix for all media and tracker integrations."""
         if demo:
@@ -168,6 +170,16 @@ class ArrBridgeManager:
                     "version": "API v2",
                     "details": "Connected as @demo_viewer (84 days left)",
                     "icon": "trakt",
+                },
+                {
+                    "id": "simkl",
+                    "name": "Simkl",
+                    "category": "Tracker",
+                    "status": "connected",
+                    "badge": "Active",
+                    "version": "API v2",
+                    "details": "Connected as @demo_viewer (Dual-Scrobbler)",
+                    "icon": "simkl",
                 },
                 {
                     "id": "sonarr",
@@ -363,6 +375,43 @@ class ArrBridgeManager:
                 "details": "Set RADARR_URL and RADARR_API_KEY in .env",
                 "icon": "radarr",
             })
+
+        # 7. Simkl Multi-Tracker
+        if simkl_client:
+            simkl_conn = await simkl_client.check_connection()
+            if simkl_conn.get("authenticated") and simkl_conn.get("enabled"):
+                servers.append({
+                    "id": "simkl",
+                    "name": "Simkl",
+                    "category": "Tracker",
+                    "status": "connected",
+                    "badge": "Active",
+                    "version": "API v2",
+                    "details": f"Connected as @{simkl_conn.get('user') or 'user'}",
+                    "icon": "simkl",
+                })
+            elif simkl_conn.get("configured"):
+                servers.append({
+                    "id": "simkl",
+                    "name": "Simkl",
+                    "category": "Tracker",
+                    "status": "error" if simkl_conn.get("status") == "expired" else "unconfigured",
+                    "badge": "Auth Required" if simkl_conn.get("status") == "not_authenticated" else "Expired",
+                    "version": "API v2",
+                    "details": "Requires authorization at /auth/simkl",
+                    "icon": "simkl",
+                })
+            else:
+                servers.append({
+                    "id": "simkl",
+                    "name": "Simkl",
+                    "category": "Tracker",
+                    "status": "unconfigured",
+                    "badge": "Disabled",
+                    "version": "API v2",
+                    "details": "Set SIMKL_CLIENT_ID to enable multi-tracking",
+                    "icon": "simkl",
+                })
 
         healthy = sum(1 for s in servers if s["status"] in ("connected", "available"))
         return {

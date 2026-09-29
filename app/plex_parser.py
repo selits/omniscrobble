@@ -215,9 +215,9 @@ class ParsedMedia(BaseModel):
                 "movies": [movie_item]
             }
 
-    def to_trakt_rating_payload(self) -> dict[str, Any]:
+    def to_trakt_rating_payload(self, rating: Optional[int] = None) -> dict[str, Any]:
         """Convert to Trakt /sync/ratings payload format."""
-        rating_val = self.rating or 10
+        rating_val = rating if rating is not None else (self.rating or 10)
 
         if self.media_type == "episode":
             if self.ids:
