@@ -361,6 +361,69 @@ class SimklClient:
 
         return await self._post("/sync/ratings", payload)
 
+    async def get_all_items(
+        self, media_type: str = "movies", date_from: Optional[str] = None
+    ) -> dict[str, Any]:
+        """Fetch user's library items (completed, watching, plan_to_watch).
+
+        Args:
+            media_type: 'movies', 'shows', or 'anime'
+            date_from: Optional ISO timestamp or date for incremental changes
+        """
+        if not self.is_authenticated():
+            return {"error": "Not authenticated"}
+
+        endpoint = f"/sync/all-items/{media_type}"
+        params: dict[str, Any] = {"extended": "full"}
+        if date_from:
+            params["date_from"] = date_from
+
+        res = await self._get(endpoint, params=params)
+        return res if isinstance(res, dict) else {}
+
+    async def get_activities(self) -> dict[str, Any]:
+        """Fetch last activity timestamps for user's library."""
+        if not self.is_authenticated():
+            return {"error": "Not authenticated"}
+        res = await self._get("/sync/activities")
+        return res if isinstance(res, dict) else {}
+
+    async def bulk_sync_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Bulk add movies/shows/episodes to Simkl watched history."""
+        if not self.is_authenticated():
+            return {"status": "skipped", "reason": "not_authenticated"}
+        return await self._post("/sync/history", payload)
+
+    async def bulk_sync_ratings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Bulk add movie/show ratings to Simkl."""
+        if not self.is_authenticated():
+            return {"status": "skipped", "reason": "not_authenticated"}
+        return await self._post("/sync/ratings", payload)
+
+    async def _get(self, endpoint: str, params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Internal helper to execute authorized GET requests."""
+        url = f"{self.base_url}{endpoint}"
+        headers = self._get_headers(auth=True)
+        try:
+            resp = await self._client.get(url, params=params, headers=headers)
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except Exception:
+                    return {}
+            elif resp.status_code == 401:
+                logger.warning("Simkl authentication rejected (401 Unauthorized)")
+                return {"error": "unauthorized", "code": 401}
+            elif resp.status_code == 429:
+                logger.warning("Simkl rate limit reached (429 Too Many Requests)")
+                return {"error": "rate_limited", "code": 429}
+            else:
+                logger.warning("Simkl API error (%s) on %s: %s", resp.status_code, endpoint, resp.text)
+                return {"error": f"HTTP {resp.status_code}", "code": resp.status_code, "detail": resp.text}
+        except httpx.RequestError as e:
+            logger.error("Network error communicating with Simkl on %s: %s", endpoint, e)
+            return {"error": "network_error", "detail": str(e)}
+
     async def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Internal helper to execute authorized POST requests."""
         url = f"{self.base_url}{endpoint}"

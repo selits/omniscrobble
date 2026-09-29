@@ -56,7 +56,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal, #simkl-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal, #simkl-modal, #cross-sync-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -115,8 +115,9 @@
     <script>
     (function() {
         const initialShows = ["Fallout", "Fargo", "House of the Dragon", "Severance", "Sh\u014dgun", "Silo", "Slow Horses", "Succession", "Ted Lasso", "The Bear", "The Last of Us", "The White Lotus"];
-        const initialEvents = [{"timestamp": "2026-09-28 17:00:41", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 16:26:41", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:39:41", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 13:54:41", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 11:44:41", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 09:04:41", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
+        const initialEvents = [{"timestamp": "2026-09-28 17:16:49", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 16:42:49", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:55:49", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 14:10:49", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 12:00:49", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 09:20:49", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
         const initialReconciliation = [{"id": "movie:101", "type": "movie", "title": "Interstellar", "series_title": null, "season": null, "episode": null, "year": 2014, "rating_key": "101", "ids": {"imdb": "tt0816692", "tmdb": "157336"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}, {"id": "movie:102", "type": "movie", "title": "Dune: Part Two", "series_title": null, "season": null, "episode": null, "year": 2024, "rating_key": "102", "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "status": "rating_mismatch", "plex_watched": true, "trakt_watched": true, "plex_rating": 8.0, "trakt_rating": 9, "action_recommended": "sync_rating_to_plex"}, {"id": "episode:201", "type": "episode", "title": "Tomorrow", "series_title": "The Bear", "season": 3, "episode": 1, "year": 2024, "rating_key": "201", "ids": {"imdb": "tt27984852"}, "status": "plex_only", "plex_watched": true, "trakt_watched": false, "plex_rating": null, "trakt_rating": null, "action_recommended": "sync_to_trakt"}, {"id": "episode:202", "type": "episode", "title": "Felina", "series_title": "Breaking Bad", "season": 5, "episode": 16, "year": 2013, "rating_key": "202", "ids": {"imdb": "tt2301451"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}];
+        const initialCrossDiff = [{"id": "diff_movie_t2s_tt15239678", "media_type": "movie", "title": "Dune: Part Two", "year": 2024, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "watched_at": "2026-09-27T21:40:00Z"}, {"id": "diff_ep_t2s_tt11280740_s2e1", "media_type": "episode", "title": "S02E01", "year": 2025, "season": 2, "episode": 1, "show_title": "Severance", "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt11280740", "tvdb": "371980"}, "watched_at": "2026-09-28T02:15:00Z"}, {"id": "diff_movie_s2t_tt0245429", "media_type": "movie", "title": "Spirited Away", "year": 2001, "season": null, "episode": null, "show_title": null, "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt0245429", "tmdb": "129", "simkl": "2608"}, "watched_at": "2026-09-26T18:30:00Z"}, {"id": "diff_ep_s2t_tt29930773_s1e1", "media_type": "episode", "title": "S01E01", "year": 2023, "season": 1, "episode": 1, "show_title": "Frieren: Beyond Journey's End", "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt29930773", "tvdb": "424759", "simkl": "2029530"}, "watched_at": "2026-09-25T14:10:00Z"}, {"id": "diff_movie_rating_t2s_tt15398776", "media_type": "movie", "title": "Oppenheimer", "year": 2023, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "rating", "source_status": "10/10", "target_status": "unrated", "source_rating": 10, "target_rating": null, "ids": {"imdb": "tt15398776", "tmdb": "872585"}, "watched_at": null}, {"id": "diff_ep_rating_s2t_tt2560140_s4e28", "media_type": "episode", "title": "S04E28", "year": 2022, "season": 4, "episode": 28, "show_title": "Attack on Titan", "direction": "simkl_to_trakt", "sync_type": "rating", "source_status": "9/10", "target_status": "unrated", "source_rating": 9, "target_rating": null, "ids": {"imdb": "tt2560140", "tvdb": "267440", "simkl": "40316"}, "watched_at": null}];
         const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "The Bear", "year": 2022, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Slow Horses", "year": 2022, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Fargo", "year": 2014, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "Ted Lasso", "year": 2020, "status": "ended"}, {"title": "Silo", "year": 2023, "status": "continuing"}, {"title": "House of the Dragon", "year": 2022, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
         const demoLogs = ["Sep 28 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 28 08:15:32 mediaserver python[5678]: 2026-09-28 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'The Bear S03E01 - Tomorrow' by user 'demo_viewer'", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for The Bear S03E01", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'The Bear S03E01 - Tomorrow' (progress: 100.0%)", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:55:01 mediaserver python[5678]: 2026-09-28 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 28 08:55:02 mediaserver python[5678]: 2026-09-28 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 28 09:02:45 mediaserver python[5678]: 2026-09-28 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 09:18:20 mediaserver python[5678]: 2026-09-28 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 28 09:18:21 mediaserver python[5678]: 2026-09-28 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
 
@@ -124,6 +125,7 @@
             shows: [...initialShows],
             events: [...initialEvents],
             reconciliation: [...initialReconciliation],
+            crossDiff: [...initialCrossDiff],
             movies_enabled: false,
             playback: {"state": "playing", "title": "Severance S02E01 - Hello, Kier", "username": "demo_viewer", "player": "Living Room Apple TV", "device": "tvOS 18.2", "progress": 68.4, "trakt_url": "https://trakt.tv/search?q=Severance"}
         };
@@ -409,6 +411,52 @@
                     ]
                 });
             }
+            if (path.endsWith('/api/cross-sync/status')) {
+                const t2s = clientState.crossDiff.filter(d => d.direction === 'trakt_to_simkl').length;
+                const s2t = clientState.crossDiff.filter(d => d.direction === 'simkl_to_trakt').length;
+                return jsonResp({
+                    configured: true,
+                    trakt_authenticated: true,
+                    simkl_authenticated: true,
+                    is_scanning: false,
+                    is_syncing: false,
+                    last_scan_time: Date.now() / 1000 - 300,
+                    last_sync_time: Date.now() / 1000 - 1800,
+                    diff_count: clientState.crossDiff.length,
+                    diff_by_direction: {
+                        trakt_to_simkl: t2s,
+                        simkl_to_trakt: s2t
+                    },
+                    sync_progress: { total: clientState.crossDiff.length, current: clientState.crossDiff.length, success: clientState.crossDiff.length, failed: 0, in_progress: false, status: "idle", message: "" }
+                });
+            }
+            if (path.includes('/api/cross-sync/diff') || path.includes('/api/cross-sync/scan')) {
+                return jsonResp({
+                    status: "ok",
+                    diff: clientState.crossDiff,
+                    count: clientState.crossDiff.length
+                });
+            }
+            if (path.endsWith('/api/cross-sync/execute')) {
+                const count = clientState.crossDiff.length;
+                clientState.crossDiff = [];
+                return jsonResp({
+                    status: "completed",
+                    message: "Successfully synchronized " + count + " cross-tracker items (Demo Mode).",
+                    progress: { total: count, current: count, success: count, failed: 0, in_progress: false, status: "completed", message: "Done" }
+                });
+            }
+            if (path.endsWith('/api/cross-sync/progress')) {
+                return jsonResp({
+                    total: 6,
+                    current: 6,
+                    success: 6,
+                    failed: 0,
+                    in_progress: false,
+                    status: "completed",
+                    message: "Sync complete!"
+                });
+            }
 
             return jsonResp({ status: 'ok', mode: 'simulated' });
         };
@@ -643,12 +691,13 @@
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span>Simkl Dual-Scrobbler: <strong>Active</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
+                <span>Cross-Tracker Sync: <strong>Ready</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Zero-Latency Async Task Dispatch: <strong>Enabled</strong></span>
+                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
-            <div style="display:flex;gap:8px;align-items:center;">
-                <button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>
+                <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
             </div>
         </div>
     </div>
@@ -856,7 +905,7 @@
                     <tbody id="events-tbody">
                         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 17:00:41</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 17:16:49</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Severance S02E01 - Hello, Kier</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -866,7 +915,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 16:26:41</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 16:42:49</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">The Bear S03E01 - Tomorrow</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -876,7 +925,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:39:41</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:55:49</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Dune: Part Two (2024)</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -886,7 +935,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 13:54:41</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 14:10:49</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Succession S04E03 - Connor&#x27;s Wedding</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_partner</span></div></td>
@@ -896,7 +945,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 11:44:41</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 12:00:49</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Slow Horses S04E01 - Identity Theft</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -906,7 +955,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 09:04:41</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 09:20:49</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Shōgun S01E01 - Anjin</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -923,7 +972,7 @@
         <div class="footer">
             <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="color: #94a3b8; font-weight: 500;">Omniscrobble</span>
-                <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v1.7.0</span>
+                <span style="background: #1e293b; border: 1px solid #334155; color: #94a3b8; padding: 2px 7px; border-radius: 4px; font-weight: 600; font-size: 11px;">v1.8.0</span>
             </div>
             <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;">
                 <a href="https://github.com/selits/omniscrobble" target="_blank" rel="noopener noreferrer" style="color: #94a3b8; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-weight: 500; transition: color 0.15s;" onmouseover="this.style.color='#f8fafc'" onmouseout="this.style.color='#94a3b8'">
@@ -1217,6 +1266,77 @@
             </p>
             <div id="simkl-modal-content" style="display:flex;flex-direction:column;gap:12px;">
                 <div style="color:#94a3b8;text-align:center;padding:20px;font-size:13px;">Checking Simkl status...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cross-Tracker Sync (Trakt <-> Simkl) Modal -->
+    <div id="cross-sync-modal" onclick="if(event.target===this)closeCrossSyncModal()">
+        <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>🔄</span> Cross-Tracker Reconciliation (Trakt &harr; Simkl)
+                    </h3>
+                    <span id="cross-sync-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">Loading...</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button onclick="fetchCrossSyncDiscrepancies(true)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;" title="Rescan Trakt and Simkl">🔄 Rescan</button>
+                    <button onclick="closeCrossSyncModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Compare your Trakt and Simkl libraries to reconcile watch history and sync user ratings bi-directionally across Movies, TV Shows, and Anime.
+            </p>
+
+            <!-- Filter tabs -->
+            <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+                <button type="button" class="btn-sm cross-sync-tab" onclick="filterCrossSync('all', this)" style="background:#0284c7;color:#fff;">All (<span id="cross-count-all">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab" onclick="filterCrossSync('trakt_to_simkl', this)" style="background:#1e293b;border:1px solid #334155;">Trakt &rarr; Simkl (<span id="cross-count-t2s">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab" onclick="filterCrossSync('simkl_to_trakt', this)" style="background:#1e293b;border:1px solid #334155;">Simkl &rarr; Trakt (<span id="cross-count-s2t">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab" onclick="filterCrossSync('rating', this)" style="background:#1e293b;border:1px solid #334155;">Ratings (<span id="cross-count-ratings">0</span>)</button>
+            </div>
+
+            <!-- Reconciliation Progress Banner -->
+            <div id="cross-sync-progress-box" style="display:none;background:#0f172a;border:1px solid #0284c7;border-radius:8px;padding:12px;margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:#e2e8f0;margin-bottom:6px;">
+                    <span id="cross-sync-progress-msg" style="font-weight:600;">Synchronizing items...</span>
+                    <span id="cross-sync-progress-stats">0%</span>
+                </div>
+                <div style="background:#1e293b;border-radius:9999px;height:8px;overflow:hidden;">
+                    <div id="cross-sync-progress-bar" style="background:#0284c7;height:100%;width:0%;transition:width 0.3s ease;"></div>
+                </div>
+            </div>
+
+            <!-- Discrepancies Table -->
+            <div class="table-container" style="flex:1;overflow-y:auto;max-height:420px;border:1px solid #334155;border-radius:8px;">
+                <table style="width:100%;">
+                    <thead>
+                        <tr>
+                            <th style="width:36px;text-align:center;"><input type="checkbox" id="cross-sync-select-all" onchange="toggleSelectAllCrossSync(this)" /></th>
+                            <th>Direction</th>
+                            <th>Media Item</th>
+                            <th>Type</th>
+                            <th>Source Status</th>
+                            <th>Target Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cross-sync-tbody">
+                        <tr><td colspan="6" style="text-align:center;padding:24px;color:#94a3b8;">Loading cross-tracker discrepancies...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Footer Actions -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:8px;">
+                <div style="font-size:12px;color:#94a3b8;">
+                    <span id="cross-sync-selected-count">0</span> items selected
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button type="button" onclick="closeCrossSyncModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
+                    <button type="button" id="cross-sync-selected-btn" onclick="executeSelectedCrossSync()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;" disabled>⚡ Sync Selected</button>
+                    <button type="button" id="cross-sync-all-btn" onclick="executeAllCrossSync()" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Sync All Both Ways</button>
+                </div>
             </div>
         </div>
     </div>
@@ -2708,6 +2828,259 @@ SIMKL_ENABLED=true</pre>
             } catch (e) {
                 alert('Error: ' + e.message);
             }
+        }
+
+        // -------------------------------------------------------------
+        // Cross-Tracker Synchronization (Trakt <-> Simkl)
+        // -------------------------------------------------------------
+        let crossSyncDiffItems = [];
+        let crossSyncSelectedIds = new Set();
+        let crossSyncActiveFilter = 'all';
+        let crossSyncProgressTimer = null;
+
+        function openCrossSyncModal(force = false) {
+            const modal = document.getElementById('cross-sync-modal');
+            if (!modal) return;
+            modal.style.display = 'flex';
+            fetchCrossSyncDiscrepancies(force);
+        }
+
+        function closeCrossSyncModal() {
+            const modal = document.getElementById('cross-sync-modal');
+            if (modal) modal.style.display = 'none';
+            if (crossSyncProgressTimer) {
+                clearInterval(crossSyncProgressTimer);
+                crossSyncProgressTimer = null;
+            }
+        }
+
+        async function fetchCrossSyncDiscrepancies(force = false) {
+            const tbody = document.getElementById('cross-sync-tbody');
+            const badge = document.getElementById('cross-sync-count-badge');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#38bdf8;">Scanning Trakt & Simkl libraries...</td></tr>';
+            }
+            if (badge) badge.innerText = 'Scanning...';
+
+            try {
+                const url = (isDemo ? '/api/cross-sync/diff?demo=true' : '/api/cross-sync/diff') + (force ? '?force=true' : '');
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    crossSyncDiffItems = data.diff || [];
+                    crossSyncSelectedIds.clear();
+                    updateCrossSyncCounts();
+                    renderCrossSyncTable();
+                } else {
+                    const err = await res.json();
+                    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:#ef4444;">Failed to scan discrepancies: ${escapeHtml(err.detail || 'Error')}</td></tr>`;
+                    if (badge) badge.innerText = 'Error';
+                }
+            } catch (e) {
+                if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:#ef4444;">Error connecting to server: ${escapeHtml(e.message)}</td></tr>`;
+                if (badge) badge.innerText = 'Error';
+            }
+        }
+
+        function updateCrossSyncCounts() {
+            const allCount = crossSyncDiffItems.length;
+            const t2sCount = crossSyncDiffItems.filter(i => i.direction === 'trakt_to_simkl').length;
+            const s2tCount = crossSyncDiffItems.filter(i => i.direction === 'simkl_to_trakt').length;
+            const ratingCount = crossSyncDiffItems.filter(i => i.sync_type === 'rating').length;
+
+            const cAll = document.getElementById('cross-count-all');
+            const cT2s = document.getElementById('cross-count-t2s');
+            const cS2t = document.getElementById('cross-count-s2t');
+            const cRatings = document.getElementById('cross-count-ratings');
+            const badge = document.getElementById('cross-sync-count-badge');
+
+            if (cAll) cAll.innerText = allCount;
+            if (cT2s) cT2s.innerText = t2sCount;
+            if (cS2t) cS2t.innerText = s2tCount;
+            if (cRatings) cRatings.innerText = ratingCount;
+            if (badge) badge.innerText = `${allCount} Discrepanc${allCount === 1 ? 'y' : 'ies'}`;
+        }
+
+        function filterCrossSync(filterType, tabBtn) {
+            crossSyncActiveFilter = filterType;
+            document.querySelectorAll('.cross-sync-tab').forEach(b => {
+                b.style.background = '#1e293b';
+                b.style.color = '#e2e8f0';
+                b.style.border = '1px solid #334155';
+            });
+            if (tabBtn) {
+                tabBtn.style.background = '#0284c7';
+                tabBtn.style.color = '#fff';
+                tabBtn.style.border = 'none';
+            }
+            renderCrossSyncTable();
+        }
+
+        function renderCrossSyncTable() {
+            const tbody = document.getElementById('cross-sync-tbody');
+            if (!tbody) return;
+
+            let items = crossSyncDiffItems;
+            if (crossSyncActiveFilter === 'trakt_to_simkl') {
+                items = items.filter(i => i.direction === 'trakt_to_simkl');
+            } else if (crossSyncActiveFilter === 'simkl_to_trakt') {
+                items = items.filter(i => i.direction === 'simkl_to_trakt');
+            } else if (crossSyncActiveFilter === 'rating') {
+                items = items.filter(i => i.sync_type === 'rating');
+            }
+
+            if (items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:28px;color:#10b981;font-weight:500;">✓ In sync! No cross-tracker discrepancies in this category.</td></tr>';
+                updateCrossSyncSelectedCount();
+                return;
+            }
+
+            let html = '';
+            for (const item of items) {
+                const isChecked = crossSyncSelectedIds.has(item.id);
+                const titleStr = item.media_type === 'episode'
+                    ? `${escapeHtml(item.show_title || '')} S${String(item.season || 1).padStart(2, '0')}E${String(item.episode || 1).padStart(2, '0')} &bull; ${escapeHtml(item.title || '')}`
+                    : `${escapeHtml(item.title || '')} (${item.year || 'N/A'})`;
+
+                const dirBadge = item.direction === 'trakt_to_simkl'
+                    ? '<span style="background:#1e1b4b;border:1px solid #4338ca;color:#a5b4fc;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Trakt &rarr; Simkl</span>'
+                    : '<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Simkl &rarr; Trakt</span>';
+
+                const typeBadge = item.sync_type === 'rating'
+                    ? '<span style="background:#451a03;border:1px solid #b45309;color:#fde68a;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;">Rating</span>'
+                    : '<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:10px;">' + (item.media_type || 'Media') + '</span>';
+
+                html += `
+                    <tr style="border-bottom:1px solid #1e293b;">
+                        <td style="text-align:center;padding:10px 14px;">
+                            <input type="checkbox" data-id="${escapeHtml(item.id)}" ${isChecked ? 'checked' : ''} onchange="toggleCrossSyncItem(this, '${escapeHtml(item.id)}')" />
+                        </td>
+                        <td style="padding:10px 14px;white-space:nowrap;">${dirBadge}</td>
+                        <td style="padding:10px 14px;color:#f8fafc;font-weight:500;">${titleStr}</td>
+                        <td style="padding:10px 14px;">${typeBadge}</td>
+                        <td style="padding:10px 14px;color:#10b981;font-weight:600;">${escapeHtml(item.source_status || 'watched')}</td>
+                        <td style="padding:10px 14px;color:#64748b;">${escapeHtml(item.target_status || 'unwatched')}</td>
+                    </tr>
+                `;
+            }
+            tbody.innerHTML = html;
+            updateCrossSyncSelectedCount();
+        }
+
+        function toggleCrossSyncItem(cb, id) {
+            if (cb.checked) {
+                crossSyncSelectedIds.add(id);
+            } else {
+                crossSyncSelectedIds.delete(id);
+            }
+            updateCrossSyncSelectedCount();
+        }
+
+        function toggleSelectAllCrossSync(masterCb) {
+            let items = crossSyncDiffItems;
+            if (crossSyncActiveFilter === 'trakt_to_simkl') {
+                items = items.filter(i => i.direction === 'trakt_to_simkl');
+            } else if (crossSyncActiveFilter === 'simkl_to_trakt') {
+                items = items.filter(i => i.direction === 'simkl_to_trakt');
+            } else if (crossSyncActiveFilter === 'rating') {
+                items = items.filter(i => i.sync_type === 'rating');
+            }
+
+            if (masterCb.checked) {
+                items.forEach(i => crossSyncSelectedIds.add(i.id));
+            } else {
+                items.forEach(i => crossSyncSelectedIds.delete(i.id));
+            }
+            renderCrossSyncTable();
+        }
+
+        function updateCrossSyncSelectedCount() {
+            const count = crossSyncSelectedIds.size;
+            const countSpan = document.getElementById('cross-sync-selected-count');
+            const syncBtn = document.getElementById('cross-sync-selected-btn');
+            if (countSpan) countSpan.innerText = count;
+            if (syncBtn) {
+                syncBtn.disabled = count === 0;
+                syncBtn.innerText = `⚡ Sync Selected (${count})`;
+            }
+        }
+
+        async function executeSelectedCrossSync() {
+            if (crossSyncSelectedIds.size === 0) return;
+            const ids = Array.from(crossSyncSelectedIds);
+            await triggerCrossSyncExecution({ item_ids: ids });
+        }
+
+        async function executeAllCrossSync() {
+            await triggerCrossSyncExecution({ direction: 'both' });
+        }
+
+        async function triggerCrossSyncExecution(payload) {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+
+            const pBox = document.getElementById('cross-sync-progress-box');
+            const pMsg = document.getElementById('cross-sync-progress-msg');
+            const pBar = document.getElementById('cross-sync-progress-bar');
+            const pStats = document.getElementById('cross-sync-progress-stats');
+
+            if (pBox) pBox.style.display = 'block';
+            if (pMsg) pMsg.innerText = 'Starting cross-tracker synchronization...';
+            if (pBar) pBar.style.width = '10%';
+            if (pStats) pStats.innerText = 'Initializing';
+
+            try {
+                const url = isDemo ? '/api/cross-sync/execute?demo=true' : '/api/cross-sync/execute';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+
+                if (isDemo || data.status === 'completed') {
+                    if (pBar) pBar.style.width = '100%';
+                    if (pStats) pStats.innerText = '100%';
+                    if (pMsg) pMsg.innerText = data.message || 'Sync complete!';
+                    setTimeout(() => {
+                        fetchCrossSyncDiscrepancies(true);
+                    }, 1200);
+                } else {
+                    pollCrossSyncProgress();
+                }
+            } catch (e) {
+                if (pMsg) pMsg.innerText = `Sync failed: ${escapeHtml(e.message)}`;
+            }
+        }
+
+        function pollCrossSyncProgress() {
+            if (crossSyncProgressTimer) clearInterval(crossSyncProgressTimer);
+            crossSyncProgressTimer = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/cross-sync/progress');
+                    const prog = await res.json();
+                    const pBar = document.getElementById('cross-sync-progress-bar');
+                    const pMsg = document.getElementById('cross-sync-progress-msg');
+                    const pStats = document.getElementById('cross-sync-progress-stats');
+
+                    if (prog.total > 0) {
+                        const pct = Math.round((prog.current / prog.total) * 100);
+                        if (pBar) pBar.style.width = `${pct}%`;
+                        if (pStats) pStats.innerText = `${pct}% (${prog.current}/${prog.total})`;
+                    }
+                    if (pMsg) pMsg.innerText = prog.message || 'Synchronizing...';
+
+                    if (!prog.in_progress) {
+                        clearInterval(crossSyncProgressTimer);
+                        crossSyncProgressTimer = null;
+                        setTimeout(() => {
+                            fetchCrossSyncDiscrepancies(true);
+                        }, 1200);
+                    }
+                } catch (e) {}
+            }, 1000);
         }
 
         // PWA Service Worker Registration
