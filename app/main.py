@@ -43,6 +43,7 @@ from app.services.multi_tracker import MultiTrackerManager
 from app.services.loop_prevention import loop_prevention
 from app.services.reverse_sync_manager import reverse_sync_mgr
 from app.services.arr_bridge import arr_bridge
+from app.services.cross_tracker_sync import CrossTrackerSyncManager
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
@@ -61,6 +62,7 @@ sonarr = SonarrClient()
 radarr = RadarrClient()
 simkl = SimklClient(Config)
 multi_tracker = MultiTrackerManager(Config, simkl_client=simkl)
+cross_tracker_sync = CrossTrackerSyncManager(trakt_client=trakt, simkl_client=simkl)
 user_mgr.set_default_client(trakt)
 reverse_sync_mgr.set_trakt_client(trakt)
 arr_bridge.set_trakt_client(trakt)
@@ -278,7 +280,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "1.7.0"
+APP_VERSION = "1.8.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -962,7 +964,7 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>"""
 
 SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v1.7.0';
+const CACHE_NAME = 'omniscrobble-v1.8.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -1565,6 +1567,61 @@ async def get_ecosystem_status(request: Request):
     """Return live status matrix for all connected media servers, tracker, and arr engines."""
     is_demo = request.query_params.get("demo") == "true"
     return await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex, simkl_client=simkl)
+
+
+class CrossSyncExecuteRequest(BaseModel):
+    item_ids: Optional[list[str]] = None
+    direction: str = "both"  # "both", "trakt_to_simkl", "simkl_to_trakt"
+
+
+@app.get("/api/cross-sync/status")
+async def get_cross_sync_status(request: Request):
+    """Return operational status and reconciliation metrics for Trakt <-> Simkl."""
+    is_demo = request.query_params.get("demo") == "true"
+    return await cross_tracker_sync.get_status(demo=is_demo)
+
+
+@app.get("/api/cross-sync/diff")
+async def get_cross_sync_diff(request: Request, force: bool = False):
+    """Scan and return cross-tracker discrepancies between Trakt and Simkl."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        demo_diff = demo_mgr.get_demo_cross_tracker_diff()
+        return {"status": "ok", "diff": demo_diff, "count": len(demo_diff)}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    diff = await cross_tracker_sync.scan_discrepancies(force=force)
+    return {"status": "ok", "diff": diff, "count": len(diff)}
+
+
+@app.post("/api/cross-sync/scan")
+async def scan_cross_sync_discrepancies(request: Request):
+    """Trigger an on-demand scan of discrepancies between Trakt and Simkl."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        demo_diff = demo_mgr.get_demo_cross_tracker_diff()
+        return {"status": "ok", "diff": demo_diff, "count": len(demo_diff)}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    diff = await cross_tracker_sync.scan_discrepancies(force=True)
+    return {"status": "ok", "diff": diff, "count": len(diff)}
+
+
+@app.post("/api/cross-sync/execute")
+async def execute_cross_sync(payload: CrossSyncExecuteRequest, request: Request):
+    """Execute cross-tracker reconciliation for selected items or all in a direction."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, demo=True)
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction)
+
+
+@app.get("/api/cross-sync/progress")
+async def get_cross_sync_progress(request: Request):
+    """Poll live cross-tracker sync progress."""
+    return cross_tracker_sync._sync_progress
 
 
 class TestWebhookRequest(BaseModel):
@@ -2491,6 +2548,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     else:
         simkl_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Manage Simkl</button>'
 
+    cross_sync_btn = ""
+    if simkl_auth and (is_demo or trakt.is_authenticated()):
+        if is_admin:
+            cross_sync_btn = '<button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>'
+        else:
+            cross_sync_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Reconcile</button>'
+
     simkl_card_html = f"""
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
@@ -2502,17 +2566,18 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Broadcast playback scrobbles and ratings across both Trakt and Simkl simultaneously. Perfect for Anime, TV shows, and movie watch histories with decoupled, zero-latency async dispatch.
+            Broadcast playback scrobbles and ratings across both Trakt and Simkl simultaneously. Cross-tracker two-way sync reconciles historical watch states and ratings bi-directionally across Movies, TV Shows, and Anime.
         </p>
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span>Simkl Dual-Scrobbler: <strong>{"Active" if simkl_auth else "Ready to link" if simkl_cfg else "Disabled in .env"}</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
+                <span>Cross-Tracker Sync: <strong>{"Ready" if simkl_auth and (is_demo or trakt.is_authenticated()) else "Requires Trakt + Simkl Auth"}</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Zero-Latency Async Task Dispatch: <strong>Enabled</strong></span>
+                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
-            <div style="display:flex;gap:8px;align-items:center;">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                {cross_sync_btn}
                 {simkl_action_btn}
                 <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">PIN Portal ↗</a>
             </div>

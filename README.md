@@ -19,8 +19,9 @@ A lightweight, modern Python service that receives media server webhooks (Plex, 
 ## 🌟 Features
 
 - **Multi-Tracker Architecture & Simkl Dual-Tracking**: Broadcast playback scrobbles (start, pause, stop) and ratings across both Trakt and **Simkl** simultaneously. Supports Movies, TV Shows, and Anime with decoupled zero-latency background task dispatch and OAuth Device PIN browser activation (`/auth/simkl`).
+- **Cross-Tracker Watched History Importer & Two-Way Sync**: Full bi-directional library reconciliation and bulk synchronization between **Trakt.tv** and **Simkl.com** (`/api/cross-sync/*`). Compare full libraries and user ratings across Movies, TV Shows, and Anime, review discrepancies in an interactive modal with direction and type filters, and execute 1-click selective or complete sync with real-time progress bars.
 - **Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to Sonarr and Radarr for automated media acquisition, intelligent deduplication against existing libraries, automated root folder/quality profile discovery, and immediate download searches.
-- **Multi-Server Ecosystem Dashboard**: Real-time multi-service observability widget monitoring live connectivity, library counts, latency, and operational health across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr.
+- **Multi-Server Ecosystem Dashboard**: Real-time multi-service observability widget monitoring live connectivity, library counts, latency, and operational health across Plex, Jellyfin, Emby, Trakt, Simkl, Sonarr, and Radarr.
 - **Two-Way Synchronization & Library Reconciliation**: Bi-directional matching of watched history and ratings between media servers (Plex) and Trakt (`/api/sync/*`), interactive discrepancy diff table with 1-click or selective reconciliation, automated periodic background sync, and smart TTL-based scrobble loop prevention.
 - **Universal Webhook Ingestion**: Native webhook support for **Plex** (`/webhook`), **Jellyfin** (`/webhook/jellyfin`), and **Emby** (`/webhook/emby`), standardizing metadata, provider IDs (IMDb, TMDb, TVDb), and playback states into a unified scrobble pipeline.
 - **Granular Scrobble Thresholds**: Configurable media-specific thresholds — set `EPISODE_SCROBBLE_THRESHOLD=80` for TV episodes (allowing credit skipping) and `MOVIE_SCROBBLE_THRESHOLD=90` for feature films (preventing premature scrobbles during climaxes).
@@ -403,6 +404,11 @@ If you prefer running in a container:
 | **`/api/simkl/poll`** | `POST` | **Poll Device PIN**: Check status of pending Simkl device PIN authorization (Admin only). |
 | **`/api/simkl/disconnect`** | `POST` | **Disconnect Simkl**: Unlink Simkl account and delete local OAuth credentials (Admin only). |
 | **`/auth/simkl`** | `GET` | **Simkl Authorization Portal**: Dedicated web portal for Device PIN activation (Admin only). |
+| **`/api/cross-sync/status`** | `GET` | **Cross-Sync Status**: Real-time reconciliation status and discrepancy counts between Trakt and Simkl. |
+| **`/api/cross-sync/diff`** | `GET` | **Cross-Tracker Diff**: Scanned watched and rating discrepancies between Trakt and Simkl (Admin only). |
+| **`/api/cross-sync/scan`** | `POST` | **Scan Discrepancies**: Trigger on-demand comparison between Trakt and Simkl libraries (Admin only). |
+| **`/api/cross-sync/execute`** | `POST` | **Execute Cross-Sync**: Reconcile selected items or all items bi-directionally (Admin only). |
+| **`/api/cross-sync/progress`** | `GET` | **Cross-Sync Progress**: Live progress percentage and batch status for active sync jobs. |
 | **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
 | **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
 
@@ -711,6 +717,7 @@ omniscrobble/
 │   ├── services/            # Core business logic services
 │   │   ├── arr_bridge.py       # Content Bridge manager for Trakt watchlist sync & ecosystem health
 │   │   ├── cowatch_manager.py  # Watch Together whitelist & dual-scrobble rules engine
+│   │   ├── cross_tracker_sync.py # Trakt <-> Simkl reconciliation & bi-directional sync engine
 │   │   ├── demo_manager.py     # Air-gapped mock playback, stats, and activity generator
 │   │   ├── log_manager.py      # Systemd journalctl reader, in-memory ring buffer & secret redaction
 │   │   ├── loop_prevention.py  # Thread-safe TTL cache for echo loop suppression
@@ -776,10 +783,17 @@ Omniscrobble is developed with a modular multi-platform architecture. Current an
   - Decoupled asynchronous background task dispatch with zero playback latency impact.
   - Interactive Simkl Multi-Tracker card (`{{SIMKL_CARD}}`) and modal (`#simkl-modal`) on the dashboard.
   - Ecosystem status matrix integration (`/api/ecosystem`) monitoring Simkl health alongside media servers and arr acquisition.
-- **v1.8.0 (Milestone 5 — Up Next)**:
+- **v1.8.0 (Cross-Tracker Importer & Two-Way Sync — Completed)**:
+  - Cross-Tracker library reconciliation and sync engine (`cross_tracker_sync.py`).
+  - Bi-directional watch history and rating import between Trakt and Simkl across Movies, TV Shows, and Anime.
+  - Dedicated Cross-Tracker Reconciliation modal (`#cross-sync-modal`) with direction toggles, type filters, and live progress bar.
+  - Simkl bulk sync API client enhancements (`get_all_items`, `get_activities`, `bulk_sync_history`, `bulk_sync_ratings`).
+  - REST API endpoints (`/api/cross-sync/status`, `/api/cross-sync/diff`, `/api/cross-sync/scan`, `/api/cross-sync/execute`, `/api/cross-sync/progress`).
+- **v1.9.0 (Milestone 5 — Up Next)**:
+  - Anime tracking integration with **MyAnimeList** and **AniList**.
   - Dynamic In-App Configuration Editor (adjust thresholds, library exclusions, and notifications without restarting).
 - **Future Horizons**:
-  - Anime tracking integration with **MyAnimeList** and **AniList**.
+  - Direct P2P sync between distributed Omniscrobble instances.
 
 ---
 

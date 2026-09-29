@@ -375,12 +375,13 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span>Simkl Dual-Scrobbler: <strong>Active</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
+                <span>Cross-Tracker Sync: <strong>Ready</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Zero-Latency Async Task Dispatch: <strong>Enabled</strong></span>
+                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
-            <div style="display:flex;gap:8px;align-items:center;">
-                <button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>
+                <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
             </div>
         </div>
     </div>
@@ -539,6 +540,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         const initialShows = {json.dumps(demo_shows)};
         const initialEvents = {json.dumps(demo_events)};
         const initialReconciliation = {json.dumps(demo_reconciliation)};
+        const initialCrossDiff = {json.dumps(demo_mgr.get_demo_cross_tracker_diff())};
         const sonarrCatalog = {json.dumps(sonarr_catalog)};
         const demoLogs = {json.dumps(demo_logs)};
 
@@ -546,6 +548,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             shows: [...initialShows],
             events: [...initialEvents],
             reconciliation: [...initialReconciliation],
+            crossDiff: [...initialCrossDiff],
             movies_enabled: false,
             playback: {json.dumps(demo_playback)}
         }};
@@ -829,6 +832,52 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                         {{ id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" }},
                         {{ id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }}
                     ]
+                }});
+            }}
+            if (path.endsWith('/api/cross-sync/status')) {{
+                const t2s = clientState.crossDiff.filter(d => d.direction === 'trakt_to_simkl').length;
+                const s2t = clientState.crossDiff.filter(d => d.direction === 'simkl_to_trakt').length;
+                return jsonResp({{
+                    configured: true,
+                    trakt_authenticated: true,
+                    simkl_authenticated: true,
+                    is_scanning: false,
+                    is_syncing: false,
+                    last_scan_time: Date.now() / 1000 - 300,
+                    last_sync_time: Date.now() / 1000 - 1800,
+                    diff_count: clientState.crossDiff.length,
+                    diff_by_direction: {{
+                        trakt_to_simkl: t2s,
+                        simkl_to_trakt: s2t
+                    }},
+                    sync_progress: {{ total: clientState.crossDiff.length, current: clientState.crossDiff.length, success: clientState.crossDiff.length, failed: 0, in_progress: false, status: "idle", message: "" }}
+                }});
+            }}
+            if (path.includes('/api/cross-sync/diff') || path.includes('/api/cross-sync/scan')) {{
+                return jsonResp({{
+                    status: "ok",
+                    diff: clientState.crossDiff,
+                    count: clientState.crossDiff.length
+                }});
+            }}
+            if (path.endsWith('/api/cross-sync/execute')) {{
+                const count = clientState.crossDiff.length;
+                clientState.crossDiff = [];
+                return jsonResp({{
+                    status: "completed",
+                    message: "Successfully synchronized " + count + " cross-tracker items (Demo Mode).",
+                    progress: {{ total: count, current: count, success: count, failed: 0, in_progress: false, status: "completed", message: "Done" }}
+                }});
+            }}
+            if (path.endsWith('/api/cross-sync/progress')) {{
+                return jsonResp({{
+                    total: 6,
+                    current: 6,
+                    success: 6,
+                    failed: 0,
+                    in_progress: false,
+                    status: "completed",
+                    message: "Sync complete!"
                 }});
             }}
 

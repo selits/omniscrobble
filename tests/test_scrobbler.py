@@ -2242,7 +2242,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v1.7.0" in html
+    assert "v1.8.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -4746,6 +4746,179 @@ def test_dashboard_renders_simkl_card():
     assert "simkl-modal" in html
     assert "openSimklModal" in html
     assert "disconnectSimkl" in html
+
+
+@pytest.mark.asyncio
+async def test_simkl_client_all_items_and_bulk_sync(tmp_path):
+    """Verify SimklClient get_all_items, get_activities, bulk_sync_history, and bulk_sync_ratings."""
+    from app.clients.simkl_client import SimklClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "/sync/all-items/movies" in url_str:
+            return httpx.Response(200, json={"movies": [{"movie": {"title": "Inception", "year": 2010, "ids": {"imdb": "tt1375666"}}, "status": "completed"}]})
+        elif "/sync/activities" in url_str:
+            return httpx.Response(200, json={"all": "2026-09-28T12:00:00Z", "movies": {"completed": "2026-09-28T12:00:00Z"}})
+        elif "/sync/history" in url_str and request.method == "POST":
+            return httpx.Response(200, json={"status": "success", "added": {"movies": 1}})
+        elif "/sync/ratings" in url_str and request.method == "POST":
+            return httpx.Response(200, json={"status": "success", "rated": {"movies": 1}})
+        return httpx.Response(404, json={"error": "not found"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as async_client:
+        tokens_file = tmp_path / "simkl_tokens.json"
+        client = SimklClient(client=async_client, tokens_file=tokens_file, client_id="test_client_id")
+        client.access_token = "valid_token"
+
+        # 1. get_all_items
+        items = await client.get_all_items("movies")
+        assert "movies" in items
+        assert items["movies"][0]["movie"]["title"] == "Inception"
+
+        # 2. get_activities
+        act = await client.get_activities()
+        assert "all" in act
+
+        # 3. bulk_sync_history
+        hist_res = await client.bulk_sync_history({"movies": [{"title": "Dune", "year": 2021}]})
+        assert hist_res.get("status") == "success"
+
+        # 4. bulk_sync_ratings
+        rate_res = await client.bulk_sync_ratings({"movies": [{"title": "Dune", "rating": 10}]})
+        assert rate_res.get("status") == "success"
+
+
+@pytest.mark.asyncio
+async def test_cross_tracker_sync_manager_scan_and_execution():
+    """Verify CrossTrackerSyncManager discrepancy detection and bi-directional reconciliation."""
+    import asyncio
+    from app.services.cross_tracker_sync import CrossTrackerSyncManager
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_trakt = MagicMock()
+    mock_trakt.is_authenticated.return_value = True
+    mock_trakt.get_watched_movies = AsyncMock(return_value=[
+        {"movie": {"title": "Trakt Movie Only", "year": 2024, "ids": {"imdb": "tt9999001"}}, "last_watched_at": "2026-09-20T00:00:00Z"},
+        {"movie": {"title": "Shared Movie", "year": 2020, "ids": {"imdb": "tt9999002"}}, "last_watched_at": "2026-09-21T00:00:00Z"},
+    ])
+    mock_trakt.get_watched_shows = AsyncMock(return_value=[
+        {
+            "show": {"title": "Trakt Show", "year": 2023, "ids": {"imdb": "tt8888001"}},
+            "seasons": [{"number": 1, "episodes": [{"number": 1, "last_watched_at": "2026-09-22T00:00:00Z"}]}]
+        }
+    ])
+    mock_trakt.get_ratings = AsyncMock(side_effect=lambda media_type: [
+        {"movie": {"title": "Shared Movie", "year": 2020, "ids": {"imdb": "tt9999002"}}, "rating": 10}
+    ] if media_type == "movies" else [])
+    mock_trakt.sync_history = AsyncMock(return_value={"status": 200, "added": {"movies": 1}})
+    mock_trakt.sync_ratings = AsyncMock(return_value={"status": 200, "added": {"movies": 1}})
+
+    mock_simkl = MagicMock()
+    mock_simkl.is_authenticated.return_value = True
+    mock_simkl.get_all_items = AsyncMock(side_effect=lambda media_type: {
+        "movies": [
+            {"movie": {"title": "Shared Movie", "year": 2020, "ids": {"imdb": "tt9999002"}}, "status": "completed", "user_rating": 8},
+            {"movie": {"title": "Simkl Movie Only", "year": 2022, "ids": {"imdb": "tt7777001"}}, "status": "completed", "last_watched_at": "2026-09-23T00:00:00Z"}
+        ]
+    } if media_type == "movies" else {"shows": [], "anime": []})
+    mock_simkl.bulk_sync_history = AsyncMock(return_value={"status": "success"})
+    mock_simkl.bulk_sync_ratings = AsyncMock(return_value={"status": "success"})
+
+    manager = CrossTrackerSyncManager(trakt_client=mock_trakt, simkl_client=mock_simkl)
+    assert manager.is_configured() is True
+
+    # 1. Scan discrepancies
+    diff = await manager.scan_discrepancies(force=True)
+    assert len(diff) >= 4
+
+    # Trakt Movie Only -> Trakt to Simkl
+    t2s_movies = [d for d in diff if d["direction"] == "trakt_to_simkl" and d["sync_type"] == "watched" and d["title"] == "Trakt Movie Only"]
+    assert len(t2s_movies) == 1
+    assert t2s_movies[0]["ids"]["imdb"] == "tt9999001"
+
+    # Shared Movie Rating mismatch -> Trakt rating 10 vs Simkl rating 8
+    rating_diffs = [d for d in diff if d["sync_type"] == "rating" and d["title"] == "Shared Movie"]
+    assert len(rating_diffs) == 2
+    t2s_ratings = [d for d in rating_diffs if d["direction"] == "trakt_to_simkl"]
+    s2t_ratings = [d for d in rating_diffs if d["direction"] == "simkl_to_trakt"]
+    assert len(t2s_ratings) == 1
+    assert t2s_ratings[0]["source_rating"] == 10
+    assert t2s_ratings[0]["target_rating"] == 8
+    assert len(s2t_ratings) == 1
+    assert s2t_ratings[0]["source_rating"] == 8
+    assert s2t_ratings[0]["target_rating"] == 10
+
+    # Simkl Movie Only -> Simkl to Trakt
+    s2t_movies = [d for d in diff if d["direction"] == "simkl_to_trakt" and d["sync_type"] == "watched" and d["title"] == "Simkl Movie Only"]
+    assert len(s2t_movies) == 1
+    assert s2t_movies[0]["ids"]["imdb"] == "tt7777001"
+
+    # 2. Execute reconciliation
+    sync_res = await manager.execute_sync(direction="both")
+    assert sync_res["status"] == "started"
+
+    # Allow background sync task to complete
+    await asyncio.sleep(0.1)
+
+    assert mock_simkl.bulk_sync_history.called
+    assert mock_trakt.sync_history.called
+
+
+def test_cross_sync_api_endpoints():
+    """Verify FastAPI route handlers for cross-tracker synchronization."""
+    client = TestClient(app)
+
+    # 1. GET /api/cross-sync/status
+    res = client.get("/api/cross-sync/status?demo=true")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["configured"] is True
+    assert "diff_count" in data
+
+    # 2. GET /api/cross-sync/diff
+    demo_diff_res = client.get("/api/cross-sync/diff?demo=true")
+    assert demo_diff_res.status_code == 200
+    assert len(demo_diff_res.json()["diff"]) > 0
+
+    if Config.WEBHOOK_SECRET:
+        unauth_diff = client.get("/api/cross-sync/diff")
+        assert unauth_diff.status_code == 401
+
+        auth_diff = client.get(f"/api/cross-sync/diff?token={Config.WEBHOOK_SECRET}")
+        assert auth_diff.status_code == 200
+    else:
+        auth_diff = client.get("/api/cross-sync/diff")
+        assert auth_diff.status_code == 200
+
+    # 3. POST /api/cross-sync/scan
+    demo_scan = client.post("/api/cross-sync/scan?demo=true")
+    assert demo_scan.status_code == 200
+    assert "diff" in demo_scan.json()
+
+    # 4. POST /api/cross-sync/execute
+    demo_exec = client.post("/api/cross-sync/execute?demo=true", json={"direction": "both"})
+    assert demo_exec.status_code == 200
+    assert demo_exec.json()["status"] == "completed"
+
+    # 5. GET /api/cross-sync/progress
+    prog = client.get("/api/cross-sync/progress")
+    assert prog.status_code == 200
+    assert "status" in prog.json()
+
+
+def test_dashboard_renders_cross_sync_modal():
+    """Verify that the dashboard renders the Cross-Tracker Reconciliation modal and trigger buttons."""
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert "cross-sync-modal" in html
+    assert "openCrossSyncModal" in html
+    assert "closeCrossSyncModal" in html
+    assert "Cross-Tracker Reconciliation" in html
+
 
 
 
