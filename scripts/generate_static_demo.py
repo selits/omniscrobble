@@ -358,6 +358,34 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     </div>
     """
 
+    simkl_card_html = """
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>✨</span> Multi-Tracker Architecture &bull; Simkl Integration
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_viewer)</span>
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            Broadcast playback scrobbles and ratings across both Trakt and Simkl simultaneously. Perfect for Anime, TV shows, and movie watch histories with decoupled, zero-latency async dispatch.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span>Simkl Dual-Scrobbler: <strong>Active</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>Zero-Latency Async Task Dispatch: <strong>Enabled</strong></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
+            </div>
+        </div>
+    </div>
+    """
+
     arr_bridge_card_html = """
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
@@ -484,6 +512,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{STAT_COLLECTIONS}}': str(demo_stats['collections']),
         '{{WEBHOOK_CARD}}': webhook_html_section,
         '{{ECOSYSTEM_CARD}}': ecosystem_card_html,
+        '{{SIMKL_CARD}}': simkl_card_html,
         '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,
@@ -757,15 +786,46 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     ]
                 }});
             }}
+            if (path.endsWith('/api/simkl/status')) {{
+                return jsonResp({{
+                    enabled: true,
+                    configured: true,
+                    authenticated: true,
+                    user: "demo_viewer",
+                    account_id: 987654,
+                    timezone: "America/New_York"
+                }});
+            }}
+            if (path.endsWith('/api/simkl/pin')) {{
+                return jsonResp({{
+                    user_code: "DEMO-8492",
+                    verification_url: "https://simkl.com/pin?code=DEMO-8492",
+                    expires_in: 900,
+                    interval: 4
+                }});
+            }}
+            if (path.endsWith('/api/simkl/poll')) {{
+                return jsonResp({{
+                    result: "OK",
+                    access_token: "demo_simkl_access_token_xyz"
+                }});
+            }}
+            if (path.endsWith('/api/simkl/disconnect')) {{
+                return jsonResp({{
+                    status: "ok",
+                    message: "Simkl disconnected"
+                }});
+            }}
             if (path.endsWith('/api/ecosystem')) {{
                 return jsonResp({{
-                    healthy_count: 6,
-                    total_count: 6,
+                    healthy_count: 7,
+                    total_count: 7,
                     servers: [
                         {{ id: "plex", name: "Plex Media Server", category: "Media Server", status: "connected", badge: "Online", version: "1.40.5", details: "Local Server (Port 32400)", icon: "plex" }},
                         {{ id: "jellyfin", name: "Jellyfin", category: "Media Server", status: "available", badge: "Ready", version: "10.9.11", details: "Webhook Ingestion Active", icon: "jellyfin" }},
                         {{ id: "emby", name: "Emby Server", category: "Media Server", status: "available", badge: "Ready", version: "4.8.8", details: "Webhook Ingestion Active", icon: "emby" }},
                         {{ id: "trakt", name: "Trakt.tv", category: "Tracker", status: "connected", badge: "Authenticated", version: "API v2", details: "Connected as @demo_viewer (84 days left)", icon: "trakt" }},
+                        {{ id: "simkl", name: "Simkl", category: "Tracker", status: "connected", badge: "Active", version: "API v2", details: "Connected as @demo_viewer (Movies, Shows, Anime)", icon: "simkl" }},
                         {{ id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" }},
                         {{ id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }}
                     ]

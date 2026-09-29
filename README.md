@@ -18,6 +18,7 @@ A lightweight, modern Python service that receives media server webhooks (Plex, 
 
 ## 🌟 Features
 
+- **Multi-Tracker Architecture & Simkl Dual-Tracking**: Broadcast playback scrobbles (start, pause, stop) and ratings across both Trakt and **Simkl** simultaneously. Supports Movies, TV Shows, and Anime with decoupled zero-latency background task dispatch and OAuth Device PIN browser activation (`/auth/simkl`).
 - **Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to Sonarr and Radarr for automated media acquisition, intelligent deduplication against existing libraries, automated root folder/quality profile discovery, and immediate download searches.
 - **Multi-Server Ecosystem Dashboard**: Real-time multi-service observability widget monitoring live connectivity, library counts, latency, and operational health across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr.
 - **Two-Way Synchronization & Library Reconciliation**: Bi-directional matching of watched history and ratings between media servers (Plex) and Trakt (`/api/sync/*`), interactive discrepancy diff table with 1-click or selective reconciliation, automated periodic background sync, and smart TTL-based scrobble loop prevention.
@@ -159,22 +160,29 @@ PLEX_TOKEN=your_plex_token_here
 REVERSE_SYNC_INTERVAL=0
 REVERSE_SYNC_ON_STARTUP=false
 REVERSE_SYNC_RATINGS=true
+
+# (Optional) Multi-Tracker Architecture: Simkl Integration
+SIMKL_CLIENT_ID=your_simkl_client_id_here
+SIMKL_CLIENT_SECRET=your_simkl_client_secret_here
+SIMKL_ENABLED=true
 ```
 
 ---
 
-### 3. Authenticate with Trakt (One-Time Setup)
+### 3. Authenticate with Trakt & Trackers (One-Time Setup)
 
 You can authenticate either through your web browser or from the command line:
 
-#### Option A: Via Web Browser (Recommended)
+#### Trakt Authorization:
+
+##### Option A: Via Web Browser (Recommended)
 
 1. Start the server (see background/systemd setup below).
 2. Open **`http://<server-ip>:<PORT>/auth`** in your browser.
 3. The page will fetch your 8-character activation code. Click the link to **`https://trakt.tv/activate`**, enter the code, and click **Authorize**.
 4. The page will automatically detect approval and redirect to your dashboard!
 
-#### Option B: Via Terminal / CLI
+##### Option B: Via Terminal / CLI
 
 ```bash
 .venv/bin/python auth.py
@@ -182,6 +190,13 @@ You can authenticate either through your web browser or from the command line:
 
 1. Open the activation URL displayed, enter the 8-character code, and authorize.
 2. The script will save your tokens to `trakt_tokens.json`.
+
+#### Simkl Authorization (Multi-Tracker):
+
+1. Ensure `SIMKL_CLIENT_ID` is set in your `.env` file (create an app at [simkl.com/settings/developer](https://simkl.com/settings/developer)).
+2. On your Omniscrobble dashboard, click **"🔑 Link Simkl Account"** on the Simkl card or open **`http://<server-ip>:<PORT>/auth/simkl`**.
+3. Click **"Generate Activation PIN"**, open the displayed Simkl link, and approve the connection.
+4. Omniscrobble will automatically capture your credentials and activate simultaneous dual-scrobbling!
 
 ---
 
@@ -382,7 +397,12 @@ If you prefer running in a container:
 | **`/api/sync/progress`** | `GET` | **Sync Progress**: Real-time progress percentage and item counts for active batch sync jobs. |
 | **`/api/arr/status`** | `GET` | **Content Bridge Status**: Live connection diagnostics and library counts for Sonarr and Radarr. |
 | **`/api/arr/sync`** | `POST` | **Watchlist Sync**: Trigger on-demand sync of Trakt watchlist items to Sonarr and Radarr (Admin only). |
-| **`/api/ecosystem`** | `GET` | **Ecosystem Health**: Multi-server status overview across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr. |
+| **`/api/ecosystem`** | `GET` | **Ecosystem Health**: Multi-server status overview across Plex, Jellyfin, Emby, Trakt, Simkl, Sonarr, and Radarr. |
+| **`/api/simkl/status`** | `GET` | **Simkl Status**: Connection status and user profile for Simkl multi-tracker. |
+| **`/api/simkl/pin`** | `POST` | **Request Device PIN**: Generate OAuth Device PIN for headless/browser Simkl authorization (Admin only). |
+| **`/api/simkl/poll`** | `POST` | **Poll Device PIN**: Check status of pending Simkl device PIN authorization (Admin only). |
+| **`/api/simkl/disconnect`** | `POST` | **Disconnect Simkl**: Unlink Simkl account and delete local OAuth credentials (Admin only). |
+| **`/auth/simkl`** | `GET` | **Simkl Authorization Portal**: Dedicated web portal for Device PIN activation (Admin only). |
 | **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
 | **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
 
@@ -684,6 +704,7 @@ omniscrobble/
 ├── app/
 │   ├── clients/             # External API integrations
 │   │   ├── trakt_client.py  # Trakt OAuth device flow, scrobbling, ratings, collection sync & search
+│   │   ├── simkl_client.py  # Simkl REST API client for OAuth Device PIN flow, dual-scrobbling & ratings
 │   │   ├── plex_api_client.py # Direct Plex Media Server REST API client for watch status & ratings
 │   │   ├── sonarr_client.py # Sonarr REST API client for TV series & download imports
 │   │   └── radarr_client.py # Radarr REST API client for movies, quality profiles & root folders
@@ -693,6 +714,7 @@ omniscrobble/
 │   │   ├── demo_manager.py     # Air-gapped mock playback, stats, and activity generator
 │   │   ├── log_manager.py      # Systemd journalctl reader, in-memory ring buffer & secret redaction
 │   │   ├── loop_prevention.py  # Thread-safe TTL cache for echo loop suppression
+│   │   ├── multi_tracker.py    # Multi-tracker coordinator for dual-dispatch scrobbling and rating sync
 │   │   ├── notifier.py         # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover)
 │   │   ├── playback_manager.py # Active streaming sessions & dashboard cards
 │   │   ├── queue_manager.py    # Persistent SQLite offline retry queue & background worker
@@ -701,6 +723,7 @@ omniscrobble/
 │   ├── templates/           # Clean, externalized HTML/CSS/JS dashboard and auth views
 │   │   ├── dashboard.html   # Main real-time status dashboard view
 │   │   ├── auth.html        # Trakt device activation view
+│   │   ├── auth_simkl.html  # Simkl OAuth device PIN activation view
 │   │   └── auth_locked.html # Admin authorization gate view
 │   ├── config.py            # Centralized environment & directory configuration
 │   ├── main.py              # FastAPI application, route handlers & template rendering
@@ -719,7 +742,7 @@ omniscrobble/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (118 tests)
+└── tests/                   # Comprehensive pytest test suite (125 tests)
 ```
 
 ---
@@ -745,9 +768,16 @@ Omniscrobble is developed with a modular multi-platform architecture. Current an
   - Multi-server ecosystem dashboard (`/api/ecosystem`) with live health checks across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr.
   - Dedicated Watchlist Sync modal (`#arr-modal`) with 1-click execution and real-time status telemetry.
   - Multi-channel notification support (`arr_add` action) with custom Discord embeds and mobile push alerts.
-- **v1.7.0 (Milestone 4 — Up Next)**:
+- **v1.7.0 (Milestone 4 — Completed)**:
+  - Multi-tracker architecture (`multi_tracker.py`) coordinating simultaneous dual-scrobbler dispatch.
+  - Native **Simkl** integration (`simkl_client.py`) with support for Movies, TV Shows, and Anime.
+  - OAuth Device PIN authorization flow (`/auth/simkl`, `/api/simkl/pin`, `/api/simkl/poll`) with zero-password in-browser activation.
+  - Simultaneous dual-scrobble and two-way rating synchronization across Trakt and Simkl.
+  - Decoupled asynchronous background task dispatch with zero playback latency impact.
+  - Interactive Simkl Multi-Tracker card (`{{SIMKL_CARD}}`) and modal (`#simkl-modal`) on the dashboard.
+  - Ecosystem status matrix integration (`/api/ecosystem`) monitoring Simkl health alongside media servers and arr acquisition.
+- **v1.8.0 (Milestone 5 — Up Next)**:
   - Dynamic In-App Configuration Editor (adjust thresholds, library exclusions, and notifications without restarting).
-  - Multi-tracker dispatch to **Simkl** (universal movies, shows, and anime tracker).
 - **Future Horizons**:
   - Anime tracking integration with **MyAnimeList** and **AniList**.
 

@@ -122,3 +122,14 @@ class Config:
     REVERSE_SYNC_INTERVAL: int = int(os.getenv("REVERSE_SYNC_INTERVAL", "0"))
     REVERSE_SYNC_ON_STARTUP: bool = os.getenv("REVERSE_SYNC_ON_STARTUP", "false").lower() in ("true", "1", "yes")
     REVERSE_SYNC_RATINGS: bool = os.getenv("REVERSE_SYNC_RATINGS", "true").lower() in ("true", "1", "yes")
+
+    # Multi-Tracker Integration (Simkl)
+    SIMKL_CLIENT_ID: str = os.getenv("SIMKL_CLIENT_ID", "").strip()
+    SIMKL_CLIENT_SECRET: str = os.getenv("SIMKL_CLIENT_SECRET", "").strip()
+    SIMKL_API_URL: str = os.getenv("SIMKL_API_URL", "https://api.simkl.com").rstrip("/")
+    SIMKL_ENABLED: bool = os.getenv("SIMKL_ENABLED", "true" if os.getenv("SIMKL_CLIENT_ID") else "false").lower() in ("true", "1", "yes")
+    _simkl_tokens_env = os.getenv("SIMKL_TOKENS_FILE", "data/simkl_tokens.json")
+    SIMKL_TOKENS_FILE: Path = (
+        Path(_simkl_tokens_env) if Path(_simkl_tokens_env).is_absolute() else (BASE_DIR / _simkl_tokens_env)
+    )
+
