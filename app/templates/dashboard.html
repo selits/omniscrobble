@@ -1271,7 +1271,7 @@
         }
 
         async function toggleSetting(category, key, enabled, btn) {
-            if (!isAdmin) {
+            if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
             }
@@ -1284,7 +1284,11 @@
                     body: JSON.stringify({ category, key, enabled })
                 });
                 if (res.ok) {
-                    window.location.reload();
+                    if (isDemo) {
+                        updateDemoSettingUI(category, key, enabled, btn);
+                    } else {
+                        window.location.reload();
+                    }
                 } else {
                     const err = await res.json();
                     alert('Failed to update setting: ' + (err.detail || 'Unknown error'));
@@ -1294,6 +1298,87 @@
                 alert('Error: ' + e.message);
                 if (btn) btn.disabled = false;
             }
+        }
+
+        function updateDemoSettingUI(category, key, enabled, triggeringBtn) {
+            const isServer = category === 'server';
+            const nameMap = {
+                plex: 'Plex',
+                jellyfin: 'Jellyfin',
+                emby: 'Emby',
+                trakt: 'Trakt',
+                simkl: 'Simkl',
+                anilist: 'AniList',
+                mal: 'MAL'
+            };
+            const name = nameMap[key] || (key.charAt(0).toUpperCase() + key.slice(1));
+
+            // Find all buttons that control this setting
+            const allBtns = document.querySelectorAll(`button[onclick*="'${category}', '${key}'"]`);
+            const targetBtns = allBtns.length > 0 ? Array.from(allBtns) : (triggeringBtn ? [triggeringBtn] : []);
+
+            targetBtns.forEach(btn => {
+                btn.disabled = false;
+                const card = btn.closest('.eco-card');
+                if (card) {
+                    if (!enabled) {
+                        card.classList.add('eco-card-disabled');
+                        card.style.opacity = '0.65';
+                        const badge = card.querySelector('span[style*="border-radius:9999px"]');
+                        if (badge) {
+                            badge.textContent = isServer ? 'Disabled' : 'Paused';
+                            badge.style.background = '#334155';
+                            badge.style.borderColor = '#64748b';
+                            badge.style.color = '#cbd5e1';
+                        }
+                        btn.innerHTML = `<span>▶</span><span>${isServer ? 'Enable' : 'Resume'}</span>`;
+                        btn.title = `${isServer ? 'Enable' : 'Resume'} ${name}`;
+                        btn.style.background = '#064e3b';
+                        btn.style.borderColor = '#059669';
+                        btn.style.color = '#6ee7b7';
+                        btn.setAttribute('onclick', `toggleSetting('${category}', '${key}', true, this)`);
+                    } else {
+                        card.classList.remove('eco-card-disabled');
+                        card.style.opacity = '1';
+                        const badge = card.querySelector('span[style*="border-radius:9999px"]');
+                        if (badge) {
+                            if (key === 'plex') {
+                                badge.textContent = 'Online';
+                                badge.style.background = '#064e3b';
+                                badge.style.borderColor = '#059669';
+                                badge.style.color = '#10b981';
+                            } else if (key === 'jellyfin' || key === 'emby') {
+                                badge.textContent = 'Ready';
+                                badge.style.background = '#0c4a6e';
+                                badge.style.borderColor = '#0284c7';
+                                badge.style.color = '#38bdf8';
+                            } else {
+                                badge.textContent = 'Active';
+                                badge.style.background = '#064e3b';
+                                badge.style.borderColor = '#059669';
+                                badge.style.color = '#10b981';
+                            }
+                        }
+                        btn.innerHTML = `<span>⏸</span><span>${isServer ? 'Disable' : 'Pause'}</span>`;
+                        btn.title = `${isServer ? 'Disable' : 'Pause'} ${name}`;
+                        btn.style.background = '#1e293b';
+                        btn.style.borderColor = '#475569';
+                        btn.style.color = '#cbd5e1';
+                        btn.setAttribute('onclick', `toggleSetting('${category}', '${key}', false, this)`);
+                    }
+                } else {
+                    // Standalone tracker buttons (e.g. Simkl, AniList, MAL sections)
+                    if (!enabled) {
+                        btn.innerHTML = `▶ Resume ${name}`;
+                        btn.style.color = '#a7f3d0';
+                        btn.setAttribute('onclick', `toggleSetting('${category}', '${key}', true, this)`);
+                    } else {
+                        btn.innerHTML = `⏸ Pause ${name}`;
+                        btn.style.color = '#cbd5e1';
+                        btn.setAttribute('onclick', `toggleSetting('${category}', '${key}', false, this)`);
+                    }
+                }
+            });
         }
 
         async function fetchPlayback() {
@@ -2599,7 +2684,7 @@ SIMKL_ENABLED=true</pre>
                         </ul>
                     </div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-                        <a href="/auth/anilist" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;">Update Token Portal ↗</a>
+                        <a href="${isDemo ? 'javascript:void(0)' : '/auth/anilist'}" ${isDemo ? 'onclick="alert(\'Token portal is simulated in demo mode.\')"' : ''} class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;">Update Token Portal ↗</a>
                         <button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;">Disconnect AniList</button>
                     </div>
                 `;
@@ -2748,7 +2833,7 @@ SIMKL_ENABLED=true</pre>
                         </ul>
                     </div>
                     <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
-                        <a href="/auth/mal" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;text-decoration:none;padding:6px 12px;font-size:12px;">Update Token Portal ↗</a>
+                        <a href="${isDemo ? 'javascript:void(0)' : '/auth/mal'}" ${isDemo ? 'onclick="alert(\'Token portal is simulated in demo mode.\')"' : ''} class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;text-decoration:none;padding:6px 12px;font-size:12px;">Update Token Portal ↗</a>
                         <button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;">Disconnect MAL</button>
                     </div>
                 `;
@@ -3095,7 +3180,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         // PWA Service Worker Registration
-        if ('serviceWorker' in navigator) {
+        if (!isDemo && 'serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js').catch(() => {});
             });

@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#090d16" />
+    </linearGradient>
+    <linearGradient id="arrowGradTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+    <linearGradient id="arrowGradBottom" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+    <linearGradient id="highlightGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7dd3fc" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="innerDiscGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <filter id="subtleDrop" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#000000" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <g filter="url(#subtleDrop)">
+    <!-- Top-Right Clockwise Arrow -->
+    <path d="M 405 285 C 418 200 360 98 256 98 C 190 98 135 135 110 188 L 86 160 L 98 238 L 174 220 L 148 194 C 168 152 210 126 256 126 C 340 126 388 206 376 280 Z" fill="url(#arrowGradTop)" />
+    
+    <!-- Bottom-Left Clockwise Arrow -->
+    <path d="M 107 227 C 94 312 152 414 256 414 C 322 414 377 377 402 324 L 426 352 L 414 274 L 338 292 L 364 318 C 344 360 302 386 256 386 C 172 386 124 306 136 232 Z" fill="url(#arrowGradBottom)" />
+
+    <!-- Motion Echo Arcs -->
+    <path d="M 390 220 C 378 160 326 122 260 122" fill="none" stroke="url(#highlightGrad)" stroke-width="6" stroke-linecap="round" opacity="0.75" />
+    <path d="M 122 292 C 134 352 186 390 252 390" fill="none" stroke="url(#highlightGrad)" stroke-width="6" stroke-linecap="round" opacity="0.75" />
+
+    <!-- Center Disc & Film Frame -->
+    <circle cx="256" cy="256" r="114" fill="url(#innerDiscGrad)" stroke="#334155" stroke-width="5" />
+    <rect x="182" y="174" width="148" height="164" rx="22" fill="#1e293b" stroke="#475569" stroke-width="3.5" />
+
+    <!-- Left Sprockets -->
+    <rect x="193" y="188" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="217" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="247" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="277" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="193" y="306" width="14" height="18" rx="3.5" fill="#0f172a" />
+
+    <!-- Right Sprockets -->
+    <rect x="305" y="188" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="217" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="247" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="277" width="14" height="18" rx="3.5" fill="#0f172a" />
+    <rect x="305" y="306" width="14" height="18" rx="3.5" fill="#0f172a" />
+
+    <!-- Play Button Triangle -->
+    <polygon points="242,216 296,256 242,296" fill="#f8fafc" stroke="#f8fafc" stroke-width="6" stroke-linejoin="round" />
+  </g>
+</svg>

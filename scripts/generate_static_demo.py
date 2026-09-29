@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.config import Config
-from app.main import APP_VERSION, REPO_URL, DASHBOARD_HTML
+from app.main import APP_VERSION, REPO_URL, DASHBOARD_HTML, OMNISCROBBLE_ICON_SVG
 from app.services.demo_manager import demo_mgr
 
 
@@ -628,6 +628,54 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     for k, v in replacements.items():
         rendered = rendered.replace(k, v)
 
+    # Rewrite asset links to relative paths for GitHub Pages (handles subpaths and custom domains)
+    rendered = rendered.replace(
+        '<link rel="manifest" href="/manifest.json">',
+        '<link rel="manifest" href="manifest.json">'
+    )
+    rendered = rendered.replace(
+        '<link rel="apple-touch-icon" href="/static/icons/icon-192.svg">',
+        '<link rel="apple-touch-icon" href="assets/icon-192.png">'
+    )
+    rendered = rendered.replace(
+        '<link rel="icon" type="image/svg+xml" href="/static/icons/icon-192.svg">',
+        '<link rel="icon" type="image/svg+xml" href="assets/icon.svg">\n    <link rel="alternate icon" type="image/png" href="assets/favicon.png">\n    <link rel="shortcut icon" href="favicon.ico">'
+    )
+    rendered = rendered.replace(
+        '<a href="/demo" style="color:#38bdf8;text-decoration:none;font-weight:600;">Try Demo Mode &rarr;</a>',
+        '<span style="color:#38bdf8;font-weight:600;">Demo Mode Active</span>'
+    )
+
+    manifest_data = {
+        "name": "Omniscrobble Demo",
+        "short_name": "Omniscrobble",
+        "description": "Universal Media Scrobbler & Webhook Bridge Interactive Demo",
+        "start_url": "./",
+        "display": "standalone",
+        "background_color": "#0f172a",
+        "theme_color": "#0f172a",
+        "icons": [
+            {
+                "src": "assets/icon-192.png",
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any maskable"
+            },
+            {
+                "src": "assets/icon-512.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable"
+            },
+            {
+                "src": "assets/icon.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any maskable"
+            }
+        ]
+    }
+
     # 4. Inject Client-Side Mock In-Memory Interceptor
     mock_interceptor_js = f"""
     <!-- GitHub Pages Client-Side Simulation Engine -->
@@ -659,6 +707,20 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             const url = new URL(urlStr, window.location.href);
             const path = url.pathname;
             const method = (init.method || 'GET').toUpperCase();
+
+            // Intercept manifest.json and static icon requests
+            if (path.endsWith('/manifest.json')) {{
+                return new Response({json.dumps(json.dumps(manifest_data))}, {{
+                    status: 200,
+                    headers: {{ 'Content-Type': 'application/manifest+json' }}
+                }});
+            }}
+            if (path.endsWith('/static/icons/icon-192.svg') || path.endsWith('/static/icons/icon-512.svg')) {{
+                return new Response({json.dumps(OMNISCROBBLE_ICON_SVG)}, {{
+                    status: 200,
+                    headers: {{ 'Content-Type': 'image/svg+xml' }}
+                }});
+            }}
 
             // If not /api/, let it pass through
             if (!path.includes('/api/')) {{
@@ -1121,6 +1183,24 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     # Write .nojekyll so GitHub Pages does not run Jekyll processing
     nojekyll_file = output_dir / ".nojekyll"
     nojekyll_file.write_text("", encoding="utf-8")
+
+    # Write manifest.json with relative asset paths for GitHub Pages
+    manifest_file = output_dir / "manifest.json"
+    manifest_file.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+    # Ensure root favicon.ico exists in output_dir
+    assets_favicon = output_dir / "assets" / "favicon.ico"
+    if not assets_favicon.is_file():
+        assets_favicon = PROJECT_ROOT / "docs" / "assets" / "favicon.ico"
+    if assets_favicon.is_file():
+        import shutil
+        shutil.copyfile(assets_favicon, output_dir / "favicon.ico")
+
+    # Create static icon fallbacks for root deployment requests
+    static_icons_dir = output_dir / "static" / "icons"
+    static_icons_dir.mkdir(parents=True, exist_ok=True)
+    (static_icons_dir / "icon-192.svg").write_text(OMNISCROBBLE_ICON_SVG, encoding="utf-8")
+    (static_icons_dir / "icon-512.svg").write_text(OMNISCROBBLE_ICON_SVG, encoding="utf-8")
 
     print(f"Generated standalone GitHub Pages demo at: {output_file} ({output_file.stat().st_size:,} bytes)")
     return output_file

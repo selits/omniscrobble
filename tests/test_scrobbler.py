@@ -3001,6 +3001,9 @@ def test_static_github_pages_demo_generation(tmp_path):
     demo_file = generate_static_demo(output_dir=tmp_path)
     assert demo_file.is_file()
     assert (tmp_path / ".nojekyll").is_file()
+    assert (tmp_path / "manifest.json").is_file()
+    assert (tmp_path / "static" / "icons" / "icon-192.svg").is_file()
+    assert (tmp_path / "static" / "icons" / "icon-512.svg").is_file()
 
     content = demo_file.read_text(encoding="utf-8")
     assert "Live Interactive Demo" in content
@@ -3015,6 +3018,15 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert "/api/logs" in content
     assert "/api/search" in content
     assert "/api/test/webhook" in content
+    assert "updateDemoSettingUI" in content
+    assert "!isDemo && 'serviceWorker'" in content
+
+    # Verify asset links use relative paths for GitHub Pages subpath compatibility
+    assert 'href="manifest.json"' in content
+    assert 'href="/manifest.json"' not in content
+    assert 'href="assets/icon-192.png"' in content
+    assert 'href="assets/icon.svg"' in content
+    assert 'href="/static/icons/icon-192.svg"' not in content
 
     # Verify no unreplaced template placeholders
     unreplaced = re.findall(r"\{\{[A-Z_]+\}\}", content)
@@ -3035,6 +3047,7 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert "Live Interactive Demo" in repo_content
     assert APP_VERSION in repo_content
     assert not re.findall(r"\{\{[A-Z_]+\}\}", repo_content)
+    assert 'href="/static/icons/icon-192.svg"' not in repo_content
 
 
 def test_granular_scrobble_thresholds_logic():
