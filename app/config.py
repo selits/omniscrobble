@@ -32,6 +32,32 @@ class Config:
         u.strip() for u in os.getenv("PLEX_ALLOWED_USERS", "").split(",") if u.strip()
     ]
 
+    # Dynamic Runtime Settings File
+    _settings_env = os.getenv("SETTINGS_FILE", "data/settings.json")
+    SETTINGS_FILE: Path = (
+        Path(_settings_env) if Path(_settings_env).is_absolute() else (BASE_DIR / _settings_env)
+    )
+
+    # Server Ingestion Enablement Flags (Plex, Jellyfin, Emby)
+    # Default is None when not specified in .env, allowing dynamic detection on upgrade or explicit bool override
+    _plex_env = os.getenv("PLEX_ENABLED")
+    PLEX_ENABLED: Optional[bool] = (
+        _plex_env.lower() in ("true", "1", "yes") if _plex_env is not None else None
+    )
+
+    _jellyfin_env = os.getenv("JELLYFIN_ENABLED")
+    JELLYFIN_ENABLED: Optional[bool] = (
+        _jellyfin_env.lower() in ("true", "1", "yes") if _jellyfin_env is not None else None
+    )
+
+    _emby_env = os.getenv("EMBY_ENABLED")
+    EMBY_ENABLED: Optional[bool] = (
+        _emby_env.lower() in ("true", "1", "yes") if _emby_env is not None else None
+    )
+
+    # Primary Tracker Enablement Flag
+    TRAKT_ENABLED: bool = os.getenv("TRAKT_ENABLED", "true").lower() in ("true", "1", "yes")
+
     # Server settings
     SERVER_HOST: str = os.getenv("SERVER_HOST", "0.0.0.0")
     SERVER_PORT: int = int(os.getenv("SERVER_PORT", "8080"))
@@ -72,6 +98,7 @@ class Config:
     NOTIFY_ON_SCROBBLE: bool = os.getenv("NOTIFY_ON_SCROBBLE", "true").lower() in ("true", "1", "yes")
     NOTIFY_ON_RATE: bool = os.getenv("NOTIFY_ON_RATE", "true").lower() in ("true", "1", "yes")
     NOTIFY_ON_COLLECTION: bool = os.getenv("NOTIFY_ON_COLLECTION", "true").lower() in ("true", "1", "yes")
+    NOTIFY_ON_FAILURE: bool = os.getenv("NOTIFY_ON_FAILURE", "true").lower() in ("true", "1", "yes")
 
     # Trakt Collection Sync (library.new events)
     SYNC_COLLECTION: bool = os.getenv("SYNC_COLLECTION", "true").lower() in ("true", "1", "yes")

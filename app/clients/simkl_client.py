@@ -394,6 +394,12 @@ class SimklClient:
             return {"status": "skipped", "reason": "not_authenticated"}
         return await self._post("/sync/history", payload)
 
+    async def remove_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /sync/history/remove - Remove movies/shows/episodes from Simkl watched history."""
+        if not self.is_authenticated():
+            return {"status": "skipped", "reason": "not_authenticated"}
+        return await self._post("/sync/history/remove", payload)
+
     async def bulk_sync_ratings(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Bulk add movie/show ratings to Simkl."""
         if not self.is_authenticated():

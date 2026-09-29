@@ -19,6 +19,19 @@ from app.services.log_manager import log_mgr
 from app.services.demo_manager import demo_mgr
 
 
+@pytest.fixture(autouse=True)
+def _ensure_servers_enabled_for_tests():
+    """Ensure server ingestion is enabled during webhook pipeline tests unless explicitly disabled."""
+    from app.services.settings_manager import settings_mgr
+    orig_servers = dict(settings_mgr._settings["servers"])
+    settings_mgr.set_server_enabled("plex", True)
+    settings_mgr.set_server_enabled("jellyfin", True)
+    settings_mgr.set_server_enabled("emby", True)
+    yield
+    for k, v in orig_servers.items():
+        settings_mgr.set_server_enabled(k, v)
+
+
 def test_parse_plex_ids():
     guid_list = [
         {"id": "imdb://tt1234567"},
@@ -2242,7 +2255,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v1.9.0" in html
+    assert "v2.0.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -5505,6 +5518,307 @@ def test_dashboard_renders_anime_tracking_card_and_modals():
     assert "openMalModal" in html
     assert "submitAnilistToken" in html
     assert "submitMalToken" in html
+
+
+def test_settings_manager_lifecycle(tmp_path):
+    """Verify SettingsManager handles persistence, defaults, and toggles."""
+    from app.services.settings_manager import SettingsManager
+
+    settings_file = tmp_path / "settings.json"
+    clean_data_dir = tmp_path / "clean_data"
+    clean_data_dir.mkdir()
+    mgr = SettingsManager(settings_file=settings_file, data_dir=clean_data_dir)
+
+    # Defaults: servers disabled by default out of the box for fresh install
+    assert mgr.is_server_enabled("plex") is False
+    assert mgr.is_server_enabled("jellyfin") is False
+    assert mgr.is_server_enabled("emby") is False
+    # Trackers enabled by default
+    assert mgr.is_tracker_enabled("trakt") is True
+    assert mgr.is_tracker_enabled("simkl") is True
+    assert mgr.is_tracker_enabled("anilist") is True
+    assert mgr.is_tracker_enabled("mal") is True
+
+    # Upgrade scenario: existing install with previous data preserves Plex enabled, Jellyfin/Emby disabled
+    upgrade_data_dir = tmp_path / "upgrade_data"
+    upgrade_data_dir.mkdir()
+    (upgrade_data_dir / "cowatch_shows.json").write_text("[]")
+    upgrade_mgr = SettingsManager(settings_file=tmp_path / "upgrade_settings.json", data_dir=upgrade_data_dir)
+    assert upgrade_mgr.is_server_enabled("plex") is True
+    assert upgrade_mgr.is_server_enabled("jellyfin") is False
+    assert upgrade_mgr.is_server_enabled("emby") is False
+
+    # Toggle server on
+    mgr.set_server_enabled("plex", True)
+    assert mgr.is_server_enabled("plex") is True
+    assert mgr.is_server_enabled("jellyfin") is False
+
+    # Toggle tracker off
+    mgr.set_tracker_enabled("simkl", False)
+    assert mgr.is_tracker_enabled("simkl") is False
+    assert mgr.is_tracker_enabled("trakt") is True
+
+    # Verify persistence
+    mgr2 = SettingsManager(settings_file=settings_file, data_dir=clean_data_dir)
+    assert mgr2.is_server_enabled("plex") is True
+    assert mgr2.is_server_enabled("jellyfin") is False
+    assert mgr2.is_tracker_enabled("simkl") is False
+    assert mgr2.is_tracker_enabled("trakt") is True
+
+
+def test_settings_api_and_toggle_endpoint():
+    """Verify GET /api/settings and POST /api/settings/toggle endpoints."""
+    from app.services.settings_manager import settings_mgr
+
+    orig_secret = Config.WEBHOOK_SECRET
+    try:
+        Config.WEBHOOK_SECRET = "secret123"
+        client = TestClient(app)
+
+        # GET is public status (returns 200)
+        res_get = client.get("/api/settings")
+        assert res_get.status_code == 200
+        data = res_get.json()
+        assert "settings" in data
+        assert "servers" in data["settings"]
+        assert "trackers" in data["settings"]
+
+        # POST /api/settings/toggle unauthorized -> 401
+        res_unauth = client.post("/api/settings/toggle", json={
+            "category": "server",
+            "key": "jellyfin",
+            "enabled": False
+        })
+        assert res_unauth.status_code == 401
+
+        # Toggle via POST authorized
+        res_toggle = client.post("/api/settings/toggle?token=secret123", json={
+            "category": "server",
+            "key": "jellyfin",
+            "enabled": False
+        })
+        assert res_toggle.status_code == 200
+        assert res_toggle.json()["enabled"] is False
+        assert settings_mgr.is_server_enabled("jellyfin") is False
+
+        # Reset back
+        res_reset = client.post("/api/settings/toggle?token=secret123", json={
+            "category": "server",
+            "key": "jellyfin",
+            "enabled": True
+        })
+        assert res_reset.status_code == 200
+        assert settings_mgr.is_server_enabled("jellyfin") is True
+    finally:
+        Config.WEBHOOK_SECRET = orig_secret
+
+
+def test_webhook_ingestion_paused_bypass():
+    """Verify incoming webhooks are paused/bypassed when server ingestion is disabled in settings."""
+    from app.services.settings_manager import settings_mgr
+
+    client = TestClient(app)
+    try:
+        settings_mgr.set_server_enabled("plex", False)
+        settings_mgr.set_server_enabled("jellyfin", False)
+        settings_mgr.set_server_enabled("emby", False)
+
+        # Plex webhook
+        res_plex = client.post("/webhook", data={"payload": "{}"})
+        assert res_plex.status_code == 200
+        assert res_plex.json()["status"] == "ignored"
+        assert "Plex ingestion is paused" in res_plex.json()["reason"]
+
+        # Jellyfin webhook
+        res_jf = client.post("/webhook/jellyfin", json={"NotificationType": "PlaybackStart"})
+        assert res_jf.status_code == 200
+        assert res_jf.json()["status"] == "ignored"
+        assert "Jellyfin ingestion is paused" in res_jf.json()["reason"]
+
+        # Emby webhook
+        res_emby = client.post("/webhook/emby", data={"data": "{}"})
+        assert res_emby.status_code == 200
+        assert res_emby.json()["status"] == "ignored"
+        assert "Emby ingestion is paused" in res_emby.json()["reason"]
+    finally:
+        settings_mgr.set_server_enabled("plex", True)
+        settings_mgr.set_server_enabled("jellyfin", True)
+        settings_mgr.set_server_enabled("emby", True)
+
+
+def test_api_history_remove_endpoint():
+    """Verify POST /api/history/remove unscrobbles items across trackers."""
+    client = TestClient(app)
+    orig_secret = Config.WEBHOOK_SECRET
+    try:
+        Config.WEBHOOK_SECRET = "admintoken"
+
+        # Unauthorized
+        res_unauth = client.post("/api/history/remove", json={
+            "media_type": "movie", "title": "Dune", "year": 2021
+        })
+        assert res_unauth.status_code == 401
+
+        # Authorized call with mock
+        with patch("app.main.multi_tracker.dispatch_unscrobble", new_callable=AsyncMock) as mock_unscrobble:
+            mock_unscrobble.return_value = {
+                "trakt": {"status": "removed"},
+                "simkl": {"status": "removed"}
+            }
+
+            res_ok = client.post("/api/history/remove?token=admintoken", json={
+                "media_type": "movie", "title": "Dune", "year": 2021,
+                "trackers": ["trakt", "simkl"],
+                "cowatch": True
+            })
+            assert res_ok.status_code == 200
+            assert res_ok.json()["status"] == "success"
+            assert "result" in res_ok.json()
+            mock_unscrobble.assert_awaited_once()
+    finally:
+        Config.WEBHOOK_SECRET = orig_secret
+
+
+@pytest.mark.asyncio
+async def test_notifier_failure_alert_deduplication():
+    """Verify Notifier sends failure alert and deduplicates subsequent identical alerts within TTL."""
+    from app.services.notifier import Notifier
+    from app.plex_parser import ParsedMedia
+
+    notifier = Notifier()
+    notifier.config.DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/test"
+    notifier._failure_cache.clear()
+
+    media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        title="Severance S02E01",
+        show_title="Severance",
+        media_type="episode",
+        season=2,
+        episode=1
+    )
+
+    mock_resp = MagicMock(status_code=204)
+    mock_http = MagicMock()
+    mock_http.post = AsyncMock(return_value=mock_resp)
+
+    # First alert -> sent
+    sent1 = await notifier.send_failure_alert(media, "Simkl", "401 Unauthorized", "selits", client=mock_http)
+    assert sent1 is True
+    assert mock_http.post.call_count == 1
+
+    # Second identical alert immediately -> deduplicated / skipped
+    sent2 = await notifier.send_failure_alert(media, "Simkl", "401 Unauthorized", "selits", client=mock_http)
+    assert sent2 is False
+    assert mock_http.post.call_count == 1
+
+    # Different failure -> sent
+    sent3 = await notifier.send_failure_alert(media, "AniList", "500 Server Error", "selits", client=mock_http)
+    assert sent3 is True
+    assert mock_http.post.call_count == 2
+
+
+def test_notifier_discord_payload_includes_cowatch_partner_and_trackers():
+    """Verify Discord payload includes unmasked co-watch partner username and tracker list."""
+    from app.services.notifier import Notifier
+    from app.plex_parser import ParsedMedia
+
+    notifier = Notifier()
+    media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        title="Severance S02E04",
+        show_title="Severance",
+        media_type="episode",
+        season=2,
+        episode=4
+    )
+
+    payload = notifier.build_discord_payload(
+        media,
+        "scrobble",
+        cowatch_partner="alice_partner",
+        trackers=["Trakt", "Simkl"]
+    )
+    fields = payload["embeds"][0]["fields"]
+    field_names = [f["name"] for f in fields]
+    field_vals = [f["value"] for f in fields]
+
+    assert "👥 Co-Watched With" in field_names
+    idx = field_names.index("👥 Co-Watched With")
+    assert "@alice_partner" in field_vals[idx]
+
+    assert "📡 Synced Trackers" in field_names
+    idx_trk = field_names.index("📡 Synced Trackers")
+    assert "Trakt, Simkl" in field_vals[idx_trk]
+
+
+def test_playback_activity_and_events_persistence(tmp_path, monkeypatch):
+    """Verify Playback Activity stats and Recent Activity logs persist across server restarts."""
+    from collections import deque
+    import app.main as main_mod
+
+    test_stats_file = tmp_path / "stats.json"
+    test_events_file = tmp_path / "events.json"
+
+    monkeypatch.setattr(main_mod, "STATS_FILE", test_stats_file)
+    monkeypatch.setattr(main_mod, "EVENTS_FILE", test_events_file)
+
+    # Initial stats should be zero
+    stats = main_mod.load_scrobble_stats()
+    assert stats["total"] == 0
+
+    # Simulate recorded activity
+    main_mod.scrobble_stats["total"] = 5
+    main_mod.scrobble_stats["movies"] = 2
+    main_mod.scrobble_stats["episodes"] = 3
+    main_mod.save_scrobble_stats()
+    assert test_stats_file.exists()
+
+    # Simulate server restart: re-read from disk
+    reloaded_stats = main_mod.load_scrobble_stats()
+    assert reloaded_stats["total"] == 5
+    assert reloaded_stats["movies"] == 2
+    assert reloaded_stats["episodes"] == 3
+
+    # Simulate events persistence
+    sample_entry = {
+        "timestamp": "2026-09-28 22:00:00",
+        "title": "Severance S02E01",
+        "user": "selits",
+        "action": "scrobble",
+        "type": "episode",
+    }
+    main_mod.recent_events.appendleft(sample_entry)
+    main_mod.save_recent_events()
+    assert test_events_file.exists()
+
+    # Simulate restart: re-read events from disk
+    main_mod.reload_recent_events_in_place()
+    assert len(main_mod.recent_events) >= 1
+    assert main_mod.recent_events[0]["title"] == "Severance S02E01"
+
+    # Test clear_events empties disk persistence
+    client = TestClient(main_mod.app)
+    orig_secret = Config.WEBHOOK_SECRET
+    try:
+        Config.WEBHOOK_SECRET = "secret123"
+        res = client.post("/api/events/clear?token=secret123")
+        assert res.status_code == 200
+        main_mod.reload_recent_events_in_place()
+        assert len(main_mod.recent_events) == 0
+
+        # Test stats reset endpoint
+        res_reset = client.post("/api/stats/reset?token=secret123")
+        assert res_reset.status_code == 200
+        assert res_reset.json()["stats"]["total"] == 0
+        cleared_stats = main_mod.load_scrobble_stats()
+        assert cleared_stats["total"] == 0
+    finally:
+        Config.WEBHOOK_SECRET = orig_secret
+
+
 
 
 
