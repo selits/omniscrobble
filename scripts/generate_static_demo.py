@@ -276,7 +276,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             Unified operational topology across all media servers, Trakt &amp; anime scrobble trackers, and automated acquisition engines.
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🔶</span>
@@ -292,7 +292,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     <button onclick="toggleSetting('server', 'plex', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Plex"><span>⏸</span><span>Disable</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🟣</span>
@@ -308,7 +308,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     <button onclick="toggleSetting('server', 'jellyfin', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Jellyfin"><span>⏸</span><span>Disable</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🟢</span>
@@ -324,7 +324,33 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     <button onclick="toggleSetting('server', 'emby', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Emby"><span>⏸</span><span>Disable</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">📺</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Sonarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="48 Series Monitored">48 Series Monitored</div>
+            </div>
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🍿</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Radarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="215 Movies Monitored">215 Movies Monitored</div>
+            </div>
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🔴</span>
@@ -340,7 +366,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     <button onclick="toggleSetting('tracker', 'trakt', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Trakt"><span>⏸</span><span>Pause</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">✨</span>
@@ -356,7 +382,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Simkl"><span>⏸</span><span>Pause</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">⚡</span>
@@ -372,7 +398,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause AniList"><span>⏸</span><span>Pause</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🎌</span>
@@ -387,32 +413,6 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (REST API v2)">Connected as @demo_viewer (REST API v2)</div>
                     <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause MAL"><span>⏸</span><span>Pause</span></button>
                 </div>
-            </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-                        <span style="font-size:18px;flex-shrink:0;">📺</span>
-                        <div style="min-width:0;">
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Sonarr</div>
-                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
-                        </div>
-                    </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
-                </div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="48 Series Monitored">48 Series Monitored</div>
-            </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-                        <span style="font-size:18px;flex-shrink:0;">🍿</span>
-                        <div style="min-width:0;">
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Radarr</div>
-                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
-                        </div>
-                    </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
-                </div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="215 Movies Monitored">215 Movies Monitored</div>
             </div>
         </div>
     </div>
@@ -1047,12 +1047,12 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                         {{ id: "plex", name: "Plex Media Server", category: "Media Server", status: "connected", badge: "Online", version: "1.40.5", details: "Local Server (Port 32400)", icon: "plex" }},
                         {{ id: "jellyfin", name: "Jellyfin", category: "Media Server", status: "available", badge: "Ready", version: "10.9.11", details: "Webhook Ingestion Active", icon: "jellyfin" }},
                         {{ id: "emby", name: "Emby Server", category: "Media Server", status: "available", badge: "Ready", version: "4.8.8", details: "Webhook Ingestion Active", icon: "emby" }},
+                        {{ id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" }},
+                        {{ id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }},
                         {{ id: "trakt", name: "Trakt.tv", category: "Tracker", status: "connected", badge: "Authenticated", version: "API v2", details: "Connected as @demo_viewer (84 days left)", icon: "trakt" }},
                         {{ id: "simkl", name: "Simkl", category: "Tracker", status: "connected", badge: "Active", version: "API v2", details: "Connected as @demo_viewer (Movies, Shows, Anime)", icon: "simkl" }},
                         {{ id: "anilist", name: "AniList", category: "Tracker", status: "connected", badge: "Authenticated", version: "GraphQL API", details: "Connected as @demo_viewer (Anime)", icon: "anilist" }},
-                        {{ id: "myanimelist", name: "MyAnimeList", category: "Tracker", status: "connected", badge: "Authenticated", version: "REST API v2", details: "Connected as @demo_viewer (Anime)", icon: "myanimelist" }},
-                        {{ id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" }},
-                        {{ id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }}
+                        {{ id: "myanimelist", name: "MyAnimeList", category: "Tracker", status: "connected", badge: "Authenticated", version: "REST API v2", details: "Connected as @demo_viewer (Anime)", icon: "myanimelist" }}
                     ]
                 }});
             }}

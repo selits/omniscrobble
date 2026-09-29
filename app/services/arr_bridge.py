@@ -167,6 +167,26 @@ class ArrBridgeManager:
                     "icon": "emby",
                 },
                 {
+                    "id": "sonarr",
+                    "name": "Sonarr",
+                    "category": "Acquisition",
+                    "status": "connected",
+                    "badge": "Online",
+                    "version": "4.0.9",
+                    "details": "48 Series Monitored",
+                    "icon": "sonarr",
+                },
+                {
+                    "id": "radarr",
+                    "name": "Radarr",
+                    "category": "Acquisition",
+                    "status": "connected",
+                    "badge": "Online",
+                    "version": "5.9.1",
+                    "details": "215 Movies Monitored",
+                    "icon": "radarr",
+                },
+                {
                     "id": "trakt",
                     "name": "Trakt.tv",
                     "category": "Tracker",
@@ -206,30 +226,17 @@ class ArrBridgeManager:
                     "details": "Connected as @demo_otaku (Anime Scrobbler)",
                     "icon": "myanimelist",
                 },
-                {
-                    "id": "sonarr",
-                    "name": "Sonarr",
-                    "category": "Acquisition",
-                    "status": "connected",
-                    "badge": "Online",
-                    "version": "4.0.9",
-                    "details": "48 Series Monitored",
-                    "icon": "sonarr",
-                },
-                {
-                    "id": "radarr",
-                    "name": "Radarr",
-                    "category": "Acquisition",
-                    "status": "connected",
-                    "badge": "Online",
-                    "version": "5.9.1",
-                    "details": "215 Movies Monitored",
-                    "icon": "radarr",
-                },
             ]
             for s in servers:
                 s["enabled"] = True
 
+            service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
+            servers.sort(
+                key=lambda s: (
+                    1 if not s.get("enabled", True) or s.get("status") == "disabled" or s.get("badge") in ("Disabled", "Paused") else 0,
+                    service_order.index(s["id"]) if s.get("id") in service_order else 99,
+                )
+            )
 
             healthy = sum(1 for s in servers if s["status"] in ("connected", "available"))
             return {
@@ -303,34 +310,7 @@ class ArrBridgeManager:
             "icon": "emby",
         })
 
-        # 4. Trakt
-        trakt = self.get_trakt()
-        if trakt.is_authenticated():
-            token_info = trakt.get_token_info()
-            days = token_info.get("days_remaining", 0)
-            servers.append({
-                "id": "trakt",
-                "name": "Trakt.tv",
-                "category": "Tracker",
-                "status": "connected",
-                "badge": "Authenticated",
-                "version": "API v2",
-                "details": f"Token Healthy ({days}d remaining)" if token_info.get("healthy") else "Token Expired",
-                "icon": "trakt",
-            })
-        else:
-            servers.append({
-                "id": "trakt",
-                "name": "Trakt.tv",
-                "category": "Tracker",
-                "status": "unconfigured",
-                "badge": "Not Authenticated",
-                "version": "API v2",
-                "details": "Requires authorization at /auth",
-                "icon": "trakt",
-            })
-
-        # 5. Sonarr
+        # 4. Sonarr
         if self.sonarr.is_configured:
             s_conn = await self.sonarr.check_connection()
             if s_conn.get("status") == "connected":
@@ -368,7 +348,7 @@ class ArrBridgeManager:
                 "icon": "sonarr",
             })
 
-        # 6. Radarr
+        # 5. Radarr
         if self.radarr.is_configured:
             r_conn = await self.radarr.check_connection()
             if r_conn.get("status") == "connected":
@@ -404,6 +384,33 @@ class ArrBridgeManager:
                 "version": "N/A",
                 "details": "Set RADARR_URL and RADARR_API_KEY in .env",
                 "icon": "radarr",
+            })
+
+        # 6. Trakt
+        trakt = self.get_trakt()
+        if trakt.is_authenticated():
+            token_info = trakt.get_token_info()
+            days = token_info.get("days_remaining", 0)
+            servers.append({
+                "id": "trakt",
+                "name": "Trakt.tv",
+                "category": "Tracker",
+                "status": "connected",
+                "badge": "Authenticated",
+                "version": "API v2",
+                "details": f"Token Healthy ({days}d remaining)" if token_info.get("healthy") else "Token Expired",
+                "icon": "trakt",
+            })
+        else:
+            servers.append({
+                "id": "trakt",
+                "name": "Trakt.tv",
+                "category": "Tracker",
+                "status": "unconfigured",
+                "badge": "Not Authenticated",
+                "version": "API v2",
+                "details": "Requires authorization at /auth",
+                "icon": "trakt",
             })
 
         # 7. Simkl Multi-Tracker
@@ -525,15 +532,42 @@ class ArrBridgeManager:
                     s["status"] = "disabled"
                     s["badge"] = "Disabled"
                     s["details"] = "Ingestion disabled"
+            elif sid in ("sonarr", "radarr"):
+                is_cfg = self.sonarr.is_configured if sid == "sonarr" else self.radarr.is_configured
+                s["enabled"] = is_cfg
+                if not is_cfg:
+                    s["status"] = "unconfigured"
+                    s["badge"] = "Disabled"
             elif sid in ("trakt", "simkl", "anilist", "myanimelist"):
                 trk = "mal" if sid == "myanimelist" else sid
-                s["enabled"] = settings_mgr.is_tracker_enabled(trk)
-                if not s["enabled"]:
+                is_trk_en = settings_mgr.is_tracker_enabled(trk)
+                if not is_trk_en:
+                    s["enabled"] = False
                     s["status"] = "disabled"
                     s["badge"] = "Paused"
                     s["details"] = "Sync paused in dashboard"
+                elif s.get("badge") == "Disabled":
+                    s["enabled"] = False
+                else:
+                    s["enabled"] = True
             else:
                 s["enabled"] = True
+
+        service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
+
+        def _is_ecosystem_disabled(srv: dict[str, Any]) -> bool:
+            return (
+                not srv.get("enabled", True)
+                or srv.get("status") == "disabled"
+                or srv.get("badge") in ("Disabled", "Paused")
+            )
+
+        servers.sort(
+            key=lambda s: (
+                1 if _is_ecosystem_disabled(s) else 0,
+                service_order.index(s["id"]) if s.get("id") in service_order else 99,
+            )
+        )
 
         healthy = sum(1 for s in servers if s["status"] in ("connected", "available"))
         return {

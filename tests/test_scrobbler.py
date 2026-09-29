@@ -4360,20 +4360,76 @@ async def test_arr_bridge_ecosystem_and_status():
     assert demo_eco["healthy_count"] == 9
     assert demo_eco["total_count"] == 9
     server_ids = [s["id"] for s in demo_eco["servers"]]
-    assert "plex" in server_ids
-    assert "jellyfin" in server_ids
-    assert "emby" in server_ids
-    assert "trakt" in server_ids
-    assert "simkl" in server_ids
-    assert "anilist" in server_ids
-    assert "myanimelist" in server_ids
-    assert "sonarr" in server_ids
-    assert "radarr" in server_ids
+    # Reordered: Servers (Plex, Jellyfin, Emby) -> Arr (Sonarr, Radarr) -> Trackers (Trakt, Simkl, AniList, MAL)
+    assert server_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
 
     # Live ecosystem
     live_eco = await arr_bridge.get_ecosystem_status(demo=False)
     assert "servers" in live_eco
     assert len(live_eco["servers"]) >= 4
+
+    # Verify that enabled items precede disabled items in live ecosystem
+    disabled_seen = False
+    for s in live_eco["servers"]:
+        is_dis = not s.get("enabled", True) or s.get("status") == "disabled" or s.get("badge") in ("Disabled", "Paused")
+        if is_dis:
+            disabled_seen = True
+        else:
+            assert not disabled_seen, f"Active server {s['id']} appeared after disabled servers"
+
+
+@pytest.mark.asyncio
+async def test_ecosystem_reordering_and_disabled_sorting():
+    """Verify ecosystem reordering (Servers -> Arr -> Trackers) and disabled items moving to end."""
+    from app.services.arr_bridge import arr_bridge
+    from app.services.settings_manager import settings_mgr
+
+    # 1. Verify demo mode canonical order
+    demo_res = await arr_bridge.get_ecosystem_status(demo=True)
+    demo_ids = [s["id"] for s in demo_res["servers"]]
+    assert demo_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
+
+    # 2. Verify live mode ordering with toggled settings
+    orig_jellyfin = settings_mgr.is_server_enabled("jellyfin")
+    orig_simkl = settings_mgr.is_tracker_enabled("simkl")
+    try:
+        settings_mgr.set_server_enabled("jellyfin", False)
+        settings_mgr.set_tracker_enabled("simkl", False)
+
+        from app.main import simkl, anilist, mal, reverse_sync_mgr
+        live_res = await arr_bridge.get_ecosystem_status(
+            demo=False,
+            plex_client=reverse_sync_mgr.plex,
+            simkl_client=simkl,
+            anilist_client=anilist,
+            mal_client=mal,
+        )
+        servers = live_res["servers"]
+
+        active_ids = [
+            s["id"] for s in servers
+            if s.get("enabled", True) and s.get("status") != "disabled" and s.get("badge") not in ("Disabled", "Paused")
+        ]
+        disabled_ids = [
+            s["id"] for s in servers
+            if (not s.get("enabled", True)) or s.get("status") == "disabled" or s.get("badge") in ("Disabled", "Paused")
+        ]
+
+        # Jellyfin and Simkl must be in disabled_ids
+        assert "jellyfin" in disabled_ids
+        assert "simkl" in disabled_ids
+
+        # All active items must precede all disabled items in the overall server list
+        full_ids = [s["id"] for s in servers]
+        assert full_ids == active_ids + disabled_ids
+
+        # Within disabled items, ordering should remain Servers -> Arr -> Trackers
+        service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
+        disabled_indices = [service_order.index(sid) for sid in disabled_ids if sid in service_order]
+        assert disabled_indices == sorted(disabled_indices)
+    finally:
+        settings_mgr.set_server_enabled("jellyfin", orig_jellyfin)
+        settings_mgr.set_tracker_enabled("simkl", orig_simkl)
 
 
 def test_arr_api_endpoints_and_auth():
@@ -4397,6 +4453,8 @@ def test_arr_api_endpoints_and_auth():
     res_eco_demo = client.get("/api/ecosystem?demo=true")
     assert res_eco_demo.status_code == 200
     assert res_eco_demo.json()["healthy_count"] == 9
+    demo_api_ids = [s["id"] for s in res_eco_demo.json()["servers"]]
+    assert demo_api_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
 
     # 3. /api/arr/sync
     # Demo execution allowed without auth
@@ -4425,11 +4483,13 @@ def test_dashboard_arr_and_ecosystem_cards():
     assert "Multi-Server Ecosystem" in html
     assert "Content Bridge" in html
     assert 'id="arr-modal"' in html
+    assert "eco-card" in html
 
     res_demo = client.get("/demo")
     assert res_demo.status_code == 200
     assert "Multi-Server Ecosystem" in res_demo.text
     assert "Content Bridge" in res_demo.text
+    assert "eco-card" in res_demo.text
 
 
 def test_notifier_arr_add_action():

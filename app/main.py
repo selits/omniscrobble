@@ -2960,6 +2960,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             srv_icon = "🍿"
 
         srv_name = html.escape(srv.get('name', ''))
+        is_disabled = (not srv.get("enabled", True)) or st == "disabled" or srv.get("badge") in ("Disabled", "Paused")
+        card_class = "eco-card eco-card-disabled" if is_disabled else "eco-card"
+        card_extra_style = "opacity:0.65;transition:opacity 0.2s ease,border-color 0.2s ease;" if is_disabled else ""
+        card_extra_attrs = 'onmouseenter="this.style.opacity=\'1\'" onmouseleave="this.style.opacity=\'0.65\'"' if is_disabled else ""
+
         toggle_btn = ""
         if is_admin and sid in ("plex", "jellyfin", "emby", "trakt", "simkl", "anilist", "myanimelist"):
             cat = "server" if sid in ("plex", "jellyfin", "emby") else "tracker"
@@ -2977,7 +2982,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Resume {srv_name}"><span>▶</span><span>Resume</span></button>'
 
         eco_cards_html += f"""
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+        <div class="{card_class}" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;{card_extra_style}" {card_extra_attrs}>
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                 <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                     <span style="font-size:18px;flex-shrink:0;">{srv_icon}</span>
