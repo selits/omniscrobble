@@ -285,7 +285,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleSetting('server', 'plex', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Plex">⏸ Disable</button>
+                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                    </div>
                 </div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Local Server (Port 32400)</div>
             </div>
@@ -298,7 +301,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleSetting('server', 'jellyfin', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Jellyfin">⏸ Disable</button>
+                        <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                    </div>
                 </div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
             </div>
@@ -311,7 +317,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleSetting('server', 'emby', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Emby">⏸ Disable</button>
+                        <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
+                    </div>
                 </div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
             </div>
@@ -324,7 +333,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleSetting('tracker', 'trakt', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause Trakt">⏸ Pause</button>
+                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                    </div>
                 </div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (84 days left)</div>
             </div>
@@ -337,7 +349,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Active</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause Simkl">⏸ Pause</button>
+                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Active</span>
+                    </div>
                 </div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (API v2)</div>
             </div>
@@ -350,7 +365,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause AniList">⏸ Pause</button>
+                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                    </div>
                 </div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (GraphQL API)</div>
             </div>
@@ -363,7 +381,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause MAL">⏸ Pause</button>
+                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                    </div>
                 </div>
                 <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (REST API v2)</div>
             </div>
@@ -419,6 +440,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause Simkl</button>
                 <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>
                 <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
             </div>
@@ -451,6 +473,8 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <span>API: <strong>GraphQL &amp; REST v2</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause AniList</button>
+                <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause MAL</button>
                 <button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">⚡ AniList Settings</button>
                 <button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🎌 MAL Settings</button>
             </div>
@@ -622,7 +646,11 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             reconciliation: [...initialReconciliation],
             crossDiff: [...initialCrossDiff],
             movies_enabled: false,
-            playback: {json.dumps(demo_playback)}
+            playback: {json.dumps(demo_playback)},
+            settings: {{
+                servers: {{ plex: true, jellyfin: true, emby: true }},
+                trackers: {{ trakt: true, simkl: true, anilist: true, mal: true }}
+            }}
         }};
 
         const origFetch = window.fetch;
@@ -733,8 +761,65 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 return jsonResp({{ results: results }});
             }}
 
-            // 9. Manual Scrobble & Watchlist
-            if (path.endsWith('/api/scrobble/manual') || path.endsWith('/api/watchlist') || path.endsWith('/api/cowatch/sync')) {{
+            // 9. Manual Scrobble
+            if (path.endsWith('/api/scrobble/manual')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                const media = body.media || {{}};
+                const isEpisode = media.media_type === 'episode';
+                const showTitle = media.show_title || (isEpisode ? media.title : null);
+                const titleStr = isEpisode ? `${{showTitle}} S${{String(media.season || 1).padStart(2, '0')}}E${{String(media.episode || 1).padStart(2, '0')}}` : (media.title || 'Movie');
+                const isCowatch = Boolean(body.cowatch);
+                const newEvent = {{
+                    timestamp: new Date().toLocaleTimeString(),
+                    user: "demo_viewer",
+                    event: "media.scrobble",
+                    action: "manual_scrobble (100.0%)",
+                    title: titleStr,
+                    type: media.media_type || 'episode',
+                    show_title: showTitle,
+                    progress: "100.0%",
+                    result_status: "ok",
+                    media_payload: media,
+                    cowatch_status: {{
+                        synced: isCowatch,
+                        reason: isCowatch ? "Manual dual-sync" : "Solo",
+                        target: "demo_partner"
+                    }}
+                }};
+                clientState.events.unshift(newEvent);
+                return jsonResp({{ status: 'success', result: {{ added: {{ movies: 1, episodes: 1 }} }} }});
+            }}
+
+            // 9b. Unscrobble / Remove from History
+            if (path.endsWith('/api/history/remove')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                const media = body.media || {{}};
+                const mTitle = (media.show_title || media.title || '').toLowerCase();
+                clientState.events = clientState.events.filter(ev => !(ev.title || '').toLowerCase().includes(mTitle));
+                return jsonResp({{
+                    status: 'success',
+                    message: 'Removed from history across selected trackers',
+                    results: {{ trakt: {{ status: 'removed' }}, simkl: {{ status: 'removed' }} }}
+                }});
+            }}
+
+            // 9c. Dynamic Service & Tracker Toggles
+            if (path.endsWith('/api/settings/toggle')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                const cat = body.category;
+                const k = body.key;
+                const en = Boolean(body.enabled);
+                if (clientState.settings && clientState.settings[cat]) {{
+                    clientState.settings[cat][k] = en;
+                }}
+                return jsonResp({{ status: 'ok', category: cat, key: k, enabled: en }});
+            }}
+
+            if (path.endsWith('/api/settings')) {{
+                return jsonResp({{ status: 'ok', settings: clientState.settings }});
+            }}
+
+            if (path.endsWith('/api/watchlist') || path.endsWith('/api/cowatch/sync')) {{
                 return jsonResp({{ status: 'success', result: {{ added: {{ movies: 1, episodes: 1 }} }} }});
             }}
 

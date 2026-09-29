@@ -308,6 +308,28 @@ class MyAnimeListClient:
             logger.error("MAL update_rating exception: %s", e)
             return {"status": "error", "error": str(e)}
 
+    async def delete_progress(self, anime_id: int) -> dict[str, Any]:
+        """Delete anime from user's MyAnimeList list (DELETE /anime/{anime_id}/my_list_status)."""
+        if not self.is_authenticated():
+            return {"status": "skipped", "reason": "not_authenticated"}
+
+        url = f"{self.BASE_URL}/anime/{anime_id}/my_list_status"
+        try:
+            client = self.get_client()
+            resp = await client.delete(
+                url,
+                headers=self._get_headers(auth=True),
+            )
+            if resp.status_code in (200, 204, 404):
+                logger.info("MAL entry deleted: anime_id=%d", anime_id)
+                return {"status": "success", "deleted": True}
+            else:
+                logger.error("MAL delete_progress HTTP %d: %s", resp.status_code, resp.text)
+                return {"status": "error", "code": resp.status_code, "error": resp.text}
+        except Exception as e:
+            logger.error("MAL delete_progress exception: %s", e)
+            return {"status": "error", "error": str(e)}
+
     async def close(self) -> None:
         """Close underlying HTTP client session."""
         if not self._external_client:

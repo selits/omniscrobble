@@ -243,6 +243,11 @@ class TraktClient:
         url = f"{self.api_url}/sync/history"
         return await self._post_authenticated(url, sync_payload)
 
+    async def remove_history(self, remove_payload: dict[str, Any]) -> dict[str, Any]:
+        """POST /sync/history/remove - Remove episodes/movies from Trakt watched history."""
+        url = f"{self.api_url}/sync/history/remove"
+        return await self._post_authenticated(url, remove_payload)
+
     async def sync_ratings(self, rating_payload: dict[str, Any]) -> dict[str, Any]:
         """POST /sync/ratings - Rate movies, shows, or episodes on Trakt."""
         url = f"{self.api_url}/sync/ratings"

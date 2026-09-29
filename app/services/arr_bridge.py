@@ -21,6 +21,7 @@ from app.clients.trakt_client import TraktClient
 from app.config import Config
 from app.plex_parser import ParsedMedia
 from app.services.notifier import Notifier, notifier
+from app.services.settings_manager import settings_mgr
 
 logger = logging.getLogger("omniscrobble.arr_bridge")
 
@@ -226,9 +227,14 @@ class ArrBridgeManager:
                     "icon": "radarr",
                 },
             ]
+            for s in servers:
+                s["enabled"] = True
+
+
+            healthy = sum(1 for s in servers if s["status"] in ("connected", "available"))
             return {
                 "servers": servers,
-                "healthy_count": len(servers),
+                "healthy_count": healthy,
                 "total_count": len(servers),
             }
 
@@ -510,6 +516,24 @@ class ArrBridgeManager:
                     "details": "Anime scrobbler disabled in config",
                     "icon": "myanimelist",
                 })
+
+        for s in servers:
+            sid = s.get("id", "")
+            if sid in ("plex", "jellyfin", "emby"):
+                s["enabled"] = settings_mgr.is_server_enabled(sid)
+                if not s["enabled"]:
+                    s["status"] = "disabled"
+                    s["badge"] = "Disabled"
+                    s["details"] = "Ingestion disabled"
+            elif sid in ("trakt", "simkl", "anilist", "myanimelist"):
+                trk = "mal" if sid == "myanimelist" else sid
+                s["enabled"] = settings_mgr.is_tracker_enabled(trk)
+                if not s["enabled"]:
+                    s["status"] = "disabled"
+                    s["badge"] = "Paused"
+                    s["details"] = "Sync paused in dashboard"
+            else:
+                s["enabled"] = True
 
         healthy = sum(1 for s in servers if s["status"] in ("connected", "available"))
         return {

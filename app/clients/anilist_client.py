@@ -411,6 +411,36 @@ class AniListClient:
         logger.info("AniList rating updated: media_id=%d, score=%.1f", media_id, score_val)
         return {"status": "success", "data": entry}
 
+    async def delete_progress(self, media_id: int) -> dict[str, Any]:
+        """Delete media entry from user's AniList list."""
+        if not self.is_authenticated():
+            return {"status": "skipped", "reason": "not_authenticated"}
+
+        query = """
+        query ($mediaId: Int) {
+            MediaList (mediaId: $mediaId) {
+                id
+            }
+        }
+        """
+        res = await self.execute_query(query, variables={"mediaId": media_id}, auth=True)
+        entry_data = res.get("data", {}).get("MediaList")
+        if not entry_data or not entry_data.get("id"):
+            return {"status": "success", "deleted": True, "message": "No entry found on AniList"}
+
+        entry_id = entry_data["id"]
+        del_mutation = """
+        mutation ($id: Int) {
+            DeleteMediaListEntry (id: $id) {
+                deleted
+            }
+        }
+        """
+        del_res = await self.execute_query(del_mutation, variables={"id": entry_id}, auth=True)
+        if "errors" in del_res:
+            return {"status": "error", "errors": del_res["errors"]}
+        return {"status": "success", "deleted": True}
+
     async def close(self) -> None:
         """Close underlying HTTP client session."""
         if not self._external_client:

@@ -47,6 +47,7 @@ from app.services.loop_prevention import loop_prevention
 from app.services.reverse_sync_manager import reverse_sync_mgr
 from app.services.arr_bridge import arr_bridge
 from app.services.cross_tracker_sync import CrossTrackerSyncManager
+from app.services.settings_manager import settings_mgr
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
@@ -84,14 +85,38 @@ queue_mgr = QueueManager(Config.QUEUE_DB_FILE)
 
 SERVER_START_TIME = time.time()
 
-# In-memory scrobble counter
-scrobble_stats: dict[str, int] = {
-    "total": 0,
-    "movies": 0,
-    "episodes": 0,
-    "ratings": 0,
-    "collections": 0,
-}
+STATS_FILE = Config.BASE_DIR / "data" / "stats.json"
+EVENTS_FILE = Config.BASE_DIR / "data" / "events.json"
+
+
+def load_scrobble_stats() -> dict[str, int]:
+    """Load persistent scrobble counters from data/stats.json."""
+    stats = {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0}
+    if STATS_FILE.exists():
+        try:
+            with open(STATS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    for k in stats:
+                        stats[k] = int(data.get(k, 0))
+        except Exception as e:
+            logger.warning(f"Could not load stats from {STATS_FILE}: {e}")
+    return stats
+
+
+def save_scrobble_stats() -> None:
+    """Persist scrobble counters to data/stats.json."""
+    try:
+        STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(scrobble_stats, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not save stats to {STATS_FILE}: {e}")
+
+
+# Persistent scrobble counter across restarts and upgrades
+scrobble_stats: dict[str, int] = {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0}
+scrobble_stats.update(load_scrobble_stats())
 
 
 def is_temporary_error(res: dict[str, Any]) -> bool:
@@ -306,7 +331,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "1.9.0"
+APP_VERSION = "2.0.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -314,7 +339,7 @@ app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
 
 async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: str):
     """Dispatch playback scrobble event asynchronously to Simkl."""
-    if not (simkl.is_enabled() and simkl.is_authenticated()):
+    if not (settings_mgr.is_tracker_enabled("simkl") and simkl.is_enabled() and simkl.is_authenticated()):
         return
     try:
         if event in ("media.play", "media.resume"):
@@ -322,52 +347,92 @@ async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: 
         elif event == "media.pause":
             await simkl.scrobble_pause(parsed, progress=parsed.progress)
         elif event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.get_threshold(parsed.media_type)):
-            await simkl.scrobble_stop(parsed, progress=parsed.progress)
+            res = await simkl.scrobble_stop(parsed, progress=parsed.progress)
+            if isinstance(res, dict) and res.get("status") == "error":
+                asyncio.create_task(notifier.send_failure_alert(parsed, "Simkl", str(res.get("error", "Error")), user=parsed.username))
         elif event == "media.rate":
             await simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
     except Exception as e:
         logger.warning(f"Simkl dispatch error for {parsed.title}: {e}")
+        asyncio.create_task(notifier.send_failure_alert(parsed, "Simkl", str(e), user=parsed.username))
 
 
 async def execute_multi_tracker_dispatch(parsed: ParsedMedia, action_taken: str, event: str, progress: float):
     """Dispatch playback scrobble and rating events asynchronously to Simkl, AniList, and MyAnimeList."""
     # 1. Simkl
-    if simkl.is_enabled() and simkl.is_authenticated():
+    if settings_mgr.is_tracker_enabled("simkl") and simkl.is_enabled() and simkl.is_authenticated():
         await execute_simkl_scrobble(parsed, action_taken, event)
 
     # 2. Anime tracking dispatch (AniList & MAL)
     try:
-        ani_active = anilist.is_enabled() and anilist.is_authenticated()
-        mal_active = mal.is_enabled() and mal.is_authenticated()
+        ani_active = settings_mgr.is_tracker_enabled("anilist") and anilist.is_enabled() and anilist.is_authenticated()
+        mal_active = settings_mgr.is_tracker_enabled("mal") and mal.is_enabled() and mal.is_authenticated()
         if ani_active or mal_active:
             resolved_anime = await anime_resolver.resolve(parsed)
             if resolved_anime and resolved_anime.get("is_anime"):
                 threshold = Config.get_threshold(parsed.media_type)
                 if event == "media.rate":
                     if ani_active:
-                        await anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
+                        ani_res = await anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
+                        if isinstance(ani_res, dict) and ani_res.get("status") == "error":
+                            asyncio.create_task(notifier.send_failure_alert(parsed, "AniList", str(ani_res.get("errors", "Error")), user=parsed.username))
                     if mal_active and resolved_anime.get("mal_id"):
-                        await mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+                        mal_res = await mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+                        if isinstance(mal_res, dict) and mal_res.get("status") == "error":
+                            asyncio.create_task(notifier.send_failure_alert(parsed, "MyAnimeList", str(mal_res.get("error", "Error")), user=parsed.username))
                 elif event == "media.scrobble" or (action_taken == "scrobble_stop" and progress >= threshold):
                     if ani_active:
-                        await anilist.update_progress(
+                        ani_res = await anilist.update_progress(
                             resolved_anime["anilist_id"],
                             resolved_anime["episode_number"],
                             resolved_anime.get("episodes"),
                         )
+                        if isinstance(ani_res, dict) and ani_res.get("status") == "error":
+                            asyncio.create_task(notifier.send_failure_alert(parsed, "AniList", str(ani_res.get("errors", "Error")), user=parsed.username))
                     if mal_active and resolved_anime.get("mal_id"):
-                        await mal.update_progress(
+                        mal_res = await mal.update_progress(
                             resolved_anime["mal_id"],
                             resolved_anime["episode_number"],
                             resolved_anime.get("episodes"),
                         )
+                        if isinstance(mal_res, dict) and mal_res.get("status") == "error":
+                            asyncio.create_task(notifier.send_failure_alert(parsed, "MyAnimeList", str(mal_res.get("error", "Error")), user=parsed.username))
     except Exception as e:
         logger.warning(f"Anime multi-tracker dispatch error for {parsed.title}: {e}")
 
 
-# In-memory log of recent webhook events for the status dashboard
-MAX_HISTORY = 30
+# Persistent log of recent webhook events for the status dashboard
+MAX_HISTORY = 50
+
+
 recent_events: deque[dict[str, Any]] = deque(maxlen=MAX_HISTORY)
+
+
+def reload_recent_events_in_place() -> None:
+    """Load persistent stream history into recent_events deque."""
+    recent_events.clear()
+    if EVENTS_FILE.exists():
+        try:
+            with open(EVENTS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    for ev in reversed(data[:MAX_HISTORY]):
+                        recent_events.appendleft(ev)
+        except Exception as e:
+            logger.warning(f"Could not load events from {EVENTS_FILE}: {e}")
+
+
+def save_recent_events() -> None:
+    """Persist stream history to data/events.json."""
+    try:
+        EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(recent_events), f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not save events to {EVENTS_FILE}: {e}")
+
+
+reload_recent_events_in_place()
 
 
 def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_status: Optional[dict[str, Any]] = None):
@@ -402,6 +467,8 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
         "cowatch_status": cowatch_status,
     }
     recent_events.appendleft(entry)
+    save_recent_events()
+    save_scrobble_stats()
 
 
 async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
@@ -644,7 +711,8 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
         log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
 
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
-            asyncio.create_task(notifier.dispatch(parsed, action_taken))
+            partner_target = Config.CO_WATCH_USER if (cowatch_info and cowatch_info.get("synced")) else None
+            asyncio.create_task(notifier.dispatch(parsed, action_taken, cowatch_partner=partner_target))
 
         asyncio.create_task(execute_multi_tracker_dispatch(parsed, action_taken, event, parsed.progress))
 
@@ -675,6 +743,10 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
 async def plex_webhook(request: Request):
     """Receives multipart/form-data or json webhook notifications from Plex Media Server."""
     verify_webhook_token(request, "webhook")
+
+    if not settings_mgr.is_server_enabled("plex"):
+        metrics_registry.record_request("webhook", 200)
+        return {"status": "ignored", "reason": "Plex ingestion is paused in settings"}
 
     raw_data = await extract_webhook_payload(request, "webhook")
     if not raw_data:
@@ -712,6 +784,10 @@ async def jellyfin_webhook(request: Request):
     """Receives webhook notifications from Jellyfin Media Server."""
     verify_webhook_token(request, "webhook_jellyfin")
 
+    if not settings_mgr.is_server_enabled("jellyfin"):
+        metrics_registry.record_request("webhook_jellyfin", 200)
+        return {"status": "ignored", "reason": "Jellyfin ingestion is paused in settings"}
+
     raw_data = await extract_webhook_payload(request, "webhook_jellyfin")
     if not raw_data:
         metrics_registry.record_request("webhook_jellyfin", 400)
@@ -747,6 +823,10 @@ def emby_info():
 async def emby_webhook(request: Request):
     """Receives webhook notifications from Emby Media Server."""
     verify_webhook_token(request, "webhook_emby")
+
+    if not settings_mgr.is_server_enabled("emby"):
+        metrics_registry.record_request("webhook_emby", 200)
+        return {"status": "ignored", "reason": "Emby ingestion is paused in settings"}
 
     raw_data = await extract_webhook_payload(request, "webhook_emby")
     if not raw_data:
@@ -1025,7 +1105,7 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>"""
 
 SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v1.9.0';
+const CACHE_NAME = 'omniscrobble-v2.0.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -1145,6 +1225,14 @@ async def export_backup(request: Request):
         if Config.QUEUE_DB_FILE.exists():
             zf.write(Config.QUEUE_DB_FILE, arcname="data/queue.db")
 
+        # 5. Playback stats, event history, and dynamic settings
+        if STATS_FILE.exists():
+            zf.write(STATS_FILE, arcname="data/stats.json")
+        if EVENTS_FILE.exists():
+            zf.write(EVENTS_FILE, arcname="data/events.json")
+        if Config.SETTINGS_FILE.exists():
+            zf.write(Config.SETTINGS_FILE, arcname="data/settings.json")
+
     buffer.seek(0)
     filename = f"plex-trakt-backup-{datetime.date.today().isoformat()}.zip"
     return Response(
@@ -1195,6 +1283,10 @@ async def import_backup(request: Request):
         trakt._tokens = None
         trakt.load_tokens()
         cowatch_mgr._load_shows()
+        settings_mgr._load_settings()
+        scrobble_stats.clear()
+        scrobble_stats.update(load_scrobble_stats())
+        reload_recent_events_in_place()
 
     except Exception as e:
         logger.error(f"Error restoring backup: {e}")
@@ -1240,7 +1332,21 @@ def clear_events(request: Request):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     recent_events.clear()
+    save_recent_events()
     return {"status": "cleared"}
+
+
+@app.post("/api/stats/reset")
+def reset_stats_endpoint(request: Request):
+    """Reset scrobble statistics counters."""
+    if request.query_params.get("demo") == "true":
+        return {"status": "ok", "stats": scrobble_stats}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    for k in scrobble_stats:
+        scrobble_stats[k] = 0
+    save_scrobble_stats()
+    return {"status": "ok", "stats": scrobble_stats}
 
 
 @app.post("/api/queue/retry")
@@ -1295,12 +1401,71 @@ async def get_system_logs(
 
 
 class ManualScrobbleRequest(BaseModel):
-    media_type: str  # "movie" or "episode" or "show"
-    title: str
+    media_type: Optional[str] = None
+    title: Optional[str] = None
     year: Optional[int] = None
     season: Optional[int] = None
     episode: Optional[int] = None
     ids: dict[str, Any] = {}
+    trackers: Optional[list[str]] = None
+    cowatch: Optional[bool] = False
+    media: Optional[dict[str, Any]] = None
+
+    model_config = {"extra": "ignore"}
+
+
+class RemoveHistoryRequest(BaseModel):
+    media_type: Optional[str] = None
+    title: Optional[str] = None
+    year: Optional[int] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    ids: dict[str, Any] = {}
+    trackers: Optional[list[str]] = None
+    cowatch: Optional[bool] = False
+    media: Optional[dict[str, Any]] = None
+
+    model_config = {"extra": "ignore"}
+
+
+class SettingsToggleRequest(BaseModel):
+    category: str  # "servers" or "trackers"
+    key: str       # "plex", "jellyfin", "emby", "trakt", "simkl", "anilist", "mal"
+    enabled: bool
+
+
+@app.get("/api/settings")
+def get_settings_endpoint(request: Request):
+    """Retrieve current runtime enablement settings for servers and trackers."""
+    if request and request.query_params.get("demo") == "true":
+        return {
+            "status": "success",
+            "settings": settings_mgr.get_all_settings(),
+        }
+    return {
+        "status": "success",
+        "settings": settings_mgr.get_all_settings(),
+    }
+
+
+@app.post("/api/settings/toggle")
+def toggle_setting_endpoint(payload: SettingsToggleRequest, request: Request):
+    """Toggle enablement state for a media server or tracker dynamically."""
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "success", "settings": settings_mgr.get_all_settings()}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    cat = payload.category.lower().strip()
+    k = payload.key.lower().strip()
+    if cat in ("servers", "server"):
+        updated = settings_mgr.set_server_enabled(k, payload.enabled)
+    elif cat in ("trackers", "tracker"):
+        updated = settings_mgr.set_tracker_enabled(k, payload.enabled)
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid category '{payload.category}'")
+
+    return {"status": "success", "category": cat, "key": k, "enabled": payload.enabled, "settings": updated}
 
 
 @app.get("/api/search")
@@ -1321,46 +1486,41 @@ async def search_media_endpoint(query: str, type: Optional[str] = None, request:
 
 @app.post("/api/scrobble/manual")
 async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
+    """Manually scrobble a movie or episode across selected/all trackers with optional co-watch."""
     if request and request.query_params.get("demo") == "true":
-        return {"status": "success", "result": {"scrobbled": True}}
+        targets = payload.trackers or ["trakt", "simkl"]
+        return {"status": "success", "result": {"synced_trackers": targets}, "cowatch_synced": bool(payload.cowatch)}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    if not trakt.is_authenticated():
-        raise HTTPException(status_code=400, detail="Trakt is not authenticated")
 
-    if payload.media_type == "episode":
-        history_payload: dict[str, Any] = {
-            "shows": [
-                {
-                    "title": payload.title,
-                    "seasons": [
-                        {
-                            "number": payload.season if payload.season is not None else 1,
-                            "episodes": [
-                                {
-                                    "number": payload.episode if payload.episode is not None else 1
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ]
-        }
-        if payload.year:
-            history_payload["shows"][0]["year"] = payload.year
-        if payload.ids:
-            history_payload["shows"][0]["ids"] = payload.ids
-    else:
-        movie_item: dict[str, Any] = {"title": payload.title}
-        if payload.year:
-            movie_item["year"] = payload.year
-        if payload.ids:
-            movie_item["ids"] = payload.ids
-        history_payload = {"movies": [movie_item]}
+    profile = await get_cached_trakt_profile()
+    admin_user = (profile.get("username") if profile else None) or "admin"
 
-    res = await trakt.sync_history(history_payload)
-    if is_temporary_error(res):
-        queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")))
+    m_dict = payload.media or {}
+    m_type = payload.media_type or m_dict.get("media_type") or "movie"
+    m_title = payload.title or m_dict.get("title") or m_dict.get("show_title") or "Unknown"
+    m_year = payload.year if payload.year is not None else m_dict.get("year")
+    m_season = payload.season if payload.season is not None else m_dict.get("season")
+    m_episode = payload.episode if payload.episode is not None else m_dict.get("episode")
+    m_ids = payload.ids or m_dict.get("ids") or {}
+
+    media_obj = ParsedMedia(
+        event="manual.scrobble",
+        username=admin_user,
+        media_type=m_type,
+        title=m_title,
+        year=m_year,
+        season=m_season,
+        episode=m_episode,
+        progress=100.0,
+        ids=m_ids,
+    )
+
+    dispatch_res = await multi_tracker.dispatch_manual_scrobble(
+        media=media_obj,
+        trakt_client=trakt,
+        selected_trackers=payload.trackers,
+    )
 
     scrobble_stats["total"] += 1
     if payload.media_type == "movie":
@@ -1368,23 +1528,117 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
     elif payload.media_type == "episode":
         scrobble_stats["episodes"] += 1
 
+    cowatch_synced = False
+    partner_user = Config.CO_WATCH_USER
+    if payload.cowatch and partner_user:
+        try:
+            cw_client = user_mgr.get_client(partner_user)
+            if cw_client.is_authenticated():
+                partner_media = ParsedMedia(
+                    event="manual.scrobble",
+                    username=partner_user,
+                    media_type=payload.media_type,
+                    title=payload.title,
+                    year=payload.year,
+                    season=payload.season,
+                    episode=payload.episode,
+                    progress=100.0,
+                    ids=payload.ids,
+                )
+                await multi_tracker.dispatch_manual_scrobble(
+                    media=partner_media,
+                    trakt_client=cw_client,
+                    selected_trackers=payload.trackers,
+                )
+                cowatch_synced = True
+                metrics_registry.record_cowatch("success")
+        except Exception as e:
+            logger.error(f"Error dual-scrobbling manual watch for co-watch partner @{partner_user}: {e}")
+
+    cowatch_status = {"synced": cowatch_synced, "target": partner_user} if cowatch_synced else None
+    log_event(media_obj, "manual_scrobble", dispatch_res, cowatch_status=cowatch_status)
+
+    synced_list = dispatch_res.get("synced_trackers", ["trakt"])
+    asyncio.create_task(
+        notifier.dispatch(
+            media_obj,
+            "mark_watched",
+            cowatch_partner=partner_user if cowatch_synced else None,
+            trackers=synced_list,
+        )
+    )
+
+    return {"status": "success", "result": dispatch_res, "cowatch_synced": cowatch_synced}
+
+
+@app.post("/api/history/remove")
+async def remove_history_endpoint(payload: RemoveHistoryRequest, request: Request):
+    """Remove a movie or episode from watched history across selected/all trackers with optional co-watch."""
+    if request and request.query_params.get("demo") == "true":
+        targets = payload.trackers or ["trakt", "simkl"]
+        return {"status": "success", "result": {"removed_trackers": targets}, "cowatch_removed": bool(payload.cowatch)}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
     profile = await get_cached_trakt_profile()
     admin_user = (profile.get("username") if profile else None) or "admin"
-    media_obj = ParsedMedia(
-        event="manual.scrobble",
-        username=admin_user,
-        media_type=payload.media_type,
-        title=payload.title,
-        year=payload.year,
-        season=payload.season,
-        episode=payload.episode,
-        progress=100.0,
-        ids=payload.ids,
-    )
-    log_event(media_obj, "manual_scrobble", res)
-    asyncio.create_task(notifier.dispatch(media_obj, "mark_watched"))
 
-    return {"status": "success", "result": res}
+    m_dict = payload.media or {}
+    m_type = payload.media_type or m_dict.get("media_type") or "movie"
+    m_title = payload.title or m_dict.get("title") or m_dict.get("show_title") or "Unknown"
+    m_year = payload.year if payload.year is not None else m_dict.get("year")
+    m_season = payload.season if payload.season is not None else m_dict.get("season")
+    m_episode = payload.episode if payload.episode is not None else m_dict.get("episode")
+    m_ids = payload.ids or m_dict.get("ids") or {}
+
+    media_obj = ParsedMedia(
+        event="manual.unscrobble",
+        username=admin_user,
+        media_type=m_type,
+        title=m_title,
+        year=m_year,
+        season=m_season,
+        episode=m_episode,
+        progress=0.0,
+        ids=m_ids,
+    )
+
+    dispatch_res = await multi_tracker.dispatch_unscrobble(
+        media=media_obj,
+        trakt_client=trakt,
+        selected_trackers=payload.trackers,
+    )
+
+    cowatch_removed = False
+    partner_user = Config.CO_WATCH_USER
+    if payload.cowatch and partner_user:
+        try:
+            cw_client = user_mgr.get_client(partner_user)
+            if cw_client.is_authenticated():
+                partner_media = ParsedMedia(
+                    event="manual.unscrobble",
+                    username=partner_user,
+                    media_type=payload.media_type,
+                    title=payload.title,
+                    year=payload.year,
+                    season=payload.season,
+                    episode=payload.episode,
+                    progress=0.0,
+                    ids=payload.ids,
+                )
+                await multi_tracker.dispatch_unscrobble(
+                    media=partner_media,
+                    trakt_client=cw_client,
+                    selected_trackers=payload.trackers,
+                )
+                cowatch_removed = True
+        except Exception as e:
+            logger.error(f"Error removing history for co-watch partner @{partner_user}: {e}")
+
+    cowatch_status = {"synced": cowatch_removed, "target": partner_user} if cowatch_removed else None
+    log_event(media_obj, "unscrobble", dispatch_res, cowatch_status=cowatch_status)
+
+    return {"status": "success", "result": dispatch_res, "cowatch_removed": cowatch_removed}
 
 
 class WatchlistRequest(BaseModel):
@@ -2655,7 +2909,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     """
 
     # Multi-Server Ecosystem Health Card
-    eco_data = await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex, simkl_client=simkl)
+    eco_data = await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex, simkl_client=simkl, anilist_client=anilist, mal_client=mal)
     eco_servers = eco_data.get("servers", [])
     eco_healthy = eco_data.get("healthy_count", 0)
     eco_total = eco_data.get("total_count", len(eco_servers))
@@ -2671,6 +2925,10 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             st_color = "#38bdf8"
             st_bg = "#0c4a6e"
             st_border = "#0284c7"
+        elif st == "disabled":
+            st_color = "#cbd5e1"
+            st_bg = "#334155"
+            st_border = "#64748b"
         elif st == "error":
             st_color = "#f87171"
             st_bg = "#7f1d1d"
@@ -2701,6 +2959,23 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         elif sid == "radarr":
             srv_icon = "🍿"
 
+        srv_name = html.escape(srv.get('name', ''))
+        toggle_btn = ""
+        if is_admin and sid in ("plex", "jellyfin", "emby", "trakt", "simkl", "anilist", "myanimelist"):
+            cat = "server" if sid in ("plex", "jellyfin", "emby") else "tracker"
+            key = "mal" if sid == "myanimelist" else sid
+            is_en = srv.get("enabled", True)
+            if cat == "server":
+                if is_en:
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable {srv_name}">⏸ Disable</button>'
+                else:
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#065f46;border:1px solid #059669;color:#a7f3d0;cursor:pointer;" title="Enable {srv_name}">▶ Enable</button>'
+            else:
+                if is_en:
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause {srv_name}">⏸ Pause</button>'
+                else:
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#065f46;border:1px solid #059669;color:#a7f3d0;cursor:pointer;" title="Resume {srv_name}">▶ Resume</button>'
+
         eco_cards_html += f"""
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -2711,9 +2986,12 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                         <div style="font-size:11px;color:#64748b;">{html.escape(srv.get('category', ''))}</div>
                     </div>
                 </div>
-                <span style="background:{st_bg};border:1px solid {st_border};color:{st_color};font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">
-                    {html.escape(srv.get('badge', st.capitalize()))}
-                </span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    {toggle_btn}
+                    <span style="background:{st_bg};border:1px solid {st_border};color:{st_color};font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">
+                        {html.escape(srv.get('badge', st.capitalize()))}
+                    </span>
+                </div>
             </div>
             <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
                 {html.escape(srv.get('details', ''))}
@@ -2760,7 +3038,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     simkl_user = simkl_status.get("user")
     simkl_disp_user = (simkl_user if is_admin else mask_username(simkl_user)) if simkl_user else "Linked"
 
-    if simkl_auth:
+    if not settings_mgr.is_tracker_enabled("simkl"):
+        simkl_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ Paused (@{simkl_disp_user})</span>'
+    elif simkl_auth:
         simkl_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@{simkl_disp_user})</span>'
     elif simkl_cfg:
         simkl_badge = '<span style="background:#1e293b;border:1px solid #eab308;color:#fde047;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● PIN Required</span>'
@@ -2770,7 +3050,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     simkl_action_btn = ""
     if is_admin:
         if simkl_auth:
-            simkl_action_btn = '<button onclick="disconnectSimkl(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect</button>'
+            simkl_paused = not settings_mgr.is_tracker_enabled("simkl")
+            simkl_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'simkl\', {str(simkl_paused).lower()}, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if simkl_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;">{"▶ Resume Simkl" if simkl_paused else "⏸ Pause Simkl"}</button>'
+            simkl_action_btn = f'{simkl_toggle_btn} <button onclick="disconnectSimkl(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect</button>'
         else:
             simkl_action_btn = '<button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🔑 Link Simkl Account</button>'
     else:
@@ -2830,7 +3112,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     ani_user = ani_status.get("user")
     ani_disp_user = (ani_user if is_admin else mask_username(ani_user)) if ani_user else "Linked"
 
-    if ani_auth:
+    if not settings_mgr.is_tracker_enabled("anilist"):
+        ani_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ AniList Paused</span>'
+    elif ani_auth:
         ani_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● AniList Active (@{ani_disp_user})</span>'
     else:
         ani_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● AniList Unlinked</span>'
@@ -2839,7 +3123,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     mal_user = mal_status.get("user")
     mal_disp_user = (mal_user if is_admin else mask_username(mal_user)) if mal_user else "Linked"
 
-    if mal_auth:
+    if not settings_mgr.is_tracker_enabled("mal"):
+        mal_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ MAL Paused</span>'
+    elif mal_auth:
         mal_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● MAL Active (@{mal_disp_user})</span>'
     else:
         mal_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● MAL Unlinked</span>'
@@ -2848,12 +3134,16 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     mal_action_btn = ""
     if is_admin:
         if ani_auth:
-            ani_action_btn = '<button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect AniList</button>'
+            ani_paused = not settings_mgr.is_tracker_enabled("anilist")
+            ani_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'anilist\', {str(ani_paused).lower()}, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if ani_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;">{"▶ Resume" if ani_paused else "⏸ Pause"}</button>'
+            ani_action_btn = f'{ani_toggle_btn} <button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect AniList</button>'
         else:
             ani_action_btn = '<button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">⚡ Link AniList</button>'
 
         if mal_auth:
-            mal_action_btn = '<button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect MAL</button>'
+            mal_paused = not settings_mgr.is_tracker_enabled("mal")
+            mal_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'mal\', {str(mal_paused).lower()}, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if mal_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;">{"▶ Resume" if mal_paused else "⏸ Pause"}</button>'
+            mal_action_btn = f'{mal_toggle_btn} <button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect MAL</button>'
         else:
             mal_action_btn = '<button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🎌 Link MAL</button>'
     else:
