@@ -411,5 +411,29 @@ class DemoManager:
             },
         ]
 
+    def get_demo_anilist_status(self) -> dict[str, Any]:
+        """Return simulated AniList connectivity status for demo previews."""
+        return {
+            "configured": True,
+            "enabled": True,
+            "authenticated": True,
+            "status": "connected",
+            "user": "demo_otaku",
+            "avatar": "https://s4.anilist.co/file/anilistcdn/user/avatar/large/default.png",
+            "id": 842105,
+        }
+
+    def get_demo_mal_status(self) -> dict[str, Any]:
+        """Return simulated MyAnimeList connectivity status for demo previews."""
+        return {
+            "configured": True,
+            "enabled": True,
+            "authenticated": True,
+            "status": "connected",
+            "user": "demo_otaku",
+            "avatar": "https://cdn.myanimelist.net/images/userimages/default.jpg",
+            "id": 1492084,
+        }
+
 
 demo_mgr = DemoManager()

@@ -269,11 +269,11 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             </h3>
             <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
                 <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
-                6/6 Services Healthy
+                9/9 Services Healthy
             </span>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Unified operational topology across all media servers, Trakt scrobble tracker, and automated media acquisition engines.
+            Unified operational topology across all media servers, Trakt &amp; anime scrobble trackers, and automated acquisition engines.
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
             <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
@@ -331,6 +331,45 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
                 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
                     <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">✨</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Simkl</div>
+                            <div style="font-size:11px;color:#64748b;">Tracker</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Active</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (API v2)</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">⚡</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">AniList</div>
+                            <div style="font-size:11px;color:#64748b;">Tracker</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (GraphQL API)</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span style="font-size:16px;">🎌</span>
+                        <div>
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">MyAnimeList</div>
+                            <div style="font-size:11px;color:#64748b;">Tracker</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
+                </div>
+                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (REST API v2)</div>
+            </div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:8px;">
                         <span style="font-size:16px;">📺</span>
                         <div>
                             <div style="font-size:13px;font-weight:600;color:#f8fafc;">Sonarr</div>
@@ -382,6 +421,38 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>
                 <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
+            </div>
+        </div>
+    </div>
+    """
+
+    anime_card_html = """
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>⚡</span> Anime Tracking Engine &bull; AniList &amp; MyAnimeList
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● AniList Active (@demo_viewer)</span>
+                <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● MAL Active (@demo_viewer)</span>
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            Specialized anime detection with automatic ID resolution across AniList and MyAnimeList. Scrobbles anime episode progress and synchronizes ratings in real-time with zero media playback latency.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span>Detection: <strong>Auto-Detect Active</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>AniList: <strong>Connected</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>MAL: <strong>Connected</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>API: <strong>GraphQL &amp; REST v2</strong></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">⚡ AniList Settings</button>
+                <button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🎌 MAL Settings</button>
             </div>
         </div>
     </div>
@@ -514,6 +585,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{WEBHOOK_CARD}}': webhook_html_section,
         '{{ECOSYSTEM_CARD}}': ecosystem_card_html,
         '{{SIMKL_CARD}}': simkl_card_html,
+        '{{ANIME_CARD}}': anime_card_html,
         '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,
@@ -819,16 +891,81 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     message: "Simkl disconnected"
                 }});
             }}
+            if (path.endsWith('/api/anilist/status')) {{
+                return jsonResp({{
+                    status: "connected",
+                    authenticated: true,
+                    user: "demo_viewer",
+                    avatar: "https://s4.anilist.co/file/anilistcdn/user/avatar/medium/default.png",
+                    id: 1234567,
+                    enabled: true,
+                    configured: true
+                }});
+            }}
+            if (path.endsWith('/api/anilist/token')) {{
+                return jsonResp({{
+                    status: "success",
+                    user: "demo_viewer",
+                    id: 1234567
+                }});
+            }}
+            if (path.endsWith('/api/anilist/disconnect')) {{
+                return jsonResp({{
+                    status: "ok",
+                    message: "AniList disconnected"
+                }});
+            }}
+            if (path.endsWith('/api/mal/status')) {{
+                return jsonResp({{
+                    status: "connected",
+                    authenticated: true,
+                    user: "demo_viewer",
+                    avatar: "https://myanimelist.net/images/userimages/default.jpg",
+                    id: 7654321,
+                    enabled: true,
+                    configured: true
+                }});
+            }}
+            if (path.endsWith('/api/mal/token')) {{
+                return jsonResp({{
+                    status: "success",
+                    user: "demo_viewer",
+                    id: 7654321
+                }});
+            }}
+            if (path.endsWith('/api/mal/disconnect')) {{
+                return jsonResp({{
+                    status: "ok",
+                    message: "MyAnimeList disconnected"
+                }});
+            }}
+            if (path.endsWith('/api/anime/resolve')) {{
+                const title = url.searchParams.get('title') || 'Attack on Titan';
+                return jsonResp({{
+                    title: title,
+                    cleaned_title: title,
+                    is_anime: true,
+                    detection_method: "title_heuristic",
+                    confidence: 0.95,
+                    anilist_id: 16498,
+                    mal_id: 16498,
+                    romaji: "Shingeki no Kyojin",
+                    english: "Attack on Titan",
+                    cached: true
+                }});
+            }}
             if (path.endsWith('/api/ecosystem')) {{
                 return jsonResp({{
-                    healthy_count: 7,
-                    total_count: 7,
+                    healthy_count: 9,
+                    total_count: 9,
                     servers: [
                         {{ id: "plex", name: "Plex Media Server", category: "Media Server", status: "connected", badge: "Online", version: "1.40.5", details: "Local Server (Port 32400)", icon: "plex" }},
                         {{ id: "jellyfin", name: "Jellyfin", category: "Media Server", status: "available", badge: "Ready", version: "10.9.11", details: "Webhook Ingestion Active", icon: "jellyfin" }},
                         {{ id: "emby", name: "Emby Server", category: "Media Server", status: "available", badge: "Ready", version: "4.8.8", details: "Webhook Ingestion Active", icon: "emby" }},
                         {{ id: "trakt", name: "Trakt.tv", category: "Tracker", status: "connected", badge: "Authenticated", version: "API v2", details: "Connected as @demo_viewer (84 days left)", icon: "trakt" }},
                         {{ id: "simkl", name: "Simkl", category: "Tracker", status: "connected", badge: "Active", version: "API v2", details: "Connected as @demo_viewer (Movies, Shows, Anime)", icon: "simkl" }},
+                        {{ id: "anilist", name: "AniList", category: "Tracker", status: "connected", badge: "Authenticated", version: "GraphQL API", details: "Connected as @demo_viewer (Anime)", icon: "anilist" }},
+                        {{ id: "myanimelist", name: "MyAnimeList", category: "Tracker", status: "connected", badge: "Authenticated", version: "REST API v2", details: "Connected as @demo_viewer (Anime)", icon: "myanimelist" }},
                         {{ id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" }},
                         {{ id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }}
                     ]

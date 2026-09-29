@@ -11,6 +11,8 @@ import logging
 import time
 from typing import Any, Optional
 
+from app.clients.anilist_client import AniListClient
+from app.clients.mal_client import MyAnimeListClient
 from app.clients.plex_api_client import PlexApiClient
 from app.clients.radarr_client import RadarrClient
 from app.clients.simkl_client import SimklClient
@@ -127,6 +129,8 @@ class ArrBridgeManager:
         demo: bool = False,
         plex_client: Optional[PlexApiClient] = None,
         simkl_client: Optional[SimklClient] = None,
+        anilist_client: Optional[AniListClient] = None,
+        mal_client: Optional[MyAnimeListClient] = None,
     ) -> dict[str, Any]:
         """Return unified ecosystem health matrix for all media and tracker integrations."""
         if demo:
@@ -180,6 +184,26 @@ class ArrBridgeManager:
                     "version": "API v2",
                     "details": "Connected as @demo_viewer (Dual-Scrobbler)",
                     "icon": "simkl",
+                },
+                {
+                    "id": "anilist",
+                    "name": "AniList",
+                    "category": "Tracker",
+                    "status": "connected",
+                    "badge": "Active",
+                    "version": "GraphQL",
+                    "details": "Connected as @demo_otaku (Anime Scrobbler)",
+                    "icon": "anilist",
+                },
+                {
+                    "id": "myanimelist",
+                    "name": "MyAnimeList",
+                    "category": "Tracker",
+                    "status": "connected",
+                    "badge": "Active",
+                    "version": "API v2",
+                    "details": "Connected as @demo_otaku (Anime Scrobbler)",
+                    "icon": "myanimelist",
                 },
                 {
                     "id": "sonarr",
@@ -411,6 +435,80 @@ class ArrBridgeManager:
                     "version": "API v2",
                     "details": "Set SIMKL_CLIENT_ID to enable multi-tracking",
                     "icon": "simkl",
+                })
+
+        # 8. AniList Tracker
+        if anilist_client:
+            ani_conn = await anilist_client.check_connection()
+            if ani_conn.get("authenticated") and ani_conn.get("enabled"):
+                servers.append({
+                    "id": "anilist",
+                    "name": "AniList",
+                    "category": "Tracker",
+                    "status": "connected",
+                    "badge": "Active",
+                    "version": "GraphQL",
+                    "details": f"Connected as @{ani_conn.get('user') or 'user'}",
+                    "icon": "anilist",
+                })
+            elif ani_conn.get("configured"):
+                servers.append({
+                    "id": "anilist",
+                    "name": "AniList",
+                    "category": "Tracker",
+                    "status": "unconfigured",
+                    "badge": "Token Required",
+                    "version": "GraphQL",
+                    "details": "Requires authorization at /auth/anilist",
+                    "icon": "anilist",
+                })
+            else:
+                servers.append({
+                    "id": "anilist",
+                    "name": "AniList",
+                    "category": "Tracker",
+                    "status": "unconfigured",
+                    "badge": "Disabled",
+                    "version": "GraphQL",
+                    "details": "Anime scrobbler disabled in config",
+                    "icon": "anilist",
+                })
+
+        # 9. MyAnimeList Tracker
+        if mal_client:
+            mal_conn = await mal_client.check_connection()
+            if mal_conn.get("authenticated") and mal_conn.get("enabled"):
+                servers.append({
+                    "id": "myanimelist",
+                    "name": "MyAnimeList",
+                    "category": "Tracker",
+                    "status": "connected",
+                    "badge": "Active",
+                    "version": "API v2",
+                    "details": f"Connected as @{mal_conn.get('user') or 'user'}",
+                    "icon": "myanimelist",
+                })
+            elif mal_conn.get("configured"):
+                servers.append({
+                    "id": "myanimelist",
+                    "name": "MyAnimeList",
+                    "category": "Tracker",
+                    "status": "unconfigured",
+                    "badge": "Auth Required",
+                    "version": "API v2",
+                    "details": "Requires authorization at /auth/mal",
+                    "icon": "myanimelist",
+                })
+            else:
+                servers.append({
+                    "id": "myanimelist",
+                    "name": "MyAnimeList",
+                    "category": "Tracker",
+                    "status": "unconfigured",
+                    "badge": "Disabled",
+                    "version": "API v2",
+                    "details": "Anime scrobbler disabled in config",
+                    "icon": "myanimelist",
                 })
 
         healthy = sum(1 for s in servers if s["status"] in ("connected", "available"))

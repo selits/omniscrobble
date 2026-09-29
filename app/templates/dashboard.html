@@ -56,7 +56,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal, #simkl-modal, #cross-sync-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -178,6 +178,8 @@
         {{ECOSYSTEM_CARD}}
 
         {{SIMKL_CARD}}
+
+        {{ANIME_CARD}}
 
         {{ARR_BRIDGE_CARD}}
 
@@ -517,6 +519,42 @@
             </p>
             <div id="simkl-modal-content" style="display:flex;flex-direction:column;gap:12px;">
                 <div style="color:#94a3b8;text-align:center;padding:20px;font-size:13px;">Checking Simkl status...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AniList Integration Modal -->
+    <div id="anilist-modal" onclick="if(event.target===this)closeAnilistModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>⚡</span> AniList Anime Tracker Settings
+                </h3>
+                <button onclick="closeAnilistModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Link your AniList account to scrobble anime episode progress and sync ratings via AniList's official GraphQL API.
+            </p>
+            <div id="anilist-modal-content" style="display:flex;flex-direction:column;gap:12px;">
+                <div style="color:#94a3b8;text-align:center;padding:20px;font-size:13px;">Checking AniList status...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MyAnimeList Integration Modal -->
+    <div id="mal-modal" onclick="if(event.target===this)closeMalModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>🎌</span> MyAnimeList (MAL) Settings
+                </h3>
+                <button onclick="closeMalModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Link your MyAnimeList account to scrobble anime episode progress and sync user ratings via the MAL v2 API.
+            </p>
+            <div id="mal-modal-content" style="display:flex;flex-direction:column;gap:12px;">
+                <div style="color:#94a3b8;text-align:center;padding:20px;font-size:13px;">Checking MyAnimeList status...</div>
             </div>
         </div>
     </div>
@@ -2075,6 +2113,304 @@ SIMKL_ENABLED=true</pre>
                     window.location.reload();
                 } else {
                     alert('Failed to disconnect Simkl');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // AniList Integration
+        // -------------------------------------------------------------
+        function openAnilistModal() {
+            const modal = document.getElementById('anilist-modal');
+            if (modal) modal.style.display = 'flex';
+            fetchAnilistStatus();
+        }
+
+        function closeAnilistModal() {
+            const modal = document.getElementById('anilist-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function fetchAnilistStatus() {
+            const container = document.getElementById('anilist-modal-content');
+            if (!container) return;
+            try {
+                const url = isDemo ? '/api/anilist/status?demo=true' : '/api/anilist/status';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Failed to load AniList status');
+                const data = await res.json();
+                renderAnilistModal(data);
+            } catch (err) {
+                container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Failed to load AniList status: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderAnilistModal(data) {
+            const container = document.getElementById('anilist-modal-content');
+            if (!container) return;
+
+            if (data.authenticated) {
+                const userDisp = data.user || 'Linked Account';
+                const avatarImg = data.avatar ? `<img src="${escapeHtml(data.avatar)}" style="width:36px;height:36px;border-radius:50%;border:1px solid #059669;" />` : '';
+                container.innerHTML = `
+                    <div style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:12px 14px;border-radius:8px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            ${avatarImg}
+                            <div>
+                                <div style="font-weight:700;">Connected to AniList</div>
+                                <div style="font-size:12px;opacity:0.9;">@${escapeHtml(userDisp)} (ID: #${escapeHtml(String(data.id || ''))})</div>
+                            </div>
+                        </div>
+                        <span style="background:#059669;color:#fff;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;">Active</span>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;font-size:13px;line-height:1.6;color:#cbd5e1;">
+                        <div style="font-weight:600;color:#f8fafc;margin-bottom:6px;">AniList Scrobbler Features:</div>
+                        <ul style="margin:0;padding-left:20px;color:#94a3b8;">
+                            <li>Live GraphQL mutation scrobbling (<code>SaveMediaListEntry</code>)</li>
+                            <li>Heuristic detection &amp; title normalization for anime</li>
+                            <li>Two-way score and rating synchronization</li>
+                            <li>Zero impact on media playback latency</li>
+                        </ul>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                        <a href="/auth/anilist" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;">Update Token Portal ↗</a>
+                        <button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;">Disconnect AniList</button>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:16px;">
+                        <p style="margin:0 0 12px 0;font-size:13px;color:#cbd5e1;">Enter your AniList Personal Access Token to link your account:</p>
+                        <form onsubmit="submitAnilistToken(event)" style="display:flex;flex-direction:column;gap:10px;">
+                            <input type="password" id="anilist-modal-token-input" placeholder="Paste your Bearer token here..." style="background:#1e293b;border:1px solid #475569;border-radius:6px;padding:10px 12px;color:#f8fafc;font-size:13px;font-family:monospace;" required autocomplete="off" />
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                                <a href="https://anilist.co/api/v2/oauth/authorize?client_id=27495&response_type=token" target="_blank" rel="noopener" style="color:#38bdf8;font-size:12px;text-decoration:none;">Get Token from AniList ↗</a>
+                                <button type="submit" id="anilist-modal-save-btn" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:8px 16px;">⚡ Connect AniList</button>
+                            </div>
+                        </form>
+                        <div id="anilist-modal-status" style="margin-top:10px;font-size:12px;min-height:16px;"></div>
+                    </div>
+                `;
+            }
+        }
+
+        async function submitAnilistToken(e) {
+            e.preventDefault();
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            const input = document.getElementById('anilist-modal-token-input');
+            const token = input ? input.value.trim() : '';
+            const statusEl = document.getElementById('anilist-modal-status');
+            const btn = document.getElementById('anilist-modal-save-btn');
+            if (!token) return;
+
+            if (isDemo) {
+                if (btn) btn.disabled = true;
+                if (statusEl) statusEl.innerHTML = '<span style="color:#38bdf8;">Connecting to AniList GraphQL...</span>';
+                setTimeout(() => {
+                    renderAnilistModal({
+                        authenticated: true,
+                        user: 'demo_otaku',
+                        id: 842105,
+                        avatar: 'https://s4.anilist.co/file/anilistcdn/user/avatar/large/default.png',
+                    });
+                }, 1000);
+                return;
+            }
+
+            if (btn) { btn.disabled = true; btn.textContent = 'Verifying...'; }
+            if (statusEl) statusEl.innerHTML = '<span style="color:#38bdf8;">Verifying token with AniList GraphQL...</span>';
+
+            try {
+                const res = await fetch('/api/anilist/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    if (statusEl) statusEl.innerHTML = `<span style="color:#10b981;font-weight:600;">✓ Connected as @${escapeHtml(data.user || 'user')}!</span>`;
+                    setTimeout(() => { window.location.reload(); }, 1200);
+                } else {
+                    if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444;">Error: ${escapeHtml(data.error || data.detail || 'Invalid token')}</span>`;
+                    if (btn) { btn.disabled = false; btn.textContent = '⚡ Connect AniList'; }
+                }
+            } catch (err) {
+                if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444;">Network error: ${escapeHtml(err.message)}</span>`;
+                if (btn) { btn.disabled = false; btn.textContent = '⚡ Connect AniList'; }
+            }
+        }
+
+        async function disconnectAnilist(btn) {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            if (!confirm('Are you sure you want to disconnect your AniList account?')) return;
+            if (isDemo) {
+                alert('AniList disconnected (Demo simulation)');
+                fetchAnilistStatus();
+                return;
+            }
+            try {
+                const res = await fetch('/api/anilist/disconnect', { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    alert('Failed to disconnect AniList');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // -------------------------------------------------------------
+        // MyAnimeList (MAL) Integration
+        // -------------------------------------------------------------
+        function openMalModal() {
+            const modal = document.getElementById('mal-modal');
+            if (modal) modal.style.display = 'flex';
+            fetchMalStatus();
+        }
+
+        function closeMalModal() {
+            const modal = document.getElementById('mal-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function fetchMalStatus() {
+            const container = document.getElementById('mal-modal-content');
+            if (!container) return;
+            try {
+                const url = isDemo ? '/api/mal/status?demo=true' : '/api/mal/status';
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Failed to load MAL status');
+                const data = await res.json();
+                renderMalModal(data);
+            } catch (err) {
+                container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Failed to load MAL status: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderMalModal(data) {
+            const container = document.getElementById('mal-modal-content');
+            if (!container) return;
+
+            if (data.authenticated) {
+                const userDisp = data.user || 'Linked Account';
+                const avatarImg = data.avatar ? `<img src="${escapeHtml(data.avatar)}" style="width:36px;height:36px;border-radius:50%;border:1px solid #2e51a2;" />` : '';
+                container.innerHTML = `
+                    <div style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:12px 14px;border-radius:8px;font-size:13px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            ${avatarImg}
+                            <div>
+                                <div style="font-weight:700;">Connected to MyAnimeList</div>
+                                <div style="font-size:12px;opacity:0.9;">@${escapeHtml(userDisp)} (ID: #${escapeHtml(String(data.id || ''))})</div>
+                            </div>
+                        </div>
+                        <span style="background:#059669;color:#fff;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;">Active</span>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;font-size:13px;line-height:1.6;color:#cbd5e1;">
+                        <div style="font-weight:600;color:#f8fafc;margin-bottom:6px;">MyAnimeList Scrobbler Features:</div>
+                        <ul style="margin:0;padding-left:20px;color:#94a3b8;">
+                            <li>Official MAL API v2 user status synchronization</li>
+                            <li>Episode progress tracking and rating synchronization</li>
+                            <li>Automatic translation from TVDB / AniList IDs to MAL IDs</li>
+                            <li>Zero-latency decoupled background dispatch</li>
+                        </ul>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                        <a href="/auth/mal" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;text-decoration:none;padding:6px 12px;font-size:12px;">Update Token Portal ↗</a>
+                        <button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;">Disconnect MAL</button>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:16px;">
+                        <p style="margin:0 0 12px 0;font-size:13px;color:#cbd5e1;">Enter your MyAnimeList Bearer Access Token to link your account:</p>
+                        <form onsubmit="submitMalToken(event)" style="display:flex;flex-direction:column;gap:10px;">
+                            <input type="password" id="mal-modal-token-input" placeholder="Paste your MAL access token here..." style="background:#1e293b;border:1px solid #475569;border-radius:6px;padding:10px 12px;color:#f8fafc;font-size:13px;font-family:monospace;" required autocomplete="off" />
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;">
+                                <a href="https://myanimelist.net/apiconfig" target="_blank" rel="noopener" style="color:#818cf8;font-size:12px;text-decoration:none;">MAL API Config ↗</a>
+                                <button type="submit" id="mal-modal-save-btn" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:8px 16px;">🎌 Connect MAL</button>
+                            </div>
+                        </form>
+                        <div id="mal-modal-status" style="margin-top:10px;font-size:12px;min-height:16px;"></div>
+                    </div>
+                `;
+            }
+        }
+
+        async function submitMalToken(e) {
+            e.preventDefault();
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            const input = document.getElementById('mal-modal-token-input');
+            const token = input ? input.value.trim() : '';
+            const statusEl = document.getElementById('mal-modal-status');
+            const btn = document.getElementById('mal-modal-save-btn');
+            if (!token) return;
+
+            if (isDemo) {
+                if (btn) btn.disabled = true;
+                if (statusEl) statusEl.innerHTML = '<span style="color:#818cf8;">Connecting to MyAnimeList API...</span>';
+                setTimeout(() => {
+                    renderMalModal({
+                        authenticated: true,
+                        user: 'demo_otaku',
+                        id: 1492084,
+                        avatar: 'https://cdn.myanimelist.net/images/userimages/default.jpg',
+                    });
+                }, 1000);
+                return;
+            }
+
+            if (btn) { btn.disabled = true; btn.textContent = 'Verifying...'; }
+            if (statusEl) statusEl.innerHTML = '<span style="color:#818cf8;">Verifying token with MyAnimeList API v2...</span>';
+
+            try {
+                const res = await fetch('/api/mal/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    if (statusEl) statusEl.innerHTML = `<span style="color:#10b981;font-weight:600;">✓ Connected as @${escapeHtml(data.user || 'user')}!</span>`;
+                    setTimeout(() => { window.location.reload(); }, 1200);
+                } else {
+                    if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444;">Error: ${escapeHtml(data.error || data.detail || 'Invalid token')}</span>`;
+                    if (btn) { btn.disabled = false; btn.textContent = '🎌 Connect MAL'; }
+                }
+            } catch (err) {
+                if (statusEl) statusEl.innerHTML = `<span style="color:#ef4444;">Network error: ${escapeHtml(err.message)}</span>`;
+                if (btn) { btn.disabled = false; btn.textContent = '🎌 Connect MAL'; }
+            }
+        }
+
+        async function disconnectMal(btn) {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            if (!confirm('Are you sure you want to disconnect your MyAnimeList account?')) return;
+            if (isDemo) {
+                alert('MyAnimeList disconnected (Demo simulation)');
+                fetchMalStatus();
+                return;
+            }
+            try {
+                const res = await fetch('/api/mal/disconnect', { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    alert('Failed to disconnect MyAnimeList');
                 }
             } catch (e) {
                 alert('Error: ' + e.message);
