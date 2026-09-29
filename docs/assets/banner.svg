@@ -55,6 +55,6 @@
     <!-- TYPOGRAPHY -->
     <text x="240" y="90" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="52" font-weight="900" letter-spacing="3" fill="#f8fafc">OMNISCROBBLE</text>
     <text x="242" y="132" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="22" font-weight="600" fill="#38bdf8">Watch anywhere. Track everywhere.</text>
-    <text x="242" y="165" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="14" font-weight="500" fill="#94a3b8">Universal Webhook Bridge for Plex, Jellyfin, and Emby to Trakt</text>
+    <text x="242" y="165" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="14" font-weight="500" fill="#94a3b8">Universal Webhook Bridge &amp; Multi-Tracker Scrobbler</text>
   </g>
 </svg>

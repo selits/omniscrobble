@@ -2772,7 +2772,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
                     <div class="cowatch-form-row">
                         <div style="flex:1;position:relative;">
-                            <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Severance, The Bear)..."
+                            <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Severance, Lanterns)..."
                                    style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
                                    oninput="onCowatchShowInput(this.value)"
                                    onfocus="onCowatchShowInput(this.value)"
@@ -2967,34 +2967,34 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             is_en = srv.get("enabled", True)
             if cat == "server":
                 if is_en:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable {srv_name}">⏸ Disable</button>'
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
                 else:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#065f46;border:1px solid #059669;color:#a7f3d0;cursor:pointer;" title="Enable {srv_name}">▶ Enable</button>'
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
             else:
                 if is_en:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause {srv_name}">⏸ Pause</button>'
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause {srv_name}"><span>⏸</span><span>Pause</span></button>'
                 else:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#065f46;border:1px solid #059669;color:#a7f3d0;cursor:pointer;" title="Resume {srv_name}">▶ Resume</button>'
+                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Resume {srv_name}"><span>▶</span><span>Resume</span></button>'
 
         eco_cards_html += f"""
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="font-size:16px;">{srv_icon}</span>
-                    <div>
-                        <div style="font-size:13px;font-weight:600;color:#f8fafc;">{html.escape(srv.get('name', ''))}</div>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">{srv_icon}</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{html.escape(srv.get('name', ''))}</div>
                         <div style="font-size:11px;color:#64748b;">{html.escape(srv.get('category', ''))}</div>
                     </div>
                 </div>
-                <div style="display:flex;align-items:center;gap:6px;">
-                    {toggle_btn}
-                    <span style="background:{st_bg};border:1px solid {st_border};color:{st_color};font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">
-                        {html.escape(srv.get('badge', st.capitalize()))}
-                    </span>
-                </div>
+                <span style="background:{st_bg};border:1px solid {st_border};color:{st_color};font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">
+                    {html.escape(srv.get('badge', st.capitalize()))}
+                </span>
             </div>
-            <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
-                {html.escape(srv.get('details', ''))}
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="{html.escape(srv.get('details', ''))}">
+                    {html.escape(srv.get('details', ''))}
+                </div>
+                {toggle_btn}
             </div>
         </div>
         """
@@ -3013,7 +3013,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
             Unified operational topology across all media servers, Trakt scrobble tracker, and automated media acquisition engines.
         </p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
             {eco_cards_html}
         </div>
     </div>
@@ -3051,19 +3051,19 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     if is_admin:
         if simkl_auth:
             simkl_paused = not settings_mgr.is_tracker_enabled("simkl")
-            simkl_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'simkl\', {str(simkl_paused).lower()}, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if simkl_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;">{"▶ Resume Simkl" if simkl_paused else "⏸ Pause Simkl"}</button>'
-            simkl_action_btn = f'{simkl_toggle_btn} <button onclick="disconnectSimkl(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect</button>'
+            simkl_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'simkl\', {str(simkl_paused).lower()}, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if simkl_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">{"▶ Resume Simkl" if simkl_paused else "⏸ Pause Simkl"}</button>'
+            simkl_action_btn = f'{simkl_toggle_btn} <button onclick="disconnectSimkl(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Disconnect</button>'
         else:
-            simkl_action_btn = '<button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🔑 Link Simkl Account</button>'
+            simkl_action_btn = '<button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔑 Link Simkl Account</button>'
     else:
-        simkl_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Manage Simkl</button>'
+        simkl_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Manage Simkl</button>'
 
     cross_sync_btn = ""
     if simkl_auth and (is_demo or trakt.is_authenticated()):
         if is_admin:
-            cross_sync_btn = '<button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>'
+            cross_sync_btn = '<button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt & Simkl</button>'
         else:
-            cross_sync_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Reconcile</button>'
+            cross_sync_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Reconcile</button>'
 
     simkl_card_html = f"""
     <div class="card">
@@ -3089,7 +3089,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 {cross_sync_btn}
                 {simkl_action_btn}
-                <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">PIN Portal ↗</a>
+                <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">PIN Portal ↗</a>
             </div>
         </div>
     </div>
@@ -3135,20 +3135,20 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     if is_admin:
         if ani_auth:
             ani_paused = not settings_mgr.is_tracker_enabled("anilist")
-            ani_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'anilist\', {str(ani_paused).lower()}, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if ani_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;">{"▶ Resume" if ani_paused else "⏸ Pause"}</button>'
-            ani_action_btn = f'{ani_toggle_btn} <button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect AniList</button>'
+            ani_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'anilist\', {str(ani_paused).lower()}, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if ani_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">{"▶ Resume" if ani_paused else "⏸ Pause"}</button>'
+            ani_action_btn = f'{ani_toggle_btn} <button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Disconnect AniList</button>'
         else:
-            ani_action_btn = '<button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">⚡ Link AniList</button>'
+            ani_action_btn = '<button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">⚡ Link AniList</button>'
 
         if mal_auth:
             mal_paused = not settings_mgr.is_tracker_enabled("mal")
-            mal_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'mal\', {str(mal_paused).lower()}, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if mal_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;">{"▶ Resume" if mal_paused else "⏸ Pause"}</button>'
-            mal_action_btn = f'{mal_toggle_btn} <button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect MAL</button>'
+            mal_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'mal\', {str(mal_paused).lower()}, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if mal_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">{"▶ Resume" if mal_paused else "⏸ Pause"}</button>'
+            mal_action_btn = f'{mal_toggle_btn} <button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Disconnect MAL</button>'
         else:
-            mal_action_btn = '<button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🎌 Link MAL</button>'
+            mal_action_btn = '<button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🎌 Link MAL</button>'
     else:
-        ani_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Manage AniList</button>'
-        mal_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Manage MAL</button>'
+        ani_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Manage AniList</button>'
+        mal_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Manage MAL</button>'
 
     anime_card_html = f"""
     <div class="card">

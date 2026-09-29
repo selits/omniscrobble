@@ -13,7 +13,7 @@
     <link rel="apple-touch-icon" href="/static/icons/icon-192.svg">
     <link rel="icon" type="image/svg+xml" href="/static/icons/icon-192.svg">
     <meta property="og:title" content="Omniscrobble — Universal Media Scrobbler &amp; Webhook Bridge">
-    <meta property="og:description" content="Watch anywhere. Track everywhere. Universal Webhook Bridge for Plex, Jellyfin, and Emby to Trakt.">
+    <meta property="og:description" content="Watch anywhere. Track everywhere. Universal Webhook Bridge &amp; Multi-Tracker Scrobbler.">
     <meta property="og:image" content="https://selits.github.io/omniscrobble/assets/social-preview.png">
     <meta property="twitter:card" content="summary_large_image">
     <script>
@@ -114,12 +114,12 @@
     <!-- GitHub Pages Client-Side Simulation Engine -->
     <script>
     (function() {
-        const initialShows = ["Fallout", "Fargo", "House of the Dragon", "Severance", "Sh\u014dgun", "Silo", "Slow Horses", "Succession", "Ted Lasso", "The Bear", "The Last of Us", "The White Lotus"];
-        const initialEvents = [{"timestamp": "2026-09-28 22:27:47", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 21:53:47", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27984852"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 21:06:47", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 19:21:47", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 17:11:47", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Slow Horses S04E01 - Identity Theft", "type": "episode", "show_title": "Slow Horses", "media_payload": {"media_type": "episode", "title": "Identity Theft", "year": 2024, "season": 4, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 14:31:47", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
-        const initialReconciliation = [{"id": "movie:101", "type": "movie", "title": "Interstellar", "series_title": null, "season": null, "episode": null, "year": 2014, "rating_key": "101", "ids": {"imdb": "tt0816692", "tmdb": "157336"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}, {"id": "movie:102", "type": "movie", "title": "Dune: Part Two", "series_title": null, "season": null, "episode": null, "year": 2024, "rating_key": "102", "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "status": "rating_mismatch", "plex_watched": true, "trakt_watched": true, "plex_rating": 8.0, "trakt_rating": 9, "action_recommended": "sync_rating_to_plex"}, {"id": "episode:201", "type": "episode", "title": "Tomorrow", "series_title": "The Bear", "season": 3, "episode": 1, "year": 2024, "rating_key": "201", "ids": {"imdb": "tt27984852"}, "status": "plex_only", "plex_watched": true, "trakt_watched": false, "plex_rating": null, "trakt_rating": null, "action_recommended": "sync_to_trakt"}, {"id": "episode:202", "type": "episode", "title": "Felina", "series_title": "Breaking Bad", "season": 5, "episode": 16, "year": 2013, "rating_key": "202", "ids": {"imdb": "tt2301451"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}];
+        const initialShows = ["A Knight of the Seven Kingdoms", "Fallout", "Lanterns", "Rick and Morty", "Severance", "Sh\u014dgun", "Succession", "The Expanse", "The Last of Us", "The Office", "The White Lotus", "Widow's Bay"];
+        const initialEvents = [{"timestamp": "2026-09-28 22:58:27", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 22:24:27", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Lanterns S01E01 - Pilot", "type": "episode", "show_title": "Lanterns", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2026, "season": 1, "episode": 1, "ids": {"imdb": "tt20885210"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 21:37:27", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 19:52:27", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 17:42:27", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Widow's Bay S01E01 - Pilot", "type": "episode", "show_title": "Widow's Bay", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2025, "season": 1, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:02:27", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
+        const initialReconciliation = [{"id": "movie:101", "type": "movie", "title": "Interstellar", "series_title": null, "season": null, "episode": null, "year": 2014, "rating_key": "101", "ids": {"imdb": "tt0816692", "tmdb": "157336"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}, {"id": "movie:102", "type": "movie", "title": "Dune: Part Two", "series_title": null, "season": null, "episode": null, "year": 2024, "rating_key": "102", "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "status": "rating_mismatch", "plex_watched": true, "trakt_watched": true, "plex_rating": 8.0, "trakt_rating": 9, "action_recommended": "sync_rating_to_plex"}, {"id": "episode:201", "type": "episode", "title": "Pilot", "series_title": "Lanterns", "season": 1, "episode": 1, "year": 2026, "rating_key": "201", "ids": {"imdb": "tt20885210"}, "status": "plex_only", "plex_watched": true, "trakt_watched": false, "plex_rating": null, "trakt_rating": null, "action_recommended": "sync_to_trakt"}, {"id": "episode:202", "type": "episode", "title": "Felina", "series_title": "Breaking Bad", "season": 5, "episode": 16, "year": 2013, "rating_key": "202", "ids": {"imdb": "tt2301451"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}];
         const initialCrossDiff = [{"id": "diff_movie_t2s_tt15239678", "media_type": "movie", "title": "Dune: Part Two", "year": 2024, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "watched_at": "2026-09-27T21:40:00Z"}, {"id": "diff_ep_t2s_tt11280740_s2e1", "media_type": "episode", "title": "S02E01", "year": 2025, "season": 2, "episode": 1, "show_title": "Severance", "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt11280740", "tvdb": "371980"}, "watched_at": "2026-09-28T02:15:00Z"}, {"id": "diff_movie_s2t_tt0245429", "media_type": "movie", "title": "Spirited Away", "year": 2001, "season": null, "episode": null, "show_title": null, "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt0245429", "tmdb": "129", "simkl": "2608"}, "watched_at": "2026-09-26T18:30:00Z"}, {"id": "diff_ep_s2t_tt29930773_s1e1", "media_type": "episode", "title": "S01E01", "year": 2023, "season": 1, "episode": 1, "show_title": "Frieren: Beyond Journey's End", "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt29930773", "tvdb": "424759", "simkl": "2029530"}, "watched_at": "2026-09-25T14:10:00Z"}, {"id": "diff_movie_rating_t2s_tt15398776", "media_type": "movie", "title": "Oppenheimer", "year": 2023, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "rating", "source_status": "10/10", "target_status": "unrated", "source_rating": 10, "target_rating": null, "ids": {"imdb": "tt15398776", "tmdb": "872585"}, "watched_at": null}, {"id": "diff_ep_rating_s2t_tt2560140_s4e28", "media_type": "episode", "title": "S04E28", "year": 2022, "season": 4, "episode": 28, "show_title": "Attack on Titan", "direction": "simkl_to_trakt", "sync_type": "rating", "source_status": "9/10", "target_status": "unrated", "source_rating": 9, "target_rating": null, "ids": {"imdb": "tt2560140", "tvdb": "267440", "simkl": "40316"}, "watched_at": null}];
-        const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "The Bear", "year": 2022, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Slow Horses", "year": 2022, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Fargo", "year": 2014, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "Ted Lasso", "year": 2020, "status": "ended"}, {"title": "Silo", "year": 2023, "status": "continuing"}, {"title": "House of the Dragon", "year": 2022, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
-        const demoLogs = ["Sep 28 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 28 08:15:32 mediaserver python[5678]: 2026-09-28 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'The Bear S03E01 - Tomorrow' by user 'demo_viewer'", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for The Bear S03E01", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'The Bear S03E01 - Tomorrow' (progress: 100.0%)", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: The Bear", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:55:01 mediaserver python[5678]: 2026-09-28 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 28 08:55:02 mediaserver python[5678]: 2026-09-28 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 28 09:02:45 mediaserver python[5678]: 2026-09-28 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 09:18:20 mediaserver python[5678]: 2026-09-28 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 28 09:18:21 mediaserver python[5678]: 2026-09-28 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
+        const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "Lanterns", "year": 2026, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Widow's Bay", "year": 2025, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Rick and Morty", "year": 2013, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "The Office", "year": 2005, "status": "ended"}, {"title": "The Expanse", "year": 2015, "status": "ended"}, {"title": "A Knight of the Seven Kingdoms", "year": 2025, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
+        const demoLogs = ["Sep 28 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 28 08:15:32 mediaserver python[5678]: 2026-09-28 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Lanterns S01E01 - Pilot' by user 'demo_viewer'", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for Lanterns S01E01", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'Lanterns S01E01 - Pilot' (progress: 100.0%)", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: Lanterns", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: Lanterns", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:55:01 mediaserver python[5678]: 2026-09-28 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 28 08:55:02 mediaserver python[5678]: 2026-09-28 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 28 09:02:45 mediaserver python[5678]: 2026-09-28 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 09:18:20 mediaserver python[5678]: 2026-09-28 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 28 09:18:21 mediaserver python[5678]: 2026-09-28 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
 
         const clientState = {
             shows: [...initialShows],
@@ -229,7 +229,7 @@
                 const q = (url.searchParams.get('query') || '').toLowerCase().trim();
                 const catalog = [
                     { type: 'show', show: { title: 'Severance', year: 2022, overview: 'Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.', ids: { tmdb: 1128074 } } },
-                    { type: 'show', show: { title: 'The Bear', year: 2022, overview: 'A young chef from the fine dining world comes home to Chicago to run his family Italian beef sandwich shop.', ids: { tmdb: 1445277 } } },
+                    { type: 'show', show: { title: 'Lanterns', year: 2026, overview: 'Intergalactic cops John Stewart and Hal Jordan investigate a dark mystery on Earth.', ids: { tmdb: 208852 } } },
                     { type: 'movie', movie: { title: 'Dune: Part Two', year: 2024, overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.', ids: { tmdb: 693134 } } },
                     { type: 'show', show: { title: 'Fallout', year: 2024, overview: 'In a future post-apocalyptic Los Angeles, citizens must live in underground bunkers to protect themselves from radiation and mutants.', ids: { tmdb: 106379 } } },
                     { type: 'show', show: { title: 'Yellowstone', year: 2018, overview: 'A ranching family in Montana faces off against others encroaching on their land.', ids: { tmdb: 73586 } } }
@@ -717,144 +717,144 @@
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
             Unified operational topology across all media servers, Trakt &amp; anime scrobble trackers, and automated acquisition engines.
         </p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🔶</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Plex Media Server</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🔶</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Plex Media Server</div>
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('server', 'plex', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Plex">⏸ Disable</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Local Server (Port 32400)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Local Server (Port 32400)">Local Server (Port 32400)</div>
+                    <button onclick="toggleSetting('server', 'plex', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Plex"><span>⏸</span><span>Disable</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🟣</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Jellyfin</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🟣</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Jellyfin</div>
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('server', 'jellyfin', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Jellyfin">⏸ Disable</button>
-                        <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
-                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Ready</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Webhook Ingestion Active">Webhook Ingestion Active</div>
+                    <button onclick="toggleSetting('server', 'jellyfin', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Jellyfin"><span>⏸</span><span>Disable</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🟢</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Emby Server</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🟢</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Emby Server</div>
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('server', 'emby', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Emby">⏸ Disable</button>
-                        <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
-                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Ready</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Webhook Ingestion Active">Webhook Ingestion Active</div>
+                    <button onclick="toggleSetting('server', 'emby', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Emby"><span>⏸</span><span>Disable</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🔴</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Trakt.tv</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🔴</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Trakt.tv</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'trakt', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause Trakt">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Authenticated</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (84 days left)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (84 days left)">Connected as @demo_viewer (84 days left)</div>
+                    <button onclick="toggleSetting('tracker', 'trakt', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Trakt"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">✨</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Simkl</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">✨</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Simkl</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause Simkl">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Active</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Active</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (API v2)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (API v2)">Connected as @demo_viewer (API v2)</div>
+                    <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Simkl"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">⚡</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">AniList</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">⚡</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">AniList</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause AniList">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Authenticated</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (GraphQL API)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (GraphQL API)">Connected as @demo_viewer (GraphQL API)</div>
+                    <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause AniList"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🎌</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">MyAnimeList</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🎌</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MyAnimeList</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause MAL">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Authenticated</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (REST API v2)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (REST API v2)">Connected as @demo_viewer (REST API v2)</div>
+                    <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause MAL"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">📺</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Sonarr</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">📺</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Sonarr</div>
                             <div style="font-size:11px;color:#64748b;">Acquisition</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">48 Series Monitored</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="48 Series Monitored">48 Series Monitored</div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🍿</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Radarr</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🍿</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Radarr</div>
                             <div style="font-size:11px;color:#64748b;">Acquisition</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">215 Movies Monitored</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="215 Movies Monitored">215 Movies Monitored</div>
             </div>
         </div>
     </div>
@@ -882,9 +882,9 @@
                 <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause Simkl</button>
-                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>
-                <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
+                <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause Simkl</button>
+                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt & Simkl</button>
+                <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Simkl Settings</button>
             </div>
         </div>
     </div>
@@ -915,10 +915,10 @@
                 <span>API: <strong>GraphQL &amp; REST v2</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause AniList</button>
-                <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause MAL</button>
-                <button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">⚡ AniList Settings</button>
-                <button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🎌 MAL Settings</button>
+                <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause AniList</button>
+                <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause MAL</button>
+                <button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">⚡ AniList Settings</button>
+                <button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🎌 MAL Settings</button>
             </div>
         </div>
     </div>
@@ -978,7 +978,7 @@
                     <input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:110px;" />
                 </div>
                 <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:180px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
-                    <span class="cowatch-chip" data-title="fallout" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Fallout<button data-show="Fallout" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Fallout" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="fargo" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Fargo<button data-show="Fargo" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Fargo" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="house of the dragon" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">House of the Dragon<button data-show="House of the Dragon" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove House of the Dragon" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="severance" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Severance<button data-show="Severance" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Severance" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="shōgun" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Shōgun<button data-show="Shōgun" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Shōgun" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="silo" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Silo<button data-show="Silo" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Silo" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="slow horses" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Slow Horses<button data-show="Slow Horses" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Slow Horses" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="succession" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Succession<button data-show="Succession" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Succession" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="ted lasso" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Ted Lasso<button data-show="Ted Lasso" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Ted Lasso" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the bear" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The Bear<button data-show="The Bear" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The Bear" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the last of us" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The Last of Us<button data-show="The Last of Us" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The Last of Us" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the white lotus" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The White Lotus<button data-show="The White Lotus" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The White Lotus" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span>
+                    <span class="cowatch-chip" data-title="a knight of the seven kingdoms" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">A Knight of the Seven Kingdoms<button data-show="A Knight of the Seven Kingdoms" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove A Knight of the Seven Kingdoms" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="fallout" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Fallout<button data-show="Fallout" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Fallout" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="lanterns" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Lanterns<button data-show="Lanterns" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Lanterns" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="rick and morty" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Rick and Morty<button data-show="Rick and Morty" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Rick and Morty" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="severance" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Severance<button data-show="Severance" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Severance" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="shōgun" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Shōgun<button data-show="Shōgun" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Shōgun" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="succession" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Succession<button data-show="Succession" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Succession" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the expanse" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The Expanse<button data-show="The Expanse" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The Expanse" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the last of us" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The Last of Us<button data-show="The Last of Us" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The Last of Us" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the office" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The Office<button data-show="The Office" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The Office" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="the white lotus" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">The White Lotus<button data-show="The White Lotus" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove The White Lotus" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span><span class="cowatch-chip" data-title="widow&#x27;s bay" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">Widow&#x27;s Bay<button data-show="Widow&#x27;s Bay" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove Widow&#x27;s Bay" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span>
                 </div>
                 <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
                     <div class="cowatch-form-row">
@@ -1126,7 +1126,7 @@
                     <tbody id="events-tbody">
                         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 22:27:47</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 22:58:27</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Severance S02E01 - Hello, Kier</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1136,17 +1136,17 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 21:53:47</td>
-            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">The Bear S03E01 - Tomorrow</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 22:24:27</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Lanterns S01E01 - Pilot</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">scrobble (100.0%) (100.0%)</span></td>
             <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
-            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Tomorrow&quot;, &quot;year&quot;: 2024, &quot;season&quot;: 3, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt27984852&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Pilot&quot;, &quot;year&quot;: 2026, &quot;season&quot;: 1, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt20885210&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 21:06:47</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 21:37:27</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Dune: Part Two (2024)</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1156,7 +1156,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 19:21:47</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 19:52:27</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Succession S04E03 - Connor&#x27;s Wedding</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_partner</span></div></td>
@@ -1166,17 +1166,17 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 17:11:47</td>
-            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Slow Horses S04E01 - Identity Theft</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 17:42:27</td>
+            <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Widow&#x27;s Bay S01E01 - Pilot</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">scrobble (100.0%) (100.0%)</span></td>
             <td style="padding:12px 16px;"><span style="color:#10b981;font-weight:600;font-size:13px;">ok</span></td>
-            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Identity Theft&quot;, &quot;year&quot;: 2024, &quot;season&quot;: 4, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt21876404&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
+            <td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;"><span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span><button onclick="quickSyncPartner('{&quot;media_type&quot;: &quot;episode&quot;, &quot;title&quot;: &quot;Pilot&quot;, &quot;year&quot;: 2025, &quot;season&quot;: 1, &quot;episode&quot;: 1, &quot;ids&quot;: {&quot;imdb&quot;: &quot;tt21876404&quot;}}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button></td>
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 14:31:47</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:02:27</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Shōgun S01E01 - Anjin</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1283,7 +1283,7 @@
             <div id="scrobble-view-search">
                 <form onsubmit="event.preventDefault();executeTraktSearch();" autocomplete="off" style="margin:0 0 12px 0;">
                     <div class="search-form-row">
-                        <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, The Bear)..."
+                        <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, Lanterns)..."
                                autocomplete="off"
                                data-lpignore="true"
                                data-1p-ignore="true"
@@ -1318,7 +1318,7 @@
 
                     <div id="direct-show-row">
                         <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Series / Show Title</label>
-                        <input type="text" id="direct-show-input" placeholder="e.g. Severance, Shogun, Silo" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;" />
+                        <input type="text" id="direct-show-input" placeholder="e.g. Severance, Shogun, The Expanse" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;" />
                     </div>
 
                     <div style="display:flex;gap:10px;">

@@ -1,6 +1,6 @@
 # Project Guidelines & Agent Instructions
 
-This document defines the architectural rules, security boundaries, and development workflows for `plex-trakt-webhook`. All AI agents and contributors must adhere to these instructions.
+This document defines the architectural rules, security boundaries, and development workflows for `omniscrobble` (formerly `plex-trakt-webhook`). All AI agents and contributors must adhere to these instructions.
 
 ---
 
@@ -14,8 +14,8 @@ This document defines the architectural rules, security boundaries, and developm
   - Never commit real mediaserver/server hostnames, personal domain names, assigned high-range ports, or user credentials.
   - Always use generic documentation placeholders: `<your-server-ip-or-domain>`, `<PORT>`, `your_trakt_client_id_here`.
   - Personal setup guides and credentials belong in the user's local Obsidian vault, **not** in this repository.
-- **Sensitive Files:**
-  - Never track `.env`, `*.env`, `trakt_tokens.json`, or anything in the `data/` directory.
+- **Sensitive Files & State Isolation:**
+  - Never track `.env`, `*.env`, `trakt_tokens.json`, or anything in the `data/` directory (`data/settings.json`, `data/stats.json`, `data/events.json`, `data/playback_sessions.json`, `data/anime_cache.json`, `data/tokens/*.json`, `data/queue.db`, `data/cowatch_shows.json`).
   - Always verify `.gitignore` before adding new files.
 - **Dashboard & Screenshot Privacy Shielding:**
   - Non-admin dashboard views must shield private information: mask Plex usernames (`mask_username`), partner accounts (`@●●●●●●●●`), server ports, hostnames, and webhook secret tokens.
@@ -35,6 +35,10 @@ This document defines the architectural rules, security boundaries, and developm
   - Create a new branch branched from up-to-date `main`.
   - Develop changes and verify all unit tests pass (`.venv/bin/pytest`).
   - Only merge into `main` after verification is complete.
+- **Static Demo Synchronization (`docs/index.html`):**
+  - Whenever modifying `app/templates/dashboard.html` or `app/services/demo_manager.py`, always run `.venv/bin/python scripts/generate_static_demo.py` so the live GitHub Pages preview remains in sync.
+- **Brand & Social Asset Generation:**
+  - When modifying logos, taglines, or platform badges, update `scripts/generate_logo_assets.py` and run `.venv/bin/python scripts/generate_logo_assets.py` to regenerate `banner.*`, `social-preview.*`, and `favicon.*`.
 - **Version Bumping & Release Protocol:**
   - Adhere strictly to Semantic Versioning (`MAJOR.MINOR.PATCH`).
   - When releasing, bump `APP_VERSION` in `app/main.py`.
@@ -89,6 +93,14 @@ This document defines the architectural rules, security boundaries, and developm
   - Multi-user tokens must be stored in isolated files (`data/tokens/{username}_tokens.json`).
   - `.env` `CO_WATCH_SHOWS` entries must automatically merge with dynamic dashboard entries in `data/cowatch_shows.json` on startup without overwriting.
   - Always return structured eligibility tuples `(eligible: bool, reason: str)` from `check_cowatch_eligibility()` for transparent activity logs.
+- **Media Server Ingestion Defaults (`settings_manager.py`):**
+  - All media server webhook listeners (`Plex`, `Jellyfin`, `Emby`) MUST be **disabled by default** on clean installations.
+  - Upgrades must detect and preserve existing active servers without activating unused ones.
+  - Disabled server listeners must fast-bypass incoming webhook processing immediately.
+- **Failure Alert Throttling (`notifier.py`):**
+  - When upstream tracker API requests fail (5xx or rate limits) and `NOTIFY_ON_FAILURE` is active, alerts must pass through an in-memory deduplication cooldown (minimum 30 minutes per title) to avoid flooding notification channels.
+- **UI Flex Layout & Mobile Safety:**
+  - Multi-button action rows (such as card headers, modal footers, and table action cells) must use `display: flex; flex-wrap: wrap; gap: 6px;` rather than `nowrap` or fixed widths to prevent buttons from overflowing or crowding adjacent cells on mobile displays.
 - **Admin Authorization & Security Gates:**
   - State-mutating endpoints (`POST`, `DELETE`) and sensitive telemetry endpoints (`/api/logs`, `/api/backup`, `/api/restore`) must check `is_admin_request(request)`.
   - Webhook endpoints must support `Config.WEBHOOK_SECRET` via query parameter `?token=` or header `x-webhook-secret`.
@@ -104,9 +116,9 @@ This document defines the architectural rules, security boundaries, and developm
 ## 5. Deployment & Operations
 
 - **Auto-Start on Reboot:**
-  - Systemd user service defined in `plex-trakt.service`.
+  - Systemd user service defined in `plex-trakt.service` (or `omniscrobble.service`).
   - Shell startup wrapper in `start.sh` (must maintain executable permissions `+x`).
-  - Uses `%h/plex-trakt-webhook` for portable user-home expansion.
+  - Uses `%h/omniscrobble` (or `%h/plex-trakt-webhook`) for portable user-home expansion.
 - **Automated Upgrades:**
   - Upgrade wrapper in `upgrade.sh` pulls latest `main`, updates dependencies, enables lingering, and reloads systemd user service.
 - **Docker & Containerization:**

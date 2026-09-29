@@ -275,144 +275,144 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
             Unified operational topology across all media servers, Trakt &amp; anime scrobble trackers, and automated acquisition engines.
         </p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:10px;">
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🔶</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Plex Media Server</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🔶</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Plex Media Server</div>
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('server', 'plex', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Plex">⏸ Disable</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Local Server (Port 32400)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Local Server (Port 32400)">Local Server (Port 32400)</div>
+                    <button onclick="toggleSetting('server', 'plex', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Plex"><span>⏸</span><span>Disable</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🟣</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Jellyfin</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🟣</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Jellyfin</div>
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('server', 'jellyfin', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Jellyfin">⏸ Disable</button>
-                        <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
-                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Ready</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Webhook Ingestion Active">Webhook Ingestion Active</div>
+                    <button onclick="toggleSetting('server', 'jellyfin', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Jellyfin"><span>⏸</span><span>Disable</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🟢</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Emby Server</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🟢</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Emby Server</div>
                             <div style="font-size:11px;color:#64748b;">Media Server</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('server', 'emby', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Disable Emby">⏸ Disable</button>
-                        <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Ready</span>
-                    </div>
+                    <span style="background:#0c4a6e;border:1px solid #0284c7;color:#38bdf8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Ready</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Webhook Ingestion Active</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Webhook Ingestion Active">Webhook Ingestion Active</div>
+                    <button onclick="toggleSetting('server', 'emby', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Emby"><span>⏸</span><span>Disable</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🔴</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Trakt.tv</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🔴</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Trakt.tv</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'trakt', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause Trakt">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Authenticated</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (84 days left)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (84 days left)">Connected as @demo_viewer (84 days left)</div>
+                    <button onclick="toggleSetting('tracker', 'trakt', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Trakt"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">✨</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Simkl</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">✨</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Simkl</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause Simkl">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Active</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Active</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (API v2)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (API v2)">Connected as @demo_viewer (API v2)</div>
+                    <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Simkl"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">⚡</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">AniList</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">⚡</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">AniList</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause AniList">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Authenticated</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (GraphQL API)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (GraphQL API)">Connected as @demo_viewer (GraphQL API)</div>
+                    <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause AniList"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🎌</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">MyAnimeList</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🎌</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MyAnimeList</div>
                             <div style="font-size:11px;color:#64748b;">Tracker</div>
                         </div>
                     </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#94a3b8;cursor:pointer;" title="Pause MAL">⏸ Pause</button>
-                        <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Authenticated</span>
-                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Authenticated</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">Connected as @demo_viewer (REST API v2)</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
+                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (REST API v2)">Connected as @demo_viewer (REST API v2)</div>
+                    <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause MAL"><span>⏸</span><span>Pause</span></button>
+                </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">📺</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Sonarr</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">📺</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Sonarr</div>
                             <div style="font-size:11px;color:#64748b;">Acquisition</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">48 Series Monitored</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="48 Series Monitored">48 Series Monitored</div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:6px;">
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span style="font-size:16px;">🍿</span>
-                        <div>
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;">Radarr</div>
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🍿</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Radarr</div>
                             <div style="font-size:11px;color:#64748b;">Acquisition</div>
                         </div>
                     </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 7px;border-radius:9999px;">Online</span>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
                 </div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:2px;">215 Movies Monitored</div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="215 Movies Monitored">215 Movies Monitored</div>
             </div>
         </div>
     </div>
@@ -440,9 +440,9 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause Simkl</button>
-                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">🔄 Reconcile Trakt & Simkl</button>
-                <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;">Simkl Settings</button>
+                <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause Simkl</button>
+                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt & Simkl</button>
+                <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Simkl Settings</button>
             </div>
         </div>
     </div>
@@ -473,10 +473,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <span>API: <strong>GraphQL &amp; REST v2</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause AniList</button>
-                <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;">⏸ Pause MAL</button>
-                <button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">⚡ AniList Settings</button>
-                <button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🎌 MAL Settings</button>
+                <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause AniList</button>
+                <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause MAL</button>
+                <button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">⚡ AniList Settings</button>
+                <button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🎌 MAL Settings</button>
             </div>
         </div>
     </div>
@@ -748,7 +748,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 const q = (url.searchParams.get('query') || '').toLowerCase().trim();
                 const catalog = [
                     {{ type: 'show', show: {{ title: 'Severance', year: 2022, overview: 'Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.', ids: {{ tmdb: 1128074 }} }} }},
-                    {{ type: 'show', show: {{ title: 'The Bear', year: 2022, overview: 'A young chef from the fine dining world comes home to Chicago to run his family Italian beef sandwich shop.', ids: {{ tmdb: 1445277 }} }} }},
+                    {{ type: 'show', show: {{ title: 'Lanterns', year: 2026, overview: 'Intergalactic cops John Stewart and Hal Jordan investigate a dark mystery on Earth.', ids: {{ tmdb: 208852 }} }} }},
                     {{ type: 'movie', movie: {{ title: 'Dune: Part Two', year: 2024, overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.', ids: {{ tmdb: 693134 }} }} }},
                     {{ type: 'show', show: {{ title: 'Fallout', year: 2024, overview: 'In a future post-apocalyptic Los Angeles, citizens must live in underground bunkers to protect themselves from radiation and mutants.', ids: {{ tmdb: 106379 }} }} }},
                     {{ type: 'show', show: {{ title: 'Yellowstone', year: 2018, overview: 'A ranching family in Montana faces off against others encroaching on their land.', ids: {{ tmdb: 73586 }} }} }}

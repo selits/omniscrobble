@@ -134,7 +134,7 @@ BANNER_SVG = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 220" wi
     <!-- TYPOGRAPHY -->
     <text x="240" y="90" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="52" font-weight="900" letter-spacing="3" fill="#f8fafc">OMNISCROBBLE</text>
     <text x="242" y="132" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="22" font-weight="600" fill="#38bdf8">Watch anywhere. Track everywhere.</text>
-    <text x="242" y="165" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="14" font-weight="500" fill="#94a3b8">Universal Webhook Bridge for Plex, Jellyfin, and Emby to Trakt</text>
+    <text x="242" y="165" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="14" font-weight="500" fill="#94a3b8">Universal Webhook Bridge &amp; Multi-Tracker Scrobbler</text>
   </g>
 </svg>'''
 
@@ -200,23 +200,32 @@ SOCIAL_SVG = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" w
   <g transform="translate(500, 210)">
     <text x="0" y="70" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="64" font-weight="900" letter-spacing="4" fill="#f8fafc">OMNISCROBBLE</text>
     <text x="0" y="125" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="28" font-weight="600" fill="#38bdf8">Watch anywhere. Track everywhere.</text>
-    <text x="0" y="170" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="18" font-weight="500" fill="#94a3b8">Universal Scrobbler for Plex, Jellyfin, and Emby to Trakt</text>
+    <text x="0" y="170" font-family="'Inter', 'Fira Sans', 'DejaVu Sans', system-ui, sans-serif" font-size="18" font-weight="500" fill="#94a3b8">Universal Webhook Bridge &amp; Multi-Tracker Scrobbler</text>
     
     <!-- Platform Pills -->
     <g transform="translate(0, 205)">
-      <rect x="0" y="0" width="80" height="32" rx="16" fill="#1e293b" stroke="#334155" />
-      <text x="40" y="21" font-family="'Inter', sans-serif" font-size="13" font-weight="700" fill="#e2e8f0" text-anchor="middle">Plex</text>
+      <rect x="0" y="0" width="70" height="30" rx="15" fill="#1e293b" stroke="#334155" />
+      <text x="35" y="20" font-family="'Inter', sans-serif" font-size="12" font-weight="700" fill="#e2e8f0" text-anchor="middle">Plex</text>
 
-      <rect x="92" y="0" width="94" height="32" rx="16" fill="#3b0764" stroke="#7e22ce" />
-      <text x="139" y="21" font-family="'Inter', sans-serif" font-size="13" font-weight="700" fill="#d8b4fe" text-anchor="middle">Jellyfin</text>
+      <rect x="78" y="0" width="82" height="30" rx="15" fill="#3b0764" stroke="#7e22ce" />
+      <text x="119" y="20" font-family="'Inter', sans-serif" font-size="12" font-weight="700" fill="#d8b4fe" text-anchor="middle">Jellyfin</text>
 
-      <rect x="198" y="0" width="84" height="32" rx="16" fill="#064e3b" stroke="#059669" />
-      <text x="240" y="21" font-family="'Inter', sans-serif" font-size="13" font-weight="700" fill="#a7f3d0" text-anchor="middle">Emby</text>
+      <rect x="168" y="0" width="74" height="30" rx="15" fill="#064e3b" stroke="#059669" />
+      <text x="205" y="20" font-family="'Inter', sans-serif" font-size="12" font-weight="700" fill="#a7f3d0" text-anchor="middle">Emby</text>
 
-      <text x="304" y="22" font-family="'Inter', sans-serif" font-size="18" font-weight="700" fill="#94a3b8">&#8594;</text>
+      <text x="256" y="21" font-family="'Inter', sans-serif" font-size="16" font-weight="700" fill="#94a3b8">&#8594;</text>
 
-      <rect x="334" y="0" width="84" height="32" rx="16" fill="#7f1d1d" stroke="#dc2626" />
-      <text x="376" y="21" font-family="'Inter', sans-serif" font-size="13" font-weight="700" fill="#fca5a5" text-anchor="middle">Trakt</text>
+      <rect x="278" y="0" width="74" height="30" rx="15" fill="#7f1d1d" stroke="#dc2626" />
+      <text x="315" y="20" font-family="'Inter', sans-serif" font-size="12" font-weight="700" fill="#fca5a5" text-anchor="middle">Trakt</text>
+
+      <rect x="360" y="0" width="74" height="30" rx="15" fill="#0c4a6e" stroke="#0284c7" />
+      <text x="397" y="20" font-family="'Inter', sans-serif" font-size="12" font-weight="700" fill="#38bdf8" text-anchor="middle">Simkl</text>
+
+      <rect x="442" y="0" width="80" height="30" rx="15" fill="#042f2e" stroke="#0d9488" />
+      <text x="482" y="20" font-family="'Inter', sans-serif" font-size="12" font-weight="700" fill="#2dd4bf" text-anchor="middle">AniList</text>
+
+      <rect x="530" y="0" width="68" height="30" rx="15" fill="#172554" stroke="#2563eb" />
+      <text x="564" y="20" font-family="'Inter', sans-serif" font-size="12" font-weight="700" fill="#93c5fd" text-anchor="middle">MAL</text>
     </g>
   </g>
 </svg>'''
