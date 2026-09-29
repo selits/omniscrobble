@@ -37,8 +37,11 @@ from app.services.user_manager import user_mgr
 from app.services.demo_manager import demo_mgr
 from app.services.log_manager import log_mgr
 from app.clients.plex_api_client import PlexApiClient
+from app.clients.anilist_client import AniListClient
+from app.clients.mal_client import MyAnimeListClient
 from app.clients.radarr_client import RadarrClient
 from app.clients.simkl_client import SimklClient
+from app.services.anime_resolver import AnimeResolver
 from app.services.multi_tracker import MultiTrackerManager
 from app.services.loop_prevention import loop_prevention
 from app.services.reverse_sync_manager import reverse_sync_mgr
@@ -50,6 +53,8 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
 AUTH_LOCKED_HTML = (TEMPLATES_DIR / 'auth_locked.html').read_text(encoding='utf-8')
 AUTH_HTML = (TEMPLATES_DIR / 'auth.html').read_text(encoding='utf-8')
 AUTH_SIMKL_HTML = (TEMPLATES_DIR / 'auth_simkl.html').read_text(encoding='utf-8')
+AUTH_ANILIST_HTML = (TEMPLATES_DIR / 'auth_anilist.html').read_text(encoding='utf-8')
+AUTH_MAL_HTML = (TEMPLATES_DIR / 'auth_mal.html').read_text(encoding='utf-8')
 DASHBOARD_HTML = (TEMPLATES_DIR / 'dashboard.html').read_text(encoding='utf-8')
 logging.basicConfig(
     level=logging.INFO,
@@ -61,7 +66,16 @@ trakt = TraktClient(Config)
 sonarr = SonarrClient()
 radarr = RadarrClient()
 simkl = SimklClient(Config)
-multi_tracker = MultiTrackerManager(Config, simkl_client=simkl)
+anilist = AniListClient(Config)
+mal = MyAnimeListClient(Config)
+anime_resolver = AnimeResolver(Config, anilist_client=anilist, mal_client=mal)
+multi_tracker = MultiTrackerManager(
+    Config,
+    simkl_client=simkl,
+    anilist_client=anilist,
+    mal_client=mal,
+    anime_resolver=anime_resolver,
+)
 cross_tracker_sync = CrossTrackerSyncManager(trakt_client=trakt, simkl_client=simkl)
 user_mgr.set_default_client(trakt)
 reverse_sync_mgr.set_trakt_client(trakt)
@@ -251,6 +265,16 @@ async def lifespan(app: FastAPI):
             logger.info(f"Startup Diagnostics: Simkl multi-tracker connected (@{simkl.user_name or 'user'}).")
         else:
             logger.info("Startup Diagnostics: Simkl multi-tracker enabled (visit /auth/simkl to link account).")
+    if anilist.is_enabled():
+        if anilist.is_authenticated():
+            logger.info(f"Startup Diagnostics: AniList anime tracker connected (@{anilist.user_name or 'user'}).")
+        else:
+            logger.info("Startup Diagnostics: AniList anime tracker enabled (visit /auth/anilist to link account).")
+    if mal.is_enabled():
+        if mal.is_authenticated():
+            logger.info(f"Startup Diagnostics: MyAnimeList anime tracker connected (@{mal.user_name or 'user'}).")
+        else:
+            logger.info("Startup Diagnostics: MyAnimeList anime tracker enabled (visit /auth/mal to link account).")
 
     yield
     if queue_worker_task:
@@ -275,12 +299,14 @@ async def lifespan(app: FastAPI):
     await arr_bridge.sonarr.close()
     await arr_bridge.radarr.close()
     await simkl.close()
+    await anilist.close()
+    await mal.close()
     await trakt.close()
     await user_mgr.close_all()
     await notifier.close()
 
 
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.9.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -295,12 +321,48 @@ async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: 
             await simkl.scrobble_start(parsed, progress=parsed.progress)
         elif event == "media.pause":
             await simkl.scrobble_pause(parsed, progress=parsed.progress)
-        elif event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= 80.0):
+        elif event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.get_threshold(parsed.media_type)):
             await simkl.scrobble_stop(parsed, progress=parsed.progress)
         elif event == "media.rate":
             await simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
     except Exception as e:
         logger.warning(f"Simkl dispatch error for {parsed.title}: {e}")
+
+
+async def execute_multi_tracker_dispatch(parsed: ParsedMedia, action_taken: str, event: str, progress: float):
+    """Dispatch playback scrobble and rating events asynchronously to Simkl, AniList, and MyAnimeList."""
+    # 1. Simkl
+    if simkl.is_enabled() and simkl.is_authenticated():
+        await execute_simkl_scrobble(parsed, action_taken, event)
+
+    # 2. Anime tracking dispatch (AniList & MAL)
+    try:
+        ani_active = anilist.is_enabled() and anilist.is_authenticated()
+        mal_active = mal.is_enabled() and mal.is_authenticated()
+        if ani_active or mal_active:
+            resolved_anime = await anime_resolver.resolve(parsed)
+            if resolved_anime and resolved_anime.get("is_anime"):
+                threshold = Config.get_threshold(parsed.media_type)
+                if event == "media.rate":
+                    if ani_active:
+                        await anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
+                    if mal_active and resolved_anime.get("mal_id"):
+                        await mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+                elif event == "media.scrobble" or (action_taken == "scrobble_stop" and progress >= threshold):
+                    if ani_active:
+                        await anilist.update_progress(
+                            resolved_anime["anilist_id"],
+                            resolved_anime["episode_number"],
+                            resolved_anime.get("episodes"),
+                        )
+                    if mal_active and resolved_anime.get("mal_id"):
+                        await mal.update_progress(
+                            resolved_anime["mal_id"],
+                            resolved_anime["episode_number"],
+                            resolved_anime.get("episodes"),
+                        )
+    except Exception as e:
+        logger.warning(f"Anime multi-tracker dispatch error for {parsed.title}: {e}")
 
 
 # In-memory log of recent webhook events for the status dashboard
@@ -584,8 +646,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
             asyncio.create_task(notifier.dispatch(parsed, action_taken))
 
-        if simkl.is_enabled() and simkl.is_authenticated():
-            asyncio.create_task(execute_simkl_scrobble(parsed, action_taken, event))
+        asyncio.create_task(execute_multi_tracker_dispatch(parsed, action_taken, event, parsed.progress))
 
         metrics_registry.record_request(endpoint_name, 200)
         return {"status": "success", "event": event, "action": action_taken, "result": result}
@@ -964,7 +1025,7 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>"""
 
 SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v1.8.0';
+const CACHE_NAME = 'omniscrobble-v1.9.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -1564,9 +1625,14 @@ async def trigger_arr_sync(request: Request):
 
 @app.get("/api/ecosystem")
 async def get_ecosystem_status(request: Request):
-    """Return live status matrix for all connected media servers, tracker, and arr engines."""
     is_demo = request.query_params.get("demo") == "true"
-    return await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex, simkl_client=simkl)
+    return await arr_bridge.get_ecosystem_status(
+        demo=is_demo,
+        plex_client=reverse_sync_mgr.plex,
+        simkl_client=simkl,
+        anilist_client=anilist,
+        mal_client=mal,
+    )
 
 
 class CrossSyncExecuteRequest(BaseModel):
@@ -1835,6 +1901,164 @@ async def auth_simkl_page(request: Request):
     if not is_admin_request(request):
         return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
     return HTMLResponse(content=AUTH_SIMKL_HTML)
+
+
+class TokenSubmitRequest(BaseModel):
+    token: str
+
+
+# --- AniList Anime Tracker Endpoints ---
+@app.get("/api/anilist/status")
+async def get_anilist_status(request: Request):
+    """Return current connection and authentication status for AniList."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_anilist_status()
+    status = await anilist.check_connection()
+    status["enabled"] = Config.ANILIST_ENABLED
+    status["configured"] = bool(Config.ANILIST_CLIENT_ID or anilist.is_authenticated())
+    return status
+
+
+@app.post("/api/anilist/token")
+async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
+    """Save an AniList personal access token and test connectivity."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    token_str = payload.token.strip()
+    if not token_str:
+        raise HTTPException(status_code=400, detail="Token cannot be empty")
+    anilist.access_token = token_str
+    conn = await anilist.check_connection()
+    if conn.get("status") == "connected":
+        anilist.save_tokens({
+            "access_token": token_str,
+            "user_name": conn.get("user"),
+            "user_avatar": conn.get("avatar"),
+            "user_id": conn.get("id"),
+        })
+        return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
+    else:
+        anilist.load_tokens()
+        raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided AniList token"))
+
+
+@app.post("/api/anilist/disconnect")
+async def disconnect_anilist(request: Request):
+    """Disconnect AniList account and delete stored tokens."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    anilist.delete_tokens()
+    return {"status": "ok", "message": "AniList disconnected"}
+
+
+@app.get("/auth/anilist", response_class=HTMLResponse)
+async def auth_anilist_page(request: Request):
+    """Render dedicated AniList authorization page."""
+    if not is_admin_request(request):
+        return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
+
+    html = AUTH_ANILIST_HTML.replace("{{PAGE_TITLE}}", "Connect AniList &bull; Omniscrobble")
+    html = html.replace("{{H1_TEXT}}", "AniList Anime Tracker")
+    html = html.replace(
+        "{{P_DESC}}",
+        "Link your AniList account to enable real-time anime scrobbling and ratings sync via the official GraphQL API.",
+    )
+    banner = ""
+    if anilist.is_authenticated():
+        uname = anilist.user_name or "Linked User"
+        banner = f'<div class="banner">✓ Currently linked to AniList as <strong>@{uname}</strong>. Entering a new token will update credentials.</div>'
+    html = html.replace("{{ALREADY_CONNECTED_BANNER}}", banner)
+    return HTMLResponse(content=html)
+
+
+# --- MyAnimeList (MAL) Anime Tracker Endpoints ---
+@app.get("/api/mal/status")
+async def get_mal_status(request: Request):
+    """Return current connection and authentication status for MyAnimeList."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_mal_status()
+    status = await mal.check_connection()
+    status["enabled"] = Config.MAL_ENABLED
+    status["configured"] = bool(Config.MAL_CLIENT_ID or mal.is_authenticated())
+    return status
+
+
+@app.post("/api/mal/token")
+async def save_mal_token(payload: TokenSubmitRequest, request: Request):
+    """Save a MyAnimeList access token and test connectivity."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    token_str = payload.token.strip()
+    if not token_str:
+        raise HTTPException(status_code=400, detail="Token cannot be empty")
+    mal.access_token = token_str
+    conn = await mal.check_connection()
+    if conn.get("status") == "connected":
+        mal.save_tokens({
+            "access_token": token_str,
+            "user_name": conn.get("user"),
+            "user_avatar": conn.get("avatar"),
+            "user_id": conn.get("id"),
+        })
+        return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
+    else:
+        mal.load_tokens()
+        raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided MyAnimeList token"))
+
+
+@app.post("/api/mal/disconnect")
+async def disconnect_mal(request: Request):
+    """Disconnect MyAnimeList account and delete stored tokens."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    mal.delete_tokens()
+    return {"status": "ok", "message": "MyAnimeList disconnected"}
+
+
+@app.get("/auth/mal", response_class=HTMLResponse)
+async def auth_mal_page(request: Request):
+    """Render dedicated MyAnimeList authorization page."""
+    if not is_admin_request(request):
+        return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
+
+    html = AUTH_MAL_HTML.replace("{{PAGE_TITLE}}", "Connect MyAnimeList &bull; Omniscrobble")
+    html = html.replace("{{H1_TEXT}}", "MyAnimeList (MAL) Integration")
+    html = html.replace(
+        "{{P_DESC}}",
+        "Link your MyAnimeList account to scrobble anime episode progress and sync ratings via the MAL v2 API.",
+    )
+    banner = ""
+    if mal.is_authenticated():
+        uname = mal.user_name or "Linked User"
+        banner = f'<div class="banner">✓ Currently linked to MyAnimeList as <strong>@{uname}</strong>. Entering a new token will update credentials.</div>'
+    html = html.replace("{{ALREADY_CONNECTED_BANNER}}", banner)
+    return HTMLResponse(content=html)
+
+
+# --- Anime Inspection Diagnostic Endpoint ---
+@app.get("/api/anime/resolve")
+async def resolve_anime_api(request: Request, title: str, year: Optional[int] = None):
+    """Diagnostic endpoint to test anime heuristics and AniList/MAL metadata matching."""
+    test_media = ParsedMedia(
+        raw_payload={},
+        event="media.play",
+        media_type="episode",
+        title=title,
+        show_title=title,
+        year=year,
+        show_year=year,
+        username="admin",
+        progress=0.0,
+    )
+    resolved = await anime_resolver.resolve(test_media)
+    return {
+        "title": title,
+        "year": year,
+        "is_anime": bool(resolved and resolved.get("is_anime")),
+        "resolved": resolved,
+    }
 
 
 @app.get('/auth', response_class=HTMLResponse)
@@ -2468,6 +2692,10 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             srv_icon = "🔴"
         elif sid == "simkl":
             srv_icon = "✨"
+        elif sid == "anilist":
+            srv_icon = "⚡"
+        elif sid == "myanimelist":
+            srv_icon = "🎌"
         elif sid == "sonarr":
             srv_icon = "📺"
         elif sid == "radarr":
@@ -2585,6 +2813,87 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     </div>
     """
 
+    # Anime Tracking Engine Card (AniList & MyAnimeList)
+    if is_demo:
+        ani_status = demo_mgr.get_demo_anilist_status()
+        mal_status = demo_mgr.get_demo_mal_status()
+    else:
+        ani_status = await anilist.check_connection()
+        ani_status["enabled"] = Config.ANILIST_ENABLED
+        ani_status["configured"] = bool(Config.ANILIST_CLIENT_ID or anilist.is_authenticated())
+
+        mal_status = await mal.check_connection()
+        mal_status["enabled"] = Config.MAL_ENABLED
+        mal_status["configured"] = bool(Config.MAL_CLIENT_ID or mal.is_authenticated())
+
+    ani_auth = ani_status.get("authenticated", False)
+    ani_user = ani_status.get("user")
+    ani_disp_user = (ani_user if is_admin else mask_username(ani_user)) if ani_user else "Linked"
+
+    if ani_auth:
+        ani_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● AniList Active (@{ani_disp_user})</span>'
+    else:
+        ani_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● AniList Unlinked</span>'
+
+    mal_auth = mal_status.get("authenticated", False)
+    mal_user = mal_status.get("user")
+    mal_disp_user = (mal_user if is_admin else mask_username(mal_user)) if mal_user else "Linked"
+
+    if mal_auth:
+        mal_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● MAL Active (@{mal_disp_user})</span>'
+    else:
+        mal_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● MAL Unlinked</span>'
+
+    ani_action_btn = ""
+    mal_action_btn = ""
+    if is_admin:
+        if ani_auth:
+            ani_action_btn = '<button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect AniList</button>'
+        else:
+            ani_action_btn = '<button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">⚡ Link AniList</button>'
+
+        if mal_auth:
+            mal_action_btn = '<button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;">Disconnect MAL</button>'
+        else:
+            mal_action_btn = '<button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;">🎌 Link MAL</button>'
+    else:
+        ani_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Manage AniList</button>'
+        mal_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;">🔒 Manage MAL</button>'
+
+    anime_card_html = f"""
+    <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <span>⚡</span> Anime Tracking Engine &bull; AniList &amp; MyAnimeList
+            </h3>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                {ani_badge}
+                {mal_badge}
+            </div>
+        </div>
+        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            Specialized anime detection with automatic ID resolution across AniList and MyAnimeList. Scrobbles anime episode progress and synchronizes ratings in real-time with zero media playback latency.
+        </p>
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+            <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span>Detection: <strong>{"Auto-Detect Active" if Config.ANIME_AUTO_DETECT else "Explicit Only"}</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>AniList: <strong>{"Connected" if ani_auth else "Unlinked"}</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>MAL: <strong>{"Connected" if mal_auth else "Unlinked"}</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>API: <strong>GraphQL &amp; REST v2</strong></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                {ani_action_btn}
+                {mal_action_btn}
+                <a href="/auth/anilist" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">AniList Portal ↗</a>
+                <a href="/auth/mal" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">MAL Portal ↗</a>
+            </div>
+        </div>
+    </div>
+    """
+
     # Arr Watchlist Automation Bridge Card
     arr_status = await arr_bridge.get_status(demo=is_demo)
     arr_cfg = arr_status.get("configured", False)
@@ -2697,6 +3006,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{WEBHOOK_CARD}}': webhook_html_section,
         '{{ECOSYSTEM_CARD}}': ecosystem_card_html,
         '{{SIMKL_CARD}}': simkl_card_html,
+        '{{ANIME_CARD}}': anime_card_html,
         '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,

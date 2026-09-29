@@ -290,6 +290,26 @@ def parse_plex_ids(guid_list: list[dict[str, str]], legacy_guid: str = "") -> di
                     ids["tvdb"] = int(gid.replace("tvdb://", ""))
                 except ValueError:
                     pass
+            elif gid.startswith("anilist://"):
+                try:
+                    ids["anilist"] = int(gid.replace("anilist://", ""))
+                except ValueError:
+                    pass
+            elif gid.startswith("myanimelist://"):
+                try:
+                    ids["mal"] = int(gid.replace("myanimelist://", ""))
+                except ValueError:
+                    pass
+            elif gid.startswith("anidb://"):
+                try:
+                    ids["anidb"] = int(gid.replace("anidb://", ""))
+                except ValueError:
+                    pass
+            elif gid.startswith("simkl://"):
+                try:
+                    ids["simkl"] = int(gid.replace("simkl://", ""))
+                except ValueError:
+                    pass
 
     # Fallback to legacy guid strings if modern Guid array wasn't present
     if not ids and legacy_guid:
@@ -305,6 +325,19 @@ def parse_plex_ids(guid_list: list[dict[str, str]], legacy_guid: str = "") -> di
             part = legacy_guid.split("themoviedb://")[1].split("?")[0]
             try:
                 ids["tmdb"] = int(part)
+            except ValueError:
+                pass
+        elif "com.plexapp.agents.hama://" in legacy_guid:
+            part = legacy_guid.split("com.plexapp.agents.hama://")[1].split("?")[0]
+            if part.startswith("anidb-"):
+                try:
+                    ids["anidb"] = int(part.replace("anidb-", ""))
+                except ValueError:
+                    pass
+        elif "com.plexapp.agents.anidb://" in legacy_guid:
+            part = legacy_guid.split("com.plexapp.agents.anidb://")[1].split("?")[0]
+            try:
+                ids["anidb"] = int(part)
             except ValueError:
                 pass
 

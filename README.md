@@ -18,10 +18,11 @@ A lightweight, modern Python service that receives media server webhooks (Plex, 
 
 ## 🌟 Features
 
+- **Anime Tracking Engine (AniList & MyAnimeList)**: Dedicated anime identification heuristics, title normalization, and 4-way multi-tracker dispatch across Trakt, Simkl, **AniList (GraphQL API)**, and **MyAnimeList (REST API v2)**. Automatically detects anime series, extracts AniList/MAL IDs from GUIDs, maps titles via AniList GraphQL, caches results locally (`data/anime_cache.json`) with negative caching for zero-latency lookups, and scrobbles episode progress and ratings in real-time.
 - **Multi-Tracker Architecture & Simkl Dual-Tracking**: Broadcast playback scrobbles (start, pause, stop) and ratings across both Trakt and **Simkl** simultaneously. Supports Movies, TV Shows, and Anime with decoupled zero-latency background task dispatch and OAuth Device PIN browser activation (`/auth/simkl`).
 - **Cross-Tracker Watched History Importer & Two-Way Sync**: Full bi-directional library reconciliation and bulk synchronization between **Trakt.tv** and **Simkl.com** (`/api/cross-sync/*`). Compare full libraries and user ratings across Movies, TV Shows, and Anime, review discrepancies in an interactive modal with direction and type filters, and execute 1-click selective or complete sync with real-time progress bars.
 - **Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to Sonarr and Radarr for automated media acquisition, intelligent deduplication against existing libraries, automated root folder/quality profile discovery, and immediate download searches.
-- **Multi-Server Ecosystem Dashboard**: Real-time multi-service observability widget monitoring live connectivity, library counts, latency, and operational health across Plex, Jellyfin, Emby, Trakt, Simkl, Sonarr, and Radarr.
+- **Multi-Server Ecosystem Dashboard**: Real-time multi-service observability widget monitoring live connectivity, library counts, latency, and operational health across Plex, Jellyfin, Emby, Trakt, Simkl, AniList, MyAnimeList, Sonarr, and Radarr (9/9 services).
 - **Two-Way Synchronization & Library Reconciliation**: Bi-directional matching of watched history and ratings between media servers (Plex) and Trakt (`/api/sync/*`), interactive discrepancy diff table with 1-click or selective reconciliation, automated periodic background sync, and smart TTL-based scrobble loop prevention.
 - **Universal Webhook Ingestion**: Native webhook support for **Plex** (`/webhook`), **Jellyfin** (`/webhook/jellyfin`), and **Emby** (`/webhook/emby`), standardizing metadata, provider IDs (IMDb, TMDb, TVDb), and playback states into a unified scrobble pipeline.
 - **Granular Scrobble Thresholds**: Configurable media-specific thresholds — set `EPISODE_SCROBBLE_THRESHOLD=80` for TV episodes (allowing credit skipping) and `MOVIE_SCROBBLE_THRESHOLD=90` for feature films (preventing premature scrobbles during climaxes).
@@ -166,6 +167,15 @@ REVERSE_SYNC_RATINGS=true
 SIMKL_CLIENT_ID=your_simkl_client_id_here
 SIMKL_CLIENT_SECRET=your_simkl_client_secret_here
 SIMKL_ENABLED=true
+
+# (Optional) Anime Tracking Engine: AniList & MyAnimeList Integrations
+ANIME_AUTO_DETECT=true
+ANILIST_ENABLED=true
+ANILIST_CLIENT_ID=your_anilist_client_id_here
+ANILIST_CLIENT_SECRET=your_anilist_client_secret_here
+MAL_ENABLED=true
+MAL_CLIENT_ID=your_mal_client_id_here
+MAL_CLIENT_SECRET=your_mal_client_secret_here
 ```
 
 ---
@@ -198,6 +208,18 @@ You can authenticate either through your web browser or from the command line:
 2. On your Omniscrobble dashboard, click **"🔑 Link Simkl Account"** on the Simkl card or open **`http://<server-ip>:<PORT>/auth/simkl`**.
 3. Click **"Generate Activation PIN"**, open the displayed Simkl link, and approve the connection.
 4. Omniscrobble will automatically capture your credentials and activate simultaneous dual-scrobbling!
+
+#### AniList Authorization (Anime Tracker):
+
+1. On your Omniscrobble dashboard, click **"⚡ Link AniList"** on the Anime card or navigate to **`http://<server-ip>:<PORT>/auth/anilist`**.
+2. Click **"Generate Token on AniList"** (or visit [anilist.co/settings/developer](https://anilist.co/settings/developer)) to create a personal access token.
+3. Paste the access token into the input box and submit. Omniscrobble immediately validates credentials and retrieves your profile.
+
+#### MyAnimeList (MAL) Authorization (Anime Tracker):
+
+1. On your Omniscrobble dashboard, click **"🎌 Link MAL"** on the Anime card or navigate to **`http://<server-ip>:<PORT>/auth/mal`**.
+2. Provide your MAL client credentials or access token from [myanimelist.net/apiconfig](https://myanimelist.net/apiconfig).
+3. Paste your token and click submit to enable synchronized MAL episode updates and ratings.
 
 ---
 

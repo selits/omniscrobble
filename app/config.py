@@ -133,3 +133,29 @@ class Config:
         Path(_simkl_tokens_env) if Path(_simkl_tokens_env).is_absolute() else (BASE_DIR / _simkl_tokens_env)
     )
 
+    # Anime Tracking & Resolution Engine
+    ANIME_AUTO_DETECT: bool = os.getenv("ANIME_AUTO_DETECT", "true").lower() in ("true", "1", "yes")
+    _anime_cache_env = os.getenv("ANIME_CACHE_FILE", "data/anime_cache.json")
+    ANIME_CACHE_FILE: Path = (
+        Path(_anime_cache_env) if Path(_anime_cache_env).is_absolute() else (BASE_DIR / _anime_cache_env)
+    )
+
+    # AniList Integration
+    ANILIST_CLIENT_ID: str = os.getenv("ANILIST_CLIENT_ID", "").strip()
+    ANILIST_CLIENT_SECRET: str = os.getenv("ANILIST_CLIENT_SECRET", "").strip()
+    ANILIST_ENABLED: bool = os.getenv("ANILIST_ENABLED", "true").lower() in ("true", "1", "yes")
+    _anilist_tokens_env = os.getenv("ANILIST_TOKENS_FILE", "data/anilist_tokens.json")
+    ANILIST_TOKENS_FILE: Path = (
+        Path(_anilist_tokens_env) if Path(_anilist_tokens_env).is_absolute() else (BASE_DIR / _anilist_tokens_env)
+    )
+
+    # MyAnimeList (MAL) Integration
+    MAL_CLIENT_ID: str = os.getenv("MAL_CLIENT_ID", "").strip()
+    MAL_CLIENT_SECRET: str = os.getenv("MAL_CLIENT_SECRET", "").strip()
+    MAL_ENABLED: bool = os.getenv("MAL_ENABLED", "true").lower() in ("true", "1", "yes")
+    _mal_tokens_env = os.getenv("MAL_TOKENS_FILE", "data/mal_tokens.json")
+    MAL_TOKENS_FILE: Path = (
+        Path(_mal_tokens_env) if Path(_mal_tokens_env).is_absolute() else (BASE_DIR / _mal_tokens_env)
+    )
+
+

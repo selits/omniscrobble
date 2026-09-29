@@ -27,9 +27,41 @@ def _extract_provider_ids(provider_ids: dict[str, Any], raw_payload: dict[str, A
                     ids["tvdb"] = int(v)
                 except (ValueError, TypeError):
                     ids["tvdb"] = str(v)
+            elif key_lower == "anilist":
+                try:
+                    ids["anilist"] = int(v)
+                except (ValueError, TypeError):
+                    pass
+            elif key_lower in ("mal", "myanimelist"):
+                try:
+                    ids["mal"] = int(v)
+                except (ValueError, TypeError):
+                    pass
+            elif key_lower == "anidb":
+                try:
+                    ids["anidb"] = int(v)
+                except (ValueError, TypeError):
+                    pass
+            elif key_lower == "kitsu":
+                try:
+                    ids["kitsu"] = int(v)
+                except (ValueError, TypeError):
+                    pass
+            elif key_lower == "simkl":
+                try:
+                    ids["simkl"] = int(v)
+                except (ValueError, TypeError):
+                    pass
 
     # Also check flat keys often provided by Jellyfin webhook templates
-    for flat_key, target in [("Provider_imdb", "imdb"), ("Provider_tmdb", "tmdb"), ("Provider_tvdb", "tvdb")]:
+    for flat_key, target in [
+        ("Provider_imdb", "imdb"),
+        ("Provider_tmdb", "tmdb"),
+        ("Provider_tvdb", "tvdb"),
+        ("Provider_anilist", "anilist"),
+        ("Provider_mal", "mal"),
+        ("Provider_anidb", "anidb"),
+    ]:
         val = raw_payload.get(flat_key)
         if val and target not in ids:
             if target == "imdb":

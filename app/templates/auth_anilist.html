@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{PAGE_TITLE}}</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.svg">
+    <link rel="icon" type="image/svg+xml" href="/static/icons/icon-192.svg">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 36px; max-width: 500px; width: 100%; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.4); }
+        .icon { width: 56px; height: 56px; margin: 0 auto 16px; display: block; }
+        h1 { font-size: 22px; font-weight: 700; margin-bottom: 8px; color: #f8fafc; }
+        p { color: #94a3b8; font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+        .instructions { text-align: left; background: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 16px; margin-bottom: 20px; font-size: 13px; color: #cbd5e1; }
+        .instructions ol { margin-left: 20px; line-height: 1.6; }
+        .instructions a { color: #38bdf8; text-decoration: none; font-weight: 600; }
+        .instructions a:hover { text-decoration: underline; }
+        .form-group { text-align: left; margin-bottom: 18px; }
+        .form-label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; margin-bottom: 6px; }
+        .form-input { width: 100%; background: #0f172a; border: 1px solid #475569; border-radius: 8px; color: #f8fafc; padding: 12px 14px; font-size: 13px; font-family: monospace; }
+        .form-input:focus { outline: none; border-color: #02a9ff; box-shadow: 0 0 0 2px rgba(2, 169, 255, 0.2); }
+        .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: #02a9ff; color: #ffffff; text-decoration: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 700; border: none; cursor: pointer; width: 100%; transition: background 0.15s; }
+        .btn:hover { background: #0098e6; }
+        .btn-back { background: #334155; margin-top: 12px; color: #cbd5e1; }
+        .btn-back:hover { background: #475569; }
+        .status-msg { margin-top: 14px; font-size: 13px; min-height: 20px; }
+        .banner { background: #064e3b; border: 1px solid #059669; color: #a7f3d0; border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <svg class="icon" viewBox="0 0 100 100" fill="none">
+            <rect width="100" height="100" rx="20" fill="#02a9ff"/>
+            <path d="M42 28L60 72H46L41 58H25L20 72H6L24 28H42ZM33 39L28 50H38L33 39Z" fill="white"/>
+            <rect x="68" y="28" width="14" height="44" rx="4" fill="white"/>
+        </svg>
+        <h1>{{H1_TEXT}}</h1>
+        <p>{{P_DESC}}</p>
+        {{ALREADY_CONNECTED_BANNER}}
+
+        <div class="instructions">
+            <strong>How to get your AniList Token:</strong>
+            <ol>
+                <li>Log in to <a href="https://anilist.co" target="_blank" rel="noopener">AniList.co</a></li>
+                <li>Go to <a href="https://anilist.co/settings/developer" target="_blank" rel="noopener">AniList Developer Settings &rarr;</a></li>
+                <li>Create an API client or authorize token generator with redirect to <code>https://anilist.co/api/v2/oauth/pin</code></li>
+                <li>Or visit <a href="https://anilist.co/api/v2/oauth/authorize?client_id=27495&response_type=token" target="_blank" rel="noopener">Instant Authorization Portal &rarr;</a></li>
+                <li>Copy the Access Token and paste it below:</li>
+            </ol>
+        </div>
+
+        <form id="token-form" onsubmit="submitToken(event)">
+            <div class="form-group">
+                <label class="form-label" for="token-input">AniList Access Token</label>
+                <input type="password" id="token-input" class="form-input" placeholder="Paste your Bearer token here..." required autocomplete="off">
+            </div>
+            <button type="submit" id="save-btn" class="btn">⚡ Verify & Save Token</button>
+        </form>
+
+        <div id="status-msg" class="status-msg"></div>
+        <a href="/" class="btn btn-back">&larr; Return to Dashboard</a>
+    </div>
+
+    <script>
+        async function submitToken(e) {
+            e.preventDefault();
+            const token = document.getElementById('token-input').value.trim();
+            const btn = document.getElementById('save-btn');
+            const msg = document.getElementById('status-msg');
+
+            if (!token) return;
+
+            btn.disabled = true;
+            btn.textContent = 'Verifying...';
+            msg.innerHTML = '<span style="color:#38bdf8;">Connecting to AniList GraphQL API...</span>';
+
+            try {
+                const res = await fetch('/api/anilist/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    msg.innerHTML = '<span style="color:#10b981;font-weight:600;">&#10003; Connected as @' + (data.user || 'user') + '! Redirecting...</span>';
+                    setTimeout(() => { window.location.href = '/'; }, 1500);
+                } else {
+                    msg.innerHTML = '<span style="color:#ef4444;">Error: ' + (data.error || data.detail || 'Invalid AniList token') + '</span>';
+                    btn.disabled = false;
+                    btn.textContent = '⚡ Verify & Save Token';
+                }
+            } catch (err) {
+                msg.innerHTML = '<span style="color:#ef4444;">Network error: ' + err.message + '</span>';
+                btn.disabled = false;
+                btn.textContent = '⚡ Verify & Save Token';
+            }
+        }
+    </script>
+</body>
+</html>
