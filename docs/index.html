@@ -66,6 +66,9 @@
         .logs-filter-group { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 220px; }
         .logs-status-group { display: flex; align-items: center; gap: 12px; }
         .scrobble-item { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .eco-card { transition: opacity 0.2s ease, border-color 0.2s ease; }
+        .eco-card-disabled { opacity: 0.65; }
+        .eco-card-disabled:hover { opacity: 1 !important; }
         .footer { margin-top: 24px; padding-top: 18px; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; color: #64748b; font-size: 12px; flex-wrap: wrap; gap: 8px; }
 
         /* Responsive Breakpoints for Mobile Viewports (<= 640px) */
@@ -115,11 +118,11 @@
     <script>
     (function() {
         const initialShows = ["A Knight of the Seven Kingdoms", "Fallout", "Lanterns", "Rick and Morty", "Severance", "Sh\u014dgun", "Succession", "The Expanse", "The Last of Us", "The Office", "The White Lotus", "Widow's Bay"];
-        const initialEvents = [{"timestamp": "2026-09-28 22:58:27", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-28 22:24:27", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Lanterns S01E01 - Pilot", "type": "episode", "show_title": "Lanterns", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2026, "season": 1, "episode": 1, "ids": {"imdb": "tt20885210"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 21:37:27", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-28 19:52:27", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 17:42:27", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Widow's Bay S01E01 - Pilot", "type": "episode", "show_title": "Widow's Bay", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2025, "season": 1, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 15:02:27", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
+        const initialEvents = [{"timestamp": "2026-09-29 07:05:16", "user": "demo_viewer", "event": "media.play", "action": "play (68.4%)", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok"}, {"timestamp": "2026-09-29 06:31:16", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Lanterns S01E01 - Pilot", "type": "episode", "show_title": "Lanterns", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2026, "season": 1, "episode": 1, "ids": {"imdb": "tt20885210"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-29 05:44:16", "user": "demo_viewer", "event": "media.rate", "action": "rate (9/10)", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok"}, {"timestamp": "2026-09-29 03:59:16", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-29 01:49:16", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble (100.0%)", "title": "Widow's Bay S01E01 - Pilot", "type": "episode", "show_title": "Widow's Bay", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2025, "season": 1, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok"}, {"timestamp": "2026-09-28 23:09:16", "user": "demo_viewer", "event": "media.pause", "action": "pause (42.1%)", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok"}];
         const initialReconciliation = [{"id": "movie:101", "type": "movie", "title": "Interstellar", "series_title": null, "season": null, "episode": null, "year": 2014, "rating_key": "101", "ids": {"imdb": "tt0816692", "tmdb": "157336"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}, {"id": "movie:102", "type": "movie", "title": "Dune: Part Two", "series_title": null, "season": null, "episode": null, "year": 2024, "rating_key": "102", "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "status": "rating_mismatch", "plex_watched": true, "trakt_watched": true, "plex_rating": 8.0, "trakt_rating": 9, "action_recommended": "sync_rating_to_plex"}, {"id": "episode:201", "type": "episode", "title": "Pilot", "series_title": "Lanterns", "season": 1, "episode": 1, "year": 2026, "rating_key": "201", "ids": {"imdb": "tt20885210"}, "status": "plex_only", "plex_watched": true, "trakt_watched": false, "plex_rating": null, "trakt_rating": null, "action_recommended": "sync_to_trakt"}, {"id": "episode:202", "type": "episode", "title": "Felina", "series_title": "Breaking Bad", "season": 5, "episode": 16, "year": 2013, "rating_key": "202", "ids": {"imdb": "tt2301451"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}];
         const initialCrossDiff = [{"id": "diff_movie_t2s_tt15239678", "media_type": "movie", "title": "Dune: Part Two", "year": 2024, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "watched_at": "2026-09-27T21:40:00Z"}, {"id": "diff_ep_t2s_tt11280740_s2e1", "media_type": "episode", "title": "S02E01", "year": 2025, "season": 2, "episode": 1, "show_title": "Severance", "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt11280740", "tvdb": "371980"}, "watched_at": "2026-09-28T02:15:00Z"}, {"id": "diff_movie_s2t_tt0245429", "media_type": "movie", "title": "Spirited Away", "year": 2001, "season": null, "episode": null, "show_title": null, "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt0245429", "tmdb": "129", "simkl": "2608"}, "watched_at": "2026-09-26T18:30:00Z"}, {"id": "diff_ep_s2t_tt29930773_s1e1", "media_type": "episode", "title": "S01E01", "year": 2023, "season": 1, "episode": 1, "show_title": "Frieren: Beyond Journey's End", "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt29930773", "tvdb": "424759", "simkl": "2029530"}, "watched_at": "2026-09-25T14:10:00Z"}, {"id": "diff_movie_rating_t2s_tt15398776", "media_type": "movie", "title": "Oppenheimer", "year": 2023, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "rating", "source_status": "10/10", "target_status": "unrated", "source_rating": 10, "target_rating": null, "ids": {"imdb": "tt15398776", "tmdb": "872585"}, "watched_at": null}, {"id": "diff_ep_rating_s2t_tt2560140_s4e28", "media_type": "episode", "title": "S04E28", "year": 2022, "season": 4, "episode": 28, "show_title": "Attack on Titan", "direction": "simkl_to_trakt", "sync_type": "rating", "source_status": "9/10", "target_status": "unrated", "source_rating": 9, "target_rating": null, "ids": {"imdb": "tt2560140", "tvdb": "267440", "simkl": "40316"}, "watched_at": null}];
         const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "Lanterns", "year": 2026, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Widow's Bay", "year": 2025, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Rick and Morty", "year": 2013, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "The Office", "year": 2005, "status": "ended"}, {"title": "The Expanse", "year": 2015, "status": "ended"}, {"title": "A Knight of the Seven Kingdoms", "year": 2025, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
-        const demoLogs = ["Sep 28 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 28 08:00:02 mediaserver python[5678]: 2026-09-28 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 28 08:15:32 mediaserver python[5678]: 2026-09-28 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Lanterns S01E01 - Pilot' by user 'demo_viewer'", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for Lanterns S01E01", "Sep 28 08:15:33 mediaserver python[5678]: 2026-09-28 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'Lanterns S01E01 - Pilot' (progress: 100.0%)", "Sep 28 08:48:12 mediaserver python[5678]: 2026-09-28 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: Lanterns", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: Lanterns", "Sep 28 08:48:13 mediaserver python[5678]: 2026-09-28 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 08:55:01 mediaserver python[5678]: 2026-09-28 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 28 08:55:02 mediaserver python[5678]: 2026-09-28 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 28 09:02:45 mediaserver python[5678]: 2026-09-28 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 28 09:02:46 mediaserver python[5678]: 2026-09-28 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 28 09:18:20 mediaserver python[5678]: 2026-09-28 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 28 09:18:21 mediaserver python[5678]: 2026-09-28 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
+        const demoLogs = ["Sep 29 08:00:01 mediaserver systemd[1]: Started Plex to Trakt Webhook Scrobbler.", "Sep 29 08:00:02 mediaserver python[5678]: 2026-09-29 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Token health verified (valid for 84 days).", "Sep 29 08:00:02 mediaserver python[5678]: 2026-09-29 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Multi-user co-watching enabled for partner @demo_partner.", "Sep 29 08:00:02 mediaserver python[5678]: 2026-09-29 08:00:02 [INFO] plex_trakt_scrobbler: Startup Diagnostics: Sonarr integration enabled (https://sonarr.demo.internal).", "Sep 29 08:00:02 mediaserver python[5678]: 2026-09-29 08:00:02 [INFO] uvicorn.error: Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)", "Sep 29 08:15:32 mediaserver python[5678]: 2026-09-29 08:15:32 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Lanterns S01E01 - Pilot' by user 'demo_viewer'", "Sep 29 08:15:33 mediaserver python[5678]: 2026-09-29 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble: start payload dispatched for Lanterns S01E01", "Sep 29 08:15:33 mediaserver python[5678]: 2026-09-29 08:15:33 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 29 08:48:12 mediaserver python[5678]: 2026-09-29 08:48:12 [INFO] plex_trakt_scrobbler: Webhook received: media.scrobble for 'Lanterns S01E01 - Pilot' (progress: 100.0%)", "Sep 29 08:48:12 mediaserver python[5678]: 2026-09-29 08:48:12 [INFO] plex_trakt_scrobbler: Co-watching dual-sync triggering for partner @demo_partner: Lanterns", "Sep 29 08:48:13 mediaserver python[5678]: 2026-09-29 08:48:13 [INFO] plex_trakt_scrobbler: Co-watch dual-sync succeeded for partner @demo_partner: Lanterns", "Sep 29 08:48:13 mediaserver python[5678]: 2026-09-29 08:48:13 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 29 08:55:01 mediaserver python[5678]: 2026-09-29 08:55:01 [INFO] plex_trakt_scrobbler: Webhook received: media.rate for 'Dune: Part Two (2024)' (rating: 9/10)", "Sep 29 08:55:02 mediaserver python[5678]: 2026-09-29 08:55:02 [INFO] plex_trakt_scrobbler: Trakt rating successfully submitted: 201 Created", "Sep 29 09:02:45 mediaserver python[5678]: 2026-09-29 09:02:45 [INFO] plex_trakt_scrobbler: Webhook received: media.play for 'Severance S02E01 - Hello, Kier' by user 'demo_viewer'", "Sep 29 09:02:46 mediaserver python[5678]: 2026-09-29 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble: start dispatched for Severance S02E01", "Sep 29 09:02:46 mediaserver python[5678]: 2026-09-29 09:02:46 [INFO] plex_trakt_scrobbler: Trakt scrobble response: 201 Created", "Sep 29 09:18:20 mediaserver python[5678]: 2026-09-29 09:18:20 [INFO] plex_trakt_scrobbler: Webhook received: media.pause for 'Severance S02E01 - Hello, Kier' (progress: 68.4%)", "Sep 29 09:18:21 mediaserver python[5678]: 2026-09-29 09:18:21 [INFO] plex_trakt_scrobbler: Trakt scrobble: pause dispatched for Severance S02E01"];
 
         const clientState = {
             shows: [...initialShows],
@@ -528,12 +531,12 @@
                         { id: "plex", name: "Plex Media Server", category: "Media Server", status: "connected", badge: "Online", version: "1.40.5", details: "Local Server (Port 32400)", icon: "plex" },
                         { id: "jellyfin", name: "Jellyfin", category: "Media Server", status: "available", badge: "Ready", version: "10.9.11", details: "Webhook Ingestion Active", icon: "jellyfin" },
                         { id: "emby", name: "Emby Server", category: "Media Server", status: "available", badge: "Ready", version: "4.8.8", details: "Webhook Ingestion Active", icon: "emby" },
+                        { id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" },
+                        { id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" },
                         { id: "trakt", name: "Trakt.tv", category: "Tracker", status: "connected", badge: "Authenticated", version: "API v2", details: "Connected as @demo_viewer (84 days left)", icon: "trakt" },
                         { id: "simkl", name: "Simkl", category: "Tracker", status: "connected", badge: "Active", version: "API v2", details: "Connected as @demo_viewer (Movies, Shows, Anime)", icon: "simkl" },
                         { id: "anilist", name: "AniList", category: "Tracker", status: "connected", badge: "Authenticated", version: "GraphQL API", details: "Connected as @demo_viewer (Anime)", icon: "anilist" },
-                        { id: "myanimelist", name: "MyAnimeList", category: "Tracker", status: "connected", badge: "Authenticated", version: "REST API v2", details: "Connected as @demo_viewer (Anime)", icon: "myanimelist" },
-                        { id: "sonarr", name: "Sonarr", category: "Acquisition", status: "connected", badge: "Online", version: "4.0.9", details: "48 Series Monitored", icon: "sonarr" },
-                        { id: "radarr", name: "Radarr", category: "Acquisition", status: "connected", badge: "Online", version: "5.9.1", details: "215 Movies Monitored", icon: "radarr" }
+                        { id: "myanimelist", name: "MyAnimeList", category: "Tracker", status: "connected", badge: "Authenticated", version: "REST API v2", details: "Connected as @demo_viewer (Anime)", icon: "myanimelist" }
                     ]
                 });
             }
@@ -718,7 +721,7 @@
             Unified operational topology across all media servers, Trakt &amp; anime scrobble trackers, and automated acquisition engines.
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🔶</span>
@@ -734,7 +737,7 @@
                     <button onclick="toggleSetting('server', 'plex', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Plex"><span>⏸</span><span>Disable</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🟣</span>
@@ -750,7 +753,7 @@
                     <button onclick="toggleSetting('server', 'jellyfin', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Jellyfin"><span>⏸</span><span>Disable</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🟢</span>
@@ -766,7 +769,33 @@
                     <button onclick="toggleSetting('server', 'emby', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable Emby"><span>⏸</span><span>Disable</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">📺</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Sonarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="48 Series Monitored">48 Series Monitored</div>
+            </div>
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <span style="font-size:18px;flex-shrink:0;">🍿</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Radarr</div>
+                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
+                        </div>
+                    </div>
+                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
+                </div>
+                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="215 Movies Monitored">215 Movies Monitored</div>
+            </div>
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🔴</span>
@@ -782,7 +811,7 @@
                     <button onclick="toggleSetting('tracker', 'trakt', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Trakt"><span>⏸</span><span>Pause</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">✨</span>
@@ -798,7 +827,7 @@
                     <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause Simkl"><span>⏸</span><span>Pause</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">⚡</span>
@@ -814,7 +843,7 @@
                     <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause AniList"><span>⏸</span><span>Pause</span></button>
                 </div>
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
+            <div class="eco-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                     <div style="display:flex;align-items:center;gap:8px;min-width:0;">
                         <span style="font-size:18px;flex-shrink:0;">🎌</span>
@@ -829,32 +858,6 @@
                     <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="Connected as @demo_viewer (REST API v2)">Connected as @demo_viewer (REST API v2)</div>
                     <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause MAL"><span>⏸</span><span>Pause</span></button>
                 </div>
-            </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-                        <span style="font-size:18px;flex-shrink:0;">📺</span>
-                        <div style="min-width:0;">
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Sonarr</div>
-                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
-                        </div>
-                    </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
-                </div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="48 Series Monitored">48 Series Monitored</div>
-            </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-                        <span style="font-size:18px;flex-shrink:0;">🍿</span>
-                        <div style="min-width:0;">
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Radarr</div>
-                            <div style="font-size:11px;color:#64748b;">Acquisition</div>
-                        </div>
-                    </div>
-                    <span style="background:#064e3b;border:1px solid #059669;color:#10b981;font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">Online</span>
-                </div>
-                <div style="font-size:11px;color:#94a3b8;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="215 Movies Monitored">215 Movies Monitored</div>
             </div>
         </div>
     </div>
@@ -1126,7 +1129,7 @@
                     <tbody id="events-tbody">
                         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 22:58:27</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-29 07:05:16</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Severance S02E01 - Hello, Kier</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1136,7 +1139,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 22:24:27</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-29 06:31:16</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Lanterns S01E01 - Pilot</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1146,7 +1149,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 21:37:27</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-29 05:44:16</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Dune: Part Two (2024)</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1156,7 +1159,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 19:52:27</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-29 03:59:16</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Succession S04E03 - Connor&#x27;s Wedding</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_partner</span></div></td>
@@ -1166,7 +1169,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 17:42:27</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-29 01:49:16</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Widow&#x27;s Bay S01E01 - Pilot</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1176,7 +1179,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 15:02:27</td>
+            <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">2026-09-28 23:09:16</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">Shōgun S01E01 - Anjin</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
