@@ -2722,12 +2722,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     # Allowed devices chips
     if not is_admin:
         device_chips_html = '<div style="color:#94a3b8;font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 2px;"><span>🔒</span><span>Unlock admin access to manage allowed devices.</span></div>'
-        rule_players_str = "●●●●●●●●"
-        devices_rule_html = ""
         devices_count_badge = "🔒"
     else:
-        rule_players_str = ", ".join(cw_devices) if cw_devices else "All Devices"
-        devices_rule_html = f' &bull; <span id="cowatch-devices-footer-wrap">Devices: <strong>{rule_players_str}</strong></span>'
         devices_count_badge = str(len(cw_devices)) if cw_devices else "All"
         if not cw_devices:
             device_chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>'
@@ -2826,7 +2822,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     </div>
                     {f'<input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:110px;" />' if is_admin else ''}
                 </div>
-                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:180px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:290px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
                     {chips_html}
                 </div>
                 {f'''
@@ -2851,7 +2847,6 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                     <span>Movies: <strong id="cowatch-movies-status">{rule_movies_str}</strong></span>
                     {f'<button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies ({ "Disable" if Config.CO_WATCH_MOVIES else "Enable" })</button>' if is_admin else ''}
-                    <span>{devices_rule_html}</span>
                 </div>
             </div>
             <div>

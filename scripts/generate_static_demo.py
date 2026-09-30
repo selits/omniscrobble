@@ -168,7 +168,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     </div>
                     <input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:110px;" />
                 </div>
-                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:180px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:290px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
                     {chips_html}
                 </div>
                 <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
@@ -193,7 +193,6 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                     <span>Movies: <strong id="cowatch-movies-status">Disabled</strong></span>
                     <button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies (Enable)</button>
-                    <span> &bull; Devices: <strong id="cowatch-devices-footer-status">{", ".join(demo_devices) if demo_devices else "All Devices"}</strong></span>
                 </div>
             </div>
             <div>

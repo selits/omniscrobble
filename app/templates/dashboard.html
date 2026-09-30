@@ -1679,16 +1679,9 @@
         function renderCowatchDeviceChips(devices) {
             const container = document.getElementById('cowatch-devices-chips-container');
             const countBadge = document.getElementById('cowatch-devices-count-badge');
-            const footerWrap = document.getElementById('cowatch-devices-footer-wrap');
             const hasDevs = Array.isArray(devices) && devices.length > 0;
 
             if (countBadge) countBadge.textContent = hasDevs ? devices.length : 'All';
-            if (footerWrap) {
-                const strong = footerWrap.querySelector('strong');
-                if (strong) {
-                    strong.textContent = hasDevs ? devices.join(', ') : 'All Devices';
-                }
-            }
 
             if (!container) return;
             if (!hasDevs) {

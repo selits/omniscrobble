@@ -1959,6 +1959,7 @@ def test_dashboard_privacy_shield_and_script_syntax():
          patch.object(Config, "CO_WATCH_USER", "bon.vivant"), \
          patch.object(Config, "CO_WATCH_PLAYERS", ["selits's Fire TV", "Google TV"]):
         cowatch_mgr._shows = ["Secret CoWatch Show Alpha", "Secret CoWatch Show Beta"]
+        cowatch_mgr._devices = ["selits's Fire TV", "Google TV"]
 
         # 1. Unauthenticated / Non-Admin Dashboard Request
         client.cookies.clear()
@@ -2001,12 +2002,15 @@ def test_dashboard_privacy_shield_and_script_syntax():
         assert res_admin.status_code == 200
         html_admin = res_admin.text
 
-        # Admin sees full show titles and device names
+        # Admin sees full show titles and device names in allowed devices whitelist
         assert "Secret CoWatch Show Alpha" in html_admin
         assert "Secret CoWatch Show Beta" in html_admin
-        assert "Devices: <strong>selits's Fire TV, Google TV</strong>" in html_admin
+        assert "selits&#x27;s Fire TV" in html_admin
+        assert "Google TV" in html_admin
+        assert "Allowed Devices Whitelist" in html_admin
         assert "testsecret" in html_admin
         client.cookies.clear()
+        cowatch_mgr._devices.clear()
 
 
 def test_auth_page_script_syntax():
