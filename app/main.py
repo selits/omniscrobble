@@ -331,7 +331,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -1105,7 +1105,7 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
 </svg>"""
 
 SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v2.0.0';
+const CACHE_NAME = 'omniscrobble-v2.1.0';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
