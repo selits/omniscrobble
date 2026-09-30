@@ -2593,6 +2593,8 @@ def test_dashboard_mobile_responsiveness():
         assert 'class="title-brand"' in html
         assert 'class="title-sub"' in html
         assert 'class="cowatch-grid"' in html
+        assert 'class="cowatch-account-row"' in html
+        assert 'class="cowatch-form-row"' in html
         assert 'class="webhook-row"' in html
         assert 'class="activity-header"' in html
         assert 'class="activity-actions"' in html
@@ -2600,6 +2602,8 @@ def test_dashboard_mobile_responsiveness():
         assert 'class="modal-dialog' in html
         assert 'class="logs-toolbar"' in html
         assert 'class="footer"' in html
+        assert '.cowatch-account-row' in html
+        assert '.cowatch-grid > div + div' in html
 
 
 @pytest.mark.asyncio

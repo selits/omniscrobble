@@ -114,33 +114,33 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     # Shared Shows Chips
     chips_html = "".join([
         f'<span class="cowatch-chip" data-title="{html.escape(s.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">'
-        f'{html.escape(s)}<button data-show="{html.escape(s)}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove {html.escape(s)}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span>'
+        f'{html.escape(s)}<button data-show="{html.escape(s)}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove {html.escape(s)}" class="cowatch-chip-del">&times;</button></span>'
         for s in sorted(demo_shows, key=lambda x: x.lower())
     ])
 
     # Allowed Devices Chips
     device_chips_html = "".join([
         f'<span class="cowatch-device-chip" data-title="{html.escape(d.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">'
-        f'📺 {html.escape(d)}<button data-device="{html.escape(d)}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove {html.escape(d)}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span>'
+        f'📺 {html.escape(d)}<button data-device="{html.escape(d)}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove {html.escape(d)}" class="cowatch-chip-del">&times;</button></span>'
         for d in sorted(demo_devices, key=lambda x: x.lower())
     ]) if demo_devices else '<span style="color:#64748b;font-size:12px;font-style:italic;">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>'
 
     users_badges_html = """
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
-            <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-weight:600;color:#f8fafc;font-size:13px;">@demo_viewer</span>
-                <span style="background:#1e3a8a;color:#93c5fd;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">Default</span>
+        <div class="cowatch-account-row">
+            <div class="cowatch-account-info">
+                <span class="cowatch-account-name">@demo_viewer</span>
+                <span style="background:#1e3a8a;color:#93c5fd;font-size:10px;padding:2px 6px;border-radius:4px;flex-shrink:0;">Default</span>
             </div>
-            <div style="display:flex;align-items:center;gap:6px;">
+            <div class="cowatch-account-status">
                 <span style="color:#10b981;font-size:12px;font-weight:500;">● Connected</span>
             </div>
         </div>
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
-            <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-weight:600;color:#f8fafc;font-size:13px;">@demo_partner</span>
-                <span style="background:#701a75;color:#f5d0fe;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">Partner</span>
+        <div class="cowatch-account-row">
+            <div class="cowatch-account-info">
+                <span class="cowatch-account-name">@demo_partner</span>
+                <span style="background:#701a75;color:#f5d0fe;font-size:10px;padding:2px 6px;border-radius:4px;flex-shrink:0;">Partner</span>
             </div>
-            <div style="display:flex;align-items:center;gap:6px;">
+            <div class="cowatch-account-status">
                 <span style="color:#10b981;font-size:12px;font-weight:500;">● Connected</span>
             </div>
         </div>
@@ -182,10 +182,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 </div>
                 <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" style="margin:0;">
                     <div class="cowatch-form-row">
-                        <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add player/device (e.g. Living Room Apple TV, Shield TV)..."
-                               style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                        <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add device (e.g. Apple TV, Shield TV)..."
+                               style="flex:1;min-width:0;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
                                autocomplete="off" />
-                        <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;">+ Add Device</button>
+                        <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;flex-shrink:0;">+ Add Device</button>
                     </div>
                 </form>
                 <div style="margin-top:4px;font-size:11px;color:#64748b;">
@@ -208,7 +208,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             </div>
             <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
                 <div class="cowatch-form-row">
-                    <div style="flex:1;position:relative;">
+                    <div style="flex:1;min-width:0;position:relative;">
                         <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Yellowstone, Severance)..."
                                style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
                                oninput="onCowatchShowInput(this.value)"
@@ -219,7 +219,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                                onkeydown="if(event.key==='Enter')addCowatchShow()" />
                         <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
                     </div>
-                    <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;">+ Add Show</button>
+                    <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;flex-shrink:0;">+ Add Show</button>
                 </div>
             </form>
             <div style="margin-top:4px;">

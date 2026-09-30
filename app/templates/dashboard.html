@@ -45,6 +45,12 @@
         .webhook-row { display: flex; gap: 8px; }
         .cowatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
         .cowatch-form-row { display: flex; gap: 8px; position: relative; }
+        .cowatch-account-row { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+        .cowatch-account-info { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
+        .cowatch-account-name { font-weight: 600; color: #f8fafc; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cowatch-account-status { display: flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; }
+        .cowatch-chip-del { background: none; border: none; color: #f87171; cursor: pointer; margin-left: 6px; font-size: 13px; font-weight: 700; line-height: 1; padding: 2px 4px; border-radius: 4px; transition: color 0.15s; }
+        .cowatch-chip-del:hover { color: #ef4444; }
         .custom-scroll { scrollbar-width: thin; scrollbar-color: #334155 #0f172a; }
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: #0f172a; border-radius: 4px; }
@@ -92,8 +98,11 @@
             .webhook-row { flex-direction: column; align-items: stretch; gap: 8px; }
             .webhook-row .btn-copy { width: 100%; text-align: center; padding: 12px; min-height: 42px; display: flex; align-items: center; justify-content: center; }
             .cowatch-grid { grid-template-columns: 1fr; gap: 16px; }
-            .cowatch-form-row { flex-direction: column; align-items: stretch; }
-            .cowatch-form-row button { width: 100%; padding: 10px; font-size: 13px; }
+            .cowatch-grid > div + div { border-top: 1px solid #334155; padding-top: 16px; }
+            .cowatch-form-row { display: flex; gap: 8px; align-items: center; }
+            .cowatch-form-row button { width: auto; padding: 8px 12px; font-size: 12px; flex-shrink: 0; white-space: nowrap; }
+            .cowatch-account-row { padding: 9px 12px; gap: 6px; }
+            .cowatch-account-row .btn-sm { padding: 3px 8px; font-size: 11px; }
             .activity-header { padding: 14px 12px; flex-direction: column; align-items: flex-start; gap: 10px; }
             .activity-header h3 { font-size: 15px; }
             .activity-actions { width: 100%; gap: 6px; }
@@ -114,9 +123,10 @@
         /* OLED True-Black Theme */
         html.theme-oled body { background-color: #000000 !important; color: #f4f4f5 !important; }
         html.theme-oled .card, html.theme-oled .modal-dialog { background: #09090b !important; border-color: #27272a !important; }
-        html.theme-oled .info-item, html.theme-oled .scrobble-item, html.theme-oled th { background: #000000 !important; border-color: #27272a !important; }
+        html.theme-oled .info-item, html.theme-oled .scrobble-item, html.theme-oled .cowatch-account-row, html.theme-oled th { background: #000000 !important; border-color: #27272a !important; }
         html.theme-oled .header, html.theme-oled .activity-header { border-color: #27272a !important; }
         html.theme-oled td, html.theme-oled tr { border-bottom-color: #18181b !important; }
+        html.theme-oled .cowatch-grid > div + div { border-color: #27272a !important; }
     </style>
 </head>
 <body>
@@ -1611,7 +1621,7 @@
                 const safeTitle = escapeHtml(s);
                 return `<span class="cowatch-chip" data-title="${safeTitle.toLowerCase()}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">
                     ${safeTitle}
-                    <button data-show="${enc}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove ${safeTitle}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#f87171'">&times;</button>
+                    <button data-show="${enc}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove ${safeTitle}" class="cowatch-chip-del">&times;</button>
                 </span>`;
             }).join('');
             const filterInput = document.getElementById('cowatch-filter-input');
@@ -1700,7 +1710,7 @@
                 const safeDev = escapeHtml(d);
                 return `<span class="cowatch-device-chip" data-title="${safeDev.toLowerCase()}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">
                     📺 ${safeDev}
-                    <button data-device="${enc}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove ${safeDev}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#f87171'">&times;</button>
+                    <button data-device="${enc}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove ${safeDev}" class="cowatch-chip-del">&times;</button>
                 </span>`;
             }).join('');
         }
