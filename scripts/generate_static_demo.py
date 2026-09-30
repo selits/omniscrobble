@@ -27,6 +27,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     # 1. Prepare demo datasets from DemoManager
     demo_playback = demo_mgr.get_demo_playback()
     demo_shows = demo_mgr.get_demo_cowatch_shows()
+    demo_devices = demo_mgr.get_demo_cowatch_devices()
     demo_events = demo_mgr.get_demo_events()
     demo_users = demo_mgr.get_demo_users()
     demo_logs = demo_mgr.get_demo_logs(lines=60)
@@ -117,6 +118,13 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         for s in sorted(demo_shows, key=lambda x: x.lower())
     ])
 
+    # Allowed Devices Chips
+    device_chips_html = "".join([
+        f'<span class="cowatch-device-chip" data-title="{html.escape(d.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">'
+        f'📺 {html.escape(d)}<button data-device="{html.escape(d)}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove {html.escape(d)}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;">&times;</button></span>'
+        for d in sorted(demo_devices, key=lambda x: x.lower())
+    ]) if demo_devices else '<span style="color:#64748b;font-size:12px;font-style:italic;">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>'
+
     users_badges_html = """
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
             <div style="display:flex;align-items:center;gap:6px;">
@@ -185,7 +193,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                     <span>Movies: <strong id="cowatch-movies-status">Disabled</strong></span>
                     <button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies (Enable)</button>
-                    <span> &bull; Devices: <strong>Living Room Apple TV</strong></span>
+                    <span> &bull; Devices: <strong id="cowatch-devices-footer-status">{", ".join(demo_devices) if demo_devices else "All Devices"}</strong></span>
                 </div>
             </div>
             <div>
@@ -195,6 +203,28 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 </div>
                 <div>
                     {users_badges_html}
+                </div>
+                <div style="margin-top:16px;border-top:1px solid #334155;padding-top:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                            <span>Allowed Devices Whitelist</span>
+                            <span id="cowatch-devices-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(demo_devices) if demo_devices else "All"}</span>
+                        </div>
+                    </div>
+                    <div id="cowatch-devices-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:44px;max-height:140px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                        {device_chips_html}
+                    </div>
+                    <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" style="margin:0;">
+                        <div class="cowatch-form-row">
+                            <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add player/device (e.g. Living Room Apple TV, Shield TV)..."
+                                   style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                                   autocomplete="off" />
+                            <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;">+ Add Device</button>
+                        </div>
+                    </form>
+                    <div style="margin-top:4px;font-size:11px;color:#64748b;">
+                        Leave empty to allow all devices. When configured, co-watching only dual-scrobbles on these players.
+                    </div>
                 </div>
             </div>
         </div>
@@ -682,6 +712,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     <script>
     (function() {{
         const initialShows = {json.dumps(demo_shows)};
+        const initialDevices = {json.dumps(demo_devices)};
         const initialEvents = {json.dumps(demo_events)};
         const initialReconciliation = {json.dumps(demo_reconciliation)};
         const initialCrossDiff = {json.dumps(demo_mgr.get_demo_cross_tracker_diff())};
@@ -690,6 +721,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
 
         const clientState = {{
             shows: [...initialShows],
+            devices: [...initialDevices],
             events: [...initialEvents],
             reconciliation: [...initialReconciliation],
             crossDiff: [...initialCrossDiff],
@@ -771,6 +803,24 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     const show = url.searchParams.get('show') || '';
                     clientState.shows = clientState.shows.filter(s => s.toLowerCase() !== show.toLowerCase());
                     return jsonResp({{ status: 'ok', shows: clientState.shows }});
+                }}
+            }}
+
+            // 4b. Co-Watch Devices
+            if (path.endsWith('/api/cowatch/devices')) {{
+                if (method === 'POST') {{
+                    const body = init.body ? JSON.parse(init.body) : {{}};
+                    const dev = (body.device || '').trim();
+                    if (dev && !clientState.devices.some(d => d.toLowerCase() === dev.toLowerCase())) {{
+                        clientState.devices.push(dev);
+                        clientState.devices.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+                    }}
+                    return jsonResp({{ status: 'ok', devices: clientState.devices }});
+                }}
+                if (method === 'DELETE') {{
+                    const dev = url.searchParams.get('device') || '';
+                    clientState.devices = clientState.devices.filter(d => d.toLowerCase() !== dev.toLowerCase());
+                    return jsonResp({{ status: 'ok', devices: clientState.devices }});
                 }}
             }}
 

@@ -1217,9 +1217,11 @@ async def export_backup(request: Request):
             for p in tokens_dir.glob("*.json"):
                 zf.write(p, arcname=f"data/tokens/{p.name}")
 
-        # 3. Co-watch shows file
+        # 3. Co-watch shows and devices files
         if Config.CO_WATCH_DATA_FILE.exists():
             zf.write(Config.CO_WATCH_DATA_FILE, arcname="data/cowatch_shows.json")
+        if Config.CO_WATCH_DEVICES_DATA_FILE.exists():
+            zf.write(Config.CO_WATCH_DEVICES_DATA_FILE, arcname="data/cowatch_devices.json")
 
         # 4. SQLite queue database
         if Config.QUEUE_DB_FILE.exists():
@@ -1283,6 +1285,7 @@ async def import_backup(request: Request):
         trakt._tokens = None
         trakt.load_tokens()
         cowatch_mgr._load_shows()
+        cowatch_mgr._load_devices()
         settings_mgr._load_settings()
         scrobble_stats.clear()
         scrobble_stats.update(load_scrobble_stats())
@@ -1734,6 +1737,34 @@ def delete_cowatch_show(show: str, request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     shows = cowatch_mgr.remove_show(show)
     return {"status": "ok", "shows": shows}
+
+
+class AddDeviceRequest(BaseModel):
+    device: str
+
+
+@app.post("/api/cowatch/devices")
+def add_cowatch_device(payload: AddDeviceRequest, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        devices = demo_mgr.add_demo_cowatch_device(payload.device)
+        return {"status": "ok", "devices": devices}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not payload.device.strip():
+        raise HTTPException(status_code=400, detail="Device name cannot be empty")
+    devices = cowatch_mgr.add_device(payload.device)
+    return {"status": "ok", "devices": devices}
+
+
+@app.delete("/api/cowatch/devices")
+def delete_cowatch_device(device: str, request: Request):
+    if request and request.query_params.get("demo") == "true":
+        devices = demo_mgr.remove_demo_cowatch_device(device)
+        return {"status": "ok", "devices": devices}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    devices = cowatch_mgr.remove_device(device)
+    return {"status": "ok", "devices": devices}
 
 
 @app.get("/api/sonarr/shows")
@@ -2666,11 +2697,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         cw_user = "demo_partner"
         cw_user_display = "demo_partner"
         cw_shows = demo_mgr.get_demo_cowatch_shows()
+        cw_devices = demo_mgr.get_demo_cowatch_devices()
         configured_users = demo_mgr.get_demo_users()
     else:
         cw_user = Config.CO_WATCH_USER
         cw_user_display = cw_user if is_admin else "●●●●●●●●"
         cw_shows = sorted(cowatch_mgr.get_shows(), key=lambda x: x.lower())
+        cw_devices = cowatch_mgr.get_devices()
         configured_users = user_mgr.list_configured_users()
 
     # Shared show chips
@@ -2685,6 +2718,39 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             chips_html += f'<span class="cowatch-chip" data-title="{html.escape(s.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">{html.escape(s)}{del_btn}</span>'
         if not chips_html:
             chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>'
+
+    # Allowed devices chips
+    if not is_admin:
+        device_chips_html = '<div style="color:#94a3b8;font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 2px;"><span>🔒</span><span>Unlock admin access to manage allowed devices.</span></div>'
+        rule_players_str = "●●●●●●●●"
+        devices_rule_html = ""
+        devices_count_badge = "🔒"
+    else:
+        rule_players_str = ", ".join(cw_devices) if cw_devices else "All Devices"
+        devices_rule_html = f' &bull; <span id="cowatch-devices-footer-wrap">Devices: <strong>{rule_players_str}</strong></span>'
+        devices_count_badge = str(len(cw_devices)) if cw_devices else "All"
+        if not cw_devices:
+            device_chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>'
+        else:
+            device_chips_html = ""
+            for d in cw_devices:
+                d_enc = urllib.parse.quote(d)
+                del_btn = f'<button data-device="{d_enc}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove {html.escape(d)}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;" onmouseover="this.style.color=\'#ef4444\'" onmouseout="this.style.color=\'#f87171\'">&times;</button>'
+                device_chips_html += f'<span class="cowatch-device-chip" data-title="{html.escape(d.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">📺 {html.escape(d)}{del_btn}</span>'
+
+    device_form_html = f'''
+    <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" style="margin:0;">
+        <div class="cowatch-form-row">
+            <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add player/device (e.g. Living Room Apple TV, Shield TV)..."
+                   style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                   autocomplete="off" />
+            <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;">+ Add Device</button>
+        </div>
+    </form>
+    <div style="margin-top:4px;font-size:11px;color:#64748b;">
+        Leave empty to allow all devices. When configured, co-watching only dual-scrobbles on these players.
+    </div>
+    ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to configure allowed devices.</div>'
 
     # Multi-user accounts list
     users_badges_html = ""
@@ -2730,11 +2796,6 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         </div>
         """
 
-    if is_admin:
-        rule_players_str = ", ".join(Config.CO_WATCH_PLAYERS) if Config.CO_WATCH_PLAYERS else "All Devices"
-        devices_rule_html = f" &bull; Devices: <strong>{rule_players_str}</strong>"
-    else:
-        devices_rule_html = ""
     rule_movies_str = "Enabled" if Config.CO_WATCH_MOVIES else "Disabled"
     sonarr_status_note = (
         '<span style="color:#10b981;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px;">'
@@ -2800,6 +2861,18 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 </div>
                 <div>
                     {users_badges_html}
+                </div>
+                <div style="margin-top:16px;border-top:1px solid #334155;padding-top:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                            <span>Allowed Devices Whitelist</span>
+                            <span id="cowatch-devices-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{devices_count_badge}</span>
+                        </div>
+                    </div>
+                    <div id="cowatch-devices-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:44px;max-height:140px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                        {device_chips_html}
+                    </div>
+                    {device_form_html}
                 </div>
             </div>
         </div>

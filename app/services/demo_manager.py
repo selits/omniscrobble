@@ -58,8 +58,27 @@ class DemoManager:
             "collections": 148,
         }
 
+    DEMO_DEVICES = [
+        "Living Room Apple TV",
+    ]
+
     def get_demo_cowatch_shows(self) -> list[str]:
         return list(self.DEMO_SHOWS)
+
+    def get_demo_cowatch_devices(self) -> list[str]:
+        return list(self.DEMO_DEVICES)
+
+    def add_demo_cowatch_device(self, device: str) -> list[str]:
+        clean = (device or "").strip()
+        if clean and not any(d.lower() == clean.lower() for d in self.DEMO_DEVICES):
+            self.DEMO_DEVICES.append(clean)
+            self.DEMO_DEVICES.sort(key=lambda x: x.lower())
+        return list(self.DEMO_DEVICES)
+
+    def remove_demo_cowatch_device(self, device: str) -> list[str]:
+        clean = (device or "").strip().lower()
+        self.DEMO_DEVICES = [d for d in self.DEMO_DEVICES if d.strip().lower() != clean]
+        return list(self.DEMO_DEVICES)
 
     def get_demo_users(self) -> list[dict[str, Any]]:
         return [
