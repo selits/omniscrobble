@@ -1543,6 +1543,39 @@ def test_cowatch_api_endpoints():
         assert res_del.status_code == 200
         assert "The Bear" not in res_del.json()["shows"]
 
+        # 4. POST /api/cowatch/devices (auth check & empty validation)
+        res_dev_unauth = client.post("/api/cowatch/devices", json={"device": "Apple TV 4K"})
+        assert res_dev_unauth.status_code == 401
+
+        res_dev_empty = client.post("/api/cowatch/devices?token=testsecret", json={"device": "   "})
+        assert res_dev_empty.status_code == 400
+
+        res_dev_auth = client.post("/api/cowatch/devices?token=testsecret", json={"device": "Apple TV 4K"})
+        assert res_dev_auth.status_code == 200
+        assert "Apple TV 4K" in res_dev_auth.json()["devices"]
+
+        # 5. DELETE /api/cowatch/devices
+        res_del_dev_unauth = client.delete("/api/cowatch/devices?device=Apple+TV+4K")
+        assert res_del_dev_unauth.status_code == 401
+
+        res_del_dev = client.delete("/api/cowatch/devices?token=testsecret&device=Apple+TV+4K")
+        assert res_del_dev.status_code == 200
+        assert "Apple TV 4K" not in res_del_dev.json()["devices"]
+
+        # 6. Demo mode for /api/cowatch/devices
+        res_demo_add = client.post("/api/cowatch/devices?demo=true", json={"device": "Demo Shield"})
+        assert res_demo_add.status_code == 200
+        assert "Demo Shield" in res_demo_add.json()["devices"]
+
+        res_demo_del = client.delete("/api/cowatch/devices?demo=true&device=Demo+Shield")
+        assert res_demo_del.status_code == 200
+        assert "Demo Shield" not in res_demo_del.json()["devices"]
+
+        # Clean up test devices
+        if Config.CO_WATCH_DEVICES_DATA_FILE.exists():
+            Config.CO_WATCH_DEVICES_DATA_FILE.unlink()
+        cowatch_mgr._devices.clear()
+
 
 def test_cowatch_manual_sync_endpoint():
     client = TestClient(app)
@@ -1890,6 +1923,7 @@ def test_backup_and_restore_endpoints():
         test_zip_buf = io.BytesIO()
         with zipfile.ZipFile(test_zip_buf, "w") as test_zf:
             test_zf.writestr("data/cowatch_shows.json", json.dumps(["Severance", "Succession"]))
+            test_zf.writestr("data/cowatch_devices.json", json.dumps(["Living Room Apple TV"]))
             # Zip slip attack attempt (must be skipped safely)
             test_zf.writestr("../evil_file.txt", "evil")
 
@@ -1900,6 +1934,7 @@ def test_backup_and_restore_endpoints():
         restore_data = res_restore.json()
         assert restore_data["status"] == "success"
         assert "data/cowatch_shows.json" in restore_data["restored"]
+        assert "data/cowatch_devices.json" in restore_data["restored"]
         # Malicious path was ignored
         assert "../evil_file.txt" not in restore_data["restored"]
 
@@ -1907,6 +1942,11 @@ def test_backup_and_restore_endpoints():
         client.cookies.clear()
         res_restore_denied = client.post("/api/restore", files=files)
         assert res_restore_denied.status_code == 401
+
+        # Cleanup restored test devices
+        if Config.CO_WATCH_DEVICES_DATA_FILE.exists():
+            Config.CO_WATCH_DEVICES_DATA_FILE.unlink()
+        cowatch_mgr._devices.clear()
 
 
 def test_dashboard_privacy_shield_and_script_syntax():
@@ -2640,6 +2680,39 @@ def test_cowatch_env_merging(tmp_path):
     assert len(shows) == 3
 
 
+def test_cowatch_devices_env_merging_and_crud(tmp_path):
+    """Verify CowatchManager manages devices dynamically and merges .env CO_WATCH_PLAYERS."""
+    devices_file = tmp_path / "cowatch_devices.json"
+    devices_file.write_text(json.dumps(["Living Room Apple TV", "Shield TV"]))
+
+    cfg = MagicMock()
+    cfg.CO_WATCH_DATA_FILE = tmp_path / "cowatch_shows.json"
+    cfg.CO_WATCH_DEVICES_DATA_FILE = devices_file
+    cfg.CO_WATCH_SHOWS = []
+    cfg.CO_WATCH_USER = "partner"
+    cfg.CO_WATCH_MOVIES = False
+    cfg.CO_WATCH_PLAYERS = ["Env Device 1", "Living Room Apple TV"]
+
+    mgr = CowatchManager(config=cfg)
+    devices = mgr.get_devices()
+    assert "Living Room Apple TV" in devices
+    assert "Shield TV" in devices
+    assert "Env Device 1" in devices
+    assert len(devices) == 3
+
+    # Add device
+    mgr.add_device("Bedroom TV")
+    assert "Bedroom TV" in mgr.get_devices()
+
+    # Re-reading from file should contain added device
+    mgr2 = CowatchManager(config=cfg)
+    assert "Bedroom TV" in mgr2.get_devices()
+
+    # Remove device
+    mgr2.remove_device("Shield TV")
+    assert "Shield TV" not in mgr2.get_devices()
+
+
 def test_cowatch_eligibility_reasons():
     """Verify check_cowatch_eligibility returns accurate boolean and informative reason strings."""
     cfg = MagicMock()
@@ -3014,6 +3087,7 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert "/api/playback" in content
     assert "/api/events" in content
     assert "/api/cowatch/shows" in content
+    assert "/api/cowatch/devices" in content
     assert "/api/sonarr/shows" in content
     assert "/api/logs" in content
     assert "/api/search" in content

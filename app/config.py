@@ -127,7 +127,14 @@ class Config:
         p.strip() for p in _cowatch_players_env.split(",") if p.strip()
     ]
     CO_WATCH_MOVIES: bool = os.getenv("CO_WATCH_MOVIES", "false").lower() in ("true", "1", "yes")
-    CO_WATCH_DATA_FILE: Path = BASE_DIR / "data" / "cowatch_shows.json"
+    _cowatch_shows_file_env = os.getenv("CO_WATCH_DATA_FILE", "data/cowatch_shows.json")
+    CO_WATCH_DATA_FILE: Path = (
+        Path(_cowatch_shows_file_env) if Path(_cowatch_shows_file_env).is_absolute() else (BASE_DIR / _cowatch_shows_file_env)
+    )
+    _cowatch_devices_file_env = os.getenv("CO_WATCH_DEVICES_DATA_FILE", "data/cowatch_devices.json")
+    CO_WATCH_DEVICES_DATA_FILE: Path = (
+        Path(_cowatch_devices_file_env) if Path(_cowatch_devices_file_env).is_absolute() else (BASE_DIR / _cowatch_devices_file_env)
+    )
 
     # Sonarr & Radarr Integrations & Watchlist Automation
     SONARR_URL: str = os.getenv("SONARR_URL", "").strip().rstrip("/")

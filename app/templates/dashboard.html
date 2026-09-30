@@ -1676,6 +1676,82 @@
             }
         }
 
+        function renderCowatchDeviceChips(devices) {
+            const container = document.getElementById('cowatch-devices-chips-container');
+            const countBadge = document.getElementById('cowatch-devices-count-badge');
+            const footerWrap = document.getElementById('cowatch-devices-footer-wrap');
+            const hasDevs = Array.isArray(devices) && devices.length > 0;
+
+            if (countBadge) countBadge.textContent = hasDevs ? devices.length : 'All';
+            if (footerWrap) {
+                const strong = footerWrap.querySelector('strong');
+                if (strong) {
+                    strong.textContent = hasDevs ? devices.join(', ') : 'All Devices';
+                }
+            }
+
+            if (!container) return;
+            if (!hasDevs) {
+                container.innerHTML = '<span style="color:#64748b;font-size:12px;font-style:italic;">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>';
+                return;
+            }
+
+            const sorted = [...devices].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+            container.innerHTML = sorted.map(d => {
+                const enc = encodeURIComponent(d);
+                const safeDev = escapeHtml(d);
+                return `<span class="cowatch-device-chip" data-title="${safeDev.toLowerCase()}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">
+                    📺 ${safeDev}
+                    <button data-device="${enc}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove ${safeDev}" style="background:none;border:none;color:#f87171;cursor:pointer;margin-left:6px;font-size:13px;font-weight:700;line-height:1;padding:0;" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#f87171'">&times;</button>
+                </span>`;
+            }).join('');
+        }
+
+        async function addCowatchDevice(devName) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const input = document.getElementById('cowatch-device-input');
+            const targetDev = (devName !== undefined ? devName : (input ? input.value : '')).trim();
+            if (!targetDev) return;
+            try {
+                const url = isDemo ? '/api/cowatch/devices?demo=true' : '/api/cowatch/devices';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device: targetDev })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (input && devName === undefined) input.value = '';
+                    renderCowatchDeviceChips(data.devices);
+                } else {
+                    const err = await res.json();
+                    alert('Failed to add device: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function removeCowatchDevice(devName) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (!confirm(`Remove "${devName}" from allowed co-watch devices?`)) return;
+            try {
+                const url = isDemo ? '/api/cowatch/devices?demo=true&device=' + encodeURIComponent(devName) : '/api/cowatch/devices?device=' + encodeURIComponent(devName);
+                const res = await fetch(url, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    renderCowatchDeviceChips(data.devices);
+                } else {
+                    const err = await res.json();
+                    alert('Failed to remove device: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
         async function quickAddShow(showName, btn) {
             if (!isAdmin) { openUnlockModal(); return; }
             btn.disabled = true;
