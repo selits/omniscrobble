@@ -45,6 +45,11 @@
         .webhook-row { display: flex; gap: 8px; }
         .cowatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
         .cowatch-form-row { display: flex; gap: 8px; position: relative; }
+        .custom-scroll { scrollbar-width: thin; scrollbar-color: #334155 #0f172a; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #0f172a; border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
         .activity-header { padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
         .activity-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -3247,6 +3252,16 @@ SIMKL_ENABLED=true</pre>
                 } catch (e) {}
             }, 1000);
         }
+
+        // Reset scroll position for co-watch chips on load and reload so refresh starts cleanly at top
+        function resetCowatchScroll() {
+            const cwChips = document.getElementById('cowatch-chips-container');
+            if (cwChips) cwChips.scrollTop = 0;
+            const devChips = document.getElementById('cowatch-devices-chips-container');
+            if (devChips) devChips.scrollTop = 0;
+        }
+        window.addEventListener('pageshow', resetCowatchScroll);
+        document.addEventListener('DOMContentLoaded', resetCowatchScroll);
 
         // PWA Service Worker Registration
         if (!isDemo && 'serviceWorker' in navigator) {
