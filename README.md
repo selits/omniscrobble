@@ -856,6 +856,12 @@ Omniscrobble is developed with a modular multi-platform architecture. Current an
   - Persistent lifetime playback statistics (`data/stats.json`) and activity feed (`data/events.json`) surviving server reboots, upgrades, and backup archives.
   - Upstream tracker failure alerts with 30-minute deduplication throttling.
   - Full-stack static demo preview update and responsive ecosystem button refinements.
+- **v2.1.0 (Milestone 7 — Completed)**:
+  - Dynamic Co-Watch Allowed Devices configuration in dashboard UI with interactive chips and add/remove controls (`data/cowatch_devices.json`).
+  - Seamless merging of `.env` `CO_WATCH_PLAYERS` with persistent dashboard device whitelists.
+  - Reorganized Watch Together & Multi-User card layout: Linked Trakt Accounts and Allowed Devices sit side-by-side on top, with full-width Shared Shows Whitelist below.
+  - Sleek custom scrollbars (`.custom-scroll`) and scroll persistence reset on reload.
+  - Backup & restore integration for `data/cowatch_devices.json`.
 - **Future Horizons**:
   - Direct P2P sync between distributed Omniscrobble instances.
   - Dynamic in-app scrobble threshold and library filtering configuration editor.
