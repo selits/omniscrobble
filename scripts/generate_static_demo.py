@@ -159,42 +159,8 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
             Dual-scrobble watched shows to your partner's Trakt account automatically, without syncing your solo shows.
         </p>
+        <!-- Top Section: Targeting & Destinations (Accounts & Devices side-by-side) -->
         <div class="cowatch-grid">
-            <div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
-                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                        <span>Shared Shows Whitelist</span>
-                        <span id="cowatch-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(demo_shows)}</span>
-                    </div>
-                    <input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:110px;" />
-                </div>
-                <div id="cowatch-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:54px;max-height:290px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
-                    {chips_html}
-                </div>
-                <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
-                    <div class="cowatch-form-row">
-                        <div style="flex:1;position:relative;">
-                            <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Yellowstone, Severance)..."
-                                   style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
-                                   oninput="onCowatchShowInput(this.value)"
-                                   onfocus="onCowatchShowInput(this.value)"
-                                   autocomplete="off"
-                                   data-lpignore="true"
-                                   data-1p-ignore="true"
-                                   onkeydown="if(event.key==='Enter')addCowatchShow()" />
-                            <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
-                        </div>
-                        <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;">+ Add Show</button>
-                    </div>
-                </form>
-                <div style="margin-top:4px;">
-                    <span style="color:#10b981;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px;">✓ Connected to Sonarr (type to search library)</span>
-                </div>
-                <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    <span>Movies: <strong id="cowatch-movies-status">Disabled</strong></span>
-                    <button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies (Enable)</button>
-                </div>
-            </div>
             <div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                     <div style="font-size:13px;font-weight:600;color:#f1f5f9;">Linked Trakt Accounts</div>
@@ -203,28 +169,65 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <div>
                     {users_badges_html}
                 </div>
-                <div style="margin-top:16px;border-top:1px solid #334155;padding-top:14px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
-                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                            <span>Allowed Devices Whitelist</span>
-                            <span id="cowatch-devices-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(demo_devices) if demo_devices else "All"}</span>
-                        </div>
-                    </div>
-                    <div id="cowatch-devices-chips-container" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:44px;max-height:140px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
-                        {device_chips_html}
-                    </div>
-                    <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" style="margin:0;">
-                        <div class="cowatch-form-row">
-                            <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add player/device (e.g. Living Room Apple TV, Shield TV)..."
-                                   style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
-                                   autocomplete="off" />
-                            <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;">+ Add Device</button>
-                        </div>
-                    </form>
-                    <div style="margin-top:4px;font-size:11px;color:#64748b;">
-                        Leave empty to allow all devices. When configured, co-watching only dual-scrobbles on these players.
+            </div>
+            <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                        <span>Allowed Devices Whitelist</span>
+                        <span id="cowatch-devices-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(demo_devices) if demo_devices else "All"}</span>
                     </div>
                 </div>
+                <div id="cowatch-devices-chips-container" class="custom-scroll" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:44px;max-height:140px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                    {device_chips_html}
+                </div>
+                <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" style="margin:0;">
+                    <div class="cowatch-form-row">
+                        <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add player/device (e.g. Living Room Apple TV, Shield TV)..."
+                               style="flex:1;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                               autocomplete="off" />
+                        <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;">+ Add Device</button>
+                    </div>
+                </form>
+                <div style="margin-top:4px;font-size:11px;color:#64748b;">
+                    Leave empty to allow all devices. When configured, co-watching only dual-scrobbles on these players.
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Section: Shared Media & Shows Whitelist (Full Width) -->
+        <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
+                <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                    <span>Shared Shows Whitelist</span>
+                    <span id="cowatch-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(demo_shows)}</span>
+                </div>
+                <input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:130px;" />
+            </div>
+            <div id="cowatch-chips-container" class="custom-scroll" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;min-height:54px;max-height:220px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                {chips_html}
+            </div>
+            <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
+                <div class="cowatch-form-row">
+                    <div style="flex:1;position:relative;">
+                        <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Yellowstone, Severance)..."
+                               style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                               oninput="onCowatchShowInput(this.value)"
+                               onfocus="onCowatchShowInput(this.value)"
+                               autocomplete="off"
+                               data-lpignore="true"
+                               data-1p-ignore="true"
+                               onkeydown="if(event.key==='Enter')addCowatchShow()" />
+                        <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
+                    </div>
+                    <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;">+ Add Show</button>
+                </div>
+            </form>
+            <div style="margin-top:4px;">
+                <span style="color:#10b981;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px;">✓ Connected to Sonarr (type to search library)</span>
+            </div>
+            <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span>Movies: <strong id="cowatch-movies-status">Disabled</strong></span>
+                <button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies (Enable)</button>
             </div>
         </div>
     </div>
