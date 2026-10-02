@@ -352,10 +352,35 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
+
+
+def is_https_request(request: Request) -> bool:
+    """Check if the request was made over HTTPS directly or via an SSL reverse proxy."""
+    if request.url.scheme == "https":
+        return True
+    proto = request.headers.get("x-forwarded-proto", "").lower()
+    return proto == "https"
+
+
+@app.middleware("http")
+async def security_and_cache_middleware(request: Request, call_next):
+    response = await call_next(request)
+    # Standard defensive security headers
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Cache-busting headers for dynamic and control endpoints
+    path = request.url.path
+    if path == "/" or path == "/demo" or path == "/sw.js" or path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: str):
@@ -473,7 +498,7 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
         "action": action_str,
         "title": title_str,
         "type": media.media_type,
-        "show_title": media.show_title if media.media_type == "episode" else None,
+        "show_title": media.show_title if media.media_type == "episode" else (media.title or media.show_title if media.media_type == "show" else None),
         "media_payload": {
             "media_type": media.media_type,
             "title": media.title,
@@ -1125,39 +1150,52 @@ OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 
   </g>
 </svg>"""
 
-SW_JS = """// Omniscrobble PWA Service Worker
-const CACHE_NAME = 'omniscrobble-v2.1.0';
+def get_sw_js() -> str:
+    """Returns dynamic PWA service worker script tied to APP_VERSION."""
+    return f"""// Omniscrobble PWA Service Worker
+const CACHE_NAME = 'omniscrobble-v{APP_VERSION}';
 const STATIC_ASSETS = [
-  '/',
   '/manifest.json',
   '/static/icons/icon-192.svg',
   '/static/icons/icon-512.svg'
 ];
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', (event) => {{
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)).catch(() => {})
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS)).catch(() => {{}})
   );
   self.skipWaiting();
-});
+}});
 
-self.addEventListener('activate', (event) => {
+self.addEventListener('activate', (event) => {{
   event.waitUntil(
-    caches.keys().then((keys) => {
+    caches.keys().then((keys) => {{
       return Promise.all(
-        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+        keys.map((key) => {{
+          if (key !== CACHE_NAME) {{
+            return caches.delete(key);
+          }}
+        }})
       );
-    })
+    }}).then(() => {{
+      // Always purge dynamic dashboard HTML '/' from any cache to prevent stale UI
+      return caches.open(CACHE_NAME).then((cache) => cache.delete('/'));
+    }})
   );
   self.clients.claim();
-});
+}});
 
-self.addEventListener('fetch', (event) => {
+self.addEventListener('fetch', (event) => {{
   if (event.request.method !== 'GET') return;
+  const url = new URL(event.request.url);
+  // Never intercept or cache navigation or API requests - always fetch live
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname.startsWith('/api/')) {{
+    return;
+  }}
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
+    caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
-});
+}});
 """
 
 
@@ -1192,8 +1230,16 @@ def pwa_manifest():
 
 @app.get("/sw.js")
 def service_worker():
-    """Serves PWA service worker script."""
-    return Response(content=SW_JS, media_type="application/javascript")
+    """Serves PWA service worker script with explicit no-cache headers."""
+    return Response(
+        content=get_sw_js(),
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/static/icons/icon-192.svg")
@@ -1344,7 +1390,9 @@ def get_events(request: Request):
         ]
     else:
         for ev in events:
-            show = ev.get("show_title")
+            show = ev.get("show_title") or (ev.get("title") if ev.get("type") == "show" else None)
+            if not show and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
+                show = ev["media_payload"].get("title")
             ev["is_cowatch_show"] = cowatch_mgr.is_cowatch_show(show) if show else False
     return {"events": events}
 
@@ -2145,6 +2193,8 @@ async def test_sync_connection(payload: MediaServerTestConnectionRequest, reques
     if srv == "jellyfin":
         url_candidate = payload.url or payload.jellyfin_url or ""
         target_url = url_candidate.strip() if url_candidate else raw_recon.get("jellyfin_url", "")
+        if target_url and not target_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
         token_candidate = payload.token or payload.jellyfin_token or ""
         target_token = token_candidate.strip() if token_candidate else ""
         if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
@@ -2154,6 +2204,8 @@ async def test_sync_connection(payload: MediaServerTestConnectionRequest, reques
     elif srv == "emby":
         url_candidate = payload.url or payload.emby_url or ""
         target_url = url_candidate.strip() if url_candidate else raw_recon.get("emby_url", "")
+        if target_url and not target_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
         token_candidate = payload.token or payload.emby_token or ""
         target_token = token_candidate.strip() if token_candidate else ""
         if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
@@ -2163,6 +2215,8 @@ async def test_sync_connection(payload: MediaServerTestConnectionRequest, reques
     else:
         url_candidate = payload.url or payload.plex_url or ""
         target_url = url_candidate.strip() if url_candidate else raw_recon.get("plex_url", "")
+        if target_url and not target_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
         token_candidate = payload.token or payload.plex_token or ""
         target_token = token_candidate.strip() if token_candidate else ""
         if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
@@ -2234,6 +2288,8 @@ async def test_arr_connection(payload: ArrTestConnectionRequest, request: Reques
     arr_cfg = settings_mgr.get_arr_settings(mask=False)
     if app_type == "sonarr":
         target_url = (payload.url or "").strip() or arr_cfg.get("sonarr_url", "")
+        if target_url and not target_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
         target_key = (payload.api_key or "").strip()
         if not target_key or settings_mgr._is_masked(target_key):
             target_key = arr_cfg.get("sonarr_api_key", "")
@@ -2244,6 +2300,8 @@ async def test_arr_connection(payload: ArrTestConnectionRequest, request: Reques
             await temp_client.close()
     elif app_type == "radarr":
         target_url = (payload.url or "").strip() or arr_cfg.get("radarr_url", "")
+        if target_url and not target_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
         target_key = (payload.api_key or "").strip()
         if not target_key or settings_mgr._is_masked(target_key):
             target_key = arr_cfg.get("radarr_api_key", "")
@@ -2426,20 +2484,66 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
     }
 
 
+_failed_unlock_attempts: dict[str, list[float]] = {}
+MAX_FAILED_UNLOCK_ATTEMPTS = 5
+UNLOCK_LOCKOUT_SECONDS = 60
+
+
+def check_unlock_rate_limit(client_ip: str) -> None:
+    now = time.time()
+    # Prune all stale entries across all IPs to prevent unbounded growth
+    for ip in list(_failed_unlock_attempts):
+        _failed_unlock_attempts[ip] = [t for t in _failed_unlock_attempts[ip] if now - t < UNLOCK_LOCKOUT_SECONDS]
+        if not _failed_unlock_attempts[ip]:
+            del _failed_unlock_attempts[ip]
+    # Safety valve: if still oversized (e.g. legitimate traffic spike), evict oldest half
+    if len(_failed_unlock_attempts) > 10_000:
+        evict = sorted(_failed_unlock_attempts, key=lambda ip: min(_failed_unlock_attempts[ip]))[:5_000]
+        for ip in evict:
+            del _failed_unlock_attempts[ip]
+    recent_attempts = _failed_unlock_attempts.get(client_ip, [])
+    if len(recent_attempts) >= MAX_FAILED_UNLOCK_ATTEMPTS:
+        retry_after = int(UNLOCK_LOCKOUT_SECONDS - (now - recent_attempts[0]))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed unlock attempts. Please wait {max(1, retry_after)} seconds before trying again.",
+            headers={"Retry-After": str(max(1, retry_after))},
+        )
+
+
+def record_failed_unlock(client_ip: str) -> None:
+    now = time.time()
+    if client_ip not in _failed_unlock_attempts:
+        _failed_unlock_attempts[client_ip] = []
+    _failed_unlock_attempts[client_ip].append(now)
+
+
+def record_successful_unlock(client_ip: str) -> None:
+    _failed_unlock_attempts.pop(client_ip, None)
+
+
 class AdminUnlockRequest(BaseModel):
     token: str
 
 
 @app.post("/api/admin/unlock")
-def admin_unlock(payload: AdminUnlockRequest, response: Response):
+def admin_unlock(payload: AdminUnlockRequest, request: Request, response: Response):
     if not Config.WEBHOOK_SECRET:
         return {"status": "ok", "message": "Admin authentication not required"}
+
+    client_ip = request.client.host if request.client else "unknown"
+    check_unlock_rate_limit(client_ip)
+
     if not secrets.compare_digest(payload.token, Config.WEBHOOK_SECRET):
+        record_failed_unlock(client_ip)
         raise HTTPException(status_code=401, detail="Invalid admin secret")
+
+    record_successful_unlock(client_ip)
     response.set_cookie(
         key="admin_token",
         value=Config.WEBHOOK_SECRET,
         httponly=True,
+        secure=is_https_request(request),
         samesite="lax",
         path="/",
         max_age=86400 * 30,
@@ -2797,6 +2901,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 key="admin_token",
                 value=Config.WEBHOOK_SECRET,
                 httponly=True,
+                secure=is_https_request(request),
                 samesite="lax",
                 path="/",
                 max_age=86400 * 30,
@@ -2892,6 +2997,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             full_emby_url = f"{base_url}/webhook/emby"
             masked_webhook_url = full_webhook_url
 
+    settings_header_btn = (
+        '<button onclick="openSettingsModal()" class="btn-sm" '
+        'style="background:#1e293b;border:1px solid #475569;color:#f8fafc;padding:6px 12px;font-size:12px;cursor:pointer;'
+        'display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:600;" '
+        'title="Configure Media Servers, Trackers, and Automation"><span>⚙️</span><span>Settings Hub</span></button>'
+    )
+
     # Events rows
     events_list = demo_mgr.get_demo_events() if is_demo else recent_events
     rows = ""
@@ -2912,7 +3024,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
             action_col = ""
             if is_admin:
-                show_title = ev.get("show_title")
+                show_title = ev.get("show_title") or (ev.get("title") if ev.get("type") == "show" else None)
+                if not show_title and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
+                    show_title = ev["media_payload"].get("title")
                 action_buttons = []
                 if show_title:
                     show_esc = urllib.parse.quote(show_title)
@@ -2922,28 +3036,36 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                         action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Add show to co-watch whitelist">+ Co-Watch</button>')
                 if (Config.CO_WATCH_USER or is_demo) and ev.get("media_payload"):
                     media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
-                    action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
-                action_col = f'<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;">{"".join(action_buttons)}</td>'
+                    action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
+                action_col = f'<td style="padding:12px 16px;"><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
 
             # Trakt Status column: show result + cowatch badge if present
-            status_badge_html = f'<span style="color:{color};font-weight:600;font-size:13px;">{ev["result_status"]}</span>'
+            result_status_disp = html.escape(str(ev.get("result_status", "")))
+            status_badge_html = f'<span style="color:{color};font-weight:600;font-size:13px;">{result_status_disp}</span>'
             cw = ev.get("cowatch_status")
             if cw:
                 if cw.get("synced"):
-                    target_txt = f"@{cw['target']}" if cw.get("target") else "partner"
+                    target_txt = html.escape(f"@{cw['target']}" if cw.get("target") else "partner")
                     reason_txt = html.escape(cw.get("reason") or "Synced")
                     status_badge_html += f' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
                 elif cw.get("reason") and any(x in str(ev.get("action")) for x in ("mark_watched", "scrobble_stop", "stop", "test_webhook")):
                     reason_txt = html.escape(cw.get("reason"))
                     status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: {reason_txt}">👥 Solo</span>'
 
+            title_disp = html.escape(str(ev.get('title', '')))
+            type_disp = html.escape(str(ev.get('type', '')))
+            user_disp = html.escape(str(u))
+            action_disp = html.escape(str(ev.get('action', '')))
+            progress_disp = html.escape(str(ev.get('progress', '')))
+            time_disp = html.escape(str(ev.get('timestamp', '')))
+
             rows += f"""
             <tr style="border-bottom: 1px solid #334155;">
-                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{ev['timestamp']}</td>
-                <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">{ev['title']}</td>
-                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['type']}</span></td>
-                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{u}</span></div></td>
-                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['action']} ({ev['progress']})</span></td>
+                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{time_disp}</td>
+                <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">{title_disp}</td>
+                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{type_disp}</span></td>
+                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{user_disp}</span></div></td>
+                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{action_disp} ({progress_disp})</span></td>
                 <td style="padding:12px 16px;">{status_badge_html}</td>
                 {action_col}
             </tr>
@@ -3033,6 +3155,12 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         stream_prog_text = "0.0%"
         stream_prog_width = "0%"
 
+    stream_title_esc = html.escape(str(stream_title))
+    user_dev_esc = html.escape(str(user_dev))
+    stream_prog_text_esc = html.escape(str(stream_prog_text))
+    clean_stream_url = stream_url if str(stream_url).startswith(("https://", "http://")) else "https://trakt.tv"
+    clean_stream_url_esc = html.escape(clean_stream_url)
+
     active_playback_card_html = f"""
         <div id="active-playback-card" class="card" style="border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
@@ -3040,18 +3168,18 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
                         <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
                         <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
-                        <span style="font-size:12px; color:#94a3b8;" id="stream-user-device">{user_dev}</span>
+                        <span style="font-size:12px; color:#94a3b8;" id="stream-user-device">{user_dev_esc}</span>
                     </div>
-                    <h2 style="margin:4px 0 8px 0; font-size:18px; color:#f8fafc;" id="stream-title">{stream_title}</h2>
+                    <h2 style="margin:4px 0 8px 0; font-size:18px; color:#f8fafc;" id="stream-title">{stream_title_esc}</h2>
                 </div>
                 <div id="stream-actions">
-                    <a id="stream-trakt-link" href="{stream_url}" target="_blank" rel="noopener" class="btn-sm" style="background:#334155; color:#38bdf8; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
+                    <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm" style="background:#334155; color:#38bdf8; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
                 </div>
             </div>
             <div style="margin-top:12px;">
                 <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:6px;">
                     <span>Playback Progress</span>
-                    <span id="stream-progress-text" style="font-weight:600; color:#f8fafc;">{stream_prog_text}</span>
+                    <span id="stream-progress-text" style="font-weight:600; color:#f8fafc;">{stream_prog_text_esc}</span>
                 </div>
                 <div style="background:#0f172a; border-radius:9999px; height:8px; overflow:hidden; border:1px solid #334155;">
                     <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
@@ -3774,6 +3902,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     replacements = {
         '{{DEMO_BANNER}}': demo_banner,
         '{{DEMO_HEADER_BTN}}': demo_header_btn,
+        '{{SETTINGS_HEADER_BTN}}': settings_header_btn,
         '{{DEMO_FOOTER_LINK}}': demo_footer_link,
         '{{STATUS_BADGE}}': status_badge,
         '{{ADMIN_BTN}}': admin_btn,
@@ -3826,7 +3955,14 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     }
     for k, v in replacements.items():
         rendered = rendered.replace(k, v)
-    return HTMLResponse(content=rendered)
+    return HTMLResponse(
+        content=rendered,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 if __name__ == '__main__':

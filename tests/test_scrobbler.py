@@ -2313,7 +2313,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v2.3.0" in html
+    assert "v2.3.1" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -6758,6 +6758,9 @@ def test_settings_modal_dashboard_rendering():
 
     assert 'id="settings-modal"' in html_content
     assert "Settings Hub" in html_content
+    assert "{{SETTINGS_HEADER_BTN}}" not in html_content
+    assert '<button onclick="openSettingsModal()"' in html_content
+    assert ", #settings-modal {" in html_content
     assert "openSettingsModal" in html_content
     assert "saveAllSettingsFromModal" in html_content
     assert "testSettingsArrConnection" in html_content
@@ -6773,6 +6776,169 @@ def test_settings_modal_dashboard_rendering():
     assert demo_res.status_code == 200
     assert 'id="settings-modal"' in demo_res.text
     assert "Settings Hub" in demo_res.text
+    assert "{{SETTINGS_HEADER_BTN}}" not in demo_res.text
+    assert '<button onclick="openSettingsModal()"' in demo_res.text
+
+
+def test_activity_table_show_cowatch_alignment():
+    """Verify that events with media_type=='show' resolve show_title, detect co-watching, and render aligned action buttons."""
+    from app.services.cowatch_manager import cowatch_mgr
+    from app.main import recent_events, log_event
+    from app.plex_parser import ParsedMedia
+
+    # Ensure Ted Lasso is in co-watch shows
+    cowatch_mgr.add_show("Ted Lasso")
+
+    # 1. Log a show event
+    parsed = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="show",
+        title="Ted Lasso (2020)",
+        year=2020,
+        show_title="Ted Lasso (2020)",
+        progress=100.0,
+    )
+    log_event(parsed, "scrobble", {"status": "ok"})
+
+    # 2. Check recent_events entry
+    latest = recent_events[0]
+    assert latest["type"] == "show"
+    assert latest["show_title"] in ("Ted Lasso (2020)", "Ted Lasso")
+
+    client = TestClient(app)
+
+    # 3. Test /api/events endpoint calculates is_cowatch_show=True
+    res = client.get("/api/events")
+    assert res.status_code == 200
+    events = res.json()["events"]
+    show_ev = next((e for e in events if e.get("type") == "show"), None)
+    assert show_ev is not None
+    assert show_ev.get("is_cowatch_show") is True
+
+    # 4. Test SSR dashboard renders ✓ Co-Watching badge and clean flex layout
+    client.cookies.set("admin_token", "unlocked")
+    dash_res = client.get("/")
+    assert dash_res.status_code == 200
+    html = dash_res.text
+    assert "✓ Co-Watching" in html
+    assert '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">' in html
+
+
+def test_cache_control_headers_and_sw_invalidation():
+    """Verify that dashboard, API endpoints, and sw.js have no-cache headers and sw.js is dynamically versioned."""
+    from app.main import APP_VERSION
+    client = TestClient(app)
+
+    # 1. Root dashboard returns no-cache headers
+    dash_res = client.get("/")
+    assert dash_res.status_code == 200
+    cache_ctrl = dash_res.headers.get("cache-control", "")
+    assert "no-cache" in cache_ctrl
+    assert "no-store" in cache_ctrl
+
+    # 2. Service worker script returns no-cache headers and dynamic versioning
+    sw_res = client.get("/sw.js")
+    assert sw_res.status_code == 200
+    sw_cache = sw_res.headers.get("cache-control", "")
+    assert "no-cache" in sw_cache
+    assert f"omniscrobble-v{APP_VERSION}" in sw_res.text
+    # Verify '/' is not cached in STATIC_ASSETS
+    static_assets_block = sw_res.text.split("STATIC_ASSETS = [")[1].split("]")[0]
+    assert "'/'" not in static_assets_block and '"/"' not in static_assets_block
+
+    # 3. Dynamic API endpoint returns no-cache headers
+    api_res = client.get("/api/events")
+    assert api_res.status_code == 200
+    assert "no-cache" in api_res.headers.get("cache-control", "")
+
+
+def test_http_security_headers():
+    """Verify security headers are present on dashboard and API responses."""
+    client = TestClient(app)
+    for path in ["/", "/api/events", "/sw.js"]:
+        res = client.get(path)
+        assert res.headers.get("x-frame-options") == "SAMEORIGIN"
+        assert res.headers.get("x-content-type-options") == "nosniff"
+        assert res.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+
+def test_admin_unlock_rate_limiting():
+    """Verify admin unlock enforces rate limiting (429) after multiple failed attempts."""
+    from app.main import _failed_unlock_attempts
+    _failed_unlock_attempts.clear()
+
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "correct_secret_phrase"):
+        # First 5 failed attempts return 401
+        for i in range(5):
+            res = client.post("/api/admin/unlock", json={"token": f"wrong_{i}"})
+            assert res.status_code == 401
+            assert "Invalid admin secret" in res.json().get("detail", "")
+
+        # 6th attempt triggers 429 rate limit
+        res_blocked = client.post("/api/admin/unlock", json={"token": "wrong_6"})
+        assert res_blocked.status_code == 429
+        assert "Too many failed unlock attempts" in res_blocked.json().get("detail", "")
+        assert "Retry-After" in res_blocked.headers
+
+    _failed_unlock_attempts.clear()
+
+
+def test_ssr_html_escaping():
+    """Verify stored strings in SSR events table are safely HTML-escaped to prevent Stored XSS."""
+    from app.main import log_event, ParsedMedia
+    client = TestClient(app)
+
+    malicious_title = "<script>alert('xss_title')</script>"
+    malicious_user = "<img src=x onerror=alert('xss_user')>"
+
+    parsed = ParsedMedia(
+        event="media.scrobble",
+        media_type="movie",
+        title=malicious_title,
+        year=2024,
+        username=malicious_user,
+        progress=100.0,
+    )
+    log_event(
+        media=parsed,
+        action="scrobble",
+        result={"status": "ok"},
+    )
+
+    res = client.get("/")
+    assert res.status_code == 200
+    assert "<script>alert('xss_title')</script>" not in res.text
+    assert "<img src=x onerror=alert('xss_user')>" not in res.text
+    assert "&lt;script&gt;alert(&#x27;xss_title&#x27;)&lt;/script&gt;" in res.text or "&lt;script&gt;alert('xss_title')&lt;/script&gt;" in res.text
+
+
+def test_connection_endpoint_url_validation():
+    """Verify test-connection endpoints reject non-http/https URL schemes."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "super_admin_pass"):
+        client.cookies.set("admin_token", "super_admin_pass")
+
+        # Test sync connection with invalid scheme
+        res_sync = client.post("/api/sync/test-connection", json={"server": "plex", "url": "file:///etc/passwd", "token": "tok"})
+        assert res_sync.status_code == 400
+        assert "must start with http:// or https://" in res_sync.json().get("detail", "")
+
+        res_jf = client.post("/api/sync/test-connection", json={"server": "jellyfin", "url": "gopher://127.0.0.1", "token": "tok"})
+        assert res_jf.status_code == 400
+        assert "must start with http:// or https://" in res_jf.json().get("detail", "")
+
+        # Test Arr connection with invalid scheme
+        res_sonarr = client.post("/api/arr/test-connection", json={"app": "sonarr", "url": "ftp://malicious.host", "api_key": "key"})
+        assert res_sonarr.status_code == 400
+        assert "must start with http:// or https://" in res_sonarr.json().get("detail", "")
+
+        res_radarr = client.post("/api/arr/test-connection", json={"app": "radarr", "url": "data:text/html,boom", "api_key": "key"})
+        assert res_radarr.status_code == 400
+        assert "must start with http:// or https://" in res_radarr.json().get("detail", "")
+
+
 
 
 

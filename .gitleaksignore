@@ -3,4 +3,6 @@
 b698516aa0b6db86c2619a66f850bd4f0a348152:.env.example:generic-api-key:119
 # False-positive mock secret in test_settings_hub_endpoints_and_masking
 842f6aeff32ed3e3c639aac5947ade7668025d7d:tests/test_scrobbler.py:generic-api-key:6653
+d66ca2fd75458f93b6c92d284d0a8b9f4b0941e1:tests/test_scrobbler.py:generic-api-key:6653
+
 
