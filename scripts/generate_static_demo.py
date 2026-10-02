@@ -584,7 +584,9 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     rows = ""
     for ev in demo_events:
         color = "#10b981" if ev["result_status"] in ("ok", 200, 201) else "#f59e0b"
-        show_title = ev.get("show_title")
+        show_title = ev.get("show_title") or (ev.get("title") if ev.get("type") == "show" else None)
+        if not show_title and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
+            show_title = ev["media_payload"].get("title")
         action_buttons = []
         if show_title:
             show_esc = html.escape(show_title)
@@ -594,9 +596,9 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         if ev.get("media_payload"):
             media_enc = html.escape(json.dumps(ev["media_payload"]))
             action_buttons.append(
-                f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Manually push this watch event to partner account">+ Sync Partner</button>'
+                f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;" title="Manually push this watch event to partner account">+ Sync Partner</button>'
             )
-        action_col = f'<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;">{"".join(action_buttons)}</td>'
+        action_col = f'<td style="padding:12px 16px;"><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
 
         status_badge_html = f'<span style="color:{color};font-weight:600;font-size:13px;">{ev["result_status"]}</span>'
         cw = ev.get("cowatch_status")

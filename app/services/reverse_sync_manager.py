@@ -164,6 +164,11 @@ class ReverseSyncManager:
                 return {"status": "unconfigured", "message": "Plex URL and token are required"}
             test_client = PlexApiClient(base_url=target_url, token=target_token)
 
+        if target_url and not target_url.startswith(("http://", "https://")):
+            # Defense-in-depth guard for direct service callers;
+            # the HTTP endpoint (main.py) also validates and raises HTTP 400 first.
+            return {"status": "error", "message": "Server URL must start with http:// or https://"}
+
         try:
             return await test_client.check_connection()
         finally:

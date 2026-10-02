@@ -67,7 +67,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #reconcile-settings-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #reconcile-settings-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal, #settings-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -643,7 +643,7 @@
             </div>
 
             <!-- Scrollable Tab Content Container -->
-            <div style="flex:1;overflow-y:auto;padding-right:4px;">
+            <div class="custom-scroll" style="flex:1;overflow-y:auto;padding-right:4px;">
                 <!-- Tab 1: Media Servers -->
                 <div id="settings-panel-servers" class="settings-content-panel" style="display:flex;flex-direction:column;gap:14px;">
                     <!-- Server Ingestion Listeners -->
@@ -1397,8 +1397,13 @@
                 closeLogsModal();
                 closeTestWebhookModal();
                 if (typeof closeReconcileModal === 'function') closeReconcileModal();
+                if (typeof closeSettingsModal === 'function') closeSettingsModal();
+                if (typeof closeReconcileSettingsModal === 'function') closeReconcileSettingsModal();
                 if (typeof closeArrModal === 'function') closeArrModal();
                 if (typeof closeSimklModal === 'function') closeSimklModal();
+                if (typeof closeAnilistModal === 'function') closeAnilistModal();
+                if (typeof closeMalModal === 'function') closeMalModal();
+                if (typeof closeCrossSyncModal === 'function') closeCrossSyncModal();
                 const box = document.getElementById('sonarr-suggestions');
                 if (box) box.style.display = 'none';
             }
@@ -2340,7 +2345,7 @@
             } finally {
                 if (testBtn) {
                     testBtn.disabled = false;
-                    testBtn.innerText = '🔌 Test Connection';
+                    testBtn.innerText = srv === 'plex' ? '🔌 Test Connection' : (srv === 'jellyfin' ? '🔌 Test Jellyfin' : '🔌 Test Emby');
                 }
             }
         }
@@ -3141,8 +3146,9 @@
                 const color = (ev.result_status === 'ok' || ev.result_status === 200 || ev.result_status === 201) ? '#10b981' : '#f59e0b';
                 let actionBtns = '';
                 if (isAdmin) {
-                    if (ev.show_title) {
-                        const showEnc = encodeURIComponent(ev.show_title);
+                    const showTitle = ev.show_title || (ev.type === 'show' ? (ev.media_payload?.title || ev.title) : null);
+                    if (showTitle) {
+                        const showEnc = encodeURIComponent(showTitle);
                         if (ev.is_cowatch_show) {
                             actionBtns += `<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>`;
                         } else {
@@ -3151,11 +3157,11 @@
                     }
                     if (ev.media_payload) {
                         const mediaEnc = encodeURIComponent(JSON.stringify(ev.media_payload));
-                        actionBtns += `<button onclick="quickSyncPartner('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;margin-left:4px;" title="Sync to partner">+ Sync Partner</button>`;
-                        actionBtns += `<button onclick="quickUnscrobble('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;margin-left:4px;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>`;
+                        actionBtns += `<button onclick="quickSyncPartner('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;" title="Sync to partner">+ Sync Partner</button>`;
+                        actionBtns += `<button onclick="quickUnscrobble('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>`;
                     }
                 }
-                const actionCol = isAdmin ? `<td style="padding:12px 16px;white-space:nowrap;display:flex;gap:4px;align-items:center;">${actionBtns}</td>` : '';
+                const actionCol = isAdmin ? `<td style="padding:12px 16px;"><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${actionBtns}</div></td>` : '';
 
                 let statusBadgeHtml = `<span style="color:${color};font-weight:600;font-size:13px;">${escapeHtml(ev.result_status)}</span>`;
                 if (ev.cowatch_status) {
@@ -5010,7 +5016,9 @@ SIMKL_ENABLED=true</pre>
         // PWA Service Worker Registration
         if (!isDemo && 'serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js').catch(() => {});
+                navigator.serviceWorker.register('/sw.js').then((reg) => {
+                    reg.update().catch(() => {});
+                }).catch(() => {});
             });
         }
     </script>
