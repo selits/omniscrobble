@@ -28,7 +28,7 @@ class SettingsManager:
             if data_dir is not None
             else getattr(config, "DATA_DIR", getattr(config, "BASE_DIR", Path(".")) / "data")
         )
-        self._settings: dict[str, dict[str, bool]] = {
+        self._settings: dict[str, Any] = {
             "servers": self._detect_default_servers(),
             "trackers": {
                 "trakt": True,
@@ -36,8 +36,40 @@ class SettingsManager:
                 "anilist": True,
                 "mal": True,
             },
+            "reconciliation": self._detect_default_reconciliation(),
         }
         self._load_settings()
+
+    def _detect_default_reconciliation(self) -> dict[str, Any]:
+        """Detect initial default reconciliation settings from Config."""
+        plex_url = getattr(self.config, "PLEX_URL", "")
+        plex_token = getattr(self.config, "PLEX_TOKEN", "")
+        jellyfin_url = getattr(self.config, "JELLYFIN_URL", "")
+        jellyfin_token = getattr(self.config, "JELLYFIN_TOKEN", "")
+        jellyfin_user_id = getattr(self.config, "JELLYFIN_USER_ID", "")
+        emby_url = getattr(self.config, "EMBY_URL", "")
+        emby_token = getattr(self.config, "EMBY_TOKEN", "")
+        emby_user_id = getattr(self.config, "EMBY_USER_ID", "")
+        interval = getattr(self.config, "REVERSE_SYNC_INTERVAL", 0)
+        sync_startup = getattr(self.config, "REVERSE_SYNC_ON_STARTUP", False)
+        sync_ratings = getattr(self.config, "REVERSE_SYNC_RATINGS", True)
+        enabled = bool((plex_url and plex_token) or (jellyfin_url and jellyfin_token) or (emby_url and emby_token))
+        return {
+            "enabled": enabled,
+            "server_type": "plex",
+            "plex_url": plex_url,
+            "plex_token": plex_token,
+            "jellyfin_url": jellyfin_url,
+            "jellyfin_token": jellyfin_token,
+            "jellyfin_user_id": jellyfin_user_id,
+            "emby_url": emby_url,
+            "emby_token": emby_token,
+            "emby_user_id": emby_user_id,
+            "interval_minutes": interval,
+            "sync_on_startup": sync_startup,
+            "sync_ratings": sync_ratings,
+            "direction_default": "all",
+        }
 
     def _detect_default_servers(self) -> dict[str, bool]:
         """Detect initial default enablement for media servers.
@@ -129,6 +161,13 @@ class SettingsManager:
                         if isinstance(trackers, dict):
                             for k, v in trackers.items():
                                 self._settings["trackers"][k.lower()] = bool(v)
+
+                        recon = data.get("reconciliation", {})
+                        if isinstance(recon, dict):
+                            current_recon = self._settings.setdefault("reconciliation", self._detect_default_reconciliation())
+                            for k, v in recon.items():
+                                if k in current_recon:
+                                    current_recon[k] = v
             except Exception as e:
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
@@ -171,11 +210,114 @@ class SettingsManager:
         logger.info(f"Tracker '{key}' sync setting updated to: {enabled}")
         return self.get_all_settings()
 
+    def get_reconciliation_settings(self, mask_token: bool = True) -> dict[str, Any]:
+        """Returns reconciliation settings dictionary with optional token masking."""
+        recon = dict(self._settings.get("reconciliation", self._detect_default_reconciliation()))
+        raw_plex_token = recon.get("plex_token", "") or ""
+        raw_jf_token = recon.get("jellyfin_token", "") or ""
+        raw_emby_token = recon.get("emby_token", "") or ""
+
+        recon["has_plex_token"] = bool(raw_plex_token)
+        recon["is_plex_token_set"] = bool(raw_plex_token)
+        recon["has_jellyfin_token"] = bool(raw_jf_token)
+        recon["is_jellyfin_token_set"] = bool(raw_jf_token)
+        recon["has_emby_token"] = bool(raw_emby_token)
+        recon["is_emby_token_set"] = bool(raw_emby_token)
+
+        # Backwards compatibility flags
+        active_srv = recon.get("server_type", "plex")
+        active_token = raw_jf_token if active_srv == "jellyfin" else raw_emby_token if active_srv == "emby" else raw_plex_token
+        recon["is_token_set"] = bool(active_token or raw_plex_token)
+        recon["has_token"] = bool(active_token or raw_plex_token)
+
+        def _mask(tok: str) -> str:
+            if not tok:
+                return ""
+            return "••••••••" + (tok[-4:] if len(tok) >= 4 else "")
+
+        recon["masked_plex_token"] = _mask(raw_plex_token)
+        recon["masked_jellyfin_token"] = _mask(raw_jf_token)
+        recon["masked_emby_token"] = _mask(raw_emby_token)
+        recon["masked_token"] = recon["masked_plex_token"]
+
+        if mask_token:
+            recon["plex_token"] = recon["masked_plex_token"]
+            recon["jellyfin_token"] = recon["masked_jellyfin_token"]
+            recon["emby_token"] = recon["masked_emby_token"]
+
+        return recon
+
+    def update_reconciliation_settings(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Updates reconciliation settings and persists to disk."""
+        recon = self._settings.setdefault("reconciliation", self._detect_default_reconciliation())
+        for k in (
+            "enabled",
+            "server_type",
+            "plex_url",
+            "jellyfin_url",
+            "jellyfin_user_id",
+            "emby_url",
+            "emby_user_id",
+            "interval_minutes",
+            "sync_on_startup",
+            "sync_ratings",
+            "direction_default",
+        ):
+            if k in data and data[k] is not None:
+                if k in ("enabled", "sync_on_startup", "sync_ratings"):
+                    recon[k] = bool(data[k])
+                elif k == "interval_minutes":
+                    try:
+                        recon[k] = max(0, int(data[k]))
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    val = str(data[k]).strip()
+                    if k in ("plex_url", "jellyfin_url", "emby_url"):
+                        val = val.rstrip("/")
+                    recon[k] = val
+
+        # Handle Plex token
+        if data.get("clear_token") or data.get("clear_plex_token"):
+            recon["plex_token"] = ""
+        elif "plex_token" in data and data["plex_token"] is not None:
+            new_token = str(data["plex_token"]).strip()
+            if new_token and not (new_token.startswith("••••") or new_token.startswith("●●●●")):
+                recon["plex_token"] = new_token
+
+        # Handle Jellyfin token
+        if data.get("clear_jellyfin_token"):
+            recon["jellyfin_token"] = ""
+        elif "jellyfin_token" in data and data["jellyfin_token"] is not None:
+            new_token = str(data["jellyfin_token"]).strip()
+            if new_token and not (new_token.startswith("••••") or new_token.startswith("●●●●")):
+                recon["jellyfin_token"] = new_token
+
+        # Handle Emby token
+        if data.get("clear_emby_token"):
+            recon["emby_token"] = ""
+        elif "emby_token" in data and data["emby_token"] is not None:
+            new_token = str(data["emby_token"]).strip()
+            if new_token and not (new_token.startswith("••••") or new_token.startswith("●●●●")):
+                recon["emby_token"] = new_token
+
+        if "enabled" not in data:
+            recon["enabled"] = bool(
+                (recon.get("plex_url") and recon.get("plex_token"))
+                or (recon.get("jellyfin_url") and recon.get("jellyfin_token"))
+                or (recon.get("emby_url") and recon.get("emby_token"))
+            )
+
+        self._save_settings()
+        logger.info("Reconciliation settings saved to disk.")
+        return self.get_reconciliation_settings(mask_token=True)
+
     def get_all_settings(self) -> dict[str, Any]:
         """Returns the full runtime settings dictionary."""
         return {
             "servers": dict(self._settings["servers"]),
             "trackers": dict(self._settings["trackers"]),
+            "reconciliation": self.get_reconciliation_settings(mask_token=True),
         }
 
 

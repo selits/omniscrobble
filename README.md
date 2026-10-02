@@ -28,7 +28,7 @@ A lightweight, high-performance Python service that receives media server webhoo
 - **Cross-Tracker Watched History Importer & Two-Way Sync**: Full bi-directional library reconciliation and bulk synchronization between **Trakt.tv** and **Simkl.com** (`/api/cross-sync/*`). Compare full libraries and user ratings across Movies, TV Shows, and Anime, review discrepancies in an interactive modal with direction and type filters, and execute 1-click selective or complete sync with real-time progress bars.
 - **Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to Sonarr and Radarr for automated media acquisition, intelligent deduplication against existing libraries, automated root folder/quality profile discovery, and immediate download searches.
 - **Multi-Server Ecosystem Dashboard**: Real-time multi-service observability widget monitoring live connectivity, library counts, latency, and operational health across Plex, Jellyfin, Emby, Trakt, Simkl, AniList, MyAnimeList, Sonarr, and Radarr (9/9 services).
-- **Two-Way Synchronization & Library Reconciliation**: Bi-directional matching of watched history and ratings between media servers (Plex) and Trakt (`/api/sync/*`), interactive discrepancy diff table with 1-click or selective reconciliation, automated periodic background sync, and smart TTL-based scrobble loop prevention.
+- **Two-Way Synchronization & Multi-Server Reconciliation**: Bi-directional matching of watched history and ratings between media servers (**Plex**, **Jellyfin**, **Emby**) and Trakt (`/api/sync/*`), multi-server discrepancy diff table with selective sync tabs, server-specific credential configuration, automated periodic background sync, and smart TTL-based scrobble loop prevention.
 - **Universal Webhook Ingestion**: Native webhook support for **Plex** (`/webhook`), **Jellyfin** (`/webhook/jellyfin`), and **Emby** (`/webhook/emby`), standardizing metadata, provider IDs (IMDb, TMDb, TVDb), and playback states into a unified scrobble pipeline.
 - **Granular Scrobble Thresholds**: Configurable media-specific thresholds — set `EPISODE_SCROBBLE_THRESHOLD=80` for TV episodes (allowing credit skipping) and `MOVIE_SCROBBLE_THRESHOLD=90` for feature films (preventing premature scrobbles during climaxes).
 - **Mobile Progressive Web App (PWA) & OLED Theme**: Fully installable PWA with offline service worker caching, dynamic SVG app icons, and an instant True-Black OLED dark mode toggle (`🌙 OLED`).
@@ -58,6 +58,42 @@ A lightweight, high-performance Python service that receives media server webhoo
 - **User Whitelist**: Easily limit scrobbling to your specific username so other family members/friends sharing your server don't overwrite your Trakt history.
 - **Live Streamlined Dashboard**: Access `http://<server-ip>:<PORT>/` to view Trakt connection health, server uptime, scrobble statistics, multi-server webhook URL tabs, recent activity logs with optional 30s auto-refresh, and a repository footer with live version badge.
 - **Docker & Remote Server Ready**: Tested and optimized for containerized, VPS, and remote Linux environments with non-root security, healthchecks, and `env_file` auto-loading.
+
+---
+
+## 🚦 Integration & Verification Matrix
+
+Omniscrobble is developed and maintained in an active daily homelab environment. Because homelab setups vary, the matrix below details which integrations and capabilities are **verified in live production** by the maintainer versus those that are **implemented and unit-tested to specification but awaiting community validation**.
+
+### 🎬 Media Servers
+
+| Platform | Webhook Ingestion | Rating Sync | Collection Sync | Two-Way Reconciliation | Status |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Plex** | ✅ Verified | ✅ Verified | ✅ Verified | ✅ Verified | **Production Tested** (Maintainer daily driver) |
+| **Jellyfin** | 🧪 Unit-tested | 🧪 Unit-tested | 🧪 Unit-tested | 🧪 Unit-tested | **Community Beta** (Untested in production by maintainer) |
+| **Emby** | 🧪 Unit-tested | 🧪 Unit-tested | 🧪 Unit-tested | 🧪 Unit-tested | **Community Beta** (Untested in production by maintainer) |
+
+### 🎯 Trackers & Sync Engines
+
+| Tracker / Service | Playback Scrobble | Rating Sync | Library Reconciliation | Cross-Tracker Sync | Status |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Trakt.tv** | ✅ Verified | ✅ Verified | ✅ Verified | ✅ Verified | **Production Tested** (Primary tracker) |
+| **Simkl** | ✅ Verified | ✅ Verified | N/A | ✅ Verified | **Production Tested** (Simultaneous dual-tracker) |
+| **AniList** | 🧪 Unit-tested | 🧪 Unit-tested | N/A | N/A | **Community Beta** (GraphQL anime tracking) |
+| **MyAnimeList (MAL)** | 🧪 Unit-tested | 🧪 Unit-tested | N/A | N/A | **Community Beta** (REST v2 anime tracking) |
+
+### ⚡ Acquisition & Automation
+
+| Service | Feature | Status | Notes |
+| :--- | :--- | :---: | :--- |
+| **Sonarr** | Download Webhook $\to$ Trakt Collection | ✅ Verified | Instant collection update on series import |
+| **Sonarr** | Co-Watch Live Series Autocomplete | ✅ Verified | Queries active library to suggest shows |
+| **Sonarr** | Trakt Watchlist Auto-Acquisition | ✅ Verified | Automatically grabs newly watchlisted series |
+| **Radarr** | Download Webhook $\to$ Trakt Collection | ✅ Verified | Instant collection update on movie import |
+| **Radarr** | Trakt Watchlist Auto-Acquisition | ✅ Verified | Automatically grabs newly watchlisted movies |
+
+> [!TIP]
+> **Community Feedback Welcomed**: If you run Jellyfin, Emby, AniList, or MyAnimeList with Omniscrobble, please report your experience or open an issue on GitHub! Direct API integrations adhere to official upstream API schemas and 100% of unit tests pass, but your real-world homelab feedback helps verify and refine them.
 
 ---
 
@@ -167,9 +203,15 @@ SONARR_ROOT_FOLDER=
 RADARR_QUALITY_PROFILE_ID=
 RADARR_ROOT_FOLDER=
 
-# (Optional) Two-Way Reverse Sync & Library Reconciliation (Trakt -> Plex)
+# (Optional) Two-Way Reverse Sync & Multi-Server Reconciliation (Plex, Jellyfin, Emby)
 PLEX_URL=http://<your-server-ip-or-domain>:32400
 PLEX_TOKEN=your_plex_token_here
+JELLYFIN_URL=http://<your-server-ip-or-domain>:8096
+JELLYFIN_TOKEN=your_jellyfin_token_here
+JELLYFIN_USER_ID=your_jellyfin_user_id
+EMBY_URL=http://<your-server-ip-or-domain>:8096
+EMBY_TOKEN=your_emby_token_here
+EMBY_USER_ID=your_emby_user_id
 REVERSE_SYNC_INTERVAL=0
 REVERSE_SYNC_ON_STARTUP=false
 REVERSE_SYNC_RATINGS=true
@@ -517,48 +559,65 @@ Connect Sonarr and Radarr to supercharge your dashboard and collection tracking:
 
 ---
 
-## 🔄 Two-Way Synchronization & Library Reconciliation
+## 🔄 Two-Way Synchronization & Multi-Server Library Reconciliation
 
-Standard scrobbling is one-directional (Media Server $\to$ Trakt). When you watch a movie in theaters, on Netflix, on an airplane, or via a mobile app, you mark it as watched on Trakt—leaving your local Plex library showing it as "Unwatched".
+Standard scrobbling is one-directional (Media Server $\to$ Trakt). When you watch a movie in theaters, on Netflix, on an airplane, or via a mobile app, you mark it as watched on Trakt—leaving your local media server library showing it as "Unwatched".
 
-**Omniscrobble v1.5.0** introduces a bi-directional reconciliation engine that bridges your local media server library with your Trakt cloud history:
+Omniscrobble features a bi-directional reconciliation engine that bridges your local media server libraries (**Plex**, **Jellyfin**, and **Emby**) with your Trakt cloud history:
+
+> [!NOTE]
+> **Media Server Support Status**:
+> - **Plex**: Fully tested, validated, and used daily in active production.
+> - **Jellyfin & Emby**: Direct API connection, library scanning, watched status toggling, and rating updates are implemented in strict accordance with official MediaBrowser REST API specifications and backed by comprehensive unit tests. However, because the maintainer's personal homelab environment is Plex-only, Jellyfin and Emby direct API integrations and reconciliation are currently considered **Community Beta / Untested in Production**. Real-world feedback, verification, and bug reports from Jellyfin and Emby users are warmly welcomed!
 
 ### 1. How Reconciliation Works
 
-- **Direct Media Server API (`PlexApiClient`)**: Connects securely to your Plex server via `PLEX_URL` and `PLEX_TOKEN`.
-- **Intelligent GUID Matching**: Compares Trakt watched history (`/sync/watched/movies`, `/sync/watched/shows`) against your media server library sections, resolving titles accurately using IMDb (`imdb://tt...`), TMDb (`tmdb://...`), and TVDb identifiers.
+- **Direct Media Server APIs**: Connects securely via direct REST APIs to Plex (`PlexApiClient`), Jellyfin (`JellyfinApiClient`), and Emby (`EmbyApiClient`). Credentials can be set in `.env` or configured and tested directly within the dashboard UI via the **⚙️ Server Settings** modal.
+- **Intelligent GUID & Provider ID Matching**: Compares Trakt watched history (`/sync/watched/movies`, `/sync/watched/shows`) against your media server library sections, resolving titles accurately using IMDb (`imdb://tt...`), TMDb (`tmdb://...`), and TVDb identifiers across all supported server formats.
 - **Discrepancy Categorization**:
-  - `Trakt Only`: Watched in Trakt cloud history, but marked unwatched on Plex.
-  - `Plex Only`: Watched on your media server, but missing from Trakt history.
-  - `Rating Mismatch`: Rated on both platforms but with different values (e.g. 8/10 on Plex vs. 9/10 on Trakt).
+  - `Trakt Only`: Watched in Trakt cloud history, but marked unwatched on your media server.
+  - `Server Only`: Watched on your media server, but missing from Trakt history.
+  - `Rating Mismatch`: Rated on both platforms but with different values (e.g. 8/10 on media server vs. 9/10 on Trakt).
 
 ### 2. Smart Loop Prevention Architecture
 
-When Omniscrobble calls Plex to mark an item as watched, Plex normally fires an outgoing `media.scrobble` webhook. Without safeguards, this would create an infinite scrobble ping-pong loop.
+When Omniscrobble calls your media server to mark an item as watched or set a rating, media servers normally fire an outgoing webhook. Without safeguards, this would create an infinite scrobble ping-pong loop.
 
 Omniscrobble features a built-in, thread-safe `LoopPreventionManager`:
 
-- Tracks synchronized media IDs and rating keys in an in-memory cache with an automated TTL (default 60s).
-- Webhooks matching recently synchronized items are dropped immediately before entering the scrobble pipeline.
+- Tracks synchronized media IDs, rating keys, and provider GUIDs in an in-memory cache with an automated TTL (default 60s).
+- Webhooks matching recently synchronized items from Plex, Jellyfin, or Emby are dropped immediately before entering the scrobble pipeline.
 - Cleans expired cache entries automatically to ensure subsequent organic plays are scrobbled normally.
 
 ### 3. Interactive Web Dashboard UI
 
-The web dashboard includes a dedicated **Library Reconciliation** card and interactive modal:
+The web dashboard includes a dedicated **Library Reconciliation** card and interactive multi-server modal:
 
-- **1-Click Scan**: View real-time discrepancy counts and connection status.
-- **Interactive Diff Modal (`#reconcile-modal`)**: Filter discrepancies by category (`All`, `Trakt Only`, `Plex Only`, `Rating Mismatch`).
-- **Selective Syncing**: Select specific items via checkboxes or click **"Sync All"** / **"Quick Reconcile (Trakt ➔ Plex)"**.
+- **Server Switcher Tabs**: Seamlessly switch discrepancy views and actions between **🎬 Plex**, **🟣 Jellyfin**, and **🟢 Emby**.
+- **1-Click Scan & Connection Diagnostics**: View real-time discrepancy counts, latency, and connection status for each media server.
+- **Interactive Diff Modal (`#reconcile-modal`)**: Filter discrepancies by category (`All`, `Trakt Only`, `Server Only`, `Rating Mismatch`).
+- **Selective Syncing**: Select specific items via checkboxes or click **"Sync All"** / **"Quick Reconcile (Trakt ➔ Server)"**.
 - **Live Progress Bar**: Polled in real-time (`GET /api/sync/progress`) showing batch progress, percentage, and success/failure tallies.
+- **Interactive Credentials Manager (`#reconcile-settings-modal`)**: Configure server URLs, tokens, and user IDs with live connection test buttons directly from the dashboard.
 
 ### 4. Reverse Sync Configuration
 
-Enable two-way synchronization in your `.env`:
+Enable two-way synchronization in your `.env` (or configure dynamically in the dashboard):
 
 ```ini
 # Direct Plex Media Server Connection
 PLEX_URL=http://<your-server-ip-or-domain>:32400
 PLEX_TOKEN=your_plex_token_here
+
+# Direct Jellyfin Media Server Connection (Community Beta)
+JELLYFIN_URL=http://<your-server-ip-or-domain>:8096
+JELLYFIN_TOKEN=your_jellyfin_token_here
+JELLYFIN_USER_ID=your_jellyfin_user_id
+
+# Direct Emby Media Server Connection (Community Beta)
+EMBY_URL=http://<your-server-ip-or-domain>:8096
+EMBY_TOKEN=your_emby_token_here
+EMBY_USER_ID=your_emby_user_id
 
 # Automated periodic reconciliation in seconds (0 = manual via UI only, 21600 = every 6 hours)
 REVERSE_SYNC_INTERVAL=0
@@ -762,6 +821,9 @@ omniscrobble/
 │   │   ├── anilist_client.py # AniList GraphQL API client for anime tracking & user lists
 │   │   ├── mal_client.py    # MyAnimeList REST API v2 client for anime progress & rating sync
 │   │   ├── plex_api_client.py # Direct Plex Media Server REST API client for watch status & ratings
+│   │   ├── mediabrowser_api_client.py # Base client for MediaBrowser-compatible REST APIs
+│   │   ├── jellyfin_api_client.py # Direct Jellyfin Media Server REST API client
+│   │   ├── emby_api_client.py # Direct Emby Media Server REST API client
 │   │   ├── sonarr_client.py # Sonarr REST API client for TV series & download imports
 │   │   └── radarr_client.py # Radarr REST API client for movies, quality profiles & root folders
 │   ├── services/            # Core business logic services
@@ -804,7 +866,7 @@ omniscrobble/
 ├── start.sh                 # Portable startup wrapper script
 ├── upgrade.sh               # 1-click automated upgrade script
 ├── Dockerfile               # Multi-stage hardened non-root container image
-└── tests/                   # Comprehensive pytest test suite (150 tests)
+└── tests/                   # Comprehensive pytest test suite (159 tests)
 ```
 
 ---
@@ -862,6 +924,12 @@ Omniscrobble is developed with a modular multi-platform architecture. Current an
   - Reorganized Watch Together & Multi-User card layout: Linked Trakt Accounts and Allowed Devices sit side-by-side on top, with full-width Shared Shows Whitelist below.
   - Sleek custom scrollbars (`.custom-scroll`) and scroll persistence reset on reload.
   - Backup & restore integration for `data/cowatch_devices.json`.
+- **v2.2.0 (Milestone 8 — Multi-Server Reconciliation & Community Expansion)**:
+  - Multi-server library reconciliation architecture (`ReverseSyncManager`) supporting **Plex**, **Jellyfin**, and **Emby**.
+  - Direct MediaBrowser REST API client framework (`mediabrowser_api_client.py`, `jellyfin_api_client.py`, `emby_api_client.py`) with played state, star/numerical rating synchronization, and GUID provider mapping.
+  - Multi-server dashboard configuration modal (`#reconcile-settings-modal`) with credential masking, live server-specific connection tests, and runtime token persistence.
+  - Discrepancy diff modal (`#reconcile-modal`) with server switching tabs, dynamic server columns, and server-targeted quick reconciliation.
+  - Community Beta callout and documentation for Jellyfin and Emby direct connections.
 - **Future Horizons**:
   - Direct P2P sync between distributed Omniscrobble instances.
   - Dynamic in-app scrobble threshold and library filtering configuration editor.

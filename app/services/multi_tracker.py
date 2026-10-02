@@ -51,18 +51,24 @@ class MultiTrackerManager:
         media: ParsedMedia,
         trakt_client: TraktClient,
         progress: float,
+        selected_trackers: Optional[list[str]] = None,
     ) -> dict[str, Any]:
-        """Dispatch playback scrobble action (start, pause, stop) to all active trackers.
+        """Dispatch playback scrobble action (start, pause, stop) to all active or selected trackers.
         
         Args:
             action: 'start' | 'pause' | 'stop' | 'scrobble'
             media: Standardized ParsedMedia instance
             trakt_client: Authenticated TraktClient for current user
             progress: Playback completion percentage (0.0 - 100.0)
+            selected_trackers: Optional explicit list of trackers to target (e.g. ['trakt', 'simkl']).
+                              When provided, explicitly overrides background auto-sync toggles.
             
         Returns:
             dict containing per-tracker dispatch statuses and list of active trackers.
         """
+        use_explicit_targets = selected_trackers is not None
+        targets = [t.lower() for t in (selected_trackers or ["trakt", "simkl", "anilist", "mal"])]
+
         results: dict[str, Any] = {
             "action": action,
             "media": f"{media.show_title or media.title} ({media.year or 'N/A'})",
@@ -75,8 +81,12 @@ class MultiTrackerManager:
             "is_anime": False,
         }
 
-        # 1. Dispatch to Trakt (Primary, if enabled in settings)
-        if settings_mgr.is_tracker_enabled("trakt"):
+        # 1. Dispatch to Trakt (Primary, if enabled in settings or explicitly requested)
+        if (
+            "trakt" in targets
+            and (use_explicit_targets or settings_mgr.is_tracker_enabled("trakt"))
+            and trakt_client.is_authenticated()
+        ):
             results["trackers"].append("trakt")
             try:
                 if action == "start":
@@ -103,9 +113,10 @@ class MultiTrackerManager:
                     )
                 )
 
-        # 2. Dispatch to Simkl (Secondary, if enabled in settings and authenticated)
+        # 2. Dispatch to Simkl (Secondary, if enabled in settings or explicitly requested, and authenticated)
         if (
-            settings_mgr.is_tracker_enabled("simkl")
+            "simkl" in targets
+            and (use_explicit_targets or settings_mgr.is_tracker_enabled("simkl"))
             and self.simkl_client.is_enabled()
             and self.simkl_client.is_authenticated()
         ):
@@ -148,7 +159,8 @@ class MultiTrackerManager:
                 if should_scrobble_anime:
                     # AniList Dispatch
                     if (
-                        settings_mgr.is_tracker_enabled("anilist")
+                        "anilist" in targets
+                        and (use_explicit_targets or settings_mgr.is_tracker_enabled("anilist"))
                         and self.anilist_client.is_enabled()
                         and self.anilist_client.is_authenticated()
                     ):
@@ -178,7 +190,8 @@ class MultiTrackerManager:
 
                     # MyAnimeList Dispatch
                     if (
-                        settings_mgr.is_tracker_enabled("mal")
+                        ("mal" in targets or "myanimelist" in targets)
+                        and (use_explicit_targets or settings_mgr.is_tracker_enabled("mal"))
                         and self.mal_client.is_enabled()
                         and self.mal_client.is_authenticated()
                         and resolved_anime.get("mal_id")
@@ -218,6 +231,7 @@ class MultiTrackerManager:
         selected_trackers: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         """Manually mark media as watched across chosen or all active trackers."""
+        use_explicit_targets = selected_trackers is not None
         targets = [t.lower() for t in (selected_trackers or ["trakt", "simkl", "anilist", "mal"])]
         results: dict[str, Any] = {
             "status": "success",
@@ -226,7 +240,7 @@ class MultiTrackerManager:
         }
 
         # 1. Trakt Sync History
-        if "trakt" in targets and settings_mgr.is_tracker_enabled("trakt") and trakt_client.is_authenticated():
+        if "trakt" in targets and (use_explicit_targets or settings_mgr.is_tracker_enabled("trakt")) and trakt_client.is_authenticated():
             try:
                 if media.media_type == "episode":
                     show_dict: dict[str, Any] = {
@@ -265,7 +279,7 @@ class MultiTrackerManager:
         # 2. Simkl Sync History
         if (
             "simkl" in targets
-            and settings_mgr.is_tracker_enabled("simkl")
+            and (use_explicit_targets or settings_mgr.is_tracker_enabled("simkl"))
             and self.simkl_client.is_enabled()
             and self.simkl_client.is_authenticated()
         ):
@@ -286,7 +300,7 @@ class MultiTrackerManager:
                 # AniList
                 if (
                     "anilist" in targets
-                    and settings_mgr.is_tracker_enabled("anilist")
+                    and (use_explicit_targets or settings_mgr.is_tracker_enabled("anilist"))
                     and self.anilist_client.is_enabled()
                     and self.anilist_client.is_authenticated()
                 ):
@@ -305,8 +319,8 @@ class MultiTrackerManager:
 
                 # MyAnimeList
                 if (
-                    "mal" in targets
-                    and settings_mgr.is_tracker_enabled("mal")
+                    ("mal" in targets or "myanimelist" in targets)
+                    and (use_explicit_targets or settings_mgr.is_tracker_enabled("mal"))
                     and self.mal_client.is_enabled()
                     and self.mal_client.is_authenticated()
                     and resolved.get("mal_id")
@@ -343,7 +357,7 @@ class MultiTrackerManager:
         }
 
         # 1. Trakt Remove History
-        if "trakt" in targets and settings_mgr.is_tracker_enabled("trakt") and trakt_client.is_authenticated():
+        if "trakt" in targets and (use_explicit_targets or settings_mgr.is_tracker_enabled("trakt")) and trakt_client.is_authenticated():
             try:
                 if media.media_type == "episode":
                     show_dict: dict[str, Any] = {
@@ -381,7 +395,7 @@ class MultiTrackerManager:
         # 2. Simkl Remove History
         if (
             "simkl" in targets
-            and settings_mgr.is_tracker_enabled("simkl")
+            and (use_explicit_targets or settings_mgr.is_tracker_enabled("simkl"))
             and self.simkl_client.is_enabled()
             and self.simkl_client.is_authenticated()
         ):
@@ -425,7 +439,7 @@ class MultiTrackerManager:
                 # AniList
                 if (
                     "anilist" in targets
-                    and settings_mgr.is_tracker_enabled("anilist")
+                    and (use_explicit_targets or settings_mgr.is_tracker_enabled("anilist"))
                     and self.anilist_client.is_enabled()
                     and self.anilist_client.is_authenticated()
                 ):
@@ -440,8 +454,8 @@ class MultiTrackerManager:
 
                 # MyAnimeList
                 if (
-                    "mal" in targets
-                    and settings_mgr.is_tracker_enabled("mal")
+                    ("mal" in targets or "myanimelist" in targets)
+                    and (use_explicit_targets or settings_mgr.is_tracker_enabled("mal"))
                     and self.mal_client.is_enabled()
                     and self.mal_client.is_authenticated()
                     and resolved.get("mal_id")

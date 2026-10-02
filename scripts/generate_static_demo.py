@@ -258,6 +258,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 </div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Configure</button>
                 <button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>
                 <button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; Plex)</button>
             </div>
@@ -729,6 +730,33 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             crossDiff: [...initialCrossDiff],
             movies_enabled: false,
             playback: {json.dumps(demo_playback)},
+            reconcile_settings: {{
+                server_type: "plex",
+                plex_url: "http://<your-server-ip-or-domain>:32400",
+                plex_token: "••••••••a1b2",
+                masked_plex_token: "••••••••a1b2",
+                has_plex_token: true,
+                is_plex_token_set: true,
+                jellyfin_url: "http://<your-server-ip-or-domain>:8096",
+                jellyfin_token: "••••••••c3d4",
+                masked_jellyfin_token: "••••••••c3d4",
+                jellyfin_user_id: "demo-admin-uid",
+                has_jellyfin_token: true,
+                is_jellyfin_token_set: true,
+                emby_url: "http://<your-server-ip-or-domain>:8096",
+                emby_token: "••••••••e5f6",
+                masked_emby_token: "••••••••e5f6",
+                emby_user_id: "demo-admin-uid",
+                has_emby_token: true,
+                is_emby_token_set: true,
+                has_token: true,
+                is_token_set: true,
+                masked_token: "••••••••a1b2",
+                interval_minutes: 30,
+                direction_default: "all",
+                sync_ratings: true,
+                sync_on_startup: true
+            }},
             settings: {{
                 servers: {{ plex: true, jellyfin: true, emby: true }},
                 trackers: {{ trakt: true, simkl: true, anilist: true, mal: true }}
@@ -860,17 +888,33 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             // 8. Trakt Catalog Search
             if (path.endsWith('/api/search')) {{
                 const q = (url.searchParams.get('query') || '').toLowerCase().trim();
+                const typeFilter = (url.searchParams.get('type') || '').toLowerCase().trim();
                 const catalog = [
                     {{ type: 'show', show: {{ title: 'Severance', year: 2022, overview: 'Mark leads a team of office workers whose memories have been surgically divided between their work and personal lives.', ids: {{ tmdb: 1128074 }} }} }},
                     {{ type: 'show', show: {{ title: 'Lanterns', year: 2026, overview: 'Intergalactic cops John Stewart and Hal Jordan investigate a dark mystery on Earth.', ids: {{ tmdb: 208852 }} }} }},
+                    {{ type: 'movie', movie: {{ title: 'Avatar', year: 2009, overview: 'A paraplegic Marine dispatched to the moon Pandora on a unique mission becomes torn between following his orders and protecting the world he feels is his home.', ids: {{ tmdb: 19995 }} }} }},
+                    {{ type: 'movie', movie: {{ title: 'Avatar: The Way of Water', year: 2022, overview: 'Set more than a decade after the events of the first film, learn the story of the Sully family.', ids: {{ tmdb: 76600 }} }} }},
                     {{ type: 'movie', movie: {{ title: 'Dune: Part Two', year: 2024, overview: 'Paul Atreides unites with Chani and the Fremen while seeking revenge against the conspirators who destroyed his family.', ids: {{ tmdb: 693134 }} }} }},
                     {{ type: 'show', show: {{ title: 'Fallout', year: 2024, overview: 'In a future post-apocalyptic Los Angeles, citizens must live in underground bunkers to protect themselves from radiation and mutants.', ids: {{ tmdb: 106379 }} }} }},
                     {{ type: 'show', show: {{ title: 'Yellowstone', year: 2018, overview: 'A ranching family in Montana faces off against others encroaching on their land.', ids: {{ tmdb: 73586 }} }} }}
                 ];
-                let results = catalog.filter(c => !q || (c.show ? c.show.title : c.movie.title).toLowerCase().includes(q));
+                let results = catalog.filter(c => {{
+                    const itemType = c.type;
+                    if (typeFilter && typeFilter !== 'all') {{
+                        if (typeFilter === 'movie' && itemType !== 'movie') return false;
+                        if (typeFilter === 'show' && itemType !== 'show') return false;
+                    }}
+                    const title = (c.show ? c.show.title : c.movie.title).toLowerCase();
+                    return !q || title.includes(q);
+                }});
                 if (!results.length && q) {{
                     const titleCased = q.charAt(0).toUpperCase() + q.slice(1);
-                    results = [{{ type: 'show', show: {{ title: titleCased, year: 2025, overview: 'Simulated Trakt search result.', ids: {{ tmdb: 100000 }} }} }}];
+                    const mockType = typeFilter === 'movie' ? 'movie' : 'show';
+                    if (mockType === 'movie') {{
+                        results = [{{ type: 'movie', movie: {{ title: titleCased, year: 2025, overview: 'Simulated Trakt search result.', ids: {{ tmdb: 100000 }} }} }}];
+                    }} else {{
+                        results = [{{ type: 'show', show: {{ title: titleCased, year: 2025, overview: 'Simulated Trakt search result.', ids: {{ tmdb: 100000 }} }} }}];
+                    }}
                 }}
                 return jsonResp({{ results: results }});
             }}
@@ -879,19 +923,47 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             if (path.endsWith('/api/scrobble/manual')) {{
                 const body = init.body ? JSON.parse(init.body) : {{}};
                 const media = body.media || {{}};
+                const action = body.action || "watched";
                 const isEpisode = media.media_type === 'episode';
                 const showTitle = media.show_title || (isEpisode ? media.title : null);
                 const titleStr = isEpisode ? `${{showTitle}} S${{String(media.season || 1).padStart(2, '0')}}E${{String(media.episode || 1).padStart(2, '0')}}` : (media.title || 'Movie');
                 const isCowatch = Boolean(body.cowatch);
+                const isStart = action === "start";
+
+                if (isStart) {{
+                    clientState.playback = {{
+                        title: titleStr,
+                        year: media.year || 2024,
+                        type: media.media_type || 'movie',
+                        progress: 1.0,
+                        state: "playing",
+                        username: "demo_viewer",
+                        player: "Web Scrobbler",
+                        device: "Browser",
+                        started_at: Math.floor(Date.now() / 1000),
+                        trakt_url: "https://trakt.tv/search/tmdb/" + ((media.ids && media.ids.tmdb) || 0) + "?id_type=movie"
+                    }};
+                    const playCard = document.getElementById('active-playback-card');
+                    if (playCard) {{
+                        playCard.style.display = 'block';
+                        const stTitle = document.getElementById('stream-title');
+                        if (stTitle) stTitle.innerText = titleStr;
+                        const stProg = document.getElementById('stream-progress-text');
+                        if (stProg) stProg.innerText = "1.0% • Just started";
+                        const stBar = document.getElementById('stream-progress-bar');
+                        if (stBar) stBar.style.width = "1%";
+                    }}
+                }}
+
                 const newEvent = {{
                     timestamp: new Date().toLocaleTimeString(),
                     user: "demo_viewer",
-                    event: "media.scrobble",
-                    action: "manual_scrobble (100.0%)",
+                    event: isStart ? "media.play" : "media.scrobble",
+                    action: isStart ? "manual_scrobble (1.0%)" : "manual_scrobble (100.0%)",
                     title: titleStr,
-                    type: media.media_type || 'episode',
+                    type: media.media_type || (isEpisode ? 'episode' : 'movie'),
                     show_title: showTitle,
-                    progress: "100.0%",
+                    progress: isStart ? "1.0%" : "100.0%",
                     result_status: "ok",
                     media_payload: media,
                     cowatch_status: {{
@@ -901,7 +973,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     }}
                 }};
                 clientState.events.unshift(newEvent);
-                return jsonResp({{ status: 'success', result: {{ added: {{ movies: 1, episodes: 1 }} }} }});
+                return jsonResp({{ status: 'success', action: action, result: {{ added: {{ movies: 1, episodes: 1 }} }} }});
             }}
 
             // 9b. Unscrobble / Remove from History
@@ -987,15 +1059,21 @@ def generate_static_demo(output_dir: Path = None) -> Path:
 
             // 12. Two-Way Library Reconciliation Endpoints
             if (path.endsWith('/api/sync/status')) {{
+                const s = clientState.reconcile_settings;
                 return jsonResp({{
                     configured: true,
-                    plex_configured: true,
+                    server_type: s.server_type || 'plex',
+                    plex_configured: Boolean(s.plex_url && (s.plex_token || s.has_plex_token)),
                     plex_connected: true,
+                    jellyfin_configured: Boolean(s.jellyfin_url && (s.jellyfin_token || s.has_jellyfin_token)),
+                    jellyfin_connected: true,
+                    emby_configured: Boolean(s.emby_url && (s.emby_token || s.has_emby_token)),
+                    emby_connected: true,
                     trakt_authenticated: true,
                     diff_count: clientState.reconciliation.length,
-                    interval_minutes: 30,
-                    sync_on_startup: true,
-                    sync_ratings: true
+                    interval_minutes: s.interval_minutes,
+                    sync_on_startup: s.sync_on_startup,
+                    sync_ratings: s.sync_ratings
                 }});
             }}
             if (path.endsWith('/api/sync/diff')) {{
@@ -1016,6 +1094,91 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             }}
             if (path.endsWith('/api/sync/progress')) {{
                 return jsonResp({{ in_progress: false, status: 'idle', total: 0, current: 0, success: 0, failed: 0 }});
+            }}
+            if (path.endsWith('/api/sync/settings')) {{
+                if (method === 'POST') {{
+                    const body = init.body ? JSON.parse(init.body) : {{}};
+                    if (body.server_type !== undefined) clientState.reconcile_settings.server_type = body.server_type;
+                    if (body.plex_url !== undefined) clientState.reconcile_settings.plex_url = body.plex_url;
+                    if (body.jellyfin_url !== undefined) clientState.reconcile_settings.jellyfin_url = body.jellyfin_url;
+                    if (body.jellyfin_user_id !== undefined) clientState.reconcile_settings.jellyfin_user_id = body.jellyfin_user_id;
+                    if (body.emby_url !== undefined) clientState.reconcile_settings.emby_url = body.emby_url;
+                    if (body.emby_user_id !== undefined) clientState.reconcile_settings.emby_user_id = body.emby_user_id;
+
+                    if (body.plex_token && !body.plex_token.includes('••••')) {{
+                        clientState.reconcile_settings.plex_token = '••••••••' + body.plex_token.slice(-4);
+                        clientState.reconcile_settings.masked_plex_token = clientState.reconcile_settings.plex_token;
+                        clientState.reconcile_settings.has_plex_token = true;
+                        clientState.reconcile_settings.is_plex_token_set = true;
+                    }}
+                    if (body.jellyfin_token && !body.jellyfin_token.includes('••••')) {{
+                        clientState.reconcile_settings.jellyfin_token = '••••••••' + body.jellyfin_token.slice(-4);
+                        clientState.reconcile_settings.masked_jellyfin_token = clientState.reconcile_settings.jellyfin_token;
+                        clientState.reconcile_settings.has_jellyfin_token = true;
+                        clientState.reconcile_settings.is_jellyfin_token_set = true;
+                    }}
+                    if (body.emby_token && !body.emby_token.includes('••••')) {{
+                        clientState.reconcile_settings.emby_token = '••••••••' + body.emby_token.slice(-4);
+                        clientState.reconcile_settings.masked_emby_token = clientState.reconcile_settings.emby_token;
+                        clientState.reconcile_settings.has_emby_token = true;
+                        clientState.reconcile_settings.is_emby_token_set = true;
+                    }}
+
+                    if (body.clear_token || body.clear_plex_token) {{
+                        clientState.reconcile_settings.plex_token = '';
+                        clientState.reconcile_settings.masked_plex_token = '';
+                        clientState.reconcile_settings.has_plex_token = false;
+                        clientState.reconcile_settings.is_plex_token_set = false;
+                    }}
+                    if (body.clear_jellyfin_token) {{
+                        clientState.reconcile_settings.jellyfin_token = '';
+                        clientState.reconcile_settings.masked_jellyfin_token = '';
+                        clientState.reconcile_settings.has_jellyfin_token = false;
+                        clientState.reconcile_settings.is_jellyfin_token_set = false;
+                    }}
+                    if (body.clear_emby_token) {{
+                        clientState.reconcile_settings.emby_token = '';
+                        clientState.reconcile_settings.masked_emby_token = '';
+                        clientState.reconcile_settings.has_emby_token = false;
+                        clientState.reconcile_settings.is_emby_token_set = false;
+                    }}
+
+                    if (body.interval_minutes !== undefined) clientState.reconcile_settings.interval_minutes = body.interval_minutes;
+                    if (body.direction_default !== undefined) clientState.reconcile_settings.direction_default = body.direction_default;
+                    if (body.sync_ratings !== undefined) clientState.reconcile_settings.sync_ratings = body.sync_ratings;
+                    if (body.sync_on_startup !== undefined) clientState.reconcile_settings.sync_on_startup = body.sync_on_startup;
+                    return jsonResp({{ status: 'ok', settings: clientState.reconcile_settings }});
+                }}
+                return jsonResp({{ status: 'ok', settings: clientState.reconcile_settings }});
+            }}
+            if (path.endsWith('/api/sync/test-connection')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                const srv = (body.server || 'plex').toLowerCase();
+                if (srv === 'jellyfin') {{
+                    return jsonResp({{
+                        status: 'connected',
+                        connected: true,
+                        server_name: "Demo Jellyfin Server",
+                        version: "10.9.11",
+                        message: "Successfully connected to Demo Jellyfin Server (v10.9.11)"
+                    }});
+                }}
+                if (srv === 'emby') {{
+                    return jsonResp({{
+                        status: 'connected',
+                        connected: true,
+                        server_name: "Demo Emby Server",
+                        version: "4.8.8",
+                        message: "Successfully connected to Demo Emby Server (v4.8.8)"
+                    }});
+                }}
+                return jsonResp({{
+                    status: 'connected',
+                    connected: true,
+                    server_name: "Demo Plex Home Theater",
+                    version: "1.41.0.8992",
+                    message: "Successfully connected to Demo Plex Home Theater (Plex Media Server v1.41.0.8992)"
+                }});
             }}
 
             // 13. Content Bridge & *Arr Automation Endpoints
