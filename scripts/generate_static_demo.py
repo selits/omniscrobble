@@ -22,6 +22,7 @@ from app.main import (
     OMNISCROBBLE_ICON_SVG,
     format_action_label,
     should_display_cowatch_badge,
+    render_status_badge,
 )
 from app.services.demo_manager import demo_mgr
 
@@ -623,13 +624,12 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     )
         action_col = f'<td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
 
-        status_badge_html = f'<span style="color:{color};font-weight:600;font-size:13px;">{ev["result_status"]}</span>'
-        cw = ev.get("cowatch_status")
-        if cw and should_display_cowatch_badge(ev.get("action"), ev.get("result_status"), ev.get("progress")):
-            if cw.get("synced"):
-                status_badge_html += ' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Synced to partner: Shared show whitelist match">👥 Co-Watched</span>'
-            elif cw.get("reason"):
-                status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;white-space:nowrap;" title="Co-watch skipped: {html.escape(cw.get("reason"))}">👥 Solo</span>'
+        status_badge_html = render_status_badge(
+            ev.get("action"),
+            ev.get("result_status"),
+            ev.get("progress", ""),
+            ev.get("cowatch_status"),
+        )
 
         server_raw = ev.get("server", "plex").lower()
         if server_raw == "jellyfin":
