@@ -205,25 +205,45 @@ async def queue_worker_loop():
             logger.error(f"Error in background queue retry worker: {e}")
 
 
+reverse_sync_config_updated: asyncio.Event = asyncio.Event()
+
+
 async def reverse_sync_worker_loop():
     """Background worker periodically executing reverse sync reconciliation if enabled."""
-    if Config.REVERSE_SYNC_INTERVAL <= 0:
-        return
-    interval_seconds = max(60, Config.REVERSE_SYNC_INTERVAL * 60)
-    logger.info(f"Reverse sync worker started (running every {Config.REVERSE_SYNC_INTERVAL}m)...")
+    logger.info("Reverse sync background worker started...")
     while True:
         try:
-            await asyncio.sleep(interval_seconds)
-            if reverse_sync_mgr.is_configured() and not reverse_sync_mgr._is_syncing:
-                logger.info("Periodic reverse sync worker: scanning for discrepancies...")
-                diff = await reverse_sync_mgr.scan_discrepancies()
-                if diff:
-                    logger.info(f"Periodic reverse sync worker: reconciling {len(diff)} items...")
-                    await reverse_sync_mgr.execute_reconciliation(direction="trakt_to_plex")
+            recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+            interval_minutes = recon.get("interval_minutes", 0)
+            enabled = recon.get("enabled", True)
+
+            if enabled and interval_minutes > 0 and reverse_sync_mgr.is_configured():
+                interval_seconds = max(60, interval_minutes * 60)
+                try:
+                    await asyncio.wait_for(reverse_sync_config_updated.wait(), timeout=interval_seconds)
+                    reverse_sync_config_updated.clear()
+                    continue
+                except asyncio.TimeoutError:
+                    pass
+
+                if reverse_sync_mgr.is_configured() and not reverse_sync_mgr._is_syncing:
+                    target_srv = recon.get("server_type", "plex")
+                    logger.info("Periodic reverse sync worker: scanning for discrepancies on %s...", target_srv)
+                    diff = await reverse_sync_mgr.scan_discrepancies(server=target_srv)
+                    if diff:
+                        dir_def = recon.get("direction_default", "trakt_to_server")
+                        if dir_def in ("all", "trakt_to_plex"):
+                            dir_def = "trakt_to_server"
+                        logger.info(f"Periodic reverse sync worker: reconciling {len(diff)} items on {target_srv}...")
+                        await reverse_sync_mgr.execute_reconciliation(direction=dir_def, server=target_srv)
+            else:
+                await reverse_sync_config_updated.wait()
+                reverse_sync_config_updated.clear()
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error(f"Error in periodic reverse sync worker: {e}")
+            await asyncio.sleep(5.0)
 
 
 arr_watchlist_worker_task: Optional[asyncio.Task] = None
@@ -251,8 +271,7 @@ async def arr_watchlist_worker_loop():
 async def lifespan(app: FastAPI):
     global queue_worker_task, reverse_sync_worker_task, arr_watchlist_worker_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
-    if Config.REVERSE_SYNC_INTERVAL > 0 and reverse_sync_mgr.plex.is_configured():
-        reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
+    reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
     if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
         arr_watchlist_worker_task = asyncio.create_task(arr_watchlist_worker_loop())
 
@@ -279,12 +298,14 @@ async def lifespan(app: FastAPI):
         logger.info(f"Startup Diagnostics: Radarr integration enabled ({Config.RADARR_URL}).")
     if Config.AUTO_ADD_FROM_WATCHLIST:
         logger.info(f"Startup Diagnostics: Watchlist acquisition enabled (interval: {Config.ARR_WATCHLIST_INTERVAL}s).")
+    recon_startup = settings_mgr.get_reconciliation_settings(mask_token=False)
     if reverse_sync_mgr.plex.is_configured():
-        logger.info(f"Startup Diagnostics: Plex API direct connection configured ({Config.PLEX_URL}).")
-        if Config.REVERSE_SYNC_ON_STARTUP:
+        logger.info(f"Startup Diagnostics: Plex API direct connection configured ({reverse_sync_mgr.plex.base_url}).")
+        if recon_startup.get("sync_on_startup", Config.REVERSE_SYNC_ON_STARTUP):
             asyncio.create_task(reverse_sync_mgr.run_startup_sync())
-    if Config.REVERSE_SYNC_INTERVAL > 0 and reverse_sync_mgr.plex.is_configured():
-        logger.info(f"Startup Diagnostics: Reverse sync interval active ({Config.REVERSE_SYNC_INTERVAL}m).")
+    int_mins = recon_startup.get("interval_minutes", Config.REVERSE_SYNC_INTERVAL)
+    if int_mins > 0 and reverse_sync_mgr.plex.is_configured():
+        logger.info(f"Startup Diagnostics: Reverse sync interval active ({int_mins}m).")
     if simkl.is_enabled():
         if simkl.is_authenticated():
             logger.info(f"Startup Diagnostics: Simkl multi-tracker connected (@{simkl.user_name or 'user'}).")
@@ -331,7 +352,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -1404,6 +1425,7 @@ async def get_system_logs(
 
 
 class ManualScrobbleRequest(BaseModel):
+    action: Optional[str] = "watched"  # "watched" or "start"
     media_type: Optional[str] = None
     title: Optional[str] = None
     year: Optional[int] = None
@@ -1489,10 +1511,13 @@ async def search_media_endpoint(query: str, type: Optional[str] = None, request:
 
 @app.post("/api/scrobble/manual")
 async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
-    """Manually scrobble a movie or episode across selected/all trackers with optional co-watch."""
+    """Manually scrobble or start playback for a movie or episode across selected/all trackers."""
+    req_action = (payload.action or "watched").lower().strip()
+    is_start = req_action == "start"
+
     if request and request.query_params.get("demo") == "true":
         targets = payload.trackers or ["trakt", "simkl"]
-        return {"status": "success", "result": {"synced_trackers": targets}, "cowatch_synced": bool(payload.cowatch)}
+        return {"status": "success", "action": req_action, "result": {"synced_trackers": targets}, "cowatch_synced": bool(payload.cowatch)}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
 
@@ -1507,71 +1532,143 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
     m_episode = payload.episode if payload.episode is not None else m_dict.get("episode")
     m_ids = payload.ids or m_dict.get("ids") or {}
 
-    media_obj = ParsedMedia(
-        event="manual.scrobble",
-        username=admin_user,
-        media_type=m_type,
-        title=m_title,
-        year=m_year,
-        season=m_season,
-        episode=m_episode,
-        progress=100.0,
-        ids=m_ids,
-    )
-
-    dispatch_res = await multi_tracker.dispatch_manual_scrobble(
-        media=media_obj,
-        trakt_client=trakt,
-        selected_trackers=payload.trackers,
-    )
-
-    scrobble_stats["total"] += 1
-    if payload.media_type == "movie":
-        scrobble_stats["movies"] += 1
-    elif payload.media_type == "episode":
-        scrobble_stats["episodes"] += 1
-
-    cowatch_synced = False
-    partner_user = Config.CO_WATCH_USER
-    if payload.cowatch and partner_user:
-        try:
-            cw_client = user_mgr.get_client(partner_user)
-            if cw_client.is_authenticated():
-                partner_media = ParsedMedia(
-                    event="manual.scrobble",
-                    username=partner_user,
-                    media_type=payload.media_type,
-                    title=payload.title,
-                    year=payload.year,
-                    season=payload.season,
-                    episode=payload.episode,
-                    progress=100.0,
-                    ids=payload.ids,
-                )
-                await multi_tracker.dispatch_manual_scrobble(
-                    media=partner_media,
-                    trakt_client=cw_client,
-                    selected_trackers=payload.trackers,
-                )
-                cowatch_synced = True
-                metrics_registry.record_cowatch("success")
-        except Exception as e:
-            logger.error(f"Error dual-scrobbling manual watch for co-watch partner @{partner_user}: {e}")
-
-    cowatch_status = {"synced": cowatch_synced, "target": partner_user} if cowatch_synced else None
-    log_event(media_obj, "manual_scrobble", dispatch_res, cowatch_status=cowatch_status)
-
-    synced_list = dispatch_res.get("synced_trackers", ["trakt"])
-    asyncio.create_task(
-        notifier.dispatch(
-            media_obj,
-            "mark_watched",
-            cowatch_partner=partner_user if cowatch_synced else None,
-            trackers=synced_list,
+    if is_start:
+        prog = 1.0
+        media_obj = ParsedMedia(
+            event="media.play",
+            username=admin_user,
+            media_type=m_type,
+            title=m_title,
+            year=m_year,
+            season=m_season,
+            episode=m_episode,
+            progress=prog,
+            ids=m_ids,
+            player="Web Dashboard",
         )
-    )
+        # Register in active streaming sessions widget
+        playback_mgr.update_playback(media_obj, state="playing")
 
-    return {"status": "success", "result": dispatch_res, "cowatch_synced": cowatch_synced}
+        dispatch_res = await multi_tracker.dispatch_scrobble(
+            action="start",
+            media=media_obj,
+            trakt_client=trakt,
+            progress=prog,
+            selected_trackers=payload.trackers,
+        )
+
+        cowatch_synced = False
+        partner_user = Config.CO_WATCH_USER
+        if payload.cowatch and partner_user:
+            try:
+                cw_client = user_mgr.get_client(partner_user)
+                if cw_client.is_authenticated():
+                    partner_media = ParsedMedia(
+                        event="media.play",
+                        username=partner_user,
+                        media_type=m_type,
+                        title=m_title,
+                        year=m_year,
+                        season=m_season,
+                        episode=m_episode,
+                        progress=prog,
+                        ids=m_ids,
+                        player="Web Dashboard (Co-Watch)",
+                    )
+                    await multi_tracker.dispatch_scrobble(
+                        action="start",
+                        media=partner_media,
+                        trakt_client=cw_client,
+                        progress=prog,
+                        selected_trackers=payload.trackers,
+                    )
+                    cowatch_synced = True
+                    metrics_registry.record_cowatch("success")
+            except Exception as e:
+                logger.error(f"Error starting playback for co-watch partner @{partner_user}: {e}")
+
+        cowatch_status = {"synced": cowatch_synced, "target": partner_user} if cowatch_synced else None
+        log_event(media_obj, "manual_start", dispatch_res, cowatch_status=cowatch_status)
+
+        synced_list = dispatch_res.get("trackers", ["trakt"])
+        asyncio.create_task(
+            notifier.dispatch(
+                media_obj,
+                "playback_start",
+                cowatch_partner=partner_user if cowatch_synced else None,
+                trackers=synced_list,
+            )
+        )
+        return {"status": "success", "action": "start", "result": dispatch_res, "cowatch_synced": cowatch_synced}
+
+    else:
+        media_obj = ParsedMedia(
+            event="manual.scrobble",
+            username=admin_user,
+            media_type=m_type,
+            title=m_title,
+            year=m_year,
+            season=m_season,
+            episode=m_episode,
+            progress=100.0,
+            ids=m_ids,
+            player="Web Dashboard",
+        )
+        # Clear any active playback session for this item
+        playback_mgr.stop_playback(media_obj)
+
+        dispatch_res = await multi_tracker.dispatch_manual_scrobble(
+            media=media_obj,
+            trakt_client=trakt,
+            selected_trackers=payload.trackers,
+        )
+
+        scrobble_stats["total"] += 1
+        if m_type == "movie":
+            scrobble_stats["movies"] += 1
+        elif m_type == "episode":
+            scrobble_stats["episodes"] += 1
+
+        cowatch_synced = False
+        partner_user = Config.CO_WATCH_USER
+        if payload.cowatch and partner_user:
+            try:
+                cw_client = user_mgr.get_client(partner_user)
+                if cw_client.is_authenticated():
+                    partner_media = ParsedMedia(
+                        event="manual.scrobble",
+                        username=partner_user,
+                        media_type=m_type,
+                        title=m_title,
+                        year=m_year,
+                        season=m_season,
+                        episode=m_episode,
+                        progress=100.0,
+                        ids=m_ids,
+                    )
+                    await multi_tracker.dispatch_manual_scrobble(
+                        media=partner_media,
+                        trakt_client=cw_client,
+                        selected_trackers=payload.trackers,
+                    )
+                    cowatch_synced = True
+                    metrics_registry.record_cowatch("success")
+            except Exception as e:
+                logger.error(f"Error dual-scrobbling manual watch for co-watch partner @{partner_user}: {e}")
+
+        cowatch_status = {"synced": cowatch_synced, "target": partner_user} if cowatch_synced else None
+        log_event(media_obj, "manual_scrobble", dispatch_res, cowatch_status=cowatch_status)
+
+        synced_list = dispatch_res.get("synced_trackers", ["trakt"])
+        asyncio.create_task(
+            notifier.dispatch(
+                media_obj,
+                "mark_watched",
+                cowatch_partner=partner_user if cowatch_synced else None,
+                trackers=synced_list,
+            )
+        )
+        return {"status": "success", "action": "watched", "result": dispatch_res, "cowatch_synced": cowatch_synced}
 
 
 @app.post("/api/history/remove")
@@ -1847,25 +1944,196 @@ def update_cowatch_settings(payload: CowatchSettingsRequest, request: Request):
 
 class ReconcileRequest(BaseModel):
     item_ids: Optional[list[str]] = None
-    direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt"
+    direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt", "trakt_to_server", "server_to_trakt"
+    server: Optional[str] = None
+
+
+class ReconcileSettingsRequest(BaseModel):
+    enabled: Optional[bool] = None
+    server_type: Optional[str] = None
+    plex_url: Optional[str] = None
+    plex_token: Optional[str] = None
+    jellyfin_url: Optional[str] = None
+    jellyfin_token: Optional[str] = None
+    jellyfin_user_id: Optional[str] = None
+    emby_url: Optional[str] = None
+    emby_token: Optional[str] = None
+    emby_user_id: Optional[str] = None
+    interval_minutes: Optional[int] = None
+    sync_on_startup: Optional[bool] = None
+    sync_ratings: Optional[bool] = None
+    direction_default: Optional[str] = None
+    clear_token: Optional[bool] = False
+    clear_plex_token: Optional[bool] = False
+    clear_jellyfin_token: Optional[bool] = False
+    clear_emby_token: Optional[bool] = False
+
+    model_config = {"extra": "ignore"}
+
+
+class MediaServerTestConnectionRequest(BaseModel):
+    server: Optional[str] = "plex"
+    url: Optional[str] = None
+    token: Optional[str] = None
+    user_id: Optional[str] = None
+    plex_url: Optional[str] = None
+    plex_token: Optional[str] = None
+    jellyfin_url: Optional[str] = None
+    jellyfin_token: Optional[str] = None
+    emby_url: Optional[str] = None
+    emby_token: Optional[str] = None
+
+    model_config = {"extra": "ignore"}
+
+
+PlexTestConnectionRequest = MediaServerTestConnectionRequest
+
+
+@app.get("/api/sync/settings")
+async def get_sync_settings(request: Request):
+    """Return persistent two-way reconciliation settings."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {
+            "enabled": True,
+            "server_type": "plex",
+            "plex_url": "http://<your-server-ip-or-domain>:32400",
+            "plex_token": "••••••••abcd",
+            "jellyfin_url": "http://<your-server-ip-or-domain>:8096",
+            "jellyfin_token": "••••••••efgh",
+            "jellyfin_user_id": "",
+            "emby_url": "http://<your-server-ip-or-domain>:8096",
+            "emby_token": "••••••••ijkl",
+            "emby_user_id": "",
+            "masked_token": "••••••••abcd",
+            "is_token_set": True,
+            "has_token": True,
+            "has_plex_token": True,
+            "has_jellyfin_token": True,
+            "has_emby_token": True,
+            "interval_minutes": 60,
+            "sync_on_startup": False,
+            "sync_ratings": True,
+            "direction_default": "all",
+        }
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return settings_mgr.get_reconciliation_settings(mask_token=True)
+
+
+@app.post("/api/sync/settings")
+async def save_sync_settings(payload: ReconcileSettingsRequest, request: Request):
+    """Save persistent two-way reconciliation settings and reconfigure in-memory worker."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {
+            "status": "success",
+            "settings": {
+                "enabled": True if payload.enabled is None else payload.enabled,
+                "server_type": payload.server_type or "plex",
+                "plex_url": payload.plex_url or "http://<your-server-ip-or-domain>:32400",
+                "plex_token": "••••••••abcd",
+                "jellyfin_url": payload.jellyfin_url or "http://<your-server-ip-or-domain>:8096",
+                "jellyfin_token": "••••••••efgh",
+                "emby_url": payload.emby_url or "http://<your-server-ip-or-domain>:8096",
+                "emby_token": "••••••••ijkl",
+                "masked_token": "••••••••abcd",
+                "is_token_set": True,
+                "has_token": True,
+                "interval_minutes": payload.interval_minutes if payload.interval_minutes is not None else 60,
+                "sync_on_startup": bool(payload.sync_on_startup),
+                "sync_ratings": True if payload.sync_ratings is None else payload.sync_ratings,
+                "direction_default": payload.direction_default or "all",
+            },
+        }
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    data = payload.model_dump(exclude_unset=True)
+    updated = settings_mgr.update_reconciliation_settings(data)
+
+    raw_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+    reverse_sync_mgr.update_config(
+        server=raw_recon.get("server_type"),
+        plex_url=raw_recon.get("plex_url"),
+        plex_token=raw_recon.get("plex_token"),
+        jellyfin_url=raw_recon.get("jellyfin_url"),
+        jellyfin_token=raw_recon.get("jellyfin_token"),
+        jellyfin_user_id=raw_recon.get("jellyfin_user_id"),
+        emby_url=raw_recon.get("emby_url"),
+        emby_token=raw_recon.get("emby_token"),
+        emby_user_id=raw_recon.get("emby_user_id"),
+    )
+    reverse_sync_config_updated.set()
+
+    return {"status": "success", "settings": updated}
+
+
+@app.post("/api/sync/test-connection")
+async def test_sync_connection(payload: MediaServerTestConnectionRequest, request: Request):
+    """Test connectivity to media server (Plex, Jellyfin, Emby) with provided or active credentials."""
+    is_demo = request.query_params.get("demo") == "true"
+    srv = (payload.server or "plex").lower().strip()
+    if is_demo:
+        if srv == "jellyfin":
+            return {"status": "connected", "server_name": "Demo Jellyfin Server", "version": "10.9.11"}
+        elif srv == "emby":
+            return {"status": "connected", "server_name": "Demo Emby Server", "version": "4.8.8"}
+        return {
+            "status": "connected",
+            "machine_identifier": "demo-plex-server",
+            "version": "1.40.2.8395",
+        }
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    raw_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+    if srv == "jellyfin":
+        url_candidate = payload.url or payload.jellyfin_url or ""
+        target_url = url_candidate.strip() if url_candidate else raw_recon.get("jellyfin_url", "")
+        token_candidate = payload.token or payload.jellyfin_token or ""
+        target_token = token_candidate.strip() if token_candidate else ""
+        if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
+            target_token = raw_recon.get("jellyfin_token", "")
+        target_user = payload.user_id or raw_recon.get("jellyfin_user_id", "")
+        res = await reverse_sync_mgr.test_connection(server="jellyfin", url=target_url, token=target_token, user_id=target_user)
+    elif srv == "emby":
+        url_candidate = payload.url or payload.emby_url or ""
+        target_url = url_candidate.strip() if url_candidate else raw_recon.get("emby_url", "")
+        token_candidate = payload.token or payload.emby_token or ""
+        target_token = token_candidate.strip() if token_candidate else ""
+        if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
+            target_token = raw_recon.get("emby_token", "")
+        target_user = payload.user_id or raw_recon.get("emby_user_id", "")
+        res = await reverse_sync_mgr.test_connection(server="emby", url=target_url, token=target_token, user_id=target_user)
+    else:
+        url_candidate = payload.url or payload.plex_url or ""
+        target_url = url_candidate.strip() if url_candidate else raw_recon.get("plex_url", "")
+        token_candidate = payload.token or payload.plex_token or ""
+        target_token = token_candidate.strip() if token_candidate else ""
+        if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
+            target_token = raw_recon.get("plex_token", "")
+        res = await reverse_sync_mgr.test_connection(server="plex", url=target_url, token=target_token)
+
+    return res
 
 
 @app.get("/api/sync/status")
-async def get_sync_status(request: Request):
+async def get_sync_status(request: Request, server: Optional[str] = None):
     """Return status of two-way sync and media server direct connection."""
     is_demo = request.query_params.get("demo") == "true"
-    return await reverse_sync_mgr.get_status(demo=is_demo)
+    return await reverse_sync_mgr.get_status(demo=is_demo, server=server)
 
 
 @app.get("/api/sync/diff")
-async def get_sync_diff(request: Request, force: bool = False):
+async def get_sync_diff(request: Request, force: bool = False, server: Optional[str] = None):
     """Scan and return discrepancies between media server and Trakt."""
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return {"status": "ok", "diff": demo_mgr.get_demo_reconciliation(), "count": len(demo_mgr.get_demo_reconciliation())}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    diff = await reverse_sync_mgr.scan_discrepancies(force=force)
+    diff = await reverse_sync_mgr.scan_discrepancies(force=force, server=server)
     return {"status": "ok", "diff": diff, "count": len(diff)}
 
 
@@ -1874,12 +2142,13 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
     """Execute two-way reconciliation for discrepancies."""
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
-        return await reverse_sync_mgr.execute_reconciliation(demo=True)
+        return await reverse_sync_mgr.execute_reconciliation(demo=True, server=payload.server)
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     res = await reverse_sync_mgr.execute_reconciliation(
         item_ids=payload.item_ids,
         direction=payload.direction,
+        server=payload.server,
     )
     return res
 
@@ -1914,6 +2183,8 @@ async def get_ecosystem_status(request: Request):
     return await arr_bridge.get_ecosystem_status(
         demo=is_demo,
         plex_client=reverse_sync_mgr.plex,
+        jellyfin_client=reverse_sync_mgr.jellyfin,
+        emby_client=reverse_sync_mgr.emby,
         simkl_client=simkl,
         anilist_client=anilist,
         mal_client=mal,
@@ -2889,28 +3160,51 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         "sync_ratings": True,
     }
 
+    active_srv = sync_status.get("active_server", "plex")
     plex_cfg = sync_status.get("plex_configured", False)
     plex_conn = sync_status.get("plex_connected", False)
+    jf_cfg = sync_status.get("jellyfin_configured", False)
+    jf_conn = sync_status.get("jellyfin_connected", False)
+    emby_cfg = sync_status.get("emby_configured", False)
+    emby_conn = sync_status.get("emby_connected", False)
+
+    server_status_badges = []
+    if plex_cfg:
+        col = "#10b981" if plex_conn else "#f59e0b"
+        st = "Online" if plex_conn else "Unreachable"
+        server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Plex {st}</span>')
+    if jf_cfg:
+        col = "#10b981" if jf_conn else "#f59e0b"
+        st = "Online" if jf_conn else "Unreachable"
+        server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Jellyfin {st}</span>')
+    if emby_cfg:
+        col = "#10b981" if emby_conn else "#f59e0b"
+        st = "Online" if emby_conn else "Unreachable"
+        server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Emby {st}</span>')
+
+    if not server_status_badges:
+        server_status_badges.append('<span style="color:#94a3b8;font-size:12px;">● Direct API Not Configured</span>')
+    server_badges_html = " ".join(server_status_badges)
+
     diff_count = sync_status.get("diff_count", 0)
     int_mins = sync_status.get("interval_minutes", 0)
     auto_sync_badge = f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Every {int_mins}m</span>' if int_mins > 0 else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Manual</span>'
 
-    if plex_cfg:
-        status_color = "#10b981" if plex_conn else "#f59e0b"
-        status_label = "Connected" if plex_conn else "Unreachable"
+    any_server_configured = plex_cfg or jf_cfg or emby_cfg
+    if any_server_configured:
         reconcile_card_html = f"""
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
                 </h3>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="color:{status_color};font-size:12px;font-weight:600;">● Plex API {status_label}</span>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    {server_badges_html}
                     {auto_sync_badge}
                 </div>
             </div>
             <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-                Bi-directional sync matches watched history and ratings between your media server and Trakt with automatic echo-loop suppression.
+                Bi-directional sync matches watched history and ratings between your media servers (Plex, Jellyfin, Emby) and Trakt with automatic echo-loop suppression.
             </p>
             <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
                 <div>
@@ -2923,8 +3217,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     </div>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    {f'<button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Configure</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Configure</button>'}
                     {f'<button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Review Discrepancies</button>'}
-                    {f'<button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; Plex)</button>' if is_admin else ''}
+                    {f'<button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; {active_srv.capitalize()})</button>' if is_admin else ''}
                 </div>
             </div>
         </div>
@@ -2939,11 +3234,14 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <span style="color:#94a3b8;font-size:12px;">● Direct API Not Configured</span>
             </div>
             <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;line-height:1.5;">
-                Enable direct media server reconciliation to pull watched history and user ratings from Trakt back to your media server with loop prevention.
+                Enable direct media server reconciliation (Plex, Jellyfin, Emby) to pull watched history and user ratings from Trakt back to your media server with loop prevention.
             </p>
             <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                <span>Set <code>PLEX_URL</code> and <code>PLEX_TOKEN</code> in your <code>.env</code> file to activate two-way reconciliation.</span>
-                <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+                <span>Configure your media server direct connection to activate two-way reconciliation and rating synchronization.</span>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    {f'<button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Set Up Connection</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Set Up Connection</button>'}
+                    <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+                </div>
             </div>
         </div>
         """
@@ -2980,7 +3278,15 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     """
 
     # Multi-Server Ecosystem Health Card
-    eco_data = await arr_bridge.get_ecosystem_status(demo=is_demo, plex_client=reverse_sync_mgr.plex, simkl_client=simkl, anilist_client=anilist, mal_client=mal)
+    eco_data = await arr_bridge.get_ecosystem_status(
+        demo=is_demo,
+        plex_client=reverse_sync_mgr.plex,
+        jellyfin_client=reverse_sync_mgr.jellyfin,
+        emby_client=reverse_sync_mgr.emby,
+        simkl_client=simkl,
+        anilist_client=anilist,
+        mal_client=mal,
+    )
     eco_servers = eco_data.get("servers", [])
     eco_healthy = eco_data.get("healthy_count", 0)
     eco_total = eco_data.get("total_count", len(eco_servers))
@@ -3042,10 +3348,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             key = "mal" if sid == "myanimelist" else sid
             is_en = srv.get("enabled", True)
             if cat == "server":
+                config_gear = f'<button onclick="openReconcileSettingsModal(\'{sid}\')" class="btn-sm" style="display:inline-flex;align-items:center;padding:3px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#38bdf8;cursor:pointer;" title="Configure {srv_name} Direct API">⚙️</button>'
                 if is_en:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
+                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
                 else:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
+                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
             else:
                 if is_en:
                     toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause {srv_name}"><span>⏸</span><span>Pause</span></button>'

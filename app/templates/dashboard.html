@@ -67,7 +67,7 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #reconcile-settings-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -307,7 +307,10 @@
 
             <!-- Target Trackers & Co-Watch -->
             <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:10px 12px;margin-bottom:12px;">
-                <div style="font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:6px;">Target Trackers:</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:4px;">
+                    <div style="font-size:12px;font-weight:600;color:#cbd5e1;">Target Trackers:</div>
+                    <div style="font-size:11px;color:#94a3b8;">Selected destinations receive this entry (works even if webhook auto-sync is paused)</div>
+                </div>
                 <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:#f8fafc;">
                     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
                         <input type="checkbox" id="scrobble-trk-trakt" checked> 🔴 Trakt
@@ -331,9 +334,14 @@
 
             <!-- Search Catalog View -->
             <div id="scrobble-view-search">
+                <div style="display:flex;gap:6px;margin-bottom:10px;">
+                    <button type="button" class="btn-sm search-type-pill" onclick="setSearchTypeFilter('', this)" style="background:#2563eb;color:#fff;font-size:11px;font-weight:600;padding:4px 10px;">All</button>
+                    <button type="button" class="btn-sm search-type-pill" onclick="setSearchTypeFilter('movie', this)" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;font-size:11px;padding:4px 10px;">Movies</button>
+                    <button type="button" class="btn-sm search-type-pill" onclick="setSearchTypeFilter('show', this)" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;font-size:11px;padding:4px 10px;">TV Shows</button>
+                </div>
                 <form onsubmit="event.preventDefault();executeTraktSearch();" autocomplete="off" style="margin:0 0 12px 0;">
                     <div class="search-form-row">
-                        <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, Lanterns)..."
+                        <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, Avatar)..."
                                autocomplete="off"
                                data-lpignore="true"
                                data-1p-ignore="true"
@@ -351,7 +359,18 @@
 
             <!-- Direct Entry View -->
             <div id="scrobble-view-direct" style="display:none;">
-                <form onsubmit="event.preventDefault();submitDirectScrobble();" style="display:flex;flex-direction:column;gap:10px;margin:0;">
+                <!-- Option A Interactive Disambiguation Container -->
+                <div id="scrobble-disambig-container" style="display:none;background:#0f172a;border:1px solid #3b82f6;border-radius:8px;padding:12px;margin-bottom:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <div style="font-size:13px;font-weight:600;color:#93c5fd;display:flex;align-items:center;gap:6px;">
+                            <span>🎬</span> Disambiguation: Which movie did you mean?
+                        </div>
+                        <button type="button" onclick="cancelDisambiguation()" class="btn-sm" style="background:#334155;color:#cbd5e1;padding:2px 8px;font-size:11px;">Cancel</button>
+                    </div>
+                    <div id="scrobble-disambig-list" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;"></div>
+                </div>
+
+                <form id="direct-scrobble-form" onsubmit="event.preventDefault();submitDirectScrobble('watched');" style="display:flex;flex-direction:column;gap:10px;margin:0;">
                     <div style="display:flex;gap:10px;">
                         <div style="flex:1;">
                             <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">Media Type</label>
@@ -386,10 +405,16 @@
                         </div>
                     </div>
 
+                    <div id="direct-id-row" style="display:none;">
+                        <label style="display:block;font-size:12px;color:#94a3b8;margin-bottom:4px;">IMDb or TMDb ID (Optional, e.g. tt0499549 or 693134)</label>
+                        <input type="text" id="direct-id-input" placeholder="tt... or TMDb numeric ID" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;" />
+                    </div>
+
                     <div id="direct-status-msg" style="display:none;padding:8px 12px;border-radius:6px;font-size:12px;"></div>
 
-                    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+                    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;flex-wrap:wrap;">
                         <button type="button" onclick="submitDirectUnscrobble(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;font-weight:600;padding:8px 14px;">🗑️ Unscrobble</button>
+                        <button type="button" id="direct-start-btn" onclick="submitDirectScrobble('start')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:8px 16px;">▶️ Just Started Watching</button>
                         <button type="submit" id="direct-submit-btn" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;padding:8px 18px;">✓ Mark Watched</button>
                     </div>
                 </form>
@@ -524,14 +549,25 @@
                 </div>
             </div>
             <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
-                Select items to synchronize between Plex Media Server and Trakt. Echo webhooks are suppressed automatically during reconciliation.
+                Select items to synchronize between your media server and Trakt. Echo webhooks are suppressed automatically during reconciliation.
             </p>
+
+            <!-- Media Server Switcher -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:12px;color:#94a3b8;font-weight:600;">Media Server:</span>
+                    <button type="button" id="recon-srv-btn-plex" class="btn-sm recon-srv-btn" onclick="switchReconcileServer('plex')" style="background:#0284c7;color:#fff;font-weight:600;padding:4px 10px;font-size:12px;">🎬 Plex</button>
+                    <button type="button" id="recon-srv-btn-jellyfin" class="btn-sm recon-srv-btn" onclick="switchReconcileServer('jellyfin')" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:4px 10px;font-size:12px;">🟣 Jellyfin</button>
+                    <button type="button" id="recon-srv-btn-emby" class="btn-sm recon-srv-btn" onclick="switchReconcileServer('emby')" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:4px 10px;font-size:12px;">🟢 Emby</button>
+                </div>
+                <button type="button" onclick="openReconcileSettingsModal(activeReconcileServer)" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;font-size:12px;padding:4px 10px;">⚙️ Server Settings</button>
+            </div>
 
             <!-- Filter tabs -->
             <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
                 <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('all', this)" style="background:#0284c7;color:#fff;">All (<span id="count-all">0</span>)</button>
-                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('trakt_only', this)" style="background:#1e293b;border:1px solid #334155;">Trakt Only &bull; Mark Plex (<span id="count-trakt">0</span>)</button>
-                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('plex_only', this)" style="background:#1e293b;border:1px solid #334155;">Plex Only &bull; Push Trakt (<span id="count-plex">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('trakt_only', this)" style="background:#1e293b;border:1px solid #334155;">Trakt Only &bull; Mark <span id="label-filter-dest">Plex</span> (<span id="count-trakt">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('server_only', this)" style="background:#1e293b;border:1px solid #334155;"><span id="label-filter-src">Plex</span> Only &bull; Push Trakt (<span id="count-plex">0</span>)</button>
                 <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('rating_mismatch', this)" style="background:#1e293b;border:1px solid #334155;">Ratings (<span id="count-ratings">0</span>)</button>
             </div>
 
@@ -554,7 +590,7 @@
                             <th style="width:36px;text-align:center;"><input type="checkbox" id="reconcile-select-all" onchange="toggleSelectAllReconcile(this)" /></th>
                             <th>Media Item</th>
                             <th>Type</th>
-                            <th>Plex Server</th>
+                            <th id="reconcile-server-col-header">Plex Server</th>
                             <th>Trakt Profile</th>
                             <th>Action</th>
                         </tr>
@@ -576,6 +612,192 @@
                     <button type="button" id="reconcile-all-btn" onclick="executeAllReconcile()" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Reconcile All</button>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Two-Way Reconciliation Settings Modal -->
+    <div id="reconcile-settings-modal" onclick="if(event.target===this)closeReconcileSettingsModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>⚙️</span> Reconciliation &amp; Direct Connection
+                </h3>
+                <button onclick="closeReconcileSettingsModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Configure media server credentials for live discrepancy scanning, automated reverse sync, and user rating synchronization without restarting.
+            </p>
+
+            <!-- Server Selector Tabs -->
+            <div style="display:flex;gap:6px;margin-bottom:12px;border-bottom:1px solid #334155;padding-bottom:10px;flex-wrap:wrap;">
+                <button type="button" id="recon-tab-btn-plex" onclick="switchReconSettingsTab('plex')" class="btn-sm recon-cfg-tab" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 14px;border-radius:6px;display:flex;align-items:center;gap:6px;">
+                    <span>🎬</span> Plex
+                </button>
+                <button type="button" id="recon-tab-btn-jellyfin" onclick="switchReconSettingsTab('jellyfin')" class="btn-sm recon-cfg-tab" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:6px 14px;border-radius:6px;display:flex;align-items:center;gap:6px;">
+                    <span>🟣</span> Jellyfin
+                </button>
+                <button type="button" id="recon-tab-btn-emby" onclick="switchReconSettingsTab('emby')" class="btn-sm recon-cfg-tab" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:6px 14px;border-radius:6px;display:flex;align-items:center;gap:6px;">
+                    <span>🟢</span> Emby
+                </button>
+            </div>
+
+            <form onsubmit="event.preventDefault();saveReconcileSettings();" style="display:flex;flex-direction:column;gap:12px;margin:0;">
+                <!-- Plex Server Section -->
+                <div id="recon-panel-plex" class="recon-server-panel" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>📺</span> Media Server Direct API (Plex)
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <div>
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Server URL</label>
+                            <input type="text" id="recon-plex-url" placeholder="http://<your-server-ip-or-domain>:32400"
+                                   style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                        </div>
+                        <div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                                <label style="font-size:11px;color:#94a3b8;">Plex Token</label>
+                                <span id="recon-token-badge-plex" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                            </div>
+                            <div style="display:flex;gap:6px;">
+                                <input type="password" id="recon-plex-token" placeholder="Enter Plex X-Plex-Token"
+                                       style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                <button type="button" onclick="toggleReconTokenVisibility('recon-plex-token','recon-token-toggle-btn-plex')" id="recon-token-toggle-btn-plex" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap;gap:6px;">
+                            <button type="button" onclick="testReconcileConnection('plex')" id="recon-test-btn-plex" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;font-weight:600;padding:6px 12px;">
+                                🔌 Test Connection
+                            </button>
+                            <span id="recon-test-status-plex" style="font-size:11px;color:#94a3b8;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Jellyfin Server Section -->
+                <div id="recon-panel-jellyfin" class="recon-server-panel" style="display:none;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>🟣</span> Media Server Direct API (Jellyfin)
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <div>
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Server URL</label>
+                            <input type="text" id="recon-jellyfin-url" placeholder="http://<your-server-ip-or-domain>:8096"
+                                   style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                        </div>
+                        <div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                                <label style="font-size:11px;color:#94a3b8;">API Key / Access Token</label>
+                                <span id="recon-token-badge-jellyfin" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                            </div>
+                            <div style="display:flex;gap:6px;">
+                                <input type="password" id="recon-jellyfin-token" placeholder="Enter Jellyfin API Key"
+                                       style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                <button type="button" onclick="toggleReconTokenVisibility('recon-jellyfin-token','recon-token-toggle-btn-jellyfin')" id="recon-token-toggle-btn-jellyfin" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">User ID (Optional)</label>
+                            <input type="text" id="recon-jellyfin-user-id" placeholder="Optional (auto-discovers administrator)"
+                                   style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                        </div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap;gap:6px;">
+                            <button type="button" onclick="testReconcileConnection('jellyfin')" id="recon-test-btn-jellyfin" class="btn-sm" style="background:#1e293b;border:1px solid #8b5cf6;color:#c084fc;font-weight:600;padding:6px 12px;">
+                                🔌 Test Connection
+                            </button>
+                            <span id="recon-test-status-jellyfin" style="font-size:11px;color:#94a3b8;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Emby Server Section -->
+                <div id="recon-panel-emby" class="recon-server-panel" style="display:none;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>🟢</span> Media Server Direct API (Emby)
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px;">
+                        <div>
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Server URL</label>
+                            <input type="text" id="recon-emby-url" placeholder="http://<your-server-ip-or-domain>:8096"
+                                   style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                        </div>
+                        <div>
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                                <label style="font-size:11px;color:#94a3b8;">API Key / Access Token</label>
+                                <span id="recon-token-badge-emby" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                            </div>
+                            <div style="display:flex;gap:6px;">
+                                <input type="password" id="recon-emby-token" placeholder="Enter Emby API Key"
+                                       style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                <button type="button" onclick="toggleReconTokenVisibility('recon-emby-token','recon-token-toggle-btn-emby')" id="recon-token-toggle-btn-emby" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">User ID (Optional)</label>
+                            <input type="text" id="recon-emby-user-id" placeholder="Optional (auto-discovers administrator)"
+                                   style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                        </div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap;gap:6px;">
+                            <button type="button" onclick="testReconcileConnection('emby')" id="recon-test-btn-emby" class="btn-sm" style="background:#1e293b;border:1px solid #10b981;color:#6ee7b7;font-weight:600;padding:6px 12px;">
+                                🔌 Test Connection
+                            </button>
+                            <span id="recon-test-status-emby" style="font-size:11px;color:#94a3b8;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Automation & Preferences Section -->
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>⏱️</span> Automation &amp; Sync Preferences
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                        <div>
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Primary Sync Server</label>
+                            <select id="recon-server-type-select" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:7px 8px;color:#f8fafc;font-size:12px;outline:none;">
+                                <option value="plex">🎬 Plex Media Server</option>
+                                <option value="jellyfin">🟣 Jellyfin</option>
+                                <option value="emby">🟢 Emby</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Periodic Sync Interval</label>
+                            <select id="recon-interval-select" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:7px 8px;color:#f8fafc;font-size:12px;outline:none;">
+                                <option value="0">Manual Only (0m)</option>
+                                <option value="15">Every 15 minutes</option>
+                                <option value="30">Every 30 minutes</option>
+                                <option value="60">Every 1 hour (60m)</option>
+                                <option value="180">Every 3 hours (180m)</option>
+                                <option value="360">Every 6 hours (360m)</option>
+                                <option value="720">Every 12 hours (720m)</option>
+                                <option value="1440">Every 24 hours (1440m)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="margin-top:10px;">
+                        <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Default Sync Direction</label>
+                        <select id="recon-direction-select" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:7px 8px;color:#f8fafc;font-size:12px;outline:none;">
+                            <option value="all">Bi-directional (All)</option>
+                            <option value="trakt_to_server">Trakt &rarr; Media Server Only</option>
+                            <option value="server_to_trakt">Media Server &rarr; Trakt Only</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-top:10px;">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#cbd5e1;">
+                            <input type="checkbox" id="recon-ratings-check" checked> Sync User Ratings (1-10 bi-directionally)
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#cbd5e1;">
+                            <input type="checkbox" id="recon-startup-check"> Scan &amp; Sync on Service Startup
+                        </label>
+                    </div>
+                </div>
+
+                <div id="recon-settings-msg" style="display:none;padding:8px 12px;border-radius:6px;font-size:12px;"></div>
+
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;flex-wrap:wrap;">
+                    <button type="button" onclick="closeReconcileSettingsModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">Cancel</button>
+                    <button type="submit" id="recon-save-btn" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;padding:8px 18px;">💾 Save Settings</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -895,14 +1117,18 @@
             const showRow = document.getElementById('direct-show-row');
             const seasonCol = document.getElementById('direct-season-col');
             const episodeCol = document.getElementById('direct-episode-col');
+            const idRow = document.getElementById('direct-id-row');
             const titleLabel = document.getElementById('direct-title-label');
             const titleInput = document.getElementById('direct-title-input');
+            const startBtn = document.getElementById('direct-start-btn');
 
             if (showRow) showRow.style.display = isEp ? 'block' : 'none';
             if (seasonCol) seasonCol.style.display = isEp ? 'block' : 'none';
             if (episodeCol) episodeCol.style.display = isEp ? 'block' : 'none';
+            if (idRow) idRow.style.display = isEp ? 'none' : 'block';
             if (titleLabel) titleLabel.textContent = isEp ? 'Episode Title (Optional)' : 'Movie Title';
             if (titleInput) titleInput.placeholder = isEp ? 'e.g. Good News About Hell' : 'e.g. Dune: Part Two';
+            if (startBtn) startBtn.style.display = isEp ? 'none' : 'inline-flex';
         }
 
         function openManualScrobbleModal() {
@@ -915,6 +1141,7 @@
             if (input) input.value = '';
             const resBox = document.getElementById('scrobble-search-results');
             if (resBox) resBox.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>';
+            cancelDisambiguation();
             switchScrobbleTab('search');
         }
 
@@ -922,6 +1149,26 @@
             document.getElementById('scrobble-modal').style.display = 'none';
             const msg = document.getElementById('direct-status-msg');
             if (msg) msg.style.display = 'none';
+            cancelDisambiguation();
+        }
+
+        let searchTypeFilter = '';
+
+        function setSearchTypeFilter(type, btn) {
+            searchTypeFilter = type;
+            document.querySelectorAll('.search-type-pill').forEach(b => {
+                b.style.background = '#1e293b';
+                b.style.border = '1px solid #334155';
+                b.style.color = '#94a3b8';
+            });
+            btn.style.background = '#2563eb';
+            btn.style.border = 'none';
+            btn.style.color = '#fff';
+
+            const query = document.getElementById('scrobble-search-input')?.value.trim();
+            if (query) {
+                executeTraktSearch();
+            }
         }
 
         async function executeTraktSearch() {
@@ -933,7 +1180,10 @@
             resultsContainer.innerHTML = '';
 
             try {
-                const url = isDemo ? '/api/search?demo=true&query=' + encodeURIComponent(query) : '/api/search?query=' + encodeURIComponent(query);
+                let url = isDemo ? '/api/search?demo=true&query=' + encodeURIComponent(query) : '/api/search?query=' + encodeURIComponent(query);
+                if (searchTypeFilter) {
+                    url += '&type=' + encodeURIComponent(searchTypeFilter);
+                }
                 const res = await fetch(url);
                 loading.style.display = 'none';
                 if (!res.ok) throw new Error('Search failed');
@@ -954,6 +1204,7 @@
             let html = '';
             for (const item of results) {
                 const type = item.type || (item.movie ? 'movie' : 'show');
+                if (searchTypeFilter && type !== searchTypeFilter) continue;
                 const media = item.movie || item.show || item;
                 const title = media.title;
                 const year = media.year ? `(${media.year})` : '';
@@ -964,6 +1215,12 @@
                     ids: media.ids || {}
                 };
                 const mediaJson = encodeURIComponent(JSON.stringify(payloadData));
+
+                const startBtn = type === 'movie' ? `
+                    <button onclick="submitManualScrobble('${mediaJson}', this, 'start')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;white-space:nowrap;padding:7px 11px;" title="Start playback (watching now)">
+                        ▶️ Started
+                    </button>
+                ` : '';
 
                 html += `
                 <div class="scrobble-item">
@@ -978,7 +1235,8 @@
                         <button onclick="submitAddToWatchlist('${mediaJson}', this)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;white-space:nowrap;padding:7px 11px;" title="Add to Trakt Watchlist">
                             🔖 Watchlist
                         </button>
-                        <button onclick="submitManualScrobble('${mediaJson}', this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;white-space:nowrap;padding:7px 11px;">
+                        ${startBtn}
+                        <button onclick="submitManualScrobble('${mediaJson}', this, 'watched')" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;white-space:nowrap;padding:7px 11px;">
                             ✓ Watched
                         </button>
                         <button onclick="submitSearchUnscrobble('${mediaJson}', this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;font-weight:600;white-space:nowrap;padding:7px 11px;" title="Remove / Unscrobble from trackers">
@@ -987,7 +1245,7 @@
                     </div>
                 </div>`;
             }
-            container.innerHTML = html;
+            container.innerHTML = html || '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">No results found matching filter.</div>';
         }
 
         async function submitAddToWatchlist(mediaJsonEncoded, btn) {
@@ -1017,24 +1275,26 @@
             }
         }
 
-        async function submitManualScrobble(mediaJsonEncoded, btn) {
+        async function submitManualScrobble(mediaJsonEncoded, btn, action = 'watched') {
+            const isStart = action === 'start';
             try {
                 const payload = JSON.parse(decodeURIComponent(mediaJsonEncoded));
                 btn.disabled = true;
-                btn.innerHTML = 'Syncing...';
+                btn.innerHTML = isStart ? 'Starting...' : 'Syncing...';
                 const url = isDemo ? '/api/scrobble/manual?demo=true' : '/api/scrobble/manual';
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        action: action,
                         media: payload,
                         trackers: getSelectedTrackers(),
                         cowatch: isCowatchChecked()
                     })
                 });
                 if (res.ok) {
-                    btn.innerHTML = '✓ Watched!';
-                    btn.style.background = '#059669';
+                    btn.innerHTML = isStart ? '▶️ Started!' : '✓ Watched!';
+                    btn.style.background = isStart ? '#0284c7' : '#059669';
                     fetchEvents();
                     fetchPlayback();
                     setTimeout(() => closeScrobbleModal(), 1200);
@@ -1085,15 +1345,33 @@
             }
         }
 
-        async function submitDirectScrobble() {
-            const btn = document.getElementById('direct-submit-btn');
+        function cancelDisambiguation() {
+            const container = document.getElementById('scrobble-disambig-container');
+            if (container) container.style.display = 'none';
+            const form = document.getElementById('direct-scrobble-form');
+            if (form) form.style.display = 'flex';
+        }
+
+        async function submitDirectScrobble(action = 'watched', selectedCandidate = null) {
+            const isStart = action === 'start';
+            const btn = isStart ? document.getElementById('direct-start-btn') : document.getElementById('direct-submit-btn');
             const msgBox = document.getElementById('direct-status-msg');
             const mediaType = document.getElementById('direct-type-select').value;
             const yearVal = document.getElementById('direct-year-input').value.trim();
             const year = yearVal ? parseInt(yearVal, 10) : undefined;
+            const idVal = document.getElementById('direct-id-input')?.value.trim() || '';
 
             let media;
-            if (mediaType === 'episode') {
+            if (selectedCandidate) {
+                // User picked a movie from Option A Disambiguation
+                media = {
+                    media_type: 'movie',
+                    title: selectedCandidate.title,
+                    year: selectedCandidate.year,
+                    ids: selectedCandidate.ids || {}
+                };
+                cancelDisambiguation();
+            } else if (mediaType === 'episode') {
                 const showTitle = document.getElementById('direct-show-input').value.trim();
                 const epTitle = document.getElementById('direct-title-input').value.trim();
                 const seasonNum = parseInt(document.getElementById('direct-season-input').value, 10) || 1;
@@ -1116,16 +1394,55 @@
                     alert('Please enter a Movie Title');
                     return;
                 }
+
+                // Parse direct ID if entered
+                const ids = {};
+                if (idVal) {
+                    if (idVal.startsWith('tt')) {
+                        ids.imdb = idVal;
+                    } else if (!isNaN(parseInt(idVal, 10))) {
+                        ids.tmdb = parseInt(idVal, 10);
+                    }
+                }
+
+                // Option A Disambiguation:
+                // If user didn't specify a year or ID, check if multiple matches exist on Trakt
+                if (!year && Object.keys(ids).length === 0) {
+                    try {
+                        const searchUrl = isDemo ? `/api/search?demo=true&query=${encodeURIComponent(movieTitle)}&type=movie` : `/api/search?query=${encodeURIComponent(movieTitle)}&type=movie`;
+                        const checkRes = await fetch(searchUrl);
+                        if (checkRes.ok) {
+                            const checkData = await checkRes.json();
+                            const results = (checkData.results || []).filter(r => (r.type === 'movie' || r.movie));
+                            if (results.length > 1) {
+                                // Show Option A Disambiguation Selector
+                                renderDisambiguationList(results, action, movieTitle);
+                                return;
+                            } else if (results.length === 1) {
+                                const cand = results[0].movie || results[0];
+                                ids.trakt = cand.ids?.trakt;
+                                if (cand.ids?.imdb) ids.imdb = cand.ids.imdb;
+                                if (cand.ids?.tmdb) ids.tmdb = cand.ids.tmdb;
+                            }
+                        }
+                    } catch (e) {
+                        // Offline or network error: proceed with title
+                    }
+                }
+
                 media = {
                     media_type: 'movie',
                     title: movieTitle,
-                    year: year
+                    year: year,
+                    ids: ids
                 };
             }
 
-            btn.disabled = true;
-            btn.textContent = 'Syncing...';
-            msgBox.style.display = 'none';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = isStart ? 'Starting...' : 'Syncing...';
+            }
+            if (msgBox) msgBox.style.display = 'none';
 
             try {
                 const url = isDemo ? '/api/scrobble/manual?demo=true' : '/api/scrobble/manual';
@@ -1133,37 +1450,380 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        action: action,
                         media: media,
                         trackers: getSelectedTrackers(),
                         cowatch: isCowatchChecked()
                     })
                 });
                 if (res.ok) {
-                    btn.textContent = '✓ Watched!';
-                    btn.style.background = '#059669';
-                    msgBox.style.display = 'block';
-                    msgBox.style.background = '#064e3b';
-                    msgBox.style.color = '#a7f3d0';
-                    msgBox.textContent = '✓ Successfully marked as watched across selected trackers!';
+                    if (btn) {
+                        btn.textContent = isStart ? '▶️ Started!' : '✓ Watched!';
+                        btn.style.background = isStart ? '#0284c7' : '#059669';
+                    }
+                    if (msgBox) {
+                        msgBox.style.display = 'block';
+                        msgBox.style.background = '#064e3b';
+                        msgBox.style.color = '#a7f3d0';
+                        msgBox.textContent = isStart
+                            ? `▶️ Playback started for "${media.title}". Visible in Active Sessions!`
+                            : `✓ Successfully marked "${media.title}" as watched across selected trackers!`;
+                    }
                     fetchEvents();
                     fetchPlayback();
                     setTimeout(() => closeScrobbleModal(), 1400);
                 } else {
                     const err = await res.json();
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = isStart ? '▶️ Just Started Watching' : '✓ Mark Watched';
+                    }
+                    if (msgBox) {
+                        msgBox.style.display = 'block';
+                        msgBox.style.background = '#7f1d1d';
+                        msgBox.style.color = '#fee2e2';
+                        msgBox.textContent = 'Error: ' + (err.detail || 'Failed to scrobble');
+                    }
+                }
+            } catch (e) {
+                if (btn) {
                     btn.disabled = false;
-                    btn.textContent = '✓ Mark Watched';
+                    btn.textContent = isStart ? '▶️ Just Started Watching' : '✓ Mark Watched';
+                }
+                if (msgBox) {
                     msgBox.style.display = 'block';
                     msgBox.style.background = '#7f1d1d';
                     msgBox.style.color = '#fee2e2';
-                    msgBox.textContent = 'Error: ' + (err.detail || 'Failed to scrobble');
+                    msgBox.textContent = 'Error: ' + e.message;
                 }
-            } catch (e) {
-                btn.disabled = false;
-                btn.textContent = '✓ Mark Watched';
-                msgBox.style.display = 'block';
-                msgBox.style.background = '#7f1d1d';
-                msgBox.style.color = '#fee2e2';
-                msgBox.textContent = 'Error: ' + e.message;
+            }
+        }
+
+        function renderDisambiguationList(results, action, queryTitle) {
+            const container = document.getElementById('scrobble-disambig-container');
+            const list = document.getElementById('scrobble-disambig-list');
+            const form = document.getElementById('direct-scrobble-form');
+            if (!container || !list) return;
+
+            let html = '';
+            for (const item of results) {
+                const media = item.movie || item;
+                const title = media.title;
+                const year = media.year ? `(${media.year})` : '';
+                const imdb = media.ids?.imdb ? `[IMDb: ${media.ids.imdb}]` : '';
+                const overview = media.overview ? media.overview : '';
+                const candidateJson = encodeURIComponent(JSON.stringify({
+                    title: media.title,
+                    year: media.year,
+                    ids: media.ids || {}
+                }));
+
+                html += `
+                <div class="disambig-card" onclick="submitDirectScrobble('${action}', JSON.parse(decodeURIComponent('${candidateJson}')))"
+                     style="background:#1e293b;border:1px solid #334155;border-radius:6px;padding:8px 12px;cursor:pointer;transition:all 0.15s ease;display:flex;justify-content:space-between;align-items:center;"
+                     onmouseover="this.style.borderColor='#38bdf8';this.style.background='#0f172a';"
+                     onmouseout="this.style.borderColor='#334155';this.style.background='#1e293b';">
+                    <div style="flex:1;min-width:0;padding-right:10px;">
+                        <div style="font-weight:600;color:#f8fafc;font-size:13px;display:flex;align-items:center;gap:6px;">
+                            <span>🎬</span> <span>${title} ${year}</span>
+                            ${imdb ? `<span style="font-size:10px;background:#334155;color:#94a3b8;padding:1px 5px;border-radius:3px;">${imdb}</span>` : ''}
+                        </div>
+                        ${overview ? `<p style="color:#94a3b8;font-size:11px;margin:3px 0 0;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${overview}</p>` : ''}
+                    </div>
+                    <button type="button" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;font-size:11px;padding:5px 10px;white-space:nowrap;">
+                        Choose &rarr;
+                    </button>
+                </div>`;
+            }
+            list.innerHTML = html;
+            container.style.display = 'block';
+            if (form) form.style.display = 'none';
+        }
+
+        // Two-Way Reconciliation Settings Modal Logic
+        let activeReconSettingsTab = 'plex';
+
+        function switchReconSettingsTab(srv) {
+            activeReconSettingsTab = srv;
+            ['plex', 'jellyfin', 'emby'].forEach(s => {
+                const btn = document.getElementById(`recon-tab-btn-${s}`);
+                const panel = document.getElementById(`recon-panel-${s}`);
+                if (btn) {
+                    if (s === srv) {
+                        btn.style.background = s === 'plex' ? '#0284c7' : s === 'jellyfin' ? '#7c3aed' : '#059669';
+                        btn.style.color = '#fff';
+                    } else {
+                        btn.style.background = '#1e293b';
+                        btn.style.color = '#cbd5e1';
+                    }
+                }
+                if (panel) {
+                    panel.style.display = (s === srv) ? 'block' : 'none';
+                }
+            });
+        }
+
+        function openReconcileSettingsModal(server = 'plex') {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            const modal = document.getElementById('reconcile-settings-modal');
+            if (modal) modal.style.display = 'flex';
+            const srv = (server && ['plex', 'jellyfin', 'emby'].includes(String(server).toLowerCase())) ? String(server).toLowerCase() : 'plex';
+            switchReconSettingsTab(srv);
+            fetchReconcileSettings();
+        }
+
+        function closeReconcileSettingsModal() {
+            const modal = document.getElementById('reconcile-settings-modal');
+            if (modal) modal.style.display = 'none';
+            const msg = document.getElementById('recon-settings-msg');
+            if (msg) msg.style.display = 'none';
+            ['plex', 'jellyfin', 'emby'].forEach(s => {
+                const testStatus = document.getElementById(`recon-test-status-${s}`);
+                if (testStatus) testStatus.innerText = '';
+            });
+        }
+
+        async function fetchReconcileSettings() {
+            const url = isDemo ? '/api/sync/settings?demo=true' : '/api/sync/settings';
+            try {
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('Failed to load settings');
+                const data = await res.json();
+
+                // Plex
+                const plexUrlInput = document.getElementById('recon-plex-url');
+                if (plexUrlInput) plexUrlInput.value = data.plex_url || '';
+                const plexTokenInput = document.getElementById('recon-plex-token');
+                const plexBadge = document.getElementById('recon-token-badge-plex');
+                if (plexTokenInput) plexTokenInput.value = data.masked_plex_token || '';
+                if (plexBadge) {
+                    if (data.is_plex_token_set || data.has_plex_token) {
+                        plexBadge.innerText = '✓ Configured';
+                        plexBadge.style.color = '#10b981';
+                    } else {
+                        plexBadge.innerText = 'Not Configured';
+                        plexBadge.style.color = '#94a3b8';
+                    }
+                }
+
+                // Jellyfin
+                const jfUrlInput = document.getElementById('recon-jellyfin-url');
+                if (jfUrlInput) jfUrlInput.value = data.jellyfin_url || '';
+                const jfTokenInput = document.getElementById('recon-jellyfin-token');
+                const jfUserInput = document.getElementById('recon-jellyfin-user-id');
+                const jfBadge = document.getElementById('recon-token-badge-jellyfin');
+                if (jfTokenInput) jfTokenInput.value = data.masked_jellyfin_token || '';
+                if (jfUserInput) jfUserInput.value = data.jellyfin_user_id || '';
+                if (jfBadge) {
+                    if (data.is_jellyfin_token_set || data.has_jellyfin_token) {
+                        jfBadge.innerText = '✓ Configured';
+                        jfBadge.style.color = '#10b981';
+                    } else {
+                        jfBadge.innerText = 'Not Configured';
+                        jfBadge.style.color = '#94a3b8';
+                    }
+                }
+
+                // Emby
+                const embyUrlInput = document.getElementById('recon-emby-url');
+                if (embyUrlInput) embyUrlInput.value = data.emby_url || '';
+                const embyTokenInput = document.getElementById('recon-emby-token');
+                const embyUserInput = document.getElementById('recon-emby-user-id');
+                const embyBadge = document.getElementById('recon-token-badge-emby');
+                if (embyTokenInput) embyTokenInput.value = data.masked_emby_token || '';
+                if (embyUserInput) embyUserInput.value = data.emby_user_id || '';
+                if (embyBadge) {
+                    if (data.is_emby_token_set || data.has_emby_token) {
+                        embyBadge.innerText = '✓ Configured';
+                        embyBadge.style.color = '#10b981';
+                    } else {
+                        embyBadge.innerText = 'Not Configured';
+                        embyBadge.style.color = '#94a3b8';
+                    }
+                }
+
+                // Primary server selection
+                const srvTypeSelect = document.getElementById('recon-server-type-select');
+                if (srvTypeSelect && data.server_type) srvTypeSelect.value = data.server_type;
+
+                const intSelect = document.getElementById('recon-interval-select');
+                if (intSelect) intSelect.value = String(data.interval_minutes !== undefined ? data.interval_minutes : 60);
+
+                const dirSelect = document.getElementById('recon-direction-select');
+                if (dirSelect) dirSelect.value = data.direction_default || 'all';
+
+                const ratingsCheck = document.getElementById('recon-ratings-check');
+                if (ratingsCheck) ratingsCheck.checked = Boolean(data.sync_ratings);
+
+                const startupCheck = document.getElementById('recon-startup-check');
+                if (startupCheck) startupCheck.checked = Boolean(data.sync_on_startup);
+            } catch (err) {
+                console.error('Error fetching reconcile settings:', err);
+            }
+        }
+
+        function toggleReconTokenVisibility(inputId, btnId) {
+            const tokenInput = document.getElementById(inputId);
+            const btn = document.getElementById(btnId);
+            if (!tokenInput) return;
+            if (tokenInput.type === 'password') {
+                tokenInput.type = 'text';
+                if (btn) btn.innerText = '🙈';
+            } else {
+                tokenInput.type = 'password';
+                if (btn) btn.innerText = '👁️';
+            }
+        }
+
+        async function testReconcileConnection(server = 'plex') {
+            const srv = (server || activeReconSettingsTab || 'plex').toLowerCase();
+            const testBtn = document.getElementById(`recon-test-btn-${srv}`);
+            const statusEl = document.getElementById(`recon-test-status-${srv}`);
+            const urlVal = document.getElementById(`recon-${srv}-url`)?.value.trim() || '';
+            const tokenVal = document.getElementById(`recon-${srv}-token`)?.value.trim() || '';
+            const userIdVal = document.getElementById(`recon-${srv}-user-id`)?.value.trim() || '';
+
+            if (testBtn) {
+                testBtn.disabled = true;
+                testBtn.innerText = 'Testing...';
+            }
+            if (statusEl) {
+                statusEl.innerText = `Connecting to ${srv.charAt(0).toUpperCase() + srv.slice(1)}...`;
+                statusEl.style.color = '#38bdf8';
+            }
+
+            try {
+                const url = isDemo ? '/api/sync/test-connection?demo=true' : '/api/sync/test-connection';
+                const body = { server: srv, url: urlVal, token: tokenVal };
+                if (userIdVal) body.user_id = userIdVal;
+
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'connected') {
+                    if (statusEl) {
+                        const ver = data.version ? ` (v${data.version})` : '';
+                        statusEl.innerText = `● Connected${ver}`;
+                        statusEl.style.color = '#10b981';
+                    }
+                } else {
+                    if (statusEl) {
+                        statusEl.innerText = `● ${data.message || 'Connection failed'}`;
+                        statusEl.style.color = '#ef4444';
+                    }
+                }
+            } catch (err) {
+                if (statusEl) {
+                    statusEl.innerText = `● Error: ${err.message}`;
+                    statusEl.style.color = '#ef4444';
+                }
+            } finally {
+                if (testBtn) {
+                    testBtn.disabled = false;
+                    testBtn.innerText = '🔌 Test Connection';
+                }
+            }
+        }
+
+        async function saveReconcileSettings() {
+            const saveBtn = document.getElementById('recon-save-btn');
+            const msgBox = document.getElementById('recon-settings-msg');
+
+            const srvType = document.getElementById('recon-server-type-select')?.value || 'plex';
+            const plexUrlVal = document.getElementById('recon-plex-url')?.value.trim() || '';
+            const plexTokenVal = document.getElementById('recon-plex-token')?.value.trim() || '';
+            const jfUrlVal = document.getElementById('recon-jellyfin-url')?.value.trim() || '';
+            const jfTokenVal = document.getElementById('recon-jellyfin-token')?.value.trim() || '';
+            const jfUserIdVal = document.getElementById('recon-jellyfin-user-id')?.value.trim() || '';
+            const embyUrlVal = document.getElementById('recon-emby-url')?.value.trim() || '';
+            const embyTokenVal = document.getElementById('recon-emby-token')?.value.trim() || '';
+            const embyUserIdVal = document.getElementById('recon-emby-user-id')?.value.trim() || '';
+
+            const intVal = parseInt(document.getElementById('recon-interval-select')?.value, 10) || 0;
+            const dirVal = document.getElementById('recon-direction-select')?.value || 'all';
+            const ratingsVal = document.getElementById('recon-ratings-check')?.checked || false;
+            const startupVal = document.getElementById('recon-startup-check')?.checked || false;
+
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.innerText = 'Saving...';
+            }
+            if (msgBox) msgBox.style.display = 'none';
+
+            try {
+                const url = isDemo ? '/api/sync/settings?demo=true' : '/api/sync/settings';
+                const payload = {
+                    server_type: srvType,
+                    plex_url: plexUrlVal,
+                    jellyfin_url: jfUrlVal,
+                    jellyfin_user_id: jfUserIdVal,
+                    emby_url: embyUrlVal,
+                    emby_user_id: embyUserIdVal,
+                    interval_minutes: intVal,
+                    direction_default: dirVal,
+                    sync_ratings: ratingsVal,
+                    sync_on_startup: startupVal
+                };
+                if (plexTokenVal && !plexTokenVal.startsWith('••••') && !plexTokenVal.startsWith('●●●●')) {
+                    payload.plex_token = plexTokenVal;
+                }
+                if (jfTokenVal && !jfTokenVal.startsWith('••••') && !jfTokenVal.startsWith('●●●●')) {
+                    payload.jellyfin_token = jfTokenVal;
+                }
+                if (embyTokenVal && !embyTokenVal.startsWith('••••') && !embyTokenVal.startsWith('●●●●')) {
+                    payload.emby_token = embyTokenVal;
+                }
+
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    if (saveBtn) {
+                        saveBtn.innerText = '✓ Saved!';
+                        saveBtn.style.background = '#059669';
+                    }
+                    if (msgBox) {
+                        msgBox.style.display = 'block';
+                        msgBox.style.background = '#064e3b';
+                        msgBox.style.color = '#a7f3d0';
+                        msgBox.innerText = '✓ Reconciliation settings saved successfully!';
+                    }
+                    setTimeout(() => {
+                        closeReconcileSettingsModal();
+                        window.location.reload();
+                    }, 900);
+                } else {
+                    const err = await res.json();
+                    if (saveBtn) {
+                        saveBtn.disabled = false;
+                        saveBtn.innerText = '💾 Save Settings';
+                    }
+                    if (msgBox) {
+                        msgBox.style.display = 'block';
+                        msgBox.style.background = '#7f1d1d';
+                        msgBox.style.color = '#fee2e2';
+                        msgBox.innerText = 'Error: ' + (err.detail || 'Failed to save settings');
+                    }
+                }
+            } catch (err) {
+                if (saveBtn) {
+                    saveBtn.disabled = false;
+                    saveBtn.innerText = '💾 Save Settings';
+                }
+                if (msgBox) {
+                    msgBox.style.display = 'block';
+                    msgBox.style.background = '#7f1d1d';
+                    msgBox.style.color = '#fee2e2';
+                    msgBox.innerText = 'Error: ' + err.message;
+                }
             }
         }
 
@@ -2142,15 +2802,52 @@
         }
 
         // Two-Way Library Reconciliation Logic
+        let activeReconcileServer = 'plex';
         let reconcileDiffItems = [];
         let reconcileActiveFilter = 'all';
         let reconcileSelectedIds = new Set();
 
-        function openReconcileModal(force = false) {
+        function switchReconcileServer(srv) {
+            activeReconcileServer = srv;
+            ['plex', 'jellyfin', 'emby'].forEach(s => {
+                const btn = document.getElementById(`recon-srv-btn-${s}`);
+                if (btn) {
+                    if (s === srv) {
+                        btn.style.background = s === 'plex' ? '#0284c7' : s === 'jellyfin' ? '#7c3aed' : '#059669';
+                        btn.style.color = '#fff';
+                        btn.style.fontWeight = '600';
+                        btn.style.borderColor = 'transparent';
+                    } else {
+                        btn.style.background = '#1e293b';
+                        btn.style.border = '1px solid #334155';
+                        btn.style.color = '#cbd5e1';
+                        btn.style.fontWeight = 'normal';
+                    }
+                }
+            });
+
+            const srvDisplayName = srv === 'plex' ? 'Plex' : srv === 'jellyfin' ? 'Jellyfin' : 'Emby';
+            const colHeader = document.getElementById('reconcile-server-col-header');
+            if (colHeader) colHeader.innerText = `${srvDisplayName} Server`;
+
+            const labelDest = document.getElementById('label-filter-dest');
+            if (labelDest) labelDest.innerText = srvDisplayName;
+
+            const labelSrc = document.getElementById('label-filter-src');
+            if (labelSrc) labelSrc.innerText = srvDisplayName;
+
+            fetchDiscrepancies(false, srv);
+        }
+
+        function openReconcileModal(force = false, server = null) {
             const modal = document.getElementById('reconcile-modal');
             if (!modal) return;
             modal.style.display = 'flex';
-            fetchDiscrepancies(force);
+            if (server && ['plex', 'jellyfin', 'emby'].includes(String(server).toLowerCase())) {
+                switchReconcileServer(String(server).toLowerCase());
+            } else {
+                fetchDiscrepancies(force, activeReconcileServer);
+            }
         }
 
         function closeReconcileModal() {
@@ -2158,16 +2855,19 @@
             if (modal) modal.style.display = 'none';
         }
 
-        async function fetchDiscrepancies(force = false) {
+        async function fetchDiscrepancies(force = false, srv = null) {
+            const targetSrv = srv || activeReconcileServer || 'plex';
             const tbody = document.getElementById('reconcile-tbody');
             const badge = document.getElementById('reconcile-count-badge');
             if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#38bdf8;">Scanning media server & Trakt libraries...</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:24px;color:#38bdf8;">Scanning ${targetSrv.toUpperCase()} & Trakt libraries...</td></tr>`;
             }
             if (badge) badge.innerText = 'Scanning...';
 
             try {
-                const url = (isDemo ? '/api/sync/diff?demo=true' : '/api/sync/diff') + (force ? '?force=true' : '');
+                const base = isDemo ? '/api/sync/diff?demo=true' : '/api/sync/diff';
+                const sep = base.includes('?') ? '&' : '?';
+                const url = `${base}${sep}server=${targetSrv}${force ? '&force=true' : ''}`;
                 const res = await fetch(url);
                 if (res.ok) {
                     const data = await res.json();
@@ -2191,7 +2891,7 @@
         function updateReconcileCounts() {
             const allCount = reconcileDiffItems.length;
             const traktCount = reconcileDiffItems.filter(i => i.status === 'trakt_only').length;
-            const plexCount = reconcileDiffItems.filter(i => i.status === 'plex_only').length;
+            const srvCount = reconcileDiffItems.filter(i => i.status === 'plex_only' || i.status === 'jellyfin_only' || i.status === 'emby_only' || i.status === 'server_only').length;
             const ratingCount = reconcileDiffItems.filter(i => i.status === 'rating_mismatch').length;
 
             const cAll = document.getElementById('count-all');
@@ -2202,7 +2902,7 @@
 
             if (cAll) cAll.innerText = allCount;
             if (cTrakt) cTrakt.innerText = traktCount;
-            if (cPlex) cPlex.innerText = plexCount;
+            if (cPlex) cPlex.innerText = srvCount;
             if (cRatings) cRatings.innerText = ratingCount;
             if (badge) badge.innerText = `${allCount} Discrepanc${allCount === 1 ? 'y' : 'ies'}`;
         }
@@ -2227,7 +2927,9 @@
             if (!tbody) return;
 
             let items = reconcileDiffItems;
-            if (reconcileActiveFilter !== 'all') {
+            if (reconcileActiveFilter === 'server_only') {
+                items = items.filter(i => i.status === 'plex_only' || i.status === 'jellyfin_only' || i.status === 'emby_only' || i.status === 'server_only');
+            } else if (reconcileActiveFilter !== 'all') {
                 items = items.filter(i => i.status === reconcileActiveFilter);
             }
 
@@ -2244,14 +2946,17 @@
                     ? `${item.series_title} S${String(item.season).padStart(2, '0')}E${String(item.episode).padStart(2, '0')} &bull; ${item.title}`
                     : `${item.title} (${item.year || 'N/A'})`;
 
-                let plexStatusHtml = '';
-                if (item.plex_watched) {
-                    plexStatusHtml = '<span style="color:#10b981;font-weight:600;">✓ Watched</span>';
+                const srvWatched = item.server_watched !== undefined ? item.server_watched : item.plex_watched;
+                const srvRating = item.server_rating !== undefined ? item.server_rating : item.plex_rating;
+
+                let srvStatusHtml = '';
+                if (srvWatched) {
+                    srvStatusHtml = '<span style="color:#10b981;font-weight:600;">✓ Watched</span>';
                 } else {
-                    plexStatusHtml = '<span style="color:#64748b;">Unwatched</span>';
+                    srvStatusHtml = '<span style="color:#64748b;">Unwatched</span>';
                 }
-                if (item.plex_rating !== null && item.plex_rating !== undefined) {
-                    plexStatusHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#facc15;padding:1px 5px;border-radius:4px;font-size:11px;">★ ${item.plex_rating}</span>`;
+                if (srvRating !== null && srvRating !== undefined) {
+                    srvStatusHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#facc15;padding:1px 5px;border-radius:4px;font-size:11px;">★ ${srvRating}</span>`;
                 }
 
                 let traktStatusHtml = '';
@@ -2265,8 +2970,10 @@
                 }
 
                 let actionBadge = '';
-                if (item.action_recommended === 'mark_plex_watched') {
-                    actionBadge = '<span style="background:#065f46;color:#a7f3d0;border:1px solid #059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">&rarr; Mark Plex</span>';
+                const itemSrvName = (item.server || activeReconcileServer || 'Plex');
+                const capSrv = itemSrvName.charAt(0).toUpperCase() + itemSrvName.slice(1);
+                if (item.action_recommended && item.action_recommended.startsWith('mark_')) {
+                    actionBadge = `<span style="background:#065f46;color:#a7f3d0;border:1px solid #059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">&rarr; Mark ${capSrv}</span>`;
                 } else if (item.action_recommended === 'sync_to_trakt') {
                     actionBadge = '<span style="background:#1e3a8a;color:#93c5fd;border:1px solid #2563eb;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">&rarr; Push Trakt</span>';
                 } else {
@@ -2280,7 +2987,7 @@
                     </td>
                     <td style="padding:10px 14px;color:#f8fafc;font-weight:500;font-size:13px;">${titleStr}</td>
                     <td style="padding:10px 14px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 6px;border-radius:4px;font-size:11px;text-transform:uppercase;">${item.type}</span></td>
-                    <td style="padding:10px 14px;font-size:13px;">${plexStatusHtml}</td>
+                    <td style="padding:10px 14px;font-size:13px;">${srvStatusHtml}</td>
                     <td style="padding:10px 14px;font-size:13px;">${traktStatusHtml}</td>
                     <td style="padding:10px 14px;">${actionBadge}</td>
                 </tr>
@@ -2294,7 +3001,9 @@
         function toggleSelectAllReconcile(masterCb) {
             const isChecked = masterCb.checked;
             let items = reconcileDiffItems;
-            if (reconcileActiveFilter !== 'all') {
+            if (reconcileActiveFilter === 'server_only') {
+                items = items.filter(i => i.status === 'plex_only' || i.status === 'jellyfin_only' || i.status === 'emby_only' || i.status === 'server_only');
+            } else if (reconcileActiveFilter !== 'all') {
                 items = items.filter(i => i.status === reconcileActiveFilter);
             }
             items.forEach(item => {
@@ -2325,7 +3034,7 @@
         async function executeSelectedReconcile() {
             const ids = Array.from(reconcileSelectedIds);
             if (ids.length === 0) return;
-            await runReconciliation({ item_ids: ids });
+            await runReconciliation({ item_ids: ids, server: activeReconcileServer });
         }
 
         async function executeAllReconcile() {
@@ -2333,11 +3042,14 @@
                 alert('No discrepancies to reconcile.');
                 return;
             }
-            if (!confirm(`Reconcile all ${reconcileDiffItems.length} discrepancies between media server and Trakt?`)) return;
-            await runReconciliation({ direction: 'all' });
+            const srvDisplayName = activeReconcileServer.charAt(0).toUpperCase() + activeReconcileServer.slice(1);
+            if (!confirm(`Reconcile all ${reconcileDiffItems.length} discrepancies between ${srvDisplayName} and Trakt?`)) return;
+            await runReconciliation({ direction: 'all', server: activeReconcileServer });
         }
 
-        async function quickReconcileTraktToPlex(btn) {
+        async function quickReconcileTraktToPlex(btn, server = null) {
+            const srv = server || activeReconcileServer || 'plex';
+            const capSrv = srv.charAt(0).toUpperCase() + srv.slice(1);
             if (btn) {
                 btn.disabled = true;
                 btn.innerText = 'Syncing...';
@@ -2347,7 +3059,7 @@
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ direction: 'trakt_to_plex' }),
+                    body: JSON.stringify({ direction: 'trakt_to_server', server: srv }),
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -2362,7 +3074,7 @@
                     }
                     setTimeout(() => {
                         if (btn) {
-                            btn.innerText = '⚡ Quick Sync (Trakt → Plex)';
+                            btn.innerText = `⚡ Quick Sync (Trakt → ${capSrv})`;
                             btn.style.background = '#10b981';
                             btn.disabled = false;
                         }

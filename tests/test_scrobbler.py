@@ -2299,7 +2299,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v2.1.0" in html
+    assert "v2.2.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -4194,7 +4194,7 @@ def test_sync_api_endpoints_and_admin_security():
 
 
 def test_dashboard_reconciliation_elements():
-    """Verify dashboard HTML includes Two-Way Reconciliation card and modal dialog."""
+    """Verify dashboard HTML includes Two-Way Reconciliation card and modal dialogs."""
     client = TestClient(app)
 
     res = client.get("/")
@@ -4202,12 +4202,570 @@ def test_dashboard_reconciliation_elements():
     html_content = res.text
     assert "Two-Way Library Reconciliation" in html_content
     assert 'id="reconcile-modal"' in html_content
+    assert 'id="reconcile-settings-modal"' in html_content
+    assert 'id="recon-plex-url"' in html_content
+    assert 'id="recon-plex-token"' in html_content
+    assert 'id="recon-tab-btn-jellyfin"' in html_content
+    assert 'id="recon-tab-btn-emby"' in html_content
+    assert 'id="recon-srv-btn-jellyfin"' in html_content
+    assert 'id="recon-srv-btn-emby"' in html_content
+    assert 'id="recon-jellyfin-url"' in html_content
+    assert 'id="recon-emby-url"' in html_content
+    assert 'id="scrobble-disambig-container"' in html_content
     assert "reconcile-diff-badge" in html_content
 
     # In demo mode
     res_demo = client.get("/demo")
     assert res_demo.status_code == 200
     assert "Two-Way Library Reconciliation" in res_demo.text
+    assert 'id="reconcile-settings-modal"' in res_demo.text
+    assert 'id="recon-tab-btn-jellyfin"' in res_demo.text
+    assert 'id="recon-srv-btn-jellyfin"' in res_demo.text
+
+
+def test_settings_manager_reconciliation(tmp_path):
+    """Verify SettingsManager reconciliation getter, token masking, and updates."""
+    from app.services.settings_manager import SettingsManager
+
+    settings_file = tmp_path / "settings.json"
+    sm = SettingsManager(settings_file=settings_file)
+
+    # 1. Defaults
+    rec = sm.get_reconciliation_settings(mask_token=True)
+    assert "plex_url" in rec
+    assert "interval_minutes" in rec
+    assert "sync_ratings" in rec
+    assert "sync_on_startup" in rec
+
+    # 2. Update settings with a secret token
+    sm.update_reconciliation_settings({
+        "plex_url": "http://plex.local:32400",
+        "plex_token": "super-secret-token-1234",
+        "interval_minutes": 15,
+        "sync_ratings": False,
+        "sync_on_startup": False,
+    })
+
+    # Masked
+    masked = sm.get_reconciliation_settings(mask_token=True)
+    assert masked["plex_url"] == "http://plex.local:32400"
+    assert masked["plex_token"] == "••••••••1234"
+    assert masked["has_token"] is True
+    assert masked["interval_minutes"] == 15
+    assert masked["sync_ratings"] is False
+    assert masked["sync_on_startup"] is False
+
+    # Unmasked
+    unmasked = sm.get_reconciliation_settings(mask_token=False)
+    assert unmasked["plex_token"] == "super-secret-token-1234"
+
+    # 3. Update without modifying token (passing back masked token placeholder)
+    sm.update_reconciliation_settings({
+        "plex_token": "••••••••1234",
+        "interval_minutes": 60,
+    })
+    # Token should remain unchanged
+    assert sm.get_reconciliation_settings(mask_token=False)["plex_token"] == "super-secret-token-1234"
+    assert sm.get_reconciliation_settings(mask_token=False)["interval_minutes"] == 60
+
+    # 4. Clear token explicitly
+    sm.update_reconciliation_settings({
+        "clear_token": True,
+    })
+    assert sm.get_reconciliation_settings(mask_token=False)["plex_token"] == ""
+    assert sm.get_reconciliation_settings(mask_token=True)["has_token"] is False
+
+
+@pytest.mark.asyncio
+async def test_sync_settings_api_and_connection_test():
+    """Verify /api/sync/settings and /api/sync/test-connection endpoints."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import reverse_sync_mgr
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
+        # 1. Unauthenticated -> 401
+        res = client.get("/api/sync/settings")
+        assert res.status_code == 401
+
+        res_post = client.post("/api/sync/settings", json={"interval_minutes": 45})
+        assert res_post.status_code == 401
+
+        res_test = client.post("/api/sync/test-connection", json={"plex_url": "http://mock-plex:32400"})
+        assert res_test.status_code == 401
+
+        headers = {"x-webhook-secret": "test_secret"}
+
+        # 2. Authenticated GET /api/sync/settings
+        res_get = client.get("/api/sync/settings", headers=headers)
+        assert res_get.status_code == 200
+        data = res_get.json()
+        assert "interval_minutes" in data
+        assert "plex_url" in data
+
+        # 3. Authenticated POST /api/sync/settings
+        res_update = client.post("/api/sync/settings", headers=headers, json={
+            "plex_url": "http://plex.local:32400",
+            "plex_token": "test-new-token-9999",
+            "interval_minutes": 45,
+            "sync_ratings": True,
+            "sync_on_startup": False
+        })
+        assert res_update.status_code == 200
+        saved = res_update.json()["settings"]
+        assert saved["interval_minutes"] == 45
+        assert saved["sync_on_startup"] is False
+        assert saved["plex_token"] == "••••••••9999"
+
+        # 4. Connection test missing params -> status unconfigured, error, or unreachable
+        res_bad_test = client.post("/api/sync/test-connection", headers=headers, json={"url": "", "token": ""})
+        assert res_bad_test.status_code == 200
+        assert res_bad_test.json().get("status") in ("unconfigured", "error", "unreachable")
+
+        # 5. Connection test successful mock
+        with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test:
+            mock_test.return_value = {
+                "connected": True,
+                "server_name": "Living Room Plex",
+                "version": "1.41.0.8992",
+                "message": "Successfully connected to Living Room Plex (v1.41.0.8992)",
+            }
+            res_conn = client.post("/api/sync/test-connection", headers=headers, json={
+                "plex_url": "http://plex.local:32400",
+                "plex_token": "••••••••9999"
+            })
+            assert res_conn.status_code == 200
+            assert res_conn.json()["connected"] is True
+            assert res_conn.json()["server_name"] == "Living Room Plex"
+            # Verify test_connection used the actual unmasked token
+            mock_test.assert_called_once()
+            assert mock_test.call_args.kwargs.get("url") == "http://plex.local:32400"
+            assert mock_test.call_args.kwargs.get("token") == "test-new-token-9999"
+
+
+@pytest.mark.asyncio
+async def test_mediabrowser_api_client_operations():
+    """Verify JellyfinApiClient and EmbyApiClient connection checks, user resolution, library views, and played status."""
+    from app.clients.jellyfin_api_client import JellyfinApiClient
+    from app.clients.emby_api_client import EmbyApiClient
+
+    # 1. Unconfigured checks
+    unconf_jf = JellyfinApiClient(base_url="", token="")
+    assert not unconf_jf.is_configured()
+    res = await unconf_jf.check_connection()
+    assert res["status"] == "unconfigured"
+    assert await unconf_jf.get_library_sections() == []
+    assert await unconf_jf.get_movies("v1") == []
+    assert await unconf_jf.get_episodes("v2") == []
+    assert not await unconf_jf.mark_as_watched("item-1")
+    assert not await unconf_jf.set_user_rating("item-1", 8.0)
+
+    # 2. Mock handler for Jellyfin / Emby REST API
+    async def mock_jf_handler(request: httpx.Request):
+        url_str = str(request.url)
+        # Auth check
+        token_hdr = request.headers.get("x-emby-token") or request.headers.get("authorization")
+        if not token_hdr or "bad-token" in str(token_hdr):
+            return httpx.Response(401, text="Unauthorized")
+
+        if "/System/Info" in url_str:
+            return httpx.Response(200, json={"ServerName": "My Jellyfin", "Version": "10.9.11", "Id": "jf-sys-id"})
+        elif "/Users" in url_str and "/Items" not in url_str and "/Views" not in url_str:
+            return httpx.Response(200, json=[
+                {"Id": "uid-guest", "Name": "guest", "Policy": {"IsAdministrator": False}},
+                {"Id": "uid-admin", "Name": "admin", "Policy": {"IsAdministrator": True}},
+            ])
+        elif "/Users/uid-admin/Views" in url_str:
+            return httpx.Response(200, json={
+                "Items": [
+                    {"Id": "view-movies", "Name": "Movies", "CollectionType": "movies"},
+                    {"Id": "view-shows", "Name": "TV Shows", "CollectionType": "tvshows"},
+                    {"Id": "view-music", "Name": "Music", "CollectionType": "music"},
+                ]
+            })
+        elif "/Rating" in url_str:
+            return httpx.Response(200, json={"Rating": 8.0})
+        elif "/PlayedItems/m-102" in url_str:
+            if request.method == "POST":
+                return httpx.Response(200, json={"Played": True})
+            elif request.method == "DELETE":
+                return httpx.Response(200, json={"Played": False})
+        elif "/Users/uid-admin/Items" in url_str:
+            if "IncludeItemTypes=Movie" in url_str:
+                return httpx.Response(200, json={
+                    "Items": [
+                        {
+                            "Id": "m-101",
+                            "Name": "Inception",
+                            "ProductionYear": 2010,
+                            "ProviderIds": {"Imdb": "tt1375666", "Tmdb": "27205"},
+                            "UserData": {"Played": True, "PlayCount": 2, "Rating": 9.0},
+                        },
+                        {
+                            "Id": "m-102",
+                            "Name": "Interstellar",
+                            "ProductionYear": 2014,
+                            "ProviderIds": {"Imdb": "tt0816692"},
+                            "UserData": {"Played": False, "PlayCount": 0},
+                        }
+                    ]
+                })
+            elif "IncludeItemTypes=Episode" in url_str:
+                return httpx.Response(200, json={
+                    "Items": [
+                        {
+                            "Id": "ep-201",
+                            "Name": "Good News About Hell",
+                            "SeriesName": "Severance",
+                            "ParentIndexNumber": 1,
+                            "IndexNumber": 1,
+                            "ProductionYear": 2022,
+                            "ProviderIds": {"Imdb": "tt11280740"},
+                            "UserData": {"Played": True, "PlayCount": 1},
+                        }
+                    ]
+                })
+
+        return httpx.Response(404, text="Not Found")
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(mock_jf_handler))
+
+    # Test Jellyfin client
+    jf = JellyfinApiClient(base_url="http://mock-jf:8096", token="valid-jf-token", user_id=None, client=mock_client)
+    assert jf.is_configured()
+    conn = await jf.check_connection()
+    assert conn["status"] == "connected"
+    assert conn["server_name"] == "My Jellyfin"
+    assert conn["version"] == "10.9.11"
+
+    # User auto-detection finds administrator
+    uid = await jf.get_default_user_id()
+    assert uid == "uid-admin"
+
+    # Library sections
+    sections = await jf.get_library_sections()
+    assert len(sections) == 2
+    assert sections[0]["type"] == "movie"
+    assert sections[1]["type"] == "show"
+
+    # Movies
+    movies = await jf.get_movies("view-movies")
+    assert len(movies) == 2
+    assert movies[0]["rating_key"] == "m-101"
+    assert movies[0]["title"] == "Inception"
+    assert movies[0]["is_watched"] is True
+    assert movies[0]["ids"]["imdb"] == "tt1375666"
+    assert movies[0]["rating"] == 9.0
+    assert movies[1]["is_watched"] is False
+
+    # Episodes
+    episodes = await jf.get_episodes("view-shows")
+    assert len(episodes) == 1
+    assert episodes[0]["series_title"] == "Severance"
+    assert episodes[0]["season"] == 1
+    assert episodes[0]["episode"] == 1
+    assert episodes[0]["is_watched"] is True
+
+    # Mark watched / unwatched / rating
+    assert await jf.mark_as_watched("m-102")
+    assert await jf.mark_as_unwatched("m-102")
+    assert await jf.set_user_rating("m-101", 8.0)
+
+    # Test Emby client subclass
+    emby = EmbyApiClient(base_url="http://mock-emby:8096", token="valid-emby-token", user_id="uid-admin", client=mock_client)
+    assert emby.is_configured()
+    assert emby.server_type == "emby"
+    emby_conn = await emby.check_connection()
+    assert emby_conn["status"] == "connected"
+    assert await emby.mark_as_watched("m-102")
+
+
+@pytest.mark.asyncio
+async def test_multi_server_reverse_sync_manager():
+    """Verify ReverseSyncManager multi-server dispatch, scanning, and reconciliation against Jellyfin."""
+    from app.services.reverse_sync_manager import ReverseSyncManager
+    from app.clients.jellyfin_api_client import JellyfinApiClient
+    from app.clients.trakt_client import TraktClient
+    from app.services.loop_prevention import LoopPreventionManager
+
+    loop_prev = LoopPreventionManager()
+
+    # Mock Jellyfin client
+    mock_jf = AsyncMock(spec=JellyfinApiClient)
+    mock_jf.server_type = "jellyfin"
+    mock_jf.is_configured.return_value = True
+    mock_jf.get_library_sections.return_value = [{"key": "sec-m", "type": "movie", "title": "Movies"}]
+    mock_jf.get_movies.return_value = [
+        {
+            "rating_key": "jf-m-1",
+            "title": "Inception",
+            "year": 2010,
+            "is_watched": False,
+            "rating": None,
+            "ids": {"imdb": "tt1375666", "tmdb": 27205},
+        },
+        {
+            "rating_key": "jf-m-2",
+            "title": "Blade Runner 2049",
+            "year": 2017,
+            "is_watched": True,
+            "rating": None,
+            "ids": {"imdb": "tt1856101"},
+        }
+    ]
+    mock_jf.get_episodes.return_value = []
+    mock_jf.mark_as_watched.return_value = True
+
+    # Mock Trakt
+    mock_trakt = AsyncMock(spec=TraktClient)
+    mock_trakt.is_authenticated.return_value = True
+    mock_trakt.get_watched_movies.return_value = [
+        {"plays": 1, "movie": {"title": "Inception", "year": 2010, "ids": {"imdb": "tt1375666"}}}
+    ]
+    mock_trakt.get_watched_shows.return_value = []
+    mock_trakt.get_ratings.return_value = []
+    mock_trakt.sync_history.return_value = {"added": {"movies": 1}}
+
+    sync_mgr = ReverseSyncManager(jellyfin_client=mock_jf, loop_prevention_mgr=loop_prev)
+    sync_mgr.get_trakt = lambda: mock_trakt
+
+    # 1. Scan Jellyfin discrepancies
+    diff = await sync_mgr.scan_discrepancies(force=True, server="jellyfin")
+    assert len(diff) == 2
+    trakt_only = next(i for i in diff if i["status"] == "trakt_only")
+    assert trakt_only["action_recommended"] == "mark_jellyfin_watched"
+    assert trakt_only["server"] == "jellyfin"
+
+    jf_only = next(i for i in diff if i["status"] == "jellyfin_only")
+    assert jf_only["action_recommended"] == "sync_to_trakt"
+    assert jf_only["server"] == "jellyfin"
+
+    # 2. Execute reconciliation for Jellyfin item
+    res = await sync_mgr.execute_reconciliation(item_ids=[trakt_only["id"]], server="jellyfin")
+    assert res["status"] == "success"
+    assert res["reconciled"] == 1
+    mock_jf.mark_as_watched.assert_called_with("jf-m-1")
+    assert loop_prev.is_ignored("jf-m-1")
+
+
+@pytest.mark.asyncio
+async def test_multi_server_sync_settings_and_test_connection_api():
+    """Verify settings persistence and test connection for Jellyfin and Emby."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import reverse_sync_mgr
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
+        headers = {"x-webhook-secret": "test_secret"}
+
+        # 1. Update Jellyfin & Emby settings
+        res = client.post("/api/sync/settings", headers=headers, json={
+            "server_type": "jellyfin",
+            "jellyfin_url": "http://jellyfin.local:8096",
+            "jellyfin_token": "jf-secret-token-5555",
+            "jellyfin_user_id": "jf-user-admin",
+            "emby_url": "http://emby.local:8096",
+            "emby_token": "emby-secret-token-7777",
+            "emby_user_id": "emby-user-admin",
+        })
+        assert res.status_code == 200
+        settings_data = res.json()["settings"]
+        assert settings_data["server_type"] == "jellyfin"
+        assert settings_data["jellyfin_url"] == "http://jellyfin.local:8096"
+        assert settings_data["jellyfin_token"] == "••••••••5555"
+        assert settings_data["emby_token"] == "••••••••7777"
+        assert settings_data["is_jellyfin_token_set"] is True
+        assert settings_data["is_emby_token_set"] is True
+
+        # 2. Test Connection for Jellyfin
+        with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test:
+            mock_test.return_value = {
+                "status": "connected",
+                "connected": True,
+                "server_name": "Living Room Jellyfin",
+                "version": "10.9.11",
+            }
+            res_jf_test = client.post("/api/sync/test-connection", headers=headers, json={
+                "server": "jellyfin",
+                "url": "http://jellyfin.local:8096",
+                "token": "••••••••5555"
+            })
+            assert res_jf_test.status_code == 200
+            assert res_jf_test.json()["connected"] is True
+            mock_test.assert_called_once()
+            assert mock_test.call_args.kwargs.get("server") == "jellyfin"
+            assert mock_test.call_args.kwargs.get("token") == "jf-secret-token-5555"
+
+        # 3. Test Connection for Emby
+        with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test_emby:
+            mock_test_emby.return_value = {
+                "status": "connected",
+                "connected": True,
+                "server_name": "Living Room Emby",
+                "version": "4.8.8",
+            }
+            res_emby_test = client.post("/api/sync/test-connection", headers=headers, json={
+                "server": "emby",
+                "url": "http://emby.local:8096",
+                "token": "••••••••7777"
+            })
+            assert res_emby_test.status_code == 200
+            assert res_emby_test.json()["connected"] is True
+            mock_test_emby.assert_called_once()
+            assert mock_test_emby.call_args.kwargs.get("server") == "emby"
+            assert mock_test_emby.call_args.kwargs.get("token") == "emby-secret-token-7777"
+
+        # 4. Clear tokens and restore server_type to plex
+        res_clear = client.post("/api/sync/settings", headers=headers, json={
+            "server_type": "plex",
+            "jellyfin_url": "",
+            "jellyfin_user_id": "",
+            "emby_url": "",
+            "emby_user_id": "",
+            "clear_jellyfin_token": True,
+            "clear_emby_token": True,
+        })
+        assert res_clear.status_code == 200
+        cleared = res_clear.json()["settings"]
+        assert cleared["server_type"] == "plex"
+        assert cleared["jellyfin_token"] == ""
+        assert cleared["emby_token"] == ""
+        assert cleared["is_jellyfin_token_set"] is False
+        assert cleared["is_emby_token_set"] is False
+
+
+def test_manual_scrobble_action_start_and_playback():
+    """Verify manual scrobble supports action='start' (Now Playing session & playback start scrobble) and action='watched'."""
+    client = TestClient(app)
+    playback_mgr.clear()
+
+    with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
+        client.cookies.set("admin_token", "test_secret")
+
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch("app.main.multi_tracker.dispatch_scrobble", new_callable=AsyncMock) as mock_dispatch, \
+             patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_dispatch_notif:
+
+            mock_dispatch.return_value = {"trakt": {"action": "start"}}
+
+            # 1. Action: "start"
+            payload_start = {
+                "media": {
+                    "media_type": "movie",
+                    "title": "Avatar: The Way of Water",
+                    "year": 2022,
+                    "ids": {"tmdb": 76600, "imdb": "tt1630029"},
+                },
+                "action": "start",
+            }
+            res_start = client.post("/api/scrobble/manual", json=payload_start)
+            assert res_start.status_code == 200
+            data_start = res_start.json()
+            assert data_start["status"] == "success"
+            assert data_start["action"] == "start"
+
+            # Check multi_tracker dispatched start
+            mock_dispatch.assert_called_once()
+            assert mock_dispatch.call_args.kwargs.get("action") == "start"
+            assert mock_dispatch.call_args.kwargs.get("media").title == "Avatar: The Way of Water"
+
+            # Check playback session was registered
+            sessions = playback_mgr.get_active_sessions()
+            assert len(sessions) > 0
+            session = sessions[0]
+            assert "Avatar: The Way of Water" in session["title"]
+            assert session["state"] == "playing"
+            assert session["progress"] == 1.0
+
+            # Check notification was dispatched for playback_start
+            assert mock_dispatch_notif.called
+            assert mock_dispatch_notif.call_args[0][1] == "playback_start"
+
+            # 2. Action: "watched" (default)
+            mock_dispatch.reset_mock()
+            mock_dispatch_notif.reset_mock()
+            mock_dispatch.return_value = {"trakt": {"action": "scrobble"}}
+
+            with patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_sync:
+                mock_sync.return_value = {"added": {"movies": 1}}
+
+                payload_watched = {
+                    "media": {
+                        "media_type": "movie",
+                        "title": "Avatar",
+                        "year": 2009,
+                        "ids": {"tmdb": 19995},
+                    },
+                    "action": "watched",
+                }
+                res_watched = client.post("/api/scrobble/manual", json=payload_watched)
+                assert res_watched.status_code == 200
+                data_watched = res_watched.json()
+                assert data_watched["status"] == "success"
+                assert data_watched["action"] == "watched"
+                assert mock_sync.called
+
+        client.cookies.clear()
+
+
+@pytest.mark.asyncio
+async def test_manual_scrobble_simkl_override_when_auto_sync_paused():
+    """Verify that when Simkl is paused in settings (stopping automatic media server webhook sync),
+    explicit manual scrobble to Simkl via selected_trackers still succeeds without double-scrobbling incoming webhooks."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import multi_tracker, simkl
+
+    # 1. Pause Simkl in settings (as user does to prevent webhook double-scrobbles)
+    orig_simkl_setting = settings_mgr.is_tracker_enabled("simkl")
+    try:
+        settings_mgr.set_tracker_enabled("simkl", False)
+        assert settings_mgr.is_tracker_enabled("simkl") is False
+
+        # 2. Verify incoming webhook would not trigger Simkl auto-sync
+        from app.main import execute_multi_tracker_dispatch
+        parsed_webhook = ParsedMedia(
+            event="media.scrobble",
+            username="testuser",
+            media_type="movie",
+            title="Dune: Part Two",
+            year=2024,
+            progress=100.0,
+        )
+        with patch("app.main.execute_simkl_scrobble", new_callable=AsyncMock) as mock_simkl_auto:
+            await execute_multi_tracker_dispatch(parsed_webhook, "mark_watched", "media.scrobble", 100.0)
+            mock_simkl_auto.assert_not_called()
+
+        # 3. Verify manual scrobble with explicit trackers=['simkl'] DOES dispatch to Simkl
+        with patch.object(simkl, "is_enabled", return_value=True), \
+             patch.object(simkl, "is_authenticated", return_value=True), \
+             patch.object(simkl, "sync_history", new_callable=AsyncMock) as mock_simkl_manual, \
+             patch.object(simkl, "scrobble_start", new_callable=AsyncMock) as mock_simkl_start:
+
+            mock_simkl_manual.return_value = {"added": {"movies": 1}}
+            mock_simkl_start.return_value = {"action": "start"}
+
+            # A. Manual watched to Simkl
+            res_manual = await multi_tracker.dispatch_manual_scrobble(
+                media=parsed_webhook,
+                trakt_client=trakt,
+                selected_trackers=["simkl"],
+            )
+            assert "simkl" in res_manual["synced_trackers"]
+            mock_simkl_manual.assert_called_once()
+
+            # B. Manual start to Simkl
+            res_start = await multi_tracker.dispatch_scrobble(
+                action="start",
+                media=parsed_webhook,
+                trakt_client=trakt,
+                progress=1.0,
+                selected_trackers=["simkl"],
+            )
+            assert "simkl" in res_start["trackers"]
+            mock_simkl_start.assert_called_once()
+
+    finally:
+        settings_mgr.set_tracker_enabled("simkl", orig_simkl_setting)
 
 
 @pytest.mark.asyncio

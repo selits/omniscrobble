@@ -1,6 +1,6 @@
 """Two-Way Library Reconciliation and Reverse Sync Engine for Omniscrobble.
 
-Matches watched history and ratings between media servers (Plex) and Trakt,
+Matches watched history and ratings between media servers (Plex, Jellyfin, Emby) and Trakt,
 detects discrepancies, and executes selective or automated bi-directional synchronization
 while suppressing webhook echo loops.
 """
@@ -10,25 +10,46 @@ import logging
 import time
 from typing import Any, Optional
 
+from app.clients.emby_api_client import EmbyApiClient
+from app.clients.jellyfin_api_client import JellyfinApiClient
 from app.clients.plex_api_client import PlexApiClient
 from app.clients.trakt_client import TraktClient
 from app.config import Config
 from app.services.demo_manager import demo_mgr
 from app.services.loop_prevention import LoopPreventionManager, loop_prevention
+from app.services.settings_manager import settings_mgr
 
 logger = logging.getLogger("omniscrobble.reverse_sync")
 
 
 class ReverseSyncManager:
-    """Manages two-way watched status and ratings reconciliation."""
+    """Manages two-way watched status and ratings reconciliation across media servers."""
 
     def __init__(
         self,
         plex_client: Optional[PlexApiClient] = None,
+        jellyfin_client: Optional[JellyfinApiClient] = None,
+        emby_client: Optional[EmbyApiClient] = None,
         trakt_client: Optional[TraktClient] = None,
         loop_prevention_mgr: Optional[LoopPreventionManager] = None,
     ):
-        self.plex = plex_client or PlexApiClient()
+        recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+
+        self.plex = plex_client or PlexApiClient(
+            base_url=recon.get("plex_url") or Config.PLEX_URL,
+            token=recon.get("plex_token") or Config.PLEX_TOKEN,
+        )
+        self.jellyfin = jellyfin_client or JellyfinApiClient(
+            base_url=recon.get("jellyfin_url") or Config.JELLYFIN_URL,
+            token=recon.get("jellyfin_token") or Config.JELLYFIN_TOKEN,
+            user_id=recon.get("jellyfin_user_id") or Config.JELLYFIN_USER_ID,
+        )
+        self.emby = emby_client or EmbyApiClient(
+            base_url=recon.get("emby_url") or Config.EMBY_URL,
+            token=recon.get("emby_token") or Config.EMBY_TOKEN,
+            user_id=recon.get("emby_user_id") or Config.EMBY_USER_ID,
+        )
+
         self.trakt = trakt_client
         self.loop_prevention = loop_prevention_mgr or loop_prevention
 
@@ -48,29 +69,148 @@ class ReverseSyncManager:
             "message": "",
         }
 
+    def get_server_client(self, server: Optional[str] = None):
+        """Return the API client corresponding to the specified server name."""
+        if server:
+            target = server.lower().strip()
+            if target == "jellyfin":
+                return self.jellyfin
+            elif target == "emby":
+                return self.emby
+            return self.plex
+
+        recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+        target = (recon.get("server_type", "plex") or "plex").lower().strip()
+        candidate = self.jellyfin if target == "jellyfin" else self.emby if target == "emby" else self.plex
+        if candidate.is_configured():
+            return candidate
+
+        # Fallback to configured client if candidate is not configured
+        if self.plex.is_configured():
+            return self.plex
+        if self.jellyfin.is_configured():
+            return self.jellyfin
+        if self.emby.is_configured():
+            return self.emby
+
+        return candidate
+
+    def update_config(
+        self,
+        server: Optional[str] = None,
+        plex_url: Optional[str] = None,
+        plex_token: Optional[str] = None,
+        jellyfin_url: Optional[str] = None,
+        jellyfin_token: Optional[str] = None,
+        jellyfin_user_id: Optional[str] = None,
+        emby_url: Optional[str] = None,
+        emby_token: Optional[str] = None,
+        emby_user_id: Optional[str] = None,
+    ) -> None:
+        """Dynamically reconfigure media server credentials in-memory."""
+        if plex_url is not None:
+            self.plex.base_url = plex_url.rstrip("/")
+        if plex_token is not None:
+            self.plex.token = plex_token
+
+        if jellyfin_url is not None:
+            self.jellyfin.base_url = jellyfin_url.rstrip("/")
+        if jellyfin_token is not None:
+            self.jellyfin.token = jellyfin_token
+        if jellyfin_user_id is not None:
+            self.jellyfin.user_id = jellyfin_user_id
+
+        if emby_url is not None:
+            self.emby.base_url = emby_url.rstrip("/")
+        if emby_token is not None:
+            self.emby.token = emby_token
+        if emby_user_id is not None:
+            self.emby.user_id = emby_user_id
+
+        logger.info(
+            "ReverseSyncManager reconfigured in-memory: plex=%s, jellyfin=%s, emby=%s",
+            self.plex.is_configured(),
+            self.jellyfin.is_configured(),
+            self.emby.is_configured(),
+        )
+
+    async def test_connection(
+        self,
+        server: str = "plex",
+        url: Optional[str] = None,
+        token: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Test connection to specified media server with provided or active credentials."""
+        srv = (server or "plex").lower().strip()
+        if srv == "jellyfin":
+            target_url = (url if url is not None else self.jellyfin.base_url or "").rstrip("/")
+            target_token = token if token is not None else (self.jellyfin.token or "")
+            target_user = user_id if user_id is not None else self.jellyfin.user_id
+            if not target_url or not target_token:
+                return {"status": "unconfigured", "message": "Jellyfin URL and token/API key are required"}
+            test_client = JellyfinApiClient(base_url=target_url, token=target_token, user_id=target_user)
+        elif srv == "emby":
+            target_url = (url if url is not None else self.emby.base_url or "").rstrip("/")
+            target_token = token if token is not None else (self.emby.token or "")
+            target_user = user_id if user_id is not None else self.emby.user_id
+            if not target_url or not target_token:
+                return {"status": "unconfigured", "message": "Emby URL and token/API key are required"}
+            test_client = EmbyApiClient(base_url=target_url, token=target_token, user_id=target_user)
+        else:
+            target_url = (url if url is not None else self.plex.base_url or "").rstrip("/")
+            target_token = token if token is not None else (self.plex.token or "")
+            if not target_url or not target_token:
+                return {"status": "unconfigured", "message": "Plex URL and token are required"}
+            test_client = PlexApiClient(base_url=target_url, token=target_token)
+
+        try:
+            return await test_client.check_connection()
+        finally:
+            await test_client.close()
+
     def set_trakt_client(self, client: TraktClient) -> None:
         self.trakt = client
 
     def get_trakt(self) -> TraktClient:
         if self.trakt is None:
-            # Fallback import if not injected
             from app.main import trakt
             self.trakt = trakt
         return self.trakt
 
-    def is_configured(self, demo: bool = False) -> bool:
+    def is_configured(self, demo: bool = False, server: Optional[str] = None) -> bool:
         """Return True if media server direct connection and Trakt are ready."""
         if demo:
             return True
-        return self.plex.is_configured() and self.get_trakt().is_authenticated()
+        if server:
+            client = self.get_server_client(server)
+            return client.is_configured() and self.get_trakt().is_authenticated()
+        any_server_cfg = self.plex.is_configured() or self.jellyfin.is_configured() or self.emby.is_configured()
+        return any_server_cfg and self.get_trakt().is_authenticated()
 
-    async def get_status(self, demo: bool = False) -> dict[str, Any]:
+    async def get_status(self, demo: bool = False, server: Optional[str] = None) -> dict[str, Any]:
         """Return real-time operational status and diagnostics."""
+        recon = settings_mgr.get_reconciliation_settings(mask_token=True)
+        active_srv = (server or recon.get("server_type", "plex") or "plex").lower().strip()
+
         if demo:
             return {
                 "configured": True,
+                "server_type": active_srv,
+                "active_server": active_srv,
+                "active_server_configured": True,
+                "active_server_connected": True,
                 "plex_configured": True,
                 "plex_connected": True,
+                "jellyfin_configured": True,
+                "jellyfin_connected": True,
+                "emby_configured": True,
+                "emby_connected": True,
+                "servers": {
+                    "plex": {"configured": True, "connected": True},
+                    "jellyfin": {"configured": True, "connected": True},
+                    "emby": {"configured": True, "connected": True},
+                },
                 "trakt_authenticated": True,
                 "is_scanning": False,
                 "is_syncing": False,
@@ -78,23 +218,52 @@ class ReverseSyncManager:
                 "last_sync_time": self._last_sync_time or (time.time() - 1800),
                 "diff_count": len(demo_mgr.get_demo_reconciliation()),
                 "sync_progress": self._sync_progress,
-                "interval_minutes": Config.REVERSE_SYNC_INTERVAL,
-                "sync_on_startup": Config.REVERSE_SYNC_ON_STARTUP,
-                "sync_ratings": Config.REVERSE_SYNC_RATINGS,
+                "interval_minutes": recon.get("interval_minutes", 60),
+                "sync_on_startup": recon.get("sync_on_startup", False),
+                "sync_ratings": recon.get("sync_ratings", True),
+                "direction_default": recon.get("direction_default", "all"),
             }
 
-        plex_configured = self.plex.is_configured()
-        plex_connected = False
-        if plex_configured:
-            conn_info = await self.plex.check_connection()
-            plex_connected = conn_info.get("status") == "connected"
+        plex_cfg = self.plex.is_configured()
+        plex_conn = False
+        if plex_cfg:
+            p_res = await self.plex.check_connection()
+            plex_conn = p_res.get("status") == "connected"
+
+        jf_cfg = self.jellyfin.is_configured()
+        jf_conn = False
+        if jf_cfg:
+            jf_res = await self.jellyfin.check_connection()
+            jf_conn = jf_res.get("status") == "connected"
+
+        emby_cfg = self.emby.is_configured()
+        emby_conn = False
+        if emby_cfg:
+            emby_res = await self.emby.check_connection()
+            emby_conn = emby_res.get("status") == "connected"
 
         trakt_auth = self.get_trakt().is_authenticated()
 
+        active_cfg = jf_cfg if active_srv == "jellyfin" else emby_cfg if active_srv == "emby" else plex_cfg
+        active_conn = jf_conn if active_srv == "jellyfin" else emby_conn if active_srv == "emby" else plex_conn
+
         return {
-            "configured": plex_configured and trakt_auth,
-            "plex_configured": plex_configured,
-            "plex_connected": plex_connected,
+            "configured": (plex_cfg or jf_cfg or emby_cfg) and trakt_auth,
+            "server_type": active_srv,
+            "active_server": active_srv,
+            "active_server_configured": active_cfg,
+            "active_server_connected": active_conn,
+            "plex_configured": plex_cfg,
+            "plex_connected": plex_conn,
+            "jellyfin_configured": jf_cfg,
+            "jellyfin_connected": jf_conn,
+            "emby_configured": emby_cfg,
+            "emby_connected": emby_conn,
+            "servers": {
+                "plex": {"configured": plex_cfg, "connected": plex_conn},
+                "jellyfin": {"configured": jf_cfg, "connected": jf_conn},
+                "emby": {"configured": emby_cfg, "connected": emby_conn},
+            },
             "trakt_authenticated": trakt_auth,
             "is_scanning": self._is_scanning,
             "is_syncing": self._is_syncing,
@@ -102,12 +271,18 @@ class ReverseSyncManager:
             "last_sync_time": self._last_sync_time,
             "diff_count": len(self._last_diff),
             "sync_progress": self._sync_progress,
-            "interval_minutes": Config.REVERSE_SYNC_INTERVAL,
-            "sync_on_startup": Config.REVERSE_SYNC_ON_STARTUP,
-            "sync_ratings": Config.REVERSE_SYNC_RATINGS,
+            "interval_minutes": recon.get("interval_minutes", Config.REVERSE_SYNC_INTERVAL),
+            "sync_on_startup": recon.get("sync_on_startup", Config.REVERSE_SYNC_ON_STARTUP),
+            "sync_ratings": recon.get("sync_ratings", Config.REVERSE_SYNC_RATINGS),
+            "direction_default": recon.get("direction_default", "all"),
         }
 
-    async def scan_discrepancies(self, force: bool = False, demo: bool = False) -> list[dict[str, Any]]:
+    async def scan_discrepancies(
+        self,
+        force: bool = False,
+        demo: bool = False,
+        server: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         """Scan media server and Trakt to identify watched and rating discrepancies."""
         if demo:
             demo_diff = demo_mgr.get_demo_reconciliation()
@@ -115,8 +290,11 @@ class ReverseSyncManager:
             self._last_scan_time = time.time()
             return demo_diff
 
-        if not self.plex.is_configured():
-            logger.warning("Reverse sync scan aborted: Plex API not configured (PLEX_URL or PLEX_TOKEN missing).")
+        client = self.get_server_client(server)
+        server_name = getattr(client, "server_type", "plex") if hasattr(client, "server_type") else "plex"
+
+        if not client.is_configured():
+            logger.warning("Reverse sync scan aborted: %s API not configured.", server_name.capitalize())
             return []
 
         trakt_client = self.get_trakt()
@@ -131,7 +309,7 @@ class ReverseSyncManager:
         async with self._lock:
             self._is_scanning = True
             try:
-                logger.info("Starting library reconciliation scan between Plex and Trakt...")
+                logger.info("Starting library reconciliation scan between %s and Trakt...", server_name.capitalize())
                 diff: list[dict[str, Any]] = []
 
                 # 1. Fetch Trakt watched movies & build lookup indices
@@ -230,31 +408,31 @@ class ReverseSyncManager:
                     except Exception as exc:
                         logger.warning("Failed to fetch Trakt ratings during reverse sync scan: %s", exc)
 
-                # 4. Fetch Plex sections
-                sections = await self.plex.get_library_sections()
+                # 4. Fetch sections from the media server
+                sections = await client.get_library_sections()
 
                 for sec in sections:
                     sec_key = sec["key"]
                     sec_type = sec["type"]
 
                     if sec_type == "movie":
-                        plex_movies = await self.plex.get_movies(sec_key)
-                        for pm in plex_movies:
-                            rating_key = pm["rating_key"]
-                            title = pm["title"]
-                            year = pm.get("year")
-                            plex_ids = pm.get("ids") or {}
-                            plex_imdb = (plex_ids.get("imdb") or "").strip().lower()
-                            plex_tmdb = str(plex_ids.get("tmdb") or "").strip()
-                            is_watched_plex = pm.get("is_watched", False)
-                            plex_rating = pm.get("user_rating")
+                        server_movies = await client.get_movies(sec_key)
+                        for sm in server_movies:
+                            rating_key = sm["rating_key"]
+                            title = sm["title"]
+                            year = sm.get("year")
+                            sm_ids = sm.get("ids") or {}
+                            sm_imdb = (sm_ids.get("imdb") or "").strip().lower()
+                            sm_tmdb = str(sm_ids.get("tmdb") or "").strip()
+                            is_watched_server = sm.get("is_watched", False)
+                            server_rating = sm.get("user_rating")
 
                             # Match against Trakt watched
                             trakt_match = None
-                            if plex_imdb and plex_imdb in trakt_movies_by_imdb:
-                                trakt_match = trakt_movies_by_imdb[plex_imdb]
-                            elif plex_tmdb and plex_tmdb in trakt_movies_by_tmdb:
-                                trakt_match = trakt_movies_by_tmdb[plex_tmdb]
+                            if sm_imdb and sm_imdb in trakt_movies_by_imdb:
+                                trakt_match = trakt_movies_by_imdb[sm_imdb]
+                            elif sm_tmdb and sm_tmdb in trakt_movies_by_tmdb:
+                                trakt_match = trakt_movies_by_tmdb[sm_tmdb]
                             elif (title.lower().strip(), year) in trakt_movies_by_title_year:
                                 trakt_match = trakt_movies_by_title_year[(title.lower().strip(), year)]
 
@@ -262,17 +440,18 @@ class ReverseSyncManager:
 
                             # Match against Trakt rating
                             trakt_rating = None
-                            if plex_imdb and plex_imdb in movie_ratings_by_imdb:
-                                trakt_rating = movie_ratings_by_imdb[plex_imdb]
-                            elif plex_tmdb and plex_tmdb in movie_ratings_by_tmdb:
-                                trakt_rating = movie_ratings_by_tmdb[plex_tmdb]
+                            if sm_imdb and sm_imdb in movie_ratings_by_imdb:
+                                trakt_rating = movie_ratings_by_imdb[sm_imdb]
+                            elif sm_tmdb and sm_tmdb in movie_ratings_by_tmdb:
+                                trakt_rating = movie_ratings_by_tmdb[sm_tmdb]
                             elif (title.lower().strip(), year) in movie_ratings_by_title_year:
                                 trakt_rating = movie_ratings_by_title_year[(title.lower().strip(), year)]
 
                             # Check for Watched Discrepancy
-                            if is_watched_trakt and not is_watched_plex:
+                            if is_watched_trakt and not is_watched_server:
                                 diff.append({
-                                    "id": f"movie:{rating_key}",
+                                    "id": f"{server_name}:movie:{rating_key}",
+                                    "server": server_name,
                                     "type": "movie",
                                     "title": title,
                                     "series_title": None,
@@ -280,17 +459,20 @@ class ReverseSyncManager:
                                     "episode": None,
                                     "year": year,
                                     "rating_key": rating_key,
-                                    "ids": plex_ids,
+                                    "ids": sm_ids,
                                     "status": "trakt_only",
+                                    "server_watched": False,
                                     "plex_watched": False,
                                     "trakt_watched": True,
-                                    "plex_rating": plex_rating,
+                                    "server_rating": server_rating,
+                                    "plex_rating": server_rating,
                                     "trakt_rating": trakt_rating,
-                                    "action_recommended": "mark_plex_watched",
+                                    "action_recommended": f"mark_{server_name}_watched",
                                 })
-                            elif is_watched_plex and not is_watched_trakt:
+                            elif is_watched_server and not is_watched_trakt:
                                 diff.append({
-                                    "id": f"movie:{rating_key}",
+                                    "id": f"{server_name}:movie:{rating_key}",
+                                    "server": server_name,
                                     "type": "movie",
                                     "title": title,
                                     "series_title": None,
@@ -298,20 +480,22 @@ class ReverseSyncManager:
                                     "episode": None,
                                     "year": year,
                                     "rating_key": rating_key,
-                                    "ids": plex_ids,
-                                    "status": "plex_only",
+                                    "ids": sm_ids,
+                                    "status": f"{server_name}_only",
+                                    "server_watched": True,
                                     "plex_watched": True,
                                     "trakt_watched": False,
-                                    "plex_rating": plex_rating,
+                                    "server_rating": server_rating,
+                                    "plex_rating": server_rating,
                                     "trakt_rating": trakt_rating,
                                     "action_recommended": "sync_to_trakt",
                                 })
                             elif Config.REVERSE_SYNC_RATINGS and trakt_rating is not None:
-                                # Watched matches, but check rating mismatch
-                                plex_r_int = round(plex_rating) if plex_rating is not None else None
-                                if plex_r_int is None or plex_r_int != trakt_rating:
+                                s_r_int = round(server_rating) if server_rating is not None else None
+                                if s_r_int is None or s_r_int != trakt_rating:
                                     diff.append({
-                                        "id": f"movie:{rating_key}",
+                                        "id": f"{server_name}:movie:{rating_key}",
+                                        "server": server_name,
                                         "type": "movie",
                                         "title": title,
                                         "series_title": None,
@@ -319,41 +503,43 @@ class ReverseSyncManager:
                                         "episode": None,
                                         "year": year,
                                         "rating_key": rating_key,
-                                        "ids": plex_ids,
+                                        "ids": sm_ids,
                                         "status": "rating_mismatch",
-                                        "plex_watched": is_watched_plex,
+                                        "server_watched": is_watched_server,
+                                        "plex_watched": is_watched_server,
                                         "trakt_watched": is_watched_trakt,
-                                        "plex_rating": plex_rating,
+                                        "server_rating": server_rating,
+                                        "plex_rating": server_rating,
                                         "trakt_rating": trakt_rating,
-                                        "action_recommended": "sync_rating_to_plex",
+                                        "action_recommended": f"sync_rating_to_{server_name}",
                                     })
 
                     elif sec_type == "show":
-                        plex_episodes = await self.plex.get_episodes(sec_key)
-                        for pe in plex_episodes:
-                            rating_key = pe["rating_key"]
-                            series_title = pe.get("series_title", "")
-                            ep_title = pe.get("title", "")
-                            season_num = pe.get("season")
-                            ep_num = pe.get("episode")
+                        server_episodes = await client.get_episodes(sec_key)
+                        for se in server_episodes:
+                            rating_key = se["rating_key"]
+                            series_title = se.get("series_title", "")
+                            ep_title = se.get("title", "")
+                            season_num = se.get("season")
+                            ep_num = se.get("episode")
                             if season_num is None or ep_num is None:
                                 continue
 
-                            plex_ids = pe.get("ids") or {}
-                            plex_imdb = (plex_ids.get("imdb") or "").strip().lower()
-                            plex_tmdb = str(plex_ids.get("tmdb") or "").strip()
-                            plex_tvdb = str(plex_ids.get("tvdb") or "").strip()
-                            is_watched_plex = pe.get("is_watched", False)
-                            plex_rating = pe.get("user_rating")
+                            se_ids = se.get("ids") or {}
+                            se_imdb = (se_ids.get("imdb") or "").strip().lower()
+                            se_tmdb = str(se_ids.get("tmdb") or "").strip()
+                            se_tvdb = str(se_ids.get("tvdb") or "").strip()
+                            is_watched_server = se.get("is_watched", False)
+                            server_rating = se.get("user_rating")
 
                             # Match against Trakt show episodes
                             trakt_ep = None
-                            if plex_imdb and (plex_imdb, season_num, ep_num) in trakt_eps_by_show_imdb:
-                                trakt_ep = trakt_eps_by_show_imdb[(plex_imdb, season_num, ep_num)]
-                            elif plex_tmdb and (plex_tmdb, season_num, ep_num) in trakt_eps_by_show_tmdb:
-                                trakt_ep = trakt_eps_by_show_tmdb[(plex_tmdb, season_num, ep_num)]
-                            elif plex_tvdb and (plex_tvdb, season_num, ep_num) in trakt_eps_by_show_tvdb:
-                                trakt_ep = trakt_eps_by_show_tvdb[(plex_tvdb, season_num, ep_num)]
+                            if se_imdb and (se_imdb, season_num, ep_num) in trakt_eps_by_show_imdb:
+                                trakt_ep = trakt_eps_by_show_imdb[(se_imdb, season_num, ep_num)]
+                            elif se_tmdb and (se_tmdb, season_num, ep_num) in trakt_eps_by_show_tmdb:
+                                trakt_ep = trakt_eps_by_show_tmdb[(se_tmdb, season_num, ep_num)]
+                            elif se_tvdb and (se_tvdb, season_num, ep_num) in trakt_eps_by_show_tvdb:
+                                trakt_ep = trakt_eps_by_show_tvdb[(se_tvdb, season_num, ep_num)]
                             elif (series_title.lower().strip(), season_num, ep_num) in trakt_eps_by_show_title:
                                 trakt_ep = trakt_eps_by_show_title[(series_title.lower().strip(), season_num, ep_num)]
 
@@ -361,69 +547,78 @@ class ReverseSyncManager:
 
                             # Match against Trakt rating
                             trakt_rating = None
-                            if plex_imdb and (plex_imdb, season_num, ep_num) in ep_ratings_by_show_imdb:
-                                trakt_rating = ep_ratings_by_show_imdb[(plex_imdb, season_num, ep_num)]
-                            elif plex_tvdb and (plex_tvdb, season_num, ep_num) in ep_ratings_by_show_tvdb:
-                                trakt_rating = ep_ratings_by_show_tvdb[(plex_tvdb, season_num, ep_num)]
+                            if se_imdb and (se_imdb, season_num, ep_num) in ep_ratings_by_show_imdb:
+                                trakt_rating = ep_ratings_by_show_imdb[(se_imdb, season_num, ep_num)]
+                            elif se_tvdb and (se_tvdb, season_num, ep_num) in ep_ratings_by_show_tvdb:
+                                trakt_rating = ep_ratings_by_show_tvdb[(se_tvdb, season_num, ep_num)]
                             elif (series_title.lower().strip(), season_num, ep_num) in ep_ratings_by_show_title:
                                 trakt_rating = ep_ratings_by_show_title[(series_title.lower().strip(), season_num, ep_num)]
 
                             # Check for Watched Discrepancy
-                            if is_watched_trakt and not is_watched_plex:
+                            if is_watched_trakt and not is_watched_server:
                                 diff.append({
-                                    "id": f"episode:{rating_key}",
+                                    "id": f"{server_name}:episode:{rating_key}",
+                                    "server": server_name,
                                     "type": "episode",
                                     "title": ep_title,
                                     "series_title": series_title,
                                     "season": season_num,
                                     "episode": ep_num,
-                                    "year": pe.get("year"),
+                                    "year": se.get("year"),
                                     "rating_key": rating_key,
-                                    "ids": plex_ids,
+                                    "ids": se_ids,
                                     "status": "trakt_only",
+                                    "server_watched": False,
                                     "plex_watched": False,
                                     "trakt_watched": True,
-                                    "plex_rating": plex_rating,
+                                    "server_rating": server_rating,
+                                    "plex_rating": server_rating,
                                     "trakt_rating": trakt_rating,
-                                    "action_recommended": "mark_plex_watched",
+                                    "action_recommended": f"mark_{server_name}_watched",
                                 })
-                            elif is_watched_plex and not is_watched_trakt:
+                            elif is_watched_server and not is_watched_trakt:
                                 diff.append({
-                                    "id": f"episode:{rating_key}",
+                                    "id": f"{server_name}:episode:{rating_key}",
+                                    "server": server_name,
                                     "type": "episode",
                                     "title": ep_title,
                                     "series_title": series_title,
                                     "season": season_num,
                                     "episode": ep_num,
-                                    "year": pe.get("year"),
+                                    "year": se.get("year"),
                                     "rating_key": rating_key,
-                                    "ids": plex_ids,
-                                    "status": "plex_only",
+                                    "ids": se_ids,
+                                    "status": f"{server_name}_only",
+                                    "server_watched": True,
                                     "plex_watched": True,
                                     "trakt_watched": False,
-                                    "plex_rating": plex_rating,
+                                    "server_rating": server_rating,
+                                    "plex_rating": server_rating,
                                     "trakt_rating": trakt_rating,
                                     "action_recommended": "sync_to_trakt",
                                 })
                             elif Config.REVERSE_SYNC_RATINGS and trakt_rating is not None:
-                                plex_r_int = round(plex_rating) if plex_rating is not None else None
-                                if plex_r_int is None or plex_r_int != trakt_rating:
+                                s_r_int = round(server_rating) if server_rating is not None else None
+                                if s_r_int is None or s_r_int != trakt_rating:
                                     diff.append({
-                                        "id": f"episode:{rating_key}",
+                                        "id": f"{server_name}:episode:{rating_key}",
+                                        "server": server_name,
                                         "type": "episode",
                                         "title": ep_title,
                                         "series_title": series_title,
                                         "season": season_num,
                                         "episode": ep_num,
-                                        "year": pe.get("year"),
+                                        "year": se.get("year"),
                                         "rating_key": rating_key,
-                                        "ids": plex_ids,
+                                        "ids": se_ids,
                                         "status": "rating_mismatch",
-                                        "plex_watched": is_watched_plex,
+                                        "server_watched": is_watched_server,
+                                        "plex_watched": is_watched_server,
                                         "trakt_watched": is_watched_trakt,
-                                        "plex_rating": plex_rating,
+                                        "server_rating": server_rating,
+                                        "plex_rating": server_rating,
                                         "trakt_rating": trakt_rating,
-                                        "action_recommended": "sync_rating_to_plex",
+                                        "action_recommended": f"sync_rating_to_{server_name}",
                                     })
 
                 self._last_diff = diff
@@ -439,6 +634,7 @@ class ReverseSyncManager:
         item_ids: Optional[list[str]] = None,
         direction: str = "all",
         demo: bool = False,
+        server: Optional[str] = None,
     ) -> dict[str, Any]:
         """Execute reconciliation actions for selected or all discrepancies."""
         if demo:
@@ -477,10 +673,16 @@ class ReverseSyncManager:
             target_items = list(self._last_diff)
 
         # Apply direction filter if specified
-        if direction == "trakt_to_plex":
-            target_items = [i for i in target_items if i["action_recommended"] in ("mark_plex_watched", "sync_rating_to_plex")]
-        elif direction == "plex_to_trakt":
-            target_items = [i for i in target_items if i["action_recommended"] in ("sync_to_trakt", "sync_rating_to_trakt")]
+        if direction in ("trakt_to_plex", "trakt_to_server"):
+            target_items = [
+                i for i in target_items
+                if i["action_recommended"].startswith("mark_") or i["action_recommended"].startswith("sync_rating_to_")
+            ]
+        elif direction in ("plex_to_trakt", "server_to_trakt"):
+            target_items = [
+                i for i in target_items
+                if i["action_recommended"] in ("sync_to_trakt", "sync_rating_to_trakt")
+            ]
 
         if not target_items:
             return {"status": "success", "total": 0, "reconciled": 0, "failed": 0, "items": []}
@@ -503,11 +705,13 @@ class ReverseSyncManager:
             trakt_client = self.get_trakt()
             for item in target_items:
                 self._sync_progress["current"] += 1
-                action = item.get("action_recommended")
+                action = item.get("action_recommended", "")
                 rating_key = item.get("rating_key", "")
+                item_server = item.get("server") or server or "plex"
+                client = self.get_server_client(item_server)
                 success = False
 
-                # Suppress loop prevention on ratingKey and all IDs before touching Plex
+                # Suppress loop prevention on ratingKey and all IDs before touching server
                 if rating_key:
                     self.loop_prevention.ignore(rating_key, ttl=180.0)
                 for id_val in (item.get("ids") or {}).values():
@@ -515,16 +719,16 @@ class ReverseSyncManager:
                         self.loop_prevention.ignore(str(id_val), ttl=180.0)
 
                 try:
-                    if action == "mark_plex_watched":
-                        success = await self.plex.mark_as_watched(rating_key)
-                    elif action == "sync_rating_to_plex":
+                    if action.startswith("mark_") and action.endswith("_watched"):
+                        success = await client.mark_as_watched(rating_key)
+                    elif action.startswith("sync_rating_to_"):
                         val = item.get("trakt_rating")
                         if val is not None:
-                            success = await self.plex.set_user_rating(rating_key, float(val))
+                            success = await client.set_user_rating(rating_key, float(val))
                         else:
                             success = False
                     elif action == "sync_to_trakt":
-                        # Push Plex watched item to Trakt history
+                        # Push media server watched item to Trakt history
                         if item["type"] == "movie":
                             payload = {"movies": [{"title": item["title"], "year": item.get("year"), "ids": item.get("ids")}]}
                         else:
@@ -543,10 +747,10 @@ class ReverseSyncManager:
                         res = await trakt_client.sync_history(payload)
                         success = not bool(res.get("error"))
                     elif action == "sync_rating_to_trakt":
-                        # Push Plex rating to Trakt
-                        plex_r = item.get("plex_rating")
-                        if plex_r is not None:
-                            val = int(round(plex_r))
+                        # Push media server rating to Trakt
+                        s_r = item.get("server_rating") or item.get("plex_rating")
+                        if s_r is not None:
+                            val = int(round(s_r))
                             if item["type"] == "movie":
                                 payload = {"movies": [{"title": item["title"], "year": item.get("year"), "rating": val, "ids": item.get("ids")}]}
                             else:
@@ -557,7 +761,7 @@ class ReverseSyncManager:
                             success = False
 
                 except Exception as exc:
-                    logger.error("Error reconciling item %s (%s): %s", item.get("id"), action, exc)
+                    logger.error("Error reconciling item %s (%s) on %s: %s", item.get("id"), action, item_server, exc)
                     success = False
 
                 if success:
@@ -588,16 +792,18 @@ class ReverseSyncManager:
 
     async def run_startup_sync(self) -> None:
         """Run scan and reconciliation on startup in the background if configured."""
-        if not Config.REVERSE_SYNC_ON_STARTUP or not self.is_configured():
+        recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+        sync_startup = recon.get("sync_on_startup", Config.REVERSE_SYNC_ON_STARTUP)
+        if not sync_startup or not self.is_configured():
             return
 
-        logger.info("Reverse Sync: Startup scan scheduled (REVERSE_SYNC_ON_STARTUP=true). Waiting 15s for server warmup...")
+        logger.info("Reverse Sync: Startup scan scheduled (sync_on_startup=true). Waiting 15s for server warmup...")
         await asyncio.sleep(15.0)
         try:
             diff = await self.scan_discrepancies()
             if diff:
                 logger.info("Reverse Sync: Startup scan found %d items to reconcile. Executing auto-reconcile...", len(diff))
-                await self.execute_reconciliation(direction="trakt_to_plex")
+                await self.execute_reconciliation(direction="trakt_to_server")
         except Exception as exc:
             logger.error("Error during startup reverse sync: %s", exc)
 

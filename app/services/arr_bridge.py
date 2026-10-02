@@ -129,6 +129,8 @@ class ArrBridgeManager:
         self,
         demo: bool = False,
         plex_client: Optional[PlexApiClient] = None,
+        jellyfin_client: Optional[Any] = None,
+        emby_client: Optional[Any] = None,
         simkl_client: Optional[SimklClient] = None,
         anilist_client: Optional[AniListClient] = None,
         mal_client: Optional[MyAnimeListClient] = None,
@@ -287,28 +289,78 @@ class ArrBridgeManager:
             })
 
         # 2. Jellyfin
-        servers.append({
-            "id": "jellyfin",
-            "name": "Jellyfin",
-            "category": "Media Server",
-            "status": "available",
-            "badge": "Listener Active",
-            "version": "Endpoint Ready",
-            "details": "/webhook/jellyfin",
-            "icon": "jellyfin",
-        })
+        if jellyfin_client and jellyfin_client.is_configured():
+            jf_conn = await jellyfin_client.check_connection()
+            if jf_conn.get("status") == "connected":
+                servers.append({
+                    "id": "jellyfin",
+                    "name": "Jellyfin",
+                    "category": "Media Server",
+                    "status": "connected",
+                    "badge": "Online",
+                    "version": jf_conn.get("version", "Active"),
+                    "details": f"Server: {jf_conn.get('server_name', 'Jellyfin')}",
+                    "icon": "jellyfin",
+                })
+            else:
+                servers.append({
+                    "id": "jellyfin",
+                    "name": "Jellyfin",
+                    "category": "Media Server",
+                    "status": "error",
+                    "badge": "Offline",
+                    "version": "Configured",
+                    "details": jf_conn.get("message", "Connection failed"),
+                    "icon": "jellyfin",
+                })
+        else:
+            servers.append({
+                "id": "jellyfin",
+                "name": "Jellyfin",
+                "category": "Media Server",
+                "status": "available",
+                "badge": "Listener Active",
+                "version": "Endpoint Ready",
+                "details": "/webhook/jellyfin (Direct API not configured)",
+                "icon": "jellyfin",
+            })
 
         # 3. Emby
-        servers.append({
-            "id": "emby",
-            "name": "Emby Server",
-            "category": "Media Server",
-            "status": "available",
-            "badge": "Listener Active",
-            "version": "Endpoint Ready",
-            "details": "/webhook/emby",
-            "icon": "emby",
-        })
+        if emby_client and emby_client.is_configured():
+            emby_conn = await emby_client.check_connection()
+            if emby_conn.get("status") == "connected":
+                servers.append({
+                    "id": "emby",
+                    "name": "Emby Server",
+                    "category": "Media Server",
+                    "status": "connected",
+                    "badge": "Online",
+                    "version": emby_conn.get("version", "Active"),
+                    "details": f"Server: {emby_conn.get('server_name', 'Emby')}",
+                    "icon": "emby",
+                })
+            else:
+                servers.append({
+                    "id": "emby",
+                    "name": "Emby Server",
+                    "category": "Media Server",
+                    "status": "error",
+                    "badge": "Offline",
+                    "version": "Configured",
+                    "details": emby_conn.get("message", "Connection failed"),
+                    "icon": "emby",
+                })
+        else:
+            servers.append({
+                "id": "emby",
+                "name": "Emby Server",
+                "category": "Media Server",
+                "status": "available",
+                "badge": "Listener Active",
+                "version": "Endpoint Ready",
+                "details": "/webhook/emby (Direct API not configured)",
+                "icon": "emby",
+            })
 
         # 4. Sonarr
         if self.sonarr.is_configured:

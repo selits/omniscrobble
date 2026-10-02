@@ -220,23 +220,44 @@ class TraktClient:
 
     # ------------------ Scrobbling & History Endpoints ------------------
 
-    async def scrobble_start(self, media_payload: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_scrobble_payload(
+        self,
+        media_payload: Any,
+        progress: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Convert ParsedMedia or dict to Trakt scrobble payload format."""
+        if hasattr(media_payload, "to_trakt_scrobble_payload"):
+            payload = media_payload.to_trakt_scrobble_payload()
+            if progress is not None:
+                payload["progress"] = round(float(progress), 1)
+            return payload
+        if isinstance(media_payload, dict):
+            payload = dict(media_payload)
+            if progress is not None:
+                payload["progress"] = round(float(progress), 1)
+            return payload
+        return {}
+
+    async def scrobble_start(self, media_payload: Any, progress: Optional[float] = None) -> dict[str, Any]:
         """POST /scrobble/start - Notify Trakt playback started."""
         url = f"{self.api_url}/scrobble/start"
-        return await self._post_authenticated(url, media_payload)
+        payload = self._prepare_scrobble_payload(media_payload, progress)
+        return await self._post_authenticated(url, payload)
 
-    async def scrobble_pause(self, media_payload: dict[str, Any]) -> dict[str, Any]:
+    async def scrobble_pause(self, media_payload: Any, progress: Optional[float] = None) -> dict[str, Any]:
         """POST /scrobble/pause - Notify Trakt playback paused."""
         url = f"{self.api_url}/scrobble/pause"
-        return await self._post_authenticated(url, media_payload)
+        payload = self._prepare_scrobble_payload(media_payload, progress)
+        return await self._post_authenticated(url, payload)
 
-    async def scrobble_stop(self, media_payload: dict[str, Any]) -> dict[str, Any]:
+    async def scrobble_stop(self, media_payload: Any, progress: Optional[float] = None) -> dict[str, Any]:
         """POST /scrobble/stop - Notify Trakt playback stopped.
 
         Marks as watched if progress >= 80%.
         """
         url = f"{self.api_url}/scrobble/stop"
-        return await self._post_authenticated(url, media_payload)
+        payload = self._prepare_scrobble_payload(media_payload, progress)
+        return await self._post_authenticated(url, payload)
 
     async def sync_history(self, sync_payload: dict[str, Any]) -> dict[str, Any]:
         """POST /sync/history - Directly mark episodes/movies as watched in Trakt history."""
