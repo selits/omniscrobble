@@ -37,6 +37,12 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     demo_shows = demo_mgr.get_demo_cowatch_shows()
     demo_devices = demo_mgr.get_demo_cowatch_devices()
     demo_events = demo_mgr.get_demo_events()
+    demo_shows_lower = {s.lower() for s in demo_shows}
+    for ev in demo_events:
+        show = ev.get("show_title") or (ev.get("title") if ev.get("type") == "show" else None)
+        if not show and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
+            show = ev["media_payload"].get("title")
+        ev["is_cowatch_show"] = (show.lower() in demo_shows_lower) if show else False
     demo_users = demo_mgr.get_demo_users()
     demo_logs = demo_mgr.get_demo_logs(lines=60)
     demo_stats = demo_mgr.get_demo_stats()
@@ -603,10 +609,11 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         if not show_title and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
             show_title = ev["media_payload"].get("title")
         action_buttons = []
-        if show_title:
+        is_cowatch = (show_title.lower() in demo_shows_lower) if show_title else False
+        if show_title and not is_cowatch:
             show_esc = html.escape(show_title)
             action_buttons.append(
-                f'<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;white-space:nowrap;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>'
+                f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;white-space:nowrap;" title="Add show to co-watch whitelist">+ Co-Watch</button>'
             )
         if ev.get("media_payload"):
             media_enc = html.escape(json.dumps(ev["media_payload"]))
@@ -615,9 +622,11 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             prog_val = str(ev.get("progress", "")).strip()
             is_completion = raw_act.startswith(("mark_watched", "scrobble_stop", "collection", "rate")) or raw_act in ("scrobble", "watched")
             if is_completion and res_stat != "ignored" and prog_val != "0.0%":
-                action_buttons.append(
-                    f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>'
-                )
+                cw = ev.get("cowatch_status") or {}
+                if not cw.get("synced"):
+                    action_buttons.append(
+                        f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>'
+                    )
                 if raw_act.startswith(("mark_watched", "scrobble_stop")) or raw_act in ("scrobble", "watched"):
                     action_buttons.append(
                         f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>'
@@ -914,7 +923,15 @@ def generate_static_demo(output_dir: Path = None) -> Path:
 
             // 2. Events list
             if (path.endsWith('/api/events')) {{
-                return jsonResp({{ events: clientState.events }});
+                const showsLower = (clientState.shows || []).map(s => s.toLowerCase());
+                const evs = (clientState.events || []).map(ev => {{
+                    const st = ev.show_title || (ev.type === 'show' ? (ev.media_payload?.title || ev.title) : null);
+                    return {{
+                        ...ev,
+                        is_cowatch_show: st ? showsLower.includes(st.toLowerCase()) : false
+                    }};
+                }});
+                return jsonResp({{ events: evs }});
             }}
 
             // 3. Clear events

@@ -3270,13 +3270,9 @@
                 let actionBtns = '';
                 if (isAdmin) {
                     const showTitle = ev.show_title || (ev.type === 'show' ? (ev.media_payload?.title || ev.title) : null);
-                    if (showTitle) {
+                    if (showTitle && !ev.is_cowatch_show) {
                         const showEnc = encodeURIComponent(showTitle);
-                        if (ev.is_cowatch_show) {
-                            actionBtns += `<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;white-space:nowrap;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>`;
-                        } else {
-                            actionBtns += `<button data-show="${showEnc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;white-space:nowrap;" title="Add show to co-watch whitelist">+ Co-Watch</button>`;
-                        }
+                        actionBtns += `<button data-show="${showEnc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;white-space:nowrap;" title="Add show to co-watch whitelist">+ Co-Watch</button>`;
                     }
                     if (ev.media_payload) {
                         const mediaEnc = encodeURIComponent(JSON.stringify(ev.media_payload));
@@ -3285,7 +3281,10 @@
                         const progVal = String(ev.progress || '').trim();
                         const isCompletion = rawAct.startsWith('mark_watched') || rawAct.startsWith('scrobble_stop') || rawAct.startsWith('collection') || rawAct.startsWith('rate') || rawAct === 'scrobble' || rawAct === 'watched';
                         if (isCompletion && resStat !== 'ignored' && progVal !== '0.0%') {
-                            actionBtns += `<button onclick="quickSyncPartner('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Sync to partner">+ Sync Partner</button>`;
+                            const cw = ev.cowatch_status || {};
+                            if (!cw.synced) {
+                                actionBtns += `<button onclick="quickSyncPartner('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Sync to partner">+ Sync Partner</button>`;
+                            }
                             if (rawAct.startsWith('mark_watched') || rawAct.startsWith('scrobble_stop') || rawAct === 'scrobble' || rawAct === 'watched') {
                                 actionBtns += `<button onclick="quickUnscrobble('${mediaEnc}', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>`;
                             }

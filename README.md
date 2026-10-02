@@ -277,7 +277,7 @@ When couples, roommates, or families watch TV shows together on a shared living 
 - **Solo Shows Untouched**: Solo shows, anime, or personal binge sessions are tracked strictly on your own profile.
 - **Device Filtering (`CO_WATCH_PLAYERS`)**: Optional rule to only trigger dual-scrobble when playing on shared devices (e.g. `Living Room Apple TV`), preventing dual-sync when you watch in bed on your phone.
 - **Movie Co-Watching (`CO_WATCH_MOVIES`)**: Toggle whether all finished movies dual-sync to your partner either via `.env` or dynamically using the dashboard's **"Toggle Movies"** button (`POST /api/cowatch/settings`) with zero service restarts.
-- **Interactive Activity Badges**: The activity feed highlights whitelisted shows with `✓ Co-Watching` and offers 1-click `+ Co-Watch` buttons for unlisted shows. Completed items display `👥 Co-Watched` (with partner name and sync reason) or `👥 Solo` (explaining why co-watching was skipped, such as device filter or show whitelist).
+- **Interactive Activity Badges**: The activity feed offers 1-click `+ Co-Watch` buttons for unlisted shows. Completed items display `👥 Co-Watched` (with partner name and sync reason) or `👥 Solo` (explaining why co-watching was skipped, such as device filter or show whitelist).
 - **Mobile-Friendly Web Dashboard**: Add or remove shared shows with interactive tag chips (`[ The Bear ✕ ]`) or click `[+ Co-Watch]` in the activity feed with 0 server restarts.
 - **Sonarr Live Autocomplete**: As you type show names into the dashboard, it queries your Sonarr library in real-time, automatically filtering out already whitelisted shows for instant 1-click addition.
 

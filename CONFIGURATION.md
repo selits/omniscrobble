@@ -389,7 +389,7 @@ CO_WATCH_MOVIES=false
 ```
 
 > [!TIP]
-> You can add or remove co-watch shows dynamically on your mobile phone or desktop without restarting the service by clicking the **`+ Co-Watch`** or **`✓ Co-Watching`** tags in the Recent Activity table.
+> You can add shows dynamically to your shared co-watch whitelist on your mobile phone or desktop without restarting the service by clicking the **`+ Co-Watch`** button in the Recent Activity table.
 
 ---
 
