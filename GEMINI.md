@@ -44,6 +44,12 @@ This document defines the architectural rules, security boundaries, and developm
   - When releasing, bump `APP_VERSION` in `app/main.py`.
   - Update version assertion in `tests/test_scrobbler.py:test_dashboard_footer_and_repo_link`.
   - Annotated git tags (`vX.Y.Z`) are cut on `main` only after full test verification.
+- **Pull Request Automation (`gh` CLI):**
+  - When the user explicitly requests to commit, push, and create a PR, execute the full pipeline autonomously without intermediate stops.
+  - In non-interactive subshell environments, dynamically source `GH_TOKEN` from the git credential helper:
+    ```bash
+    GH_TOKEN=$(printf "protocol=https\nhost=github.com\n" | git credential fill 2>/dev/null | grep '^password=' | cut -d= -f2) gh pr create ...
+    ```
 
 ---
 
