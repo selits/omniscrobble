@@ -1,3 +1,6 @@
 # Gitleaks ignore list
 # False-positive generic-api-key multiline match on empty ANILIST_CLIENT_SECRET in .env.example
 b698516aa0b6db86c2619a66f850bd4f0a348152:.env.example:generic-api-key:119
+# False-positive mock secret in test_settings_hub_endpoints_and_masking
+842f6aeff32ed3e3c639aac5947ade7668025d7d:tests/test_scrobbler.py:generic-api-key:6653
+

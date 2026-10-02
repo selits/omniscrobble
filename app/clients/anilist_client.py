@@ -100,7 +100,11 @@ class AniListClient:
 
     def is_enabled(self) -> bool:
         """Check if AniList tracking is enabled in configuration."""
-        return self.config.ANILIST_ENABLED
+        try:
+            from app.services.settings_manager import settings_mgr
+            return settings_mgr.is_tracker_enabled("anilist")
+        except Exception:
+            return self.config.ANILIST_ENABLED
 
     def _get_headers(self, auth: bool = True) -> dict[str, str]:
         """Construct headers for GraphQL request."""

@@ -2313,7 +2313,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v2.2.0" in html
+    assert "v2.3.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -6605,6 +6605,175 @@ def test_quick_scrobble_modal_defaults_and_simkl_button():
     # Simkl card renders Quick Scrobble button
     assert "🍿 Quick Scrobble" in demo_html
     assert 'onclick="openManualScrobbleModal()"' in demo_html
+
+
+def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
+    """Verify GET and POST /api/settings with credential masking, auth protection, and live reload."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import simkl, arr_bridge
+    test_settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(settings_mgr, "settings_file", test_settings_file)
+    settings_mgr._settings = {
+        "servers": {"plex": True, "jellyfin": False, "emby": False},
+        "trackers": {"trakt": True, "simkl": False, "anilist": False, "mal": False},
+        "reconciliation": settings_mgr._detect_default_reconciliation(),
+        "credentials": settings_mgr._detect_default_credentials(),
+        "arr": settings_mgr._detect_default_arr(),
+    }
+    settings_mgr._save_settings()
+
+    client = TestClient(app)
+
+    # 1. GET /api/settings returns masked settings
+    res = client.get("/api/settings")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert "servers" in data
+    assert "trackers" in data
+    assert "credentials" in data
+    assert "reconciliation" in data
+    assert "arr" in data
+
+    # 2. Auth Protection: Require admin when secret configured
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "supersecret123")
+    unauth_res = client.post("/api/settings", json={"servers": {"jellyfin": True}})
+    assert unauth_res.status_code == 401
+    assert "Unauthorized" in unauth_res.json()["detail"]
+
+    # 3. Successful update as Admin
+    client.cookies.set("admin_token", "supersecret123")
+
+    payload = {
+        "servers": {"jellyfin": True},
+        "trackers": {"simkl": True},
+        "credentials": {
+            "simkl": {
+                "client_id": "test_simkl_client_id_999",
+                "client_secret": "simkl_secret_raw_pass_8888",
+            }
+        },
+        "reconciliation": {
+            "server_type": "plex",
+            "plex_url": "http://127.0.0.1:32400",
+            "plex_token": "my_super_secret_plex_token_1111",
+        },
+        "arr": {
+            "sonarr_url": "http://127.0.0.1:8989",
+            "sonarr_api_key": "sonarr_key_raw_2222",
+            "radarr_url": "http://127.0.0.1:7878",
+            "radarr_api_key": "radarr_key_raw_3333",
+            "auto_add_watchlist": True,
+            "search_on_add": True,
+        },
+    }
+    update_res = client.post("/api/settings", json=payload)
+    assert update_res.status_code == 200
+    up_data = update_res.json()
+    assert up_data["status"] == "success"
+    assert up_data["settings"]["servers"]["jellyfin"] is True
+    assert up_data["settings"]["trackers"]["simkl"] is True
+
+    # Verify live in-memory reload
+    assert simkl.effective_client_id == "test_simkl_client_id_999"
+    assert arr_bridge.sonarr.base_url == "http://127.0.0.1:8989"
+    assert arr_bridge.sonarr.api_key == "sonarr_key_raw_2222"
+    assert arr_bridge.radarr.base_url == "http://127.0.0.1:7878"
+    assert arr_bridge.radarr.api_key == "radarr_key_raw_3333"
+
+    # 4. Mask preservation test: Submitting masked string does NOT overwrite real secret
+    mask_payload = {
+        "credentials": {
+            "simkl": {
+                "client_id": "test_simkl_client_id_999",
+                "client_secret": "••••••••8888",
+            }
+        },
+        "arr": {
+            "sonarr_api_key": "••••••••2222",
+        },
+    }
+    mask_res = client.post("/api/settings", json=mask_payload)
+    assert mask_res.status_code == 200
+
+    # Unmasked check in settings manager
+    unmasked_simkl = settings_mgr.get_tracker_credentials("simkl", mask=False)
+    assert unmasked_simkl["client_secret"] == "simkl_secret_raw_pass_8888"
+
+    unmasked_arr = settings_mgr.get_arr_settings(mask=False)
+    assert unmasked_arr["sonarr_api_key"] == "sonarr_key_raw_2222"
+
+
+def test_arr_test_connection_endpoint(monkeypatch):
+    """Verify POST /api/arr/test-connection for Sonarr and Radarr with demo and mocked connectivity."""
+    from app.clients.sonarr_client import SonarrClient
+    from app.clients.radarr_client import RadarrClient
+    client = TestClient(app)
+
+    # 1. Demo mode returns simulated success
+    demo_res = client.post("/api/arr/test-connection?demo=true", json={"app": "sonarr"})
+    assert demo_res.status_code == 200
+    assert demo_res.json()["status"] == "connected"
+    assert demo_res.json()["app"] == "sonarr"
+
+    demo_radarr = client.post("/api/arr/test-connection?demo=true", json={"app": "radarr"})
+    assert demo_radarr.status_code == 200
+    assert demo_radarr.json()["status"] == "connected"
+    assert demo_radarr.json()["app"] == "radarr"
+
+    # 2. Auth protection
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "pwd12345")
+    unauth_res = client.post("/api/arr/test-connection", json={"app": "sonarr"})
+    assert unauth_res.status_code == 401
+
+    # 3. As admin with mock
+    client.cookies.set("admin_token", "pwd12345")
+
+    with patch.object(SonarrClient, "check_connection", new_callable=AsyncMock) as mock_sonarr:
+        mock_sonarr.return_value = {"status": "connected", "version": "4.0.9"}
+        s_res = client.post("/api/arr/test-connection", json={"app": "sonarr", "url": "http://127.0.0.1:8989", "api_key": "testkey"})
+        assert s_res.status_code == 200
+        assert s_res.json()["status"] == "connected"
+
+    with patch.object(RadarrClient, "check_connection", new_callable=AsyncMock) as mock_radarr:
+        mock_radarr.return_value = {"status": "connected", "version": "5.9.1"}
+        r_res = client.post("/api/arr/test-connection", json={"app": "radarr", "url": "http://127.0.0.1:7878", "api_key": "testkey"})
+        assert r_res.status_code == 200
+        assert r_res.json()["status"] == "connected"
+
+    # 4. Invalid app type returns 400
+    bad_res = client.post("/api/arr/test-connection", json={"app": "lidarr"})
+    assert bad_res.status_code == 400
+    assert "Invalid app" in bad_res.json()["detail"]
+
+
+def test_settings_modal_dashboard_rendering():
+    """Verify that #settings-modal, header button, and contextual deep links render on dashboard."""
+    client = TestClient(app)
+
+    # 1. Main dashboard renders #settings-modal and Settings Hub header button
+    res = client.get("/")
+    assert res.status_code == 200
+    html_content = res.text
+
+    assert 'id="settings-modal"' in html_content
+    assert "Settings Hub" in html_content
+    assert "openSettingsModal" in html_content
+    assert "saveAllSettingsFromModal" in html_content
+    assert "testSettingsArrConnection" in html_content
+
+    # Contextual deep link calls
+    assert 'openSettingsModal(\'servers\')' in html_content or "openSettingsModal('servers')" in html_content
+    assert "openSettingsModal('trackers', 'simkl')" in html_content
+    assert "openSettingsModal('trackers', 'anilist')" in html_content
+    assert "openSettingsModal('automation')" in html_content
+
+    # 2. Demo dashboard also includes Settings Hub
+    demo_res = client.get("/demo")
+    assert demo_res.status_code == 200
+    assert 'id="settings-modal"' in demo_res.text
+    assert "Settings Hub" in demo_res.text
+
 
 
 

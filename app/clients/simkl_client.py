@@ -31,8 +31,13 @@ class SimklClient:
         client_secret: Optional[str] = None,
     ) -> None:
         self.config = config
-        self.client_id = client_id or config.SIMKL_CLIENT_ID
-        self.client_secret = client_secret or config.SIMKL_CLIENT_SECRET
+        try:
+            from app.services.settings_manager import settings_mgr
+            stored_creds = settings_mgr.get_tracker_credentials("simkl", mask=False)
+        except Exception:
+            stored_creds = {}
+        self.client_id = client_id or stored_creds.get("client_id") or config.SIMKL_CLIENT_ID
+        self.client_secret = client_secret or stored_creds.get("client_secret") or config.SIMKL_CLIENT_SECRET
         self.base_url = config.SIMKL_API_URL.rstrip("/")
         self.tokens_file = tokens_file or config.SIMKL_TOKENS_FILE
         self._external_client = client is not None
@@ -41,6 +46,23 @@ class SimklClient:
         self.access_token: Optional[str] = None
         self.user_name: Optional[str] = None
         self.load_tokens()
+
+    def update_credentials(self, client_id: Optional[str] = None, client_secret: Optional[str] = None) -> None:
+        """Update client credentials in-memory dynamically."""
+        if client_id is not None:
+            self.client_id = client_id
+        if client_secret is not None:
+            self.client_secret = client_secret
+
+    @property
+    def effective_client_id(self) -> str:
+        if self.client_id:
+            return self.client_id
+        try:
+            from app.services.settings_manager import settings_mgr
+            return settings_mgr.get_tracker_credentials("simkl", mask=False).get("client_id", "")
+        except Exception:
+            return getattr(self.config, "SIMKL_CLIENT_ID", "")
 
     def load_tokens(self) -> None:
         """Load stored access token and user info from disk."""
@@ -93,13 +115,18 @@ class SimklClient:
 
     def is_enabled(self) -> bool:
         """Check if Simkl tracking is configured and enabled."""
-        return bool(self.client_id) and self.config.SIMKL_ENABLED
+        try:
+            from app.services.settings_manager import settings_mgr
+            tracker_active = settings_mgr.is_tracker_enabled("simkl")
+        except Exception:
+            tracker_active = self.config.SIMKL_ENABLED
+        return bool(self.effective_client_id) and tracker_active
 
     def _get_headers(self, auth: bool = True) -> dict[str, str]:
         """Construct HTTP headers required for Simkl API."""
         headers = {
             "Content-Type": "application/json",
-            "simkl-api-key": self.client_id,
+            "simkl-api-key": self.effective_client_id,
         }
         if auth and self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
@@ -111,11 +138,12 @@ class SimklClient:
         Returns:
             dict containing user_code, verification_url, expires_in, interval.
         """
-        if not self.client_id:
+        cid = self.effective_client_id
+        if not cid:
             return {"error": "SIMKL_CLIENT_ID not configured"}
 
         url = f"{self.base_url}/oauth/pin"
-        params = {"client_id": self.client_id}
+        params = {"client_id": cid}
         try:
             resp = await self._client.get(url, params=params, headers={"Content-Type": "application/json"})
             if resp.status_code == 200:
@@ -138,11 +166,12 @@ class SimklClient:
         Returns:
             dict with 'status': 'success' | 'pending' | 'error'
         """
-        if not self.client_id:
+        cid = self.effective_client_id
+        if not cid:
             return {"status": "error", "error": "SIMKL_CLIENT_ID not configured"}
 
         url = f"{self.base_url}/oauth/pin/{user_code}"
-        params = {"client_id": self.client_id}
+        params = {"client_id": cid}
         try:
             resp = await self._client.get(url, params=params, headers={"Content-Type": "application/json"})
             if resp.status_code == 200:
@@ -199,7 +228,7 @@ class SimklClient:
 
     async def check_connection(self) -> dict[str, Any]:
         """Check live connection status and token validity."""
-        configured = bool(self.client_id)
+        configured = bool(self.effective_client_id)
         if not configured:
             return {
                 "configured": False,
@@ -212,7 +241,7 @@ class SimklClient:
         if not self.is_authenticated():
             return {
                 "configured": True,
-                "enabled": self.config.SIMKL_ENABLED,
+                "enabled": self.is_enabled(),
                 "authenticated": False,
                 "user": None,
                 "status": "not_authenticated",

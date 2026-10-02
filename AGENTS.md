@@ -25,3 +25,8 @@ All autonomous and pair-programming AI agents (Gemini, Claude, Copilot, Cursor, 
    - Whenever dashboard templates (`app/templates/dashboard.html`) or mock catalog data change, always regenerate the static demo via `.venv/bin/python scripts/generate_static_demo.py` so GitHub Pages remains in sync.
 7. **Server Listener Defaults:**
    - All media server listeners (Plex, Jellyfin, Emby) must remain disabled by default on clean installations. Upgrades must detect and preserve existing active servers without activating unused ones.
+8. **Pull Request Automation (`gh` CLI):**
+   - When the user instructs to commit, push, and create a pull request, execute the entire pipeline end-to-end without pausing to ask again.
+   - For `gh pr create` in subshell environments, dynamically source the GitHub token from the local git credential helper:
+     `GH_TOKEN=$(printf "protocol=https\nhost=github.com\n" | git credential fill 2>/dev/null | grep '^password=' | cut -d= -f2)`
+

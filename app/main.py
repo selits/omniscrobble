@@ -352,7 +352,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -1459,18 +1459,72 @@ class SettingsToggleRequest(BaseModel):
     enabled: bool
 
 
+class SettingsUpdateRequest(BaseModel):
+    servers: Optional[dict[str, bool]] = None
+    trackers: Optional[dict[str, bool]] = None
+    credentials: Optional[dict[str, dict[str, Any]]] = None
+    reconciliation: Optional[dict[str, Any]] = None
+    arr: Optional[dict[str, Any]] = None
+
+    model_config = {"extra": "ignore"}
+
+
 @app.get("/api/settings")
 def get_settings_endpoint(request: Request):
     """Retrieve current runtime enablement settings for servers and trackers."""
-    if request and request.query_params.get("demo") == "true":
-        return {
-            "status": "success",
-            "settings": settings_mgr.get_all_settings(),
-        }
+    all_s = settings_mgr.get_all_settings()
     return {
         "status": "success",
-        "settings": settings_mgr.get_all_settings(),
+        "settings": all_s,
+        **all_s,
     }
+
+
+@app.post("/api/settings")
+def update_settings_endpoint(payload: SettingsUpdateRequest, request: Request):
+    """Update runtime settings, tracker credentials, reconciliation, or arr settings."""
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "success", "settings": settings_mgr.get_all_settings()}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    data = payload.model_dump(exclude_unset=True)
+    updated = settings_mgr.update_all_settings(data)
+
+    # Dynamic in-memory reconfiguration
+    if payload.credentials:
+        if "simkl" in payload.credentials:
+            simkl_creds = settings_mgr.get_tracker_credentials("simkl", mask=False)
+            simkl.update_credentials(client_id=simkl_creds.get("client_id"), client_secret=simkl_creds.get("client_secret"))
+        if "mal" in payload.credentials:
+            mal_creds = settings_mgr.get_tracker_credentials("mal", mask=False)
+            mal.update_credentials(client_id=mal_creds.get("client_id"), client_secret=mal_creds.get("client_secret"))
+
+    if payload.reconciliation:
+        raw_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+        reverse_sync_mgr.update_config(
+            server=raw_recon.get("server_type"),
+            plex_url=raw_recon.get("plex_url"),
+            plex_token=raw_recon.get("plex_token"),
+            jellyfin_url=raw_recon.get("jellyfin_url"),
+            jellyfin_token=raw_recon.get("jellyfin_token"),
+            jellyfin_user_id=raw_recon.get("jellyfin_user_id"),
+            emby_url=raw_recon.get("emby_url"),
+            emby_token=raw_recon.get("emby_token"),
+            emby_user_id=raw_recon.get("emby_user_id"),
+        )
+        reverse_sync_config_updated.set()
+
+    if payload.arr:
+        arr_cfg = settings_mgr.get_arr_settings(mask=False)
+        arr_bridge.update_config(
+            sonarr_url=arr_cfg.get("sonarr_url"),
+            sonarr_api_key=arr_cfg.get("sonarr_api_key"),
+            radarr_url=arr_cfg.get("radarr_url"),
+            radarr_api_key=arr_cfg.get("radarr_api_key"),
+        )
+
+    return {"status": "success", "settings": updated}
 
 
 @app.post("/api/settings/toggle")
@@ -2157,6 +2211,49 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
 async def get_sync_progress(request: Request):
     """Poll reconciliation progress."""
     return reverse_sync_mgr._sync_progress
+
+
+class ArrTestConnectionRequest(BaseModel):
+    app: Optional[str] = "sonarr"
+    url: Optional[str] = None
+    api_key: Optional[str] = None
+
+    model_config = {"extra": "ignore"}
+
+
+@app.post("/api/arr/test-connection")
+async def test_arr_connection(payload: ArrTestConnectionRequest, request: Request):
+    """Test connectivity to Sonarr or Radarr with provided or active credentials."""
+    is_demo = request.query_params.get("demo") == "true"
+    app_type = (payload.app or "sonarr").lower().strip()
+    if is_demo:
+        return {"status": "connected", "app": app_type, "version": "4.0.9" if app_type == "sonarr" else "5.9.1"}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    arr_cfg = settings_mgr.get_arr_settings(mask=False)
+    if app_type == "sonarr":
+        target_url = (payload.url or "").strip() or arr_cfg.get("sonarr_url", "")
+        target_key = (payload.api_key or "").strip()
+        if not target_key or settings_mgr._is_masked(target_key):
+            target_key = arr_cfg.get("sonarr_api_key", "")
+        temp_client = SonarrClient(base_url=target_url, api_key=target_key)
+        try:
+            return await temp_client.check_connection()
+        finally:
+            await temp_client.close()
+    elif app_type == "radarr":
+        target_url = (payload.url or "").strip() or arr_cfg.get("radarr_url", "")
+        target_key = (payload.api_key or "").strip()
+        if not target_key or settings_mgr._is_masked(target_key):
+            target_key = arr_cfg.get("radarr_api_key", "")
+        temp_client = RadarrClient(base_url=target_url, api_key=target_key)
+        try:
+            return await temp_client.check_connection()
+        finally:
+            await temp_client.close()
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid app '{payload.app}'")
 
 
 @app.get("/api/arr/status")
@@ -3388,10 +3485,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                 <span>🌐</span> Multi-Server Ecosystem
             </h3>
-            <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
-                <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
-                {eco_healthy}/{eco_total} Services Healthy
-            </span>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                    <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                    {eco_healthy}/{eco_total} Services Healthy
+                </span>
+                <button onclick="openSettingsModal('servers')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:4px 10px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">⚙️ Manage Servers</button>
+            </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
             Unified operational topology across all media servers, Trakt scrobble tracker, and automated media acquisition engines.
@@ -3475,6 +3575,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 {quick_scrobble_btn}
                 {cross_sync_btn}
                 {simkl_action_btn}
+                <button onclick="openSettingsModal('trackers', 'simkl')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Simkl Settings</button>
                 <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">PIN Portal ↗</a>
             </div>
         </div>
@@ -3563,6 +3664,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 {ani_action_btn}
                 {mal_action_btn}
+                <button onclick="openSettingsModal('trackers', 'anilist')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Anime Settings</button>
                 <a href="/auth/anilist" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">AniList Portal ↗</a>
                 <a href="/auth/mal" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">MAL Portal ↗</a>
             </div>
@@ -3631,6 +3733,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                     {sync_btn_html}
                     <button onclick="openArrModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;">📋 View Log</button>
+                    <button onclick="openSettingsModal('automation')" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">⚙️ Configure</button>
                 </div>
             </div>
         </div>
@@ -3648,8 +3751,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 Connect Trakt Watchlists directly to Sonarr and Radarr. When you add movies or shows to your Trakt Watchlist, Omniscrobble automatically looks them up and queues them for acquisition.
             </p>
             <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                <span>Set <code>SONARR_URL</code>, <code>SONARR_API_KEY</code>, <code>RADARR_URL</code>, or <code>RADARR_API_KEY</code> in your <code>.env</code> file.</span>
-                <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+                <span>Configure Sonarr and Radarr connections directly in the Settings Hub or via <code>.env</code>.</span>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button onclick="openSettingsModal('automation')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;border:none;cursor:pointer;">⚙️ Setup *Arr Bridge</button>
+                    <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+                </div>
             </div>
         </div>
         """

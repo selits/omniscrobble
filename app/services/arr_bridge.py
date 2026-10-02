@@ -36,8 +36,20 @@ class ArrBridgeManager:
         trakt_client: Optional[TraktClient] = None,
         notifier_service: Optional[Notifier] = None,
     ):
-        self.sonarr = sonarr_client or SonarrClient()
-        self.radarr = radarr_client or RadarrClient()
+        try:
+            arr_cfg = settings_mgr.get_arr_settings(mask=False)
+            s_url = arr_cfg.get("sonarr_url") or Config.SONARR_URL
+            s_key = arr_cfg.get("sonarr_api_key") or Config.SONARR_API_KEY
+            r_url = arr_cfg.get("radarr_url") or Config.RADARR_URL
+            r_key = arr_cfg.get("radarr_api_key") or Config.RADARR_API_KEY
+        except Exception:
+            s_url = Config.SONARR_URL
+            s_key = Config.SONARR_API_KEY
+            r_url = Config.RADARR_URL
+            r_key = Config.RADARR_API_KEY
+
+        self.sonarr = sonarr_client or SonarrClient(base_url=s_url, api_key=s_key)
+        self.radarr = radarr_client or RadarrClient(base_url=r_url, api_key=r_key)
         self.trakt = trakt_client
         self.notifier = notifier_service or notifier
 
@@ -45,6 +57,23 @@ class ArrBridgeManager:
         self._is_syncing: bool = False
         self._last_sync_time: Optional[float] = None
         self._last_sync_result: Optional[dict[str, Any]] = None
+
+    def update_config(
+        self,
+        sonarr_url: Optional[str] = None,
+        sonarr_api_key: Optional[str] = None,
+        radarr_url: Optional[str] = None,
+        radarr_api_key: Optional[str] = None,
+    ) -> None:
+        """Update Sonarr and Radarr connection parameters dynamically in-memory."""
+        if sonarr_url is not None:
+            self.sonarr.base_url = sonarr_url.rstrip("/")
+        if sonarr_api_key is not None:
+            self.sonarr.api_key = sonarr_api_key
+        if radarr_url is not None:
+            self.radarr.base_url = radarr_url.rstrip("/")
+        if radarr_api_key is not None:
+            self.radarr.api_key = radarr_api_key
 
     def set_trakt_client(self, client: TraktClient) -> None:
         self.trakt = client
