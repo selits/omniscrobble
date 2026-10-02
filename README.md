@@ -12,6 +12,15 @@
 ![Docker](https://img.shields.io/badge/docker-ready-2496ed.svg?logo=docker&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
+<p align="center">
+  <a href="#-features"><b>Features</b></a> •
+  <a href="#-step-by-step-setup-guide"><b>Quickstart</b></a> •
+  <a href="CONFIGURATION.md"><b>Configuration Guide</b></a> •
+  <a href="DEPLOYMENT.md"><b>Deployment Guide</b></a> •
+  <a href="docs/API.md"><b>API Reference</b></a> •
+  <a href="https://selits.github.io/omniscrobble/"><b>Live Demo</b></a>
+</p>
+
 A lightweight, high-performance Python service that receives media server webhooks (Plex, Jellyfin, and Emby) and automatically tracks your TV shows, movies, and anime across Trakt, Simkl, AniList, and MyAnimeList—updating playback status in real-time, syncing ratings and collections, and keeping your watch history synchronized everywhere.
 
 ---
@@ -181,151 +190,23 @@ You can authenticate either through your web browser or from the command line:
 1. Open the activation URL displayed, enter the 8-character code, and authorize.
 2. The script will save your tokens to `trakt_tokens.json`.
 
-#### Simkl Authorization (Multi-Tracker):
-
-1. Ensure `SIMKL_CLIENT_ID` is set in your `.env` file (create an app at [simkl.com/settings/developer](https://simkl.com/settings/developer)).
-2. On your Omniscrobble dashboard, click **"🔑 Link Simkl Account"** on the Simkl card or open **`http://<server-ip>:<PORT>/auth/simkl`**.
-3. Click **"Generate Activation PIN"**, open the displayed Simkl link, and approve the connection.
-4. Omniscrobble will automatically capture your credentials and activate simultaneous dual-scrobbling!
-
-#### AniList Authorization (Anime Tracker):
-
-1. On your Omniscrobble dashboard, click **"⚡ Link AniList"** on the Anime card or navigate to **`http://<server-ip>:<PORT>/auth/anilist`**.
-2. Click **"Generate Token on AniList"** (or visit [anilist.co/settings/developer](https://anilist.co/settings/developer)) to create a personal access token.
-3. Paste the access token into the input box and submit. Omniscrobble immediately validates credentials and retrieves your profile.
-
-#### MyAnimeList (MAL) Authorization (Anime Tracker):
-
-1. On your Omniscrobble dashboard, click **"🎌 Link MAL"** on the Anime card or navigate to **`http://<server-ip>:<PORT>/auth/mal`**.
-2. Provide your MAL client credentials or access token from [myanimelist.net/apiconfig](https://myanimelist.net/apiconfig).
-3. Paste your token and click submit to enable synchronized MAL episode updates and ratings.
+> 🎯 **Connecting Secondary Trackers (Simkl, AniList, MyAnimeList):**  
+> You can connect Simkl, AniList, and MyAnimeList anytime directly from their dedicated dashboard cards (`/auth/simkl`, `/auth/anilist`, `/auth/mal`). For developer app setup and API key guides, see [**Tracker Developer Applications & OAuth Setup**](./CONFIGURATION.md#4-tracker-developer-applications--oauth-setup) in `CONFIGURATION.md`.
 
 ---
 
-## 🌐 Deploying on a Remote Linux Server or VPS
+## 🌐 Deployment & Running 24/7
 
-When deploying on a remote Linux server, VPS, or containerized hosting environment where Plex runs inside an isolated container, follow these guidelines:
+Omniscrobble can be deployed natively on any Linux server, VPS, NAS, or containerized environment to run 24/7 in the background and survive system reboots:
 
-### 1. Select an Available Port
+| Deployment Mode | Best For | Quick Start |
+| :--- | :--- | :--- |
+| **systemd User Service** | Linux Servers, VPS, Headless hosts | `systemctl --user enable --now omniscrobble` |
+| **Docker Compose** | Containerized environments, Unraid, TrueNAS | `docker compose up -d` |
+| **Direct / Shell** | Local testing & development | `python main.py` or `./start.sh` |
 
-Choose an available port on your host (e.g. `8080`, or your provider's assigned port). Confirm it is free:
-
-```bash
-ss -tuln | grep <PORT>
-```
-
-*(If it returns empty, the port is free to use).*
-
-### 2. Network Configuration: Why `0.0.0.0` is Required
-
-In `.env`, always set:
-
-```ini
-SERVER_HOST=0.0.0.0
-SERVER_PORT=<PORT>
-```
-
-If set to `127.0.0.1`, the service will only accept connections from the host and will block incoming requests from the Plex container.
-
-### 3. Auto-Starting on Server Reboots & Running 24/7
-
-Choose one of the methods below to keep the scrobbler running in the background and ensure it automatically restarts if the server reboots:
-
-#### Option A: systemd User Service (Recommended for Linux Servers & VPS)
-
-Linux servers and non-root environments support user-level `systemd` services without needing `sudo`. This automatically restarts the service on server boot and recovers from crashes.
-
-1. Copy the provided service file to your systemd user directory:
-
-   ```bash
-   mkdir -p ~/.config/systemd/user
-   cp plex-trakt.service ~/.config/systemd/user/omniscrobble.service
-   ```
-
-   *(Note: The service file defaults to `%h/omniscrobble` or `%h/plex-trakt-webhook`. Running `./upgrade.sh` automatically configures `WorkingDirectory` and `ExecStart` for your exact directory).*
-
-2. Enable lingering so the service starts on boot without requiring an active SSH session:
-
-   ```bash
-   loginctl enable-linger $USER
-   ```
-
-   *(On many managed Linux hosts, lingering is typically enabled by default).*
-
-3. Reload systemd, enable, and start the service:
-
-   ```bash
-   systemctl --user daemon-reload
-   systemctl --user enable --now omniscrobble.service
-   ```
-
-4. **Useful management commands:**
-
-   ```bash
-   # Check service status
-   systemctl --user status omniscrobble.service
-
-   # View live logs
-   journalctl --user -u omniscrobble.service -f
-
-   # Restart or stop the service
-   systemctl --user restart omniscrobble.service
-   systemctl --user stop omniscrobble.service
-   ```
-
----
-
-#### Option B: Cron `@reboot` (Fallback for Environments without systemd)
-
-If your host does not support user systemd services:
-
-1. Run `crontab -e`.
-2. Add the following line at the end (adjusting the path to your repository):
-
-   ```bash
-   @reboot /home/<username>/omniscrobble/start.sh >> /home/<username>/omniscrobble/server.log 2>&1 &
-   ```
-
----
-
-#### Option C: Running with Screen (Manual / Temporary)
-
-If you only want to run it during testing without surviving server reboots:
-
-```bash
-# Start a new screen session
-screen -S plex-trakt
-
-# Inside the screen session, run:
-.venv/bin/python main.py
-```
-
-- **Detach from screen** (keeps it running): Press **`Ctrl+A`** followed by **`D`**.
-- **Re-attach to check live logs**: `screen -x plex-trakt`
-- **Stop screen**: `pkill -f "screen.*plex-trakt"`
-
----
-
-#### Option D: Docker & Docker Compose
-
-If you prefer running in a container:
-
-1. Configure your `.env` file (set `TRAKT_TOKENS_FILE=/app/data/trakt_tokens.json`).
-2. Start the service with Docker Compose:
-
-   ```bash
-   docker compose up -d
-   ```
-
-3. Check container logs and built-in health check:
-
-   ```bash
-   docker compose logs -f
-   ```
-
-   *(Data is persisted in the `./data` volume, and the container runs under a hardened, non-root `appuser`)*.
-
----
+> 📖 **Comprehensive Deployment Guide:**  
+> For complete instructions on systemd user services, process lingering, port binding, reverse proxy configuration (Caddy / Nginx), Docker Compose persistence, and headless operation, see [**`DEPLOYMENT.md`**](./DEPLOYMENT.md).
 
 ---
 
@@ -361,72 +242,23 @@ If you prefer running in a container:
 
 ---
 
-## 🗺️ Web UI & API Endpoints
+## 🗺️ Webhooks & REST API
 
-| Endpoint | Method | Description |
+Omniscrobble provides a real-time web dashboard, universal media server webhook ingestion endpoints, and an extensive REST API for status, telemetry, multi-tracker management, and library reconciliation.
+
+### Primary Ingestion & Management Endpoints
+
+| Endpoint | Method | Purpose |
 | :--- | :---: | :--- |
-| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected Trakt profiles, multi-server tabs, active stream status, and activity. |
-| **`/demo`** | `GET` | **Demo Dashboard**: Air-gapped preview environment showcasing full dashboard with realistic mock data. |
-| **`/auth`** | `GET` | **Trakt Device Authorization**: Browser-based OAuth activation (supports `?user=username` for multi-user linking). |
-| **`/webhook`** | `POST` | **Plex Webhook Endpoint**: Ingests Plex playback, rating, scrobble, and library events. |
-| **`/webhook/jellyfin`** | `POST` / `GET` | **Jellyfin Webhook Endpoint**: Ingests native Jellyfin webhook notifications (start, stop, progress, ratings). |
-| **`/webhook/emby`** | `POST` / `GET` | **Emby Webhook Endpoint**: Ingests native Emby server webhooks. |
-| **`/manifest.json`** | `GET` | **PWA Manifest**: Web App Manifest for mobile and desktop home screen installation. |
-| **`/sw.js`** | `GET` | **PWA Service Worker**: Background asset caching and offline reliability. |
-| **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token health telemetry. |
-| **`/metrics`** | `GET` | **Prometheus Metrics**: Scrape real-time service, playback, and queue metrics in standard exposition format. |
-| **`/api/logs`** | `GET` | **System Logs**: Live service logs from `journalctl` or in-memory ring buffer with automatic secret redaction (Admin only). |
-| **`/api/events`** | `GET` | **Event History**: Returns recent scrobble, rating, and playback events in JSON. |
-| **`/api/events/clear`** | `POST` | **Clear Events**: Resets the in-memory event log (Admin only). |
-| **`/api/playback`** | `GET` | **Active Streams**: Returns real-time streaming sessions and recently finished media. |
-| **`/api/search`** | `GET` | **Trakt Search**: Search movies and shows across Trakt's global database (Admin only). |
-| **`/api/scrobble/manual`** | `POST` | **Manual Scrobble**: 1-click manual history scrobble for any movie or episode (Admin only). |
-| **`/api/watchlist`** | `POST` | **Trakt Watchlist**: 1-click bookmark movie or TV show to your Trakt watchlist (Admin only). |
-| **`/api/queue`** | `GET` | **Offline Queue**: View pending items, retry counts, and error diagnostics in the SQLite queue. |
-| **`/api/queue/retry`** | `POST` | **Retry Queue**: Trigger immediate background processing of pending queue items (Admin only). |
-| **`/api/queue/clear`** | `POST` | **Clear Queue**: Purge pending or failed queue items (Admin only). |
-| **`/api/backup`** | `GET` | **Download Backup**: Export a timestamped `.zip` containing tokens, retry database, and settings (Admin only). |
-| **`/api/restore`** | `POST` | **Restore Backup**: Upload and restore a `.zip` backup archive with Zip Slip security verification (Admin only). |
-| **`/api/cowatch`** | `GET` | **Co-Watch Status**: Returns shared shows list, configuration, and linked user profiles. |
-| **`/api/cowatch/shows`** | `POST` / `DELETE` | **Shared Shows Manager**: Add or remove TV shows from the Watch Together whitelist (Admin only). |
-| **`/api/cowatch/settings`** | `POST` | **Co-Watch Settings**: Dynamically toggle movie co-watching or update runtime settings (Admin only). |
-| **`/api/cowatch/sync`** | `POST` | **1-Click Partner Dual Sync**: Manually push any completed media to your partner's Trakt account (Admin only). |
-| **`/api/sonarr/shows`** | `GET` | **Sonarr Series Search**: Autocomplete TV series from Sonarr for Co-Watch whitelist (Admin only). |
-| **`/api/test/webhook`** | `POST` | **Synthetic Webhook Simulator**: Test and simulate server events with dry-run or live Trakt sync (Admin only). |
-| **`/api/sync/status`** | `GET` | **Sync Diagnostics**: Connection status for media server, last scan/sync timestamps, and operational flags. |
-| **`/api/sync/diff`** | `GET` | **Library Discrepancy Diff**: Scan and list watched status and rating differences between Trakt and Plex (Admin only). |
-| **`/api/sync/reconcile`** | `POST` | **Execute Reconciliation**: Reconcile selected items or entire library bi-directionally (Admin only). |
-| **`/api/sync/progress`** | `GET` | **Sync Progress**: Real-time progress percentage and item counts for active batch sync jobs. |
-| **`/api/arr/status`** | `GET` | **Content Bridge Status**: Live connection diagnostics and library counts for Sonarr and Radarr. |
-| **`/api/arr/sync`** | `POST` | **Watchlist Sync**: Trigger on-demand sync of Trakt watchlist items to Sonarr and Radarr (Admin only). |
-| **`/api/ecosystem`** | `GET` | **Ecosystem Health**: Multi-server status overview across Plex, Jellyfin, Emby, Trakt, Simkl, Sonarr, and Radarr. |
-| **`/api/simkl/status`** | `GET` | **Simkl Status**: Connection status and user profile for Simkl multi-tracker. |
-| **`/api/simkl/pin`** | `POST` | **Request Device PIN**: Generate OAuth Device PIN for headless/browser Simkl authorization (Admin only). |
-| **`/api/simkl/poll`** | `POST` | **Poll Device PIN**: Check status of pending Simkl device PIN authorization (Admin only). |
-| **`/api/simkl/disconnect`** | `POST` | **Disconnect Simkl**: Unlink Simkl account and delete local OAuth credentials (Admin only). |
-| **`/auth/simkl`** | `GET` | **Simkl Authorization Portal**: Dedicated web portal for Device PIN activation (Admin only). |
-| **`/api/cross-sync/status`** | `GET` | **Cross-Sync Status**: Real-time reconciliation status and discrepancy counts between Trakt and Simkl. |
-| **`/api/cross-sync/diff`** | `GET` | **Cross-Tracker Diff**: Scanned watched and rating discrepancies between Trakt and Simkl (Admin only). |
-| **`/api/cross-sync/scan`** | `POST` | **Scan Discrepancies**: Trigger on-demand comparison between Trakt and Simkl libraries (Admin only). |
-| **`/api/cross-sync/execute`** | `POST` | **Execute Cross-Sync**: Reconcile selected items or all items bi-directionally (Admin only). |
-| **`/api/cross-sync/progress`** | `GET` | **Cross-Sync Progress**: Live progress percentage and batch status for active sync jobs. |
-| **`/api/settings`** | `GET` | **Runtime Settings**: Retrieve current media server listener and tracker active/pause states. |
-| **`/api/settings/toggle`** | `POST` | **Toggle Services**: Enable/disable media server listeners or pause/resume trackers at runtime (Admin only). |
-| **`/api/stats/reset`** | `POST` | **Reset Stats**: Reset lifetime scrobble, rating, and collection counters (Admin only). |
-| **`/api/history/remove`** | `POST` | **Unscrobble Media**: 1-click remove an item from Trakt history with optional partner un-scrobble (Admin only). |
-| **`/api/admin/unlock`** | `POST` | **Admin Unlock**: Authenticate with Webhook Secret to elevate session permissions. |
-| **`/api/admin/lock`** | `POST` | **Admin Lock**: Relock dashboard session to non-admin privacy-shielded mode. |
-| **`/auth/anilist`** | `GET` | **AniList Authorization Portal**: Dedicated web portal for AniList token activation (Admin only). |
-| **`/api/anilist/status`** | `GET` | **AniList Status**: Connection status and user profile for AniList tracker. |
-| **`/api/anilist/token`** | `POST` | **Save AniList Token**: Save user access token for AniList GraphQL scrobbling (Admin only). |
-| **`/api/anilist/disconnect`** | `POST` | **Disconnect AniList**: Unlink AniList account and purge local credentials (Admin only). |
-| **`/auth/mal`** | `GET` | **MyAnimeList Authorization Portal**: Dedicated web portal for MAL token activation (Admin only). |
-| **`/api/mal/status`** | `GET` | **MAL Status**: Connection status and user profile for MyAnimeList tracker. |
-| **`/api/mal/token`** | `POST` | **Save MAL Token**: Save user access token for MyAnimeList REST v2 scrobbling (Admin only). |
-| **`/api/mal/disconnect`** | `POST` | **Disconnect MAL**: Unlink MAL account and purge local credentials (Admin only). |
-| **`/api/anime/resolve`** | `GET` | **Anime Resolution**: Query cached or live AniList GraphQL / MAL ID mapping for a title. |
-| **`/sonarr`** | `POST` | **Sonarr Webhook**: Instant Trakt collection sync when Sonarr imports a download. |
-| **`/radarr`** | `POST` | **Radarr Webhook**: Instant Trakt collection sync when Radarr imports a download. |
+| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected profiles, active streams, and control center. |
+| **`/webhook`** | `POST` | **Plex Webhook**: Ingests Plex playback, scrobble, rating, and library events. |
+| **`/webhook/jellyfin`** | `POST` / `GET` | **Jellyfin Webhook**: Ingests Jellyfin playback and user data notifications. |
+| **`/webhook/emby`** | `POST` / `GET` | **Emby Webhook**: Ingests Emby playback and rating notifications. |
+| **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token diagnostics. |
+| **`/metrics`** | `GET` | **Prometheus Metrics**: Scrape real-time service, playback, and queue metrics. |
+
+> 📚 **Complete REST API Specification:**  
+> For full documentation of all 28 REST endpoints (including multi-tracker management, offline queue, library reconciliation, Co-Watch, manual scrobbling, and backup/restore), see [**`docs/API.md`**](./docs/API.md).
 
 ---
 
@@ -774,66 +606,19 @@ omniscrobble/
 
 ## 🗺️ Roadmap & Horizons
 
-Omniscrobble is developed with a modular multi-platform architecture. Current and future development milestones:
+Omniscrobble is developed with a modular multi-platform architecture.
 
-- **v1.4.0 (Milestone 1 — Completed)**:
-  - Rebranding to Omniscrobble.
-  - Universal Webhook Ingestion for Jellyfin & Emby.
-  - Media-specific granular scrobble thresholds (`EPISODE_SCROBBLE_THRESHOLD=80`, `MOVIE_SCROBBLE_THRESHOLD=90`).
-  - Mobile Progressive Web App (PWA) & True-Black OLED Dark Mode.
-- **v1.5.0 (Milestone 2 — Completed)**:
-  - Direct Media Server REST API client (`PlexApiClient`) for bi-directional communication.
-  - Two-Way Library Reconciliation & Reverse Watch/Rating Sync Engine (`ReverseSyncManager`).
-  - Thread-safe Scrobble Loop Prevention architecture (`LoopPreventionManager`) with TTL suppression cache.
-  - Interactive Dashboard Reconciliation Card & Discrepancy Diff Modal (`#reconcile-modal`) with selective sync, filter tabs, and live progress bar.
-  - Automated startup sync and background periodic reconciliation worker.
-- **v1.6.0 (Milestone 3 — Completed)**:
-  - Trakt Watchlist ➔ Sonarr & Radarr Content Bridge (`arr_bridge.py`, `radarr_client.py`).
-  - Automated lookup, deduplication, root folder resolution, and acquisition search.
-  - Multi-server ecosystem dashboard (`/api/ecosystem`) with live health checks across Plex, Jellyfin, Emby, Trakt, Sonarr, and Radarr.
-  - Dedicated Watchlist Sync modal (`#arr-modal`) with 1-click execution and real-time status telemetry.
-  - Multi-channel notification support (`arr_add` action) with custom Discord embeds and mobile push alerts.
-- **v1.7.0 (Milestone 4 — Completed)**:
-  - Multi-tracker architecture (`multi_tracker.py`) coordinating simultaneous dual-scrobbler dispatch.
-  - Native **Simkl** integration (`simkl_client.py`) with support for Movies, TV Shows, and Anime.
-  - OAuth Device PIN authorization flow (`/auth/simkl`, `/api/simkl/pin`, `/api/simkl/poll`) with zero-password in-browser activation.
-  - Simultaneous dual-scrobble and two-way rating synchronization across Trakt and Simkl.
-  - Decoupled asynchronous background task dispatch with zero playback latency impact.
-  - Interactive Simkl Multi-Tracker card (`{{SIMKL_CARD}}`) and modal (`#simkl-modal`) on the dashboard.
-  - Ecosystem status matrix integration (`/api/ecosystem`) monitoring Simkl health alongside media servers and arr acquisition.
-- **v1.8.0 (Cross-Tracker Importer & Two-Way Sync — Completed)**:
-  - Cross-Tracker library reconciliation and sync engine (`cross_tracker_sync.py`).
-  - Bi-directional watch history and rating import between Trakt and Simkl across Movies, TV Shows, and Anime.
-  - Dedicated Cross-Tracker Reconciliation modal (`#cross-sync-modal`) with direction toggles, type filters, and live progress bar.
-  - Simkl bulk sync API client enhancements (`get_all_items`, `get_activities`, `bulk_sync_history`, `bulk_sync_ratings`).
-  - REST API endpoints (`/api/cross-sync/status`, `/api/cross-sync/diff`, `/api/cross-sync/scan`, `/api/cross-sync/execute`, `/api/cross-sync/progress`).
-- **v1.9.0 (Milestone 5 — Completed)**:
-  - Anime tracking engine with dedicated AniList GraphQL and MyAnimeList REST v2 integrations (`anilist_client.py`, `mal_client.py`, `anime_resolver.py`).
-  - Heuristic title normalization, smart GUID parsing, and negative caching (`data/anime_cache.json`).
-  - Web UI authorization portals (`/auth/anilist`, `/auth/mal`).
-  - Simultaneous 4-way dispatch across Trakt, Simkl, AniList, and MAL.
-- **v2.0.0 (Milestone 6 — Completed)**:
-  - Control Dashboard with 1-click media server listener toggles (disabled by default on clean install; preserves active on upgrade) and tracker pause/resume (`settings_manager.py`).
-  - Quick-Mark Watched modal with live catalog search and direct manual entry across all trackers with partner Co-Watch support.
-  - 1-Click Unscrobble / Remove from History (`/api/history/remove`) with partner history unlinking.
-  - Persistent lifetime playback statistics (`data/stats.json`) and activity feed (`data/events.json`) surviving server reboots, upgrades, and backup archives.
-  - Upstream tracker failure alerts with 30-minute deduplication throttling.
-  - Full-stack static demo preview update and responsive ecosystem button refinements.
-- **v2.1.0 (Milestone 7 — Completed)**:
-  - Dynamic Co-Watch Allowed Devices configuration in dashboard UI with interactive chips and add/remove controls (`data/cowatch_devices.json`).
-  - Seamless merging of `.env` `CO_WATCH_PLAYERS` with persistent dashboard device whitelists.
-  - Reorganized Watch Together & Multi-User card layout: Linked Trakt Accounts and Allowed Devices sit side-by-side on top, with full-width Shared Shows Whitelist below.
-  - Sleek custom scrollbars (`.custom-scroll`) and scroll persistence reset on reload.
-  - Backup & restore integration for `data/cowatch_devices.json`.
-- **v2.2.0 (Milestone 8 — Multi-Server Reconciliation & Community Expansion)**:
-  - Multi-server library reconciliation architecture (`ReverseSyncManager`) supporting **Plex**, **Jellyfin**, and **Emby**.
-  - Direct MediaBrowser REST API client framework (`mediabrowser_api_client.py`, `jellyfin_api_client.py`, `emby_api_client.py`) with played state, star/numerical rating synchronization, and GUID provider mapping.
-  - Multi-server dashboard configuration modal (`#reconcile-settings-modal`) with credential masking, live server-specific connection tests, and runtime token persistence.
-  - Discrepancy diff modal (`#reconcile-modal`) with server switching tabs, dynamic server columns, and server-targeted quick reconciliation.
-  - Community Beta callout and documentation for Jellyfin and Emby direct connections.
-- **Future Horizons**:
-  - Direct P2P sync between distributed Omniscrobble instances.
-  - Dynamic in-app scrobble threshold and library filtering configuration editor.
+- [x] **Universal Media Server Ingestion**: Multi-server webhooks for Plex, Jellyfin, and Emby.
+- [x] **Multi-Tracker Synchronization**: Simultaneous dispatch across Trakt, Simkl, AniList, and MyAnimeList.
+- [x] **Bi-Directional Library Reconciliation**: Discrepancy diffing and played/rating sync across Plex, Jellyfin, Emby, Trakt, and Simkl.
+- [x] **Watch Together / Co-Watch**: Dynamic multi-user partner scrobbling with show and device whitelists.
+- [x] **Content Bridge**: Automated Trakt Watchlist sync to Sonarr and Radarr.
+- [x] **Offline Queue & Resilience**: SQLite persistence with exponential backoff and transient failure retries.
+- [ ] **Direct P2P Sync**: Mesh synchronization between distributed Omniscrobble instances.
+- [ ] **Dynamic Rules Engine**: In-app scrobble threshold and library filtering configuration editor.
+
+> 📦 **Release History & Changelogs:**  
+> For detailed release notes, changelogs, and upgrade instructions for every release (v1.0 &rarr; v2.3+), visit [**GitHub Releases**](https://github.com/selits/omniscrobble/releases).
 
 ---
 

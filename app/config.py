@@ -75,6 +75,9 @@ class Config:
         os.getenv("MOVIE_SCROBBLE_THRESHOLD", os.getenv("SCROBBLE_THRESHOLD", "90.0"))
     )
 
+    # Maximum activity history events retained in memory and persisted to data/events.json
+    MAX_EVENT_HISTORY: int = int(os.getenv("MAX_EVENT_HISTORY", "100"))
+
     @classmethod
     def get_threshold(cls, media_type: str) -> float:
         """Return the scrobble threshold percentage for the given media type."""

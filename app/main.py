@@ -352,7 +352,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.4.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -448,7 +448,7 @@ async def execute_multi_tracker_dispatch(parsed: ParsedMedia, action_taken: str,
 
 
 # Persistent log of recent webhook events for the status dashboard
-MAX_HISTORY = 50
+MAX_HISTORY = max(10, getattr(Config, "MAX_EVENT_HISTORY", 100))
 
 
 recent_events: deque[dict[str, Any]] = deque(maxlen=MAX_HISTORY)
@@ -1367,11 +1367,15 @@ async def import_backup(request: Request):
 
 
 @app.get("/api/events")
-def get_events(request: Request):
+def get_events(request: Request, limit: Optional[int] = None, offset: int = 0):
     if request.query_params.get("demo") == "true":
-        return {"events": demo_mgr.get_demo_events()}
+        all_demo = demo_mgr.get_demo_events()
+        total_demo = len(all_demo)
+        paged_demo = all_demo[offset : offset + limit] if limit is not None else all_demo
+        return {"events": paged_demo, "total": total_demo}
     is_admin = is_admin_request(request)
-    events = list(recent_events)
+    raw_events = list(recent_events)
+    total_count = len(raw_events)
     if not is_admin:
         events = [
             {
@@ -1386,15 +1390,18 @@ def get_events(request: Request):
                 "result_status": ev.get("result_status"),
                 "cowatch_status": None,
             }
-            for ev in events
+            for ev in raw_events
         ]
     else:
+        events = raw_events
         for ev in events:
             show = ev.get("show_title") or (ev.get("title") if ev.get("type") == "show" else None)
             if not show and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
                 show = ev["media_payload"].get("title")
             ev["is_cowatch_show"] = cowatch_mgr.is_cowatch_show(show) if show else False
-    return {"events": events}
+    if limit is not None:
+        events = events[offset : offset + limit]
+    return {"events": events, "total": total_count}
 
 
 @app.post("/api/events/clear")
@@ -3004,14 +3011,22 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         'title="Configure Media Servers, Trackers, and Automation"><span>⚙️</span><span>Settings Hub</span></button>'
     )
 
-    # Events rows
-    events_list = demo_mgr.get_demo_events() if is_demo else recent_events
+    # Events rows & pagination metadata
+    events_list = demo_mgr.get_demo_events() if is_demo else list(recent_events)
+    total_events = len(events_list)
+    initial_page_size = 10
+    total_pages = max(1, (total_events + initial_page_size - 1) // initial_page_size) if total_events > 0 else 1
+    events_page_info = f"Showing 1–{min(initial_page_size, total_events)} of {total_events} events" if total_events > 0 else "0 events"
+    events_page_num = f"Page 1 of {total_pages}"
+    events_next_disabled = "" if total_pages > 1 else "disabled"
+
+    ssr_events = events_list[:initial_page_size]
     rows = ""
     col_span = 7 if is_admin else 6
-    if not events_list:
+    if not ssr_events:
         rows = f'<tr><td colspan="{col_span}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex, Jellyfin, or Emby to test!</td></tr>'
     else:
-        for ev in events_list:
+        for ev in ssr_events:
             color = "#10b981" if ev["result_status"] in ("ok", 200, 201) else "#f59e0b"
             u = ev["user"] if is_admin else mask_username(ev["user"])
             server_raw = ev.get("server", "plex").lower()
@@ -3048,15 +3063,21 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     target_txt = html.escape(f"@{cw['target']}" if cw.get("target") else "partner")
                     reason_txt = html.escape(cw.get("reason") or "Synced")
                     status_badge_html += f' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
-                elif cw.get("reason") and any(x in str(ev.get("action")) for x in ("mark_watched", "scrobble_stop", "stop", "test_webhook")):
+                elif cw.get("reason") and any(x in str(ev.get("action")) for x in ("mark_watched", "scrobble_stop", "scrobble", "stop", "test_webhook")):
                     reason_txt = html.escape(cw.get("reason"))
                     status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: {reason_txt}">👥 Solo</span>'
 
             title_disp = html.escape(str(ev.get('title', '')))
             type_disp = html.escape(str(ev.get('type', '')))
             user_disp = html.escape(str(u))
-            action_disp = html.escape(str(ev.get('action', '')))
-            progress_disp = html.escape(str(ev.get('progress', '')))
+            action_raw = str(ev.get('action', ''))
+            progress_raw = str(ev.get('progress', '')).strip()
+            action_disp = html.escape(action_raw)
+            progress_disp = html.escape(progress_raw)
+            if progress_disp and progress_raw not in action_raw and "(" not in action_raw and action_raw.lower() != "collection":
+                action_text = f"{action_disp} ({progress_disp})"
+            else:
+                action_text = action_disp
             time_disp = html.escape(str(ev.get('timestamp', '')))
 
             rows += f"""
@@ -3065,7 +3086,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">{title_disp}</td>
                 <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{type_disp}</span></td>
                 <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{user_disp}</span></div></td>
-                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{action_disp} ({progress_disp})</span></td>
+                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">{action_text}</span></td>
                 <td style="padding:12px 16px;">{status_badge_html}</td>
                 {action_col}
             </tr>
@@ -3935,6 +3956,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{CLEAR_BUTTON}}': clear_button_html,
         '{{ACTIONS_HEADER}}': ('<th>Actions</th>' if is_admin else ''),
         '{{EVENT_ROWS}}': rows,
+        '{{EVENTS_PAGE_INFO}}': events_page_info,
+        '{{EVENTS_PAGE_NUM}}': events_page_num,
+        '{{EVENTS_NEXT_DISABLED}}': events_next_disabled,
         '{{IS_ADMIN_JS}}': ('true' if is_admin else 'false'),
         '{{IS_DEMO_JS}}': ('true' if is_demo else 'false'),
         '{{APP_VERSION}}': APP_VERSION,

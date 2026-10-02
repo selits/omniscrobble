@@ -580,9 +580,16 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     </div>
     """
 
-    # Events rows
+    # Events rows & pagination metadata
+    total_demo_events = len(demo_events)
+    initial_page_size = 10
+    total_demo_pages = max(1, (total_demo_events + initial_page_size - 1) // initial_page_size) if total_demo_events > 0 else 1
+    demo_page_info = f"Showing 1–{min(initial_page_size, total_demo_events)} of {total_demo_events} events" if total_demo_events > 0 else "0 events"
+    demo_page_num = f"Page 1 of {total_demo_pages}"
+    demo_next_disabled = "" if total_demo_pages > 1 else "disabled"
+
     rows = ""
-    for ev in demo_events:
+    for ev in demo_events[:initial_page_size]:
         color = "#10b981" if ev["result_status"] in ("ok", 200, 201) else "#f59e0b"
         show_title = ev.get("show_title") or (ev.get("title") if ev.get("type") == "show" else None)
         if not show_title and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
@@ -604,6 +611,8 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         cw = ev.get("cowatch_status")
         if cw and cw.get("synced"):
             status_badge_html += ' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to partner: Shared show whitelist match">👥 Co-Watched</span>'
+        elif cw and cw.get("reason") and any(x in str(ev.get("action")) for x in ("mark_watched", "scrobble_stop", "scrobble", "stop", "test_webhook")):
+            status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: {html.escape(cw.get("reason"))}">👥 Solo</span>'
 
         server_raw = ev.get("server", "plex").lower()
         if server_raw == "jellyfin":
@@ -613,13 +622,22 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         else:
             server_badge = '<span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span>'
 
+        action_raw = str(ev.get('action', ''))
+        progress_raw = str(ev.get('progress', '')).strip()
+        action_disp = html.escape(action_raw)
+        progress_disp = html.escape(progress_raw)
+        if progress_disp and progress_raw not in action_raw and "(" not in action_raw and action_raw.lower() != "collection":
+            action_text = f"{action_disp} ({progress_disp})"
+        else:
+            action_text = action_disp
+
         rows += f"""
         <tr style="border-bottom: 1px solid #334155;">
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{ev['timestamp']}</td>
             <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">{html.escape(ev['title'])}</td>
             <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['type']}</span></td>
             <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{ev['user']}</span></div></td>
-            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['action']} ({ev['progress']})</span></td>
+            <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">{action_text}</span></td>
             <td style="padding:12px 16px;">{status_badge_html}</td>
             {action_col}
         </tr>
@@ -663,6 +681,9 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{CLEAR_BUTTON}}': '<button onclick="clearHistory()" class="btn-sm" style="color:#f87171;">Clear</button>',
         '{{ACTIONS_HEADER}}': '<th>Actions</th>',
         '{{EVENT_ROWS}}': rows,
+        '{{EVENTS_PAGE_INFO}}': demo_page_info,
+        '{{EVENTS_PAGE_NUM}}': demo_page_num,
+        '{{EVENTS_NEXT_DISABLED}}': demo_next_disabled,
         '{{IS_ADMIN_JS}}': 'true',
         '{{IS_DEMO_JS}}': 'true',
         '{{APP_VERSION}}': APP_VERSION,

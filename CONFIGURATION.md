@@ -2,6 +2,14 @@
 
 This document is the comprehensive reference manual for configuring **Omniscrobble**. It explains the two-tier configuration architecture, provides step-by-step instructions for extracting API keys and tokens from all supported media servers and trackers, details homelab networking patterns, and provides an exhaustive environment variable reference.
 
+<p align="center">
+  <a href="README.md"><b>Overview</b></a> •
+  <a href="CONFIGURATION.md"><b>Configuration Guide</b></a> •
+  <a href="DEPLOYMENT.md"><b>Deployment Guide</b></a> •
+  <a href="docs/API.md"><b>API Reference</b></a> •
+  <a href="https://selits.github.io/omniscrobble/"><b>Live Demo</b></a>
+</p>
+
 ---
 
 ## 📑 Table of Contents
@@ -446,6 +454,7 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`SCROBBLE_MODE`** | `scrobble` | String | **Yes** | `scrobble` (real-time play/pause/stop) or `watched_only` (marks watched at threshold). |
 | **`EPISODE_SCROBBLE_THRESHOLD`** | `80.0` | Float (0–100) | **Yes** | Completion percentage required to scrobble TV episodes (enables credit-skipping). |
 | **`MOVIE_SCROBBLE_THRESHOLD`** | `90.0` | Float (0–100) | **Yes** | Completion percentage required to scrobble Movies (prevents premature scrobbling). |
+| **`MAX_EVENT_HISTORY`** | `100` | Integer | **Yes** | Maximum scrobble events retained in memory and persisted to `data/events.json`. |
 | **`SYNC_COLLECTION`** | `true` | Boolean | **Yes** | Automatically adds newly downloaded items (`library.new`) to Trakt collection. |
 | **`TRAKT_CLIENT_ID`** | `""` | String | No | Trakt API OAuth Application Client ID. |
 | **`TRAKT_CLIENT_SECRET`** | `""` | String | No | Trakt API OAuth Application Client Secret. |
