@@ -33,8 +33,13 @@ class MyAnimeListClient:
         access_token: Optional[str] = None,
     ) -> None:
         self.config = config
-        self.client_id = client_id or config.MAL_CLIENT_ID
-        self.client_secret = client_secret or config.MAL_CLIENT_SECRET
+        try:
+            from app.services.settings_manager import settings_mgr
+            stored_creds = settings_mgr.get_tracker_credentials("mal", mask=False)
+        except Exception:
+            stored_creds = {}
+        self.client_id = client_id or stored_creds.get("client_id") or config.MAL_CLIENT_ID
+        self.client_secret = client_secret or stored_creds.get("client_secret") or config.MAL_CLIENT_SECRET
         self.tokens_file = tokens_file or config.MAL_TOKENS_FILE
         self._external_client = client is not None
         self._client = client or httpx.AsyncClient(timeout=15.0)
@@ -45,6 +50,23 @@ class MyAnimeListClient:
         self.user_avatar: Optional[str] = None
         self.user_id: Optional[int] = None
         self.load_tokens()
+
+    def update_credentials(self, client_id: Optional[str] = None, client_secret: Optional[str] = None) -> None:
+        """Update client credentials in-memory dynamically."""
+        if client_id is not None:
+            self.client_id = client_id
+        if client_secret is not None:
+            self.client_secret = client_secret
+
+    @property
+    def effective_client_id(self) -> str:
+        if self.client_id:
+            return self.client_id
+        try:
+            from app.services.settings_manager import settings_mgr
+            return settings_mgr.get_tracker_credentials("mal", mask=False).get("client_id", "")
+        except Exception:
+            return getattr(self.config, "MAL_CLIENT_ID", "")
 
     def load_tokens(self) -> None:
         """Load stored tokens and user details from disk."""
@@ -110,17 +132,22 @@ class MyAnimeListClient:
 
     def is_enabled(self) -> bool:
         """Check if MyAnimeList tracking is enabled in configuration."""
-        return self.config.MAL_ENABLED
+        try:
+            from app.services.settings_manager import settings_mgr
+            return settings_mgr.is_tracker_enabled("mal")
+        except Exception:
+            return self.config.MAL_ENABLED
 
     def _get_headers(self, auth: bool = True) -> dict[str, str]:
         """Construct headers for MAL API request."""
         headers = {
             "User-Agent": "Omniscrobble/1.9.0",
         }
+        cid = self.effective_client_id
         if auth and self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
-        elif self.client_id:
-            headers["X-MAL-CLIENT-ID"] = self.client_id
+        elif cid:
+            headers["X-MAL-CLIENT-ID"] = cid
         return headers
 
     def get_client(self) -> httpx.AsyncClient:
@@ -133,7 +160,7 @@ class MyAnimeListClient:
         """Test credentials and retrieve authenticated user profile."""
         if not self.is_authenticated():
             return {
-                "configured": bool(self.client_id or self.access_token),
+                "configured": bool(self.effective_client_id or self.access_token),
                 "enabled": self.is_enabled(),
                 "authenticated": False,
                 "status": "not_authenticated",

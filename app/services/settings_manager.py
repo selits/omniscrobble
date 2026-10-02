@@ -36,9 +36,47 @@ class SettingsManager:
                 "anilist": True,
                 "mal": True,
             },
+            "credentials": self._detect_default_credentials(),
             "reconciliation": self._detect_default_reconciliation(),
+            "arr": self._detect_default_arr(),
         }
         self._load_settings()
+
+    def _detect_default_credentials(self) -> dict[str, dict[str, str]]:
+        """Detect initial default API credentials from Config."""
+        return {
+            "simkl": {
+                "client_id": getattr(self.config, "SIMKL_CLIENT_ID", "") or "",
+                "client_secret": getattr(self.config, "SIMKL_CLIENT_SECRET", "") or "",
+            },
+            "anilist": {
+                "client_id": getattr(self.config, "ANILIST_CLIENT_ID", "") or "",
+                "client_secret": getattr(self.config, "ANILIST_CLIENT_SECRET", "") or "",
+            },
+            "mal": {
+                "client_id": getattr(self.config, "MAL_CLIENT_ID", "") or "",
+                "client_secret": getattr(self.config, "MAL_CLIENT_SECRET", "") or "",
+            },
+            "trakt": {
+                "client_id": getattr(self.config, "TRAKT_CLIENT_ID", "") or "",
+                "client_secret": getattr(self.config, "TRAKT_CLIENT_SECRET", "") or "",
+            },
+        }
+
+    def _detect_default_arr(self) -> dict[str, Any]:
+        """Detect initial default *Arr acquisition settings from Config."""
+        return {
+            "sonarr_url": getattr(self.config, "SONARR_URL", "") or "",
+            "sonarr_api_key": getattr(self.config, "SONARR_API_KEY", "") or "",
+            "radarr_url": getattr(self.config, "RADARR_URL", "") or "",
+            "radarr_api_key": getattr(self.config, "RADARR_API_KEY", "") or "",
+            "auto_add_from_watchlist": bool(getattr(self.config, "AUTO_ADD_FROM_WATCHLIST", False)),
+            "search_on_add": bool(getattr(self.config, "SEARCH_ON_ADD", True)),
+            "sonarr_quality_profile_id": getattr(self.config, "SONARR_QUALITY_PROFILE_ID", None),
+            "sonarr_root_folder": getattr(self.config, "SONARR_ROOT_FOLDER", None),
+            "radarr_quality_profile_id": getattr(self.config, "RADARR_QUALITY_PROFILE_ID", None),
+            "radarr_root_folder": getattr(self.config, "RADARR_ROOT_FOLDER", None),
+        }
 
     def _detect_default_reconciliation(self) -> dict[str, Any]:
         """Detect initial default reconciliation settings from Config."""
@@ -168,6 +206,26 @@ class SettingsManager:
                             for k, v in recon.items():
                                 if k in current_recon:
                                     current_recon[k] = v
+
+                        creds = data.get("credentials", {})
+                        if isinstance(creds, dict):
+                            current_creds = self._settings.setdefault("credentials", self._detect_default_credentials())
+                            for trk, c_vals in creds.items():
+                                if isinstance(c_vals, dict):
+                                    trk_k = str(trk).lower()
+                                    if trk_k in ("myanimelist", "mal"):
+                                        trk_k = "mal"
+                                    target_c = current_creds.setdefault(trk_k, {})
+                                    for ck, cv in c_vals.items():
+                                        if cv is not None:
+                                            target_c[ck] = str(cv).strip()
+
+                        arr_data = data.get("arr", {})
+                        if isinstance(arr_data, dict):
+                            current_arr = self._settings.setdefault("arr", self._detect_default_arr())
+                            for ak, av in arr_data.items():
+                                if ak in current_arr and av is not None:
+                                    current_arr[ak] = av
             except Exception as e:
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
@@ -312,13 +370,172 @@ class SettingsManager:
         logger.info("Reconciliation settings saved to disk.")
         return self.get_reconciliation_settings(mask_token=True)
 
-    def get_all_settings(self) -> dict[str, Any]:
+    @staticmethod
+    def _mask_val(val: str) -> str:
+        if not val:
+            return ""
+        return "••••••••" + (val[-4:] if len(val) >= 4 else "")
+
+    @staticmethod
+    def _is_masked(val: Any) -> bool:
+        if val is None:
+            return False
+        s = str(val).strip()
+        return s.startswith("••••") or s.startswith("●●●●") or "••••" in s
+
+    def get_tracker_credentials(self, tracker: str, mask: bool = True) -> dict[str, Any]:
+        """Returns credentials dictionary for the requested tracker with optional masking."""
+        trk = str(tracker).strip().lower()
+        if trk in ("myanimelist", "mal"):
+            trk = "mal"
+        defaults = self._detect_default_credentials().get(trk, {})
+        current = self._settings.setdefault("credentials", self._detect_default_credentials()).setdefault(trk, {})
+
+        cid = current.get("client_id") if current.get("client_id") is not None else defaults.get("client_id", "")
+        sec = current.get("client_secret") if current.get("client_secret") is not None else defaults.get("client_secret", "")
+
+        cid = str(cid or "").strip()
+        sec = str(sec or "").strip()
+
+        masked_sec = self._mask_val(sec)
+        return {
+            "client_id": cid,
+            "client_secret": masked_sec if mask else sec,
+            "masked_client_secret": masked_sec,
+            "has_client_id": bool(cid),
+            "has_client_secret": bool(sec),
+        }
+
+    def update_tracker_credentials(self, tracker: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Update tracker credentials and persist to disk."""
+        trk = str(tracker).strip().lower()
+        if trk in ("myanimelist", "mal"):
+            trk = "mal"
+        current = self._settings.setdefault("credentials", self._detect_default_credentials()).setdefault(trk, {})
+
+        if data.get("clear_client_id"):
+            current["client_id"] = ""
+        elif "client_id" in data and data["client_id"] is not None:
+            cid = str(data["client_id"]).strip()
+            if not self._is_masked(cid):
+                current["client_id"] = cid
+
+        if data.get("clear_client_secret"):
+            current["client_secret"] = ""
+        elif "client_secret" in data and data["client_secret"] is not None:
+            sec = str(data["client_secret"]).strip()
+            if not self._is_masked(sec):
+                current["client_secret"] = sec
+
+        self._save_settings()
+        logger.info(f"Updated tracker credentials for '{trk}'")
+        return self.get_tracker_credentials(trk, mask=True)
+
+    def get_arr_settings(self, mask: bool = True) -> dict[str, Any]:
+        """Returns *Arr configuration dictionary with optional token masking."""
+        defaults = self._detect_default_arr()
+        current = self._settings.setdefault("arr", defaults)
+        res = dict(defaults)
+        res.update(current)
+
+        raw_sonarr_key = str(res.get("sonarr_api_key", "") or "")
+        raw_radarr_key = str(res.get("radarr_api_key", "") or "")
+
+        res["has_sonarr_key"] = bool(raw_sonarr_key)
+        res["has_radarr_key"] = bool(raw_radarr_key)
+        res["masked_sonarr_key"] = self._mask_val(raw_sonarr_key)
+        res["masked_radarr_key"] = self._mask_val(raw_radarr_key)
+
+        if mask:
+            res["sonarr_api_key"] = res["masked_sonarr_key"]
+            res["radarr_api_key"] = res["masked_radarr_key"]
+
+        return res
+
+    def update_arr_settings(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Updates *Arr automation settings and persists to disk."""
+        arr = self._settings.setdefault("arr", self._detect_default_arr())
+        for k in (
+            "sonarr_url",
+            "radarr_url",
+            "auto_add_from_watchlist",
+            "search_on_add",
+            "sonarr_quality_profile_id",
+            "sonarr_root_folder",
+            "radarr_quality_profile_id",
+            "radarr_root_folder",
+        ):
+            if k in data and data[k] is not None:
+                if k in ("auto_add_from_watchlist", "search_on_add"):
+                    arr[k] = bool(data[k])
+                elif k in ("sonarr_quality_profile_id", "radarr_quality_profile_id"):
+                    try:
+                        arr[k] = int(data[k]) if str(data[k]).strip() else None
+                    except (ValueError, TypeError):
+                        pass
+                else:
+                    val = str(data[k]).strip()
+                    if k in ("sonarr_url", "radarr_url"):
+                        val = val.rstrip("/")
+                    arr[k] = val
+
+        if data.get("clear_sonarr_api_key"):
+            arr["sonarr_api_key"] = ""
+        elif "sonarr_api_key" in data and data["sonarr_api_key"] is not None:
+            new_key = str(data["sonarr_api_key"]).strip()
+            if not self._is_masked(new_key):
+                arr["sonarr_api_key"] = new_key
+
+        if data.get("clear_radarr_api_key"):
+            arr["radarr_api_key"] = ""
+        elif "radarr_api_key" in data and data["radarr_api_key"] is not None:
+            new_key = str(data["radarr_api_key"]).strip()
+            if not self._is_masked(new_key):
+                arr["radarr_api_key"] = new_key
+
+        self._save_settings()
+        logger.info("*Arr settings saved to disk.")
+        return self.get_arr_settings(mask=True)
+
+    def get_all_settings(self, mask_token: bool = True) -> dict[str, Any]:
         """Returns the full runtime settings dictionary."""
         return {
             "servers": dict(self._settings["servers"]),
             "trackers": dict(self._settings["trackers"]),
-            "reconciliation": self.get_reconciliation_settings(mask_token=True),
+            "credentials": {
+                t: self.get_tracker_credentials(t, mask=mask_token)
+                for t in ("simkl", "anilist", "mal", "trakt")
+            },
+            "reconciliation": self.get_reconciliation_settings(mask_token=mask_token),
+            "arr": self.get_arr_settings(mask=mask_token),
         }
+
+    def update_all_settings(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Update any subset of settings and persist to disk."""
+        if "servers" in data and isinstance(data["servers"], dict):
+            for srv, en in data["servers"].items():
+                self._settings["servers"][str(srv).lower().strip()] = bool(en)
+
+        if "trackers" in data and isinstance(data["trackers"], dict):
+            for trk, en in data["trackers"].items():
+                k = str(trk).lower().strip()
+                if k in ("myanimelist", "mal"):
+                    k = "mal"
+                self._settings["trackers"][k] = bool(en)
+
+        if "credentials" in data and isinstance(data["credentials"], dict):
+            for trk, creds in data["credentials"].items():
+                if isinstance(creds, dict):
+                    self.update_tracker_credentials(trk, creds)
+
+        if "reconciliation" in data and isinstance(data["reconciliation"], dict):
+            self.update_reconciliation_settings(data["reconciliation"])
+
+        if "arr" in data and isinstance(data["arr"], dict):
+            self.update_arr_settings(data["arr"])
+
+        self._save_settings()
+        return self.get_all_settings(mask_token=True)
 
 
 settings_mgr = SettingsManager()

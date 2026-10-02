@@ -64,6 +64,13 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '⭐ Star on GitHub</a>'
     )
 
+    demo_settings_header_btn = (
+        '<button onclick="openSettingsModal()" class="btn-sm" '
+        'style="background:#1e293b;border:1px solid #475569;color:#f8fafc;padding:6px 12px;font-size:12px;cursor:pointer;'
+        'display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:600;" '
+        'title="Configure Media Servers, Trackers, and Automation"><span>⚙️</span><span>Settings Hub</span></button>'
+    )
+
     demo_footer_link = (
         f'<a href="{REPO_URL}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:none;font-weight:600;">'
         'GitHub Repository &rarr;</a>'
@@ -621,6 +628,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     replacements = {
         '{{DEMO_BANNER}}': demo_banner,
         '{{DEMO_HEADER_BTN}}': demo_header_btn,
+        '{{SETTINGS_HEADER_BTN}}': demo_settings_header_btn,
         '{{DEMO_FOOTER_LINK}}': demo_footer_link,
         '{{STATUS_BADGE}}': status_badge,
         '{{ADMIN_BTN}}': admin_btn,
@@ -772,8 +780,50 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 sync_on_startup: true
             }},
             settings: {{
-                servers: {{ plex: true, jellyfin: true, emby: true }},
-                trackers: {{ trakt: true, simkl: true, anilist: true, mal: true }}
+                servers: {{ plex: true, jellyfin: false, emby: false }},
+                trackers: {{ trakt: true, simkl: true, anilist: true, mal: true }},
+                credentials: {{
+                    simkl: {{ client_id: "demo_simkl_id", client_secret: "••••••••s1m1", masked_client_secret: "••••••••s1m1", has_credentials: true }},
+                    anilist: {{ access_token: "••••••••an1l", masked_access_token: "••••••••an1l", has_credentials: true }},
+                    mal: {{ client_id: "demo_mal_id", client_secret: "••••••••mal1", masked_client_secret: "••••••••mal1", access_token: "••••••••tokn", masked_access_token: "••••••••tokn", has_credentials: true }},
+                    trakt: {{ client_id: "demo_trakt_id", has_credentials: true }}
+                }},
+                reconciliation: {{
+                    server_type: "plex",
+                    plex_url: "http://<your-server-ip-or-domain>:32400",
+                    plex_token: "••••••••a1b2",
+                    masked_plex_token: "••••••••a1b2",
+                    has_plex_token: true,
+                    is_plex_token_set: true,
+                    jellyfin_url: "http://<your-server-ip-or-domain>:8096",
+                    jellyfin_token: "••••••••c3d4",
+                    masked_jellyfin_token: "••••••••c3d4",
+                    jellyfin_user_id: "demo-admin-uid",
+                    has_jellyfin_token: true,
+                    is_jellyfin_token_set: true,
+                    emby_url: "http://<your-server-ip-or-domain>:8096",
+                    emby_token: "••••••••e5f6",
+                    masked_emby_token: "••••••••e5f6",
+                    emby_user_id: "demo-admin-uid",
+                    has_emby_token: true,
+                    is_emby_token_set: true,
+                    interval_minutes: 30,
+                    direction_default: "all",
+                    sync_ratings: true,
+                    sync_on_startup: true
+                }},
+                arr: {{
+                    sonarr_url: "http://<your-server-ip-or-domain>:8989",
+                    sonarr_api_key: "••••••••snrr",
+                    masked_sonarr_key: "••••••••snrr",
+                    has_sonarr_key: true,
+                    radarr_url: "http://<your-server-ip-or-domain>:7878",
+                    radarr_api_key: "••••••••rdrr",
+                    masked_radarr_key: "••••••••rdrr",
+                    has_radarr_key: true,
+                    auto_add_watchlist: false,
+                    search_on_add: true
+                }}
             }}
         }};
 
@@ -1016,7 +1066,28 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             }}
 
             if (path.endsWith('/api/settings')) {{
-                return jsonResp({{ status: 'ok', settings: clientState.settings }});
+                if (method === 'POST') {{
+                    const body = init.body ? JSON.parse(init.body) : {{}};
+                    if (body.servers) Object.assign(clientState.settings.servers, body.servers);
+                    if (body.trackers) Object.assign(clientState.settings.trackers, body.trackers);
+                    if (body.credentials) {{
+                        for (const trk in body.credentials) {{
+                            if (!clientState.settings.credentials[trk]) clientState.settings.credentials[trk] = {{}};
+                            Object.assign(clientState.settings.credentials[trk], body.credentials[trk]);
+                        }}
+                    }}
+                    if (body.reconciliation) Object.assign(clientState.settings.reconciliation, body.reconciliation);
+                    if (body.arr) Object.assign(clientState.settings.arr, body.arr);
+                    return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
+                }}
+                return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
+            }}
+
+            if (path.endsWith('/api/arr/test-connection')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                const appName = body.app === 'radarr' ? 'Radarr' : 'Sonarr';
+                const appVer = body.app === 'radarr' ? '5.9.1' : '4.0.9';
+                return jsonResp({{ status: 'connected', version: appVer, message: `${{appName}} v${{appVer}} reachable` }});
             }}
 
             if (path.endsWith('/api/watchlist') || path.endsWith('/api/cowatch/sync')) {{
