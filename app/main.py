@@ -3430,6 +3430,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     else:
         simkl_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Optional Tracker</span>'
 
+    quick_scrobble_btn = '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🍿 Quick Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Quick Scrobble</button>'
+
     simkl_action_btn = ""
     if is_admin:
         if simkl_auth:
@@ -3470,6 +3472,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                {quick_scrobble_btn}
                 {cross_sync_btn}
                 {simkl_action_btn}
                 <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">PIN Portal ↗</a>
@@ -3653,6 +3656,14 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
     stats_data = demo_mgr.get_demo_stats() if is_demo else scrobble_stats
 
+    trakt_configured = bool(auth_status)
+    simkl_configured = bool(simkl_auth)
+    anilist_configured = bool(ani_auth)
+    mal_configured = bool(mal_auth)
+    cowatch_user = Config.CO_WATCH_USER
+    cowatch_disp = (cowatch_user if is_admin else mask_username(cowatch_user)) if cowatch_user else ""
+    has_cowatch_partner = bool(cowatch_user and (is_demo or user_mgr.is_user_authenticated(cowatch_user)))
+
     rendered = DASHBOARD_HTML
     replacements = {
         '{{DEMO_BANNER}}': demo_banner,
@@ -3693,6 +3704,19 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{IS_DEMO_JS}}': ('true' if is_demo else 'false'),
         '{{APP_VERSION}}': APP_VERSION,
         '{{REPO_URL}}': REPO_URL,
+        '{{SCROBBLE_CHECKED_TRAKT}}': ('checked' if trakt_configured else ''),
+        '{{SCROBBLE_CHECKED_SIMKL}}': ('checked' if simkl_configured else ''),
+        '{{SCROBBLE_CHECKED_ANILIST}}': ('checked' if anilist_configured else ''),
+        '{{SCROBBLE_CHECKED_MAL}}': ('checked' if mal_configured else ''),
+        '{{SCROBBLE_CHECKED_TRAKT_JS}}': ('true' if trakt_configured else 'false'),
+        '{{SCROBBLE_CHECKED_SIMKL_JS}}': ('true' if simkl_configured else 'false'),
+        '{{SCROBBLE_CHECKED_ANILIST_JS}}': ('true' if anilist_configured else 'false'),
+        '{{SCROBBLE_CHECKED_MAL_JS}}': ('true' if mal_configured else 'false'),
+        '{{SCROBBLE_BADGE_TRAKT}}': ('' if trakt_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
+        '{{SCROBBLE_BADGE_SIMKL}}': ('' if simkl_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
+        '{{SCROBBLE_BADGE_ANILIST}}': ('' if anilist_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
+        '{{SCROBBLE_BADGE_MAL}}': ('' if mal_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
+        '{{SCROBBLE_BADGE_COWATCH}}': (f' <span style="font-size:10px;color:#d8b4fe;">(@{cowatch_disp})</span>' if has_cowatch_partner else ' <span style="font-size:10px;color:#64748b;">(No partner linked)</span>'),
     }
     for k, v in replacements.items():
         rendered = rendered.replace(k, v)
