@@ -141,6 +141,7 @@ class DemoManager:
                 },
                 "progress": "100.0%",
                 "result_status": "ok",
+                "cowatch_status": {"synced": True, "target": "demo_partner", "reason": "Shared show whitelist match"},
             },
             {
                 "timestamp": _time_ago(85),
@@ -158,6 +159,7 @@ class DemoManager:
                 },
                 "progress": "9/10",
                 "result_status": "ok",
+                "cowatch_status": {"synced": False, "reason": "Movie co-watching is disabled"},
             },
             {
                 "timestamp": _time_ago(190),
@@ -177,6 +179,7 @@ class DemoManager:
                 },
                 "progress": "100.0%",
                 "result_status": "ok",
+                "cowatch_status": {"synced": True, "target": "demo_viewer", "reason": "Shared show whitelist match"},
             },
             {
                 "timestamp": _time_ago(320),
@@ -196,6 +199,7 @@ class DemoManager:
                 },
                 "progress": "100.0%",
                 "result_status": "ok",
+                "cowatch_status": {"synced": True, "target": "demo_partner", "reason": "Shared show whitelist match"},
             },
             {
                 "timestamp": _time_ago(480),
@@ -234,6 +238,7 @@ class DemoManager:
                 },
                 "progress": "100.0%",
                 "result_status": "ok",
+                "cowatch_status": {"synced": False, "reason": "Not in shared co-watch list"},
             },
             {
                 "timestamp": _time_ago(720),
@@ -253,6 +258,7 @@ class DemoManager:
                 },
                 "progress": "100.0%",
                 "result_status": "ok",
+                "cowatch_status": {"synced": True, "target": "demo_partner", "reason": "Shared show whitelist match"},
             },
             {
                 "timestamp": _time_ago(850),
@@ -270,6 +276,7 @@ class DemoManager:
                 },
                 "progress": "10/10",
                 "result_status": "ok",
+                "cowatch_status": {"synced": False, "reason": "Movie co-watching is disabled"},
             },
             {
                 "timestamp": _time_ago(1000),
@@ -289,6 +296,7 @@ class DemoManager:
                 },
                 "progress": "100.0%",
                 "result_status": "ok",
+                "cowatch_status": {"synced": True, "target": "demo_viewer", "reason": "Shared show whitelist match"},
             },
             {
                 "timestamp": _time_ago(1200),

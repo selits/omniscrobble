@@ -6816,12 +6816,13 @@ def test_activity_table_show_cowatch_alignment():
     assert show_ev is not None
     assert show_ev.get("is_cowatch_show") is True
 
-    # 4. Test SSR dashboard renders ✓ Co-Watching badge and clean flex layout
+    # 4. Test SSR dashboard renders clean flex layout without inert badge or redundant + Co-Watch button for whitelisted show
     client.cookies.set("admin_token", "unlocked")
     dash_res = client.get("/")
     assert dash_res.status_code == 200
     html = dash_res.text
-    assert "✓ Co-Watching" in html
+    assert "✓ Co-Watching" not in html
+    assert 'data-show="Ted%20Lasso%20%282020%29"' not in html
     assert '<div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">' in html
 
 
@@ -7117,6 +7118,21 @@ async def test_activity_table_ui_polish():
         cowatch_status={"synced": True, "target": "partner", "reason": "Shared show whitelist match"},
     )
 
+    # Log an unsynced 100% completed event (should still offer + Sync Partner)
+    parsed_unsynced = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Solo Watched Indie Movie",
+        progress=100.0,
+    )
+    log_event(
+        parsed_unsynced,
+        "mark_watched",
+        {"status": "ok"},
+        cowatch_status={"synced": False, "reason": "Not in shared co-watch list"},
+    )
+
     dash_res = client.get("/")
     assert dash_res.status_code == 200
     html_text = dash_res.text
@@ -7132,6 +7148,13 @@ async def test_activity_table_ui_polish():
     # Verify 0% stop gets clean ✓ OK badge and does NOT have Solo badge
     assert '✓ OK</span>' in html_text
     assert 'title="Co-watch skipped: Not in shared co-watch list"' not in html_text
+
+    # Action buttons: inert ✓ Co-Watching is omitted completely
+    assert '✓ Co-Watching' not in html_text
+
+    # Action buttons: unsynced completed event gets + Sync Partner and Unscrobble
+    assert '+ Sync Partner' in html_text
+    assert '🗑️ Unscrobble' in html_text
 
     # Action buttons flex styling
     assert 'display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;' in html_text

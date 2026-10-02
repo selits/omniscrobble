@@ -3114,9 +3114,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 action_buttons = []
                 if show_title:
                     show_esc = urllib.parse.quote(show_title)
-                    if cowatch_mgr.is_cowatch_show(show_title):
-                        action_buttons.append(f'<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;white-space:nowrap;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>')
-                    else:
+                    if not cowatch_mgr.is_cowatch_show(show_title):
                         action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;white-space:nowrap;" title="Add show to co-watch whitelist">+ Co-Watch</button>')
                 if (Config.CO_WATCH_USER or is_demo) and ev.get("media_payload"):
                     media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
@@ -3125,7 +3123,9 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     prog_val = str(ev.get("progress", "")).strip()
                     is_completion = raw_act.startswith(("mark_watched", "scrobble_stop", "collection", "rate")) or raw_act in ("scrobble", "watched")
                     if is_completion and res_stat != "ignored" and prog_val != "0.0%":
-                        action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
+                        cw = ev.get("cowatch_status") or {}
+                        if not cw.get("synced"):
+                            action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
                         if raw_act.startswith(("mark_watched", "scrobble_stop")) or raw_act in ("scrobble", "watched"):
                             action_buttons.append(f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>')
                 action_col = f'<td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
