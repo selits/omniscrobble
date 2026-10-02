@@ -239,6 +239,26 @@
                     </tbody>
                 </table>
             </div>
+            <!-- Pagination Controls Footer -->
+            <div id="events-pagination" style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:#0f172a;border-top:1px solid #334155;flex-wrap:wrap;gap:10px;font-size:12px;color:#94a3b8;">
+                <div id="events-page-info">{{EVENTS_PAGE_INFO}}</div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <label style="display:flex;align-items:center;gap:6px;">
+                        <span>Per page:</span>
+                        <select id="events-page-size" onchange="changeEventsPageSize(this.value)" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer;outline:none;">
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="all">All</option>
+                        </select>
+                    </label>
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <button id="events-prev-btn" onclick="prevEventsPage()" class="btn-sm" style="padding:3px 10px;background:#1e293b;border:1px solid #334155;color:#f8fafc;cursor:pointer;border-radius:4px;" disabled>‹ Prev</button>
+                        <span id="events-page-num" style="padding:2px 8px;font-weight:600;color:#f8fafc;font-size:12px;">{{EVENTS_PAGE_NUM}}</span>
+                        <button id="events-next-btn" onclick="nextEventsPage()" class="btn-sm" style="padding:3px 10px;background:#1e293b;border:1px solid #334155;color:#f8fafc;cursor:pointer;border-radius:4px;" {{EVENTS_NEXT_DISABLED}}>Next ›</button>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="footer">
@@ -3134,15 +3154,49 @@
             }
         }
 
+        let allEvents = null;
+        let eventsCurrentPage = 1;
+        let eventsPageSize = 10;
+
         function renderRows(events) {
+            if (events !== undefined && events !== null) {
+                allEvents = events;
+            }
             const tbody = document.getElementById('events-tbody');
             const colSpan = isAdmin ? 7 : 6;
-            if (!events || events.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex to test!</td></tr>`;
+            const items = allEvents || [];
+            const total = items.length;
+
+            const pageInfo = document.getElementById('events-page-info');
+            const pageNum = document.getElementById('events-page-num');
+            const prevBtn = document.getElementById('events-prev-btn');
+            const nextBtn = document.getElementById('events-next-btn');
+
+            if (total === 0) {
+                tbody.innerHTML = `<tr><td colspan="${colSpan}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex, Jellyfin, or Emby to test!</td></tr>`;
+                if (pageInfo) pageInfo.textContent = '0 events';
+                if (pageNum) pageNum.textContent = 'Page 1 of 1';
+                if (prevBtn) prevBtn.disabled = true;
+                if (nextBtn) nextBtn.disabled = true;
                 return;
             }
+
+            const effectiveSize = eventsPageSize === 'all' ? total : parseInt(eventsPageSize, 10);
+            const totalPages = Math.max(1, Math.ceil(total / effectiveSize));
+            if (eventsCurrentPage > totalPages) eventsCurrentPage = totalPages;
+            if (eventsCurrentPage < 1) eventsCurrentPage = 1;
+
+            const startIdx = (eventsCurrentPage - 1) * effectiveSize;
+            const endIdx = Math.min(startIdx + effectiveSize, total);
+            const pageEvents = items.slice(startIdx, endIdx);
+
+            if (pageInfo) pageInfo.textContent = `Showing ${startIdx + 1}–${endIdx} of ${total} events`;
+            if (pageNum) pageNum.textContent = `Page ${eventsCurrentPage} of ${totalPages}`;
+            if (prevBtn) prevBtn.disabled = eventsCurrentPage <= 1;
+            if (nextBtn) nextBtn.disabled = eventsCurrentPage >= totalPages;
+
             let html = '';
-            for (const ev of events) {
+            for (const ev of pageEvents) {
                 const color = (ev.result_status === 'ok' || ev.result_status === 200 || ev.result_status === 201) ? '#10b981' : '#f59e0b';
                 let actionBtns = '';
                 if (isAdmin) {
@@ -3169,10 +3223,24 @@
                         const targetTxt = ev.cowatch_status.target ? `@${ev.cowatch_status.target}` : 'partner';
                         const reasonTxt = escapeHtml(ev.cowatch_status.reason || 'Synced');
                         statusBadgeHtml += ` <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to ${targetTxt}: ${reasonTxt}">👥 Co-Watched</span>`;
-                    } else if (ev.cowatch_status.reason && (String(ev.action).includes('mark_watched') || String(ev.action).includes('scrobble_stop') || String(ev.action).includes('stop') || String(ev.action).includes('test_webhook'))) {
+                    } else if (ev.cowatch_status.reason && (String(ev.action).includes('mark_watched') || String(ev.action).includes('scrobble_stop') || String(ev.action).includes('scrobble') || String(ev.action).includes('stop') || String(ev.action).includes('test_webhook'))) {
                         const reasonTxt = escapeHtml(ev.cowatch_status.reason);
                         statusBadgeHtml += ` <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: ${reasonTxt}">👥 Solo</span>`;
                     }
+                }
+
+                const srv = (ev.server || 'plex').toLowerCase();
+                let serverBadge = '<span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span>';
+                if (srv === 'jellyfin') {
+                    serverBadge = '<span style="background:#3b0764;color:#d8b4fe;border:1px solid #7e22ce;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Jellyfin</span>';
+                } else if (srv === 'emby') {
+                    serverBadge = '<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Emby</span>';
+                }
+
+                let actionText = ev.action || '';
+                const prog = ev.progress ? String(ev.progress).trim() : '';
+                if (prog && !actionText.includes(prog) && !actionText.includes('(') && actionText.toLowerCase() !== 'collection') {
+                    actionText = `${actionText} (${prog})`;
                 }
 
                 html += `
@@ -3180,13 +3248,35 @@
                     <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${ev.timestamp}</td>
                     <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">${escapeHtml(ev.title)}</td>
                     <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">${ev.type}</span></td>
-                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">${escapeHtml(ev.user)}</td>
-                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;">${escapeHtml(ev.action)} (${ev.progress})</span></td>
+                    <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">${serverBadge}<span>${escapeHtml(ev.user)}</span></div></td>
+                    <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">${escapeHtml(actionText)}</span></td>
                     <td style="padding:12px 16px;">${statusBadgeHtml}</td>
                     ${actionCol}
                 </tr>`;
             }
             tbody.innerHTML = html;
+        }
+
+        function changeEventsPageSize(newSize) {
+            eventsPageSize = newSize;
+            eventsCurrentPage = 1;
+            renderRows();
+        }
+
+        function prevEventsPage() {
+            if (eventsCurrentPage > 1) {
+                eventsCurrentPage--;
+                renderRows();
+            }
+        }
+
+        function nextEventsPage() {
+            const effectiveSize = eventsPageSize === 'all' ? (allEvents ? allEvents.length : 1) : parseInt(eventsPageSize, 10);
+            const totalPages = Math.max(1, Math.ceil((allEvents ? allEvents.length : 0) / effectiveSize));
+            if (eventsCurrentPage < totalPages) {
+                eventsCurrentPage++;
+                renderRows();
+            }
         }
 
         async function fetchEvents() {
@@ -3230,6 +3320,8 @@
             if (confirm('Clear all recent activity logs?')) {
                 const url = isDemo ? '/api/events/clear?demo=true' : '/api/events/clear';
                 await fetch(url, { method: 'POST' });
+                allEvents = [];
+                eventsCurrentPage = 1;
                 fetchEvents();
             }
         }
@@ -5011,7 +5103,10 @@ SIMKL_ENABLED=true</pre>
             if (devChips) devChips.scrollTop = 0;
         }
         window.addEventListener('pageshow', resetCowatchScroll);
-        document.addEventListener('DOMContentLoaded', resetCowatchScroll);
+        document.addEventListener('DOMContentLoaded', () => {
+            resetCowatchScroll();
+            fetchEvents();
+        });
 
         // PWA Service Worker Registration
         if (!isDemo && 'serviceWorker' in navigator) {

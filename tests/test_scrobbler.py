@@ -2313,7 +2313,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v2.3.1" in html
+    assert "v2.4.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -6937,6 +6937,79 @@ def test_connection_endpoint_url_validation():
         res_radarr = client.post("/api/arr/test-connection", json={"app": "radarr", "url": "data:text/html,boom", "api_key": "key"})
         assert res_radarr.status_code == 400
         assert "must start with http:// or https://" in res_radarr.json().get("detail", "")
+
+
+def test_api_events_pagination_and_dashboard_controls():
+    client = TestClient(app)
+    recent_events.clear()
+
+    # Seed 25 test events
+    for i in range(25):
+        recent_events.appendleft({
+            "timestamp": f"2026-10-02 12:{i:02d}:00",
+            "user": "selits",
+            "server": "plex",
+            "event": "media.scrobble",
+            "action": "scrobble",
+            "title": f"Show S01E{i+1:02d}",
+            "type": "episode",
+            "show_title": "Show",
+            "media_payload": {"media_type": "episode", "title": f"Episode {i+1}", "season": 1, "episode": i + 1},
+            "progress": "100.0%",
+            "result_status": "ok",
+            "raw_result": {"status": "ok"},
+            "cowatch_status": None,
+        })
+
+    try:
+        # 1. /api/events returns all 25 items and total
+        res = client.get("/api/events")
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["events"]) == 25
+        assert data["total"] == 25
+
+        # 2. /api/events with limit & offset
+        res_page1 = client.get("/api/events?limit=10&offset=0")
+        assert res_page1.status_code == 200
+        data1 = res_page1.json()
+        assert len(data1["events"]) == 10
+        assert data1["total"] == 25
+        assert data1["events"][0]["title"] == "Show S01E25"
+
+        res_page2 = client.get("/api/events?limit=10&offset=10")
+        assert res_page2.status_code == 200
+        data2 = res_page2.json()
+        assert len(data2["events"]) == 10
+        assert data2["events"][0]["title"] == "Show S01E15"
+
+        res_page3 = client.get("/api/events?limit=10&offset=20")
+        assert res_page3.status_code == 200
+        data3 = res_page3.json()
+        assert len(data3["events"]) == 5
+
+        # 3. /api/events in demo mode
+        res_demo = client.get("/api/events?demo=true&limit=2&offset=0")
+        assert res_demo.status_code == 200
+        assert len(res_demo.json()["events"]) == 2
+        assert res_demo.json()["total"] > 2
+
+        # 4. Dashboard HTML includes pagination controls and info
+        dash_res = client.get("/")
+        assert dash_res.status_code == 200
+        assert "events-pagination" in dash_res.text
+        assert "events-page-info" in dash_res.text
+        assert "events-page-size" in dash_res.text
+        assert "events-prev-btn" in dash_res.text
+        assert "events-next-btn" in dash_res.text
+        assert "Showing 1–10 of 25 events" in dash_res.text
+        assert "Page 1 of 3" in dash_res.text
+
+        # 5. Config default verification
+        assert Config.MAX_EVENT_HISTORY >= 10
+    finally:
+        recent_events.clear()
+
 
 
 
