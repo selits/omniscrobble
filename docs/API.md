@@ -189,9 +189,10 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 |---|:---:|:---:|---|
-| **`/api/settings`** | `GET` | Public | **Get Runtime Settings**: Retrieves current media server listener toggles and tracker active states. |
+| **`/api/settings`** | `GET` | Public | **Get Runtime Settings**: Retrieves current media server listener toggles, tracker active states, and masked notification channel configuration. |
 | **`/api/settings/toggle`** | `POST` | Admin | **Toggle Service**: Enables/disables media server listeners or pauses/resumes trackers. |
-| **`/api/settings/save-all`** | `POST` | Admin | **Save Settings Hub**: Atomically saves all Settings Hub tabs to `data/settings.json` without server restarts. |
+| **`/api/settings/save-all`** | `POST` | Admin | **Save Settings Hub**: Atomically saves all Settings Hub tabs (servers, trackers, notifications) to `data/settings.json` without server restarts. |
+| **`/api/notifications/test`** | `POST` | Admin | **Test Notification Channel**: Dispatches a test message to a specified channel (`discord`, `telegram`, `ntfy`, `pushover`). Body: `{"channel": "discord"}`. Returns `{"ok": true}` on success. |
 
 ---
 

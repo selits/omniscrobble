@@ -435,6 +435,10 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
    PUSHOVER_PRIORITY=0
    ```
 
+> [!TIP]
+> **Dashboard Configuration & Channel Testing**:
+> All notification channels and event toggles can also be configured dynamically in the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab on your desktop or mobile browser without modifying `.env` or restarting the server. Each channel includes a 1-click **Test** button to verify webhook and bot token delivery immediately.
+
 ---
 
 ## 7. Complete Environment Variable Reference
@@ -499,6 +503,10 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`NTFY_URL`** | `""` | String | **Yes** | Ntfy server URL and topic name. |
 | **`PUSHOVER_USER_KEY`** | `""` | String | **Yes** | Pushover User Key. |
 | **`PUSHOVER_API_TOKEN`** | `""` | String | **Yes** | Pushover Application API Token. |
+| **`NOTIFY_ON_SCROBBLE`** | `true` | Boolean | **Yes** | Dispatches alerts on completed scrobbles. |
+| **`NOTIFY_ON_RATE`** | `true` | Boolean | **Yes** | Dispatches alerts when items are rated. |
+| **`NOTIFY_ON_COLLECTION`** | `true` | Boolean | **Yes** | Dispatches alerts on library collection adds. |
+| **`NOTIFY_ON_FAILURE`** | `true` | Boolean | **Yes** | Dispatches alerts on upstream tracker sync failures. |
 
 ---
 

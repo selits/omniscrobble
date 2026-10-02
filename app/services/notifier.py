@@ -14,6 +14,14 @@ except ImportError:
     from config import Config
     from plex_parser import ParsedMedia
 
+try:
+    from app.services.settings_manager import settings_mgr
+except ImportError:
+    try:
+        from services.settings_manager import settings_mgr
+    except ImportError:
+        settings_mgr = None
+
 logger = logging.getLogger("notifier")
 
 DISCORD_COLOR_SCROBBLE = 0xED1C24   # Trakt Red / Primary
@@ -70,17 +78,53 @@ class Notifier:
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
 
+    def _get_setting(self, key: str, fallback_config_attr: str, default: Any = "") -> Any:
+        """Retrieve dynamic runtime notification setting with fallback to Config."""
+        if settings_mgr is not None:
+            custom = settings_mgr.get_custom_notifications()
+            if key in custom and custom[key] is not None:
+                val = custom[key]
+                if str(val).strip():
+                    return val
+        return getattr(self.config, fallback_config_attr, default)
+
+    def _get_discord_url(self) -> str:
+        return self._get_setting("discord_webhook_url", "DISCORD_WEBHOOK_URL", "")
+
+    def _get_telegram_token(self) -> str:
+        return self._get_setting("telegram_bot_token", "TELEGRAM_BOT_TOKEN", "")
+
+    def _get_telegram_chat_id(self) -> str:
+        return self._get_setting("telegram_chat_id", "TELEGRAM_CHAT_ID", "")
+
+    def _get_ntfy_url(self) -> str:
+        return self._get_setting("ntfy_url", "NTFY_URL", "")
+
+    def _get_pushover_user_key(self) -> str:
+        return self._get_setting("pushover_user_key", "PUSHOVER_USER_KEY", "")
+
+    def _get_pushover_api_token(self) -> str:
+        return self._get_setting("pushover_api_token", "PUSHOVER_API_TOKEN", "")
+
+    def _is_event_enabled(self, key: str, fallback_config_attr: str, default: bool = True) -> bool:
+        """Checks if a notification event type is enabled in runtime settings or Config."""
+        if settings_mgr is not None:
+            custom = settings_mgr.get_custom_notifications()
+            if key in custom and custom[key] is not None:
+                return bool(custom[key])
+        return bool(getattr(self.config, fallback_config_attr, default))
+
     def get_status(self) -> dict[str, Any]:
         """Returns the current activation state for configured notification channels."""
         return {
-            "discord": bool(self.config.DISCORD_WEBHOOK_URL),
-            "telegram": bool(self.config.TELEGRAM_BOT_TOKEN and self.config.TELEGRAM_CHAT_ID),
-            "ntfy": bool(self.config.NTFY_URL),
-            "pushover": bool(self.config.PUSHOVER_USER_KEY and self.config.PUSHOVER_API_TOKEN),
-            "notify_on_scrobble": self.config.NOTIFY_ON_SCROBBLE,
-            "notify_on_rate": self.config.NOTIFY_ON_RATE,
-            "notify_on_collection": self.config.NOTIFY_ON_COLLECTION,
-            "notify_on_failure": getattr(self.config, "NOTIFY_ON_FAILURE", True),
+            "discord": bool(self._get_discord_url()),
+            "telegram": bool(self._get_telegram_token() and self._get_telegram_chat_id()),
+            "ntfy": bool(self._get_ntfy_url()),
+            "pushover": bool(self._get_pushover_user_key() and self._get_pushover_api_token()),
+            "notify_on_scrobble": self._is_event_enabled("notify_on_scrobble", "NOTIFY_ON_SCROBBLE", True),
+            "notify_on_rate": self._is_event_enabled("notify_on_rate", "NOTIFY_ON_RATE", True),
+            "notify_on_collection": self._is_event_enabled("notify_on_collection", "NOTIFY_ON_COLLECTION", True),
+            "notify_on_failure": self._is_event_enabled("notify_on_failure", "NOTIFY_ON_FAILURE", True),
         }
 
     def build_discord_payload(
@@ -264,7 +308,7 @@ class Notifier:
             )
 
         return {
-            "chat_id": self.config.TELEGRAM_CHAT_ID,
+            "chat_id": self._get_telegram_chat_id(),
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": False,
@@ -277,9 +321,10 @@ class Notifier:
         client: Optional[httpx.AsyncClient] = None,
         cowatch_partner: Optional[str] = None,
         trackers: Optional[list[str]] = None,
+        webhook_url_override: Optional[str] = None,
     ) -> bool:
         """Sends a rich embed notification to the configured Discord webhook URL."""
-        webhook_url = self.config.DISCORD_WEBHOOK_URL
+        webhook_url = webhook_url_override or self._get_discord_url()
         if not webhook_url:
             return False
 
@@ -309,10 +354,12 @@ class Notifier:
         client: Optional[httpx.AsyncClient] = None,
         cowatch_partner: Optional[str] = None,
         trackers: Optional[list[str]] = None,
+        bot_token_override: Optional[str] = None,
+        chat_id_override: Optional[str] = None,
     ) -> bool:
         """Sends a formatted HTML notification message via Telegram Bot API."""
-        bot_token = self.config.TELEGRAM_BOT_TOKEN
-        chat_id = self.config.TELEGRAM_CHAT_ID
+        bot_token = bot_token_override or self._get_telegram_token()
+        chat_id = chat_id_override or self._get_telegram_chat_id()
         if not bot_token or not chat_id:
             return False
 
@@ -320,6 +367,7 @@ class Notifier:
         payload = self.build_telegram_payload(
             media, action, cowatch_partner=cowatch_partner, trackers=trackers
         )
+        payload["chat_id"] = chat_id
         http = client or self.get_client()
 
         try:
@@ -343,9 +391,10 @@ class Notifier:
         client: Optional[httpx.AsyncClient] = None,
         cowatch_partner: Optional[str] = None,
         trackers: Optional[list[str]] = None,
+        url_override: Optional[str] = None,
     ) -> bool:
         """Sends a push notification via Ntfy."""
-        url = self.config.NTFY_URL
+        url = url_override or self._get_ntfy_url()
         if not url:
             return False
 
@@ -388,10 +437,12 @@ class Notifier:
         client: Optional[httpx.AsyncClient] = None,
         cowatch_partner: Optional[str] = None,
         trackers: Optional[list[str]] = None,
+        user_key_override: Optional[str] = None,
+        api_token_override: Optional[str] = None,
     ) -> bool:
         """Sends a push notification via Pushover API."""
-        user_key = self.config.PUSHOVER_USER_KEY
-        api_token = self.config.PUSHOVER_API_TOKEN
+        user_key = user_key_override or self._get_pushover_user_key()
+        api_token = api_token_override or self._get_pushover_api_token()
         if not user_key or not api_token:
             return False
 
@@ -436,7 +487,7 @@ class Notifier:
         client: Optional[httpx.AsyncClient] = None,
     ) -> bool:
         """Sends a failure alert notification with spam-prevention deduplication."""
-        if not getattr(self.config, "NOTIFY_ON_FAILURE", True):
+        if not self._is_event_enabled("notify_on_failure", "NOTIFY_ON_FAILURE", True):
             return False
 
         # TTL cache: deduplicate alerts for 30 minutes to prevent spam
@@ -449,7 +500,7 @@ class Notifier:
             return False
 
         self._failure_cache[cache_key] = now
-        webhook_url = self.config.DISCORD_WEBHOOK_URL
+        webhook_url = self._get_discord_url()
         if not webhook_url:
             return False
 
@@ -478,13 +529,13 @@ class Notifier:
     ) -> None:
         """Dispatches notifications across all enabled channels concurrently."""
         if action in ("mark_watched", "scrobble_stop"):
-            if not self.config.NOTIFY_ON_SCROBBLE:
+            if not self._is_event_enabled("notify_on_scrobble", "NOTIFY_ON_SCROBBLE", True):
                 return
         elif action == "rate":
-            if not self.config.NOTIFY_ON_RATE:
+            if not self._is_event_enabled("notify_on_rate", "NOTIFY_ON_RATE", True):
                 return
         elif action == "collection":
-            if not self.config.NOTIFY_ON_COLLECTION:
+            if not self._is_event_enabled("notify_on_collection", "NOTIFY_ON_COLLECTION", True):
                 return
         elif action == "arr_add":
             if not getattr(self.config, "ARR_NOTIFY_ON_ADD", True):
@@ -493,25 +544,25 @@ class Notifier:
             return
 
         tasks = []
-        if self.config.DISCORD_WEBHOOK_URL:
+        if self._get_discord_url():
             tasks.append(
                 self.send_discord(
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
                 )
             )
-        if self.config.TELEGRAM_BOT_TOKEN and self.config.TELEGRAM_CHAT_ID:
+        if self._get_telegram_token() and self._get_telegram_chat_id():
             tasks.append(
                 self.send_telegram(
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
                 )
             )
-        if self.config.NTFY_URL:
+        if self._get_ntfy_url():
             tasks.append(
                 self.send_ntfy(
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
                 )
             )
-        if self.config.PUSHOVER_USER_KEY and self.config.PUSHOVER_API_TOKEN:
+        if self._get_pushover_user_key() and self._get_pushover_api_token():
             tasks.append(
                 self.send_pushover(
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
@@ -520,6 +571,116 @@ class Notifier:
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def send_test_notification(
+        self,
+        channel: str,
+        discord_webhook_url: Optional[str] = None,
+        telegram_bot_token: Optional[str] = None,
+        telegram_chat_id: Optional[str] = None,
+        ntfy_url: Optional[str] = None,
+        pushover_user_key: Optional[str] = None,
+        pushover_api_token: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> tuple[bool, str]:
+        """Sends an immediate test alert to verify channel connectivity."""
+        ch = str(channel).strip().lower()
+        http = client or self.get_client()
+
+        if ch == "discord":
+            url = discord_webhook_url or self._get_discord_url()
+            if not url:
+                return False, "Discord Webhook URL is not configured."
+            payload = {
+                "embeds": [
+                    {
+                        "title": "🔔 Omniscrobble Test Notification",
+                        "description": "Your Discord webhook notification channel is connected successfully!",
+                        "color": DISCORD_COLOR_SCROBBLE,
+                        "fields": [
+                            {"name": "Status", "value": "✅ Online", "inline": True},
+                            {"name": "Service", "value": "Omniscrobble", "inline": True},
+                            {"name": "Mode", "value": "Live Webhook", "inline": True},
+                        ],
+                        "footer": {"text": "Omniscrobble • Universal Scrobbler"},
+                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    }
+                ]
+            }
+            try:
+                res = await http.post(url, json=payload)
+                if 200 <= res.status_code < 300:
+                    return True, "Discord test alert delivered successfully!"
+                return False, f"Discord returned HTTP {res.status_code}: {res.text[:150]}"
+            except Exception as e:
+                return False, f"Failed to connect to Discord: {e}"
+
+        elif ch == "telegram":
+            bot_token = telegram_bot_token or self._get_telegram_token()
+            chat_id = telegram_chat_id or self._get_telegram_chat_id()
+            if not bot_token or not chat_id:
+                return False, "Telegram Bot Token or Chat ID is not configured."
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            payload = {
+                "chat_id": chat_id,
+                "text": (
+                    "🔔 <b>Omniscrobble Test Notification</b>\n\n"
+                    "Your Telegram bot notification channel is connected successfully!\n\n"
+                    "✅ <b>Status:</b> <code>Connected</code>\n"
+                    "🚀 <b>Service:</b> <code>Omniscrobble</code>"
+                ),
+                "parse_mode": "HTML",
+            }
+            try:
+                res = await http.post(url, json=payload)
+                if 200 <= res.status_code < 300:
+                    return True, "Telegram test message delivered successfully!"
+                return False, f"Telegram returned HTTP {res.status_code}: {res.text[:150]}"
+            except Exception as e:
+                return False, f"Failed to connect to Telegram: {e}"
+
+        elif ch == "ntfy":
+            url = ntfy_url or self._get_ntfy_url()
+            if not url:
+                return False, "Ntfy Server URL is not configured."
+            headers: dict[str, str] = {
+                "Title": "Omniscrobble Test Notification",
+                "Tags": "white_check_mark,bell,omniscrobble",
+                "Priority": self.config.NTFY_PRIORITY or "default",
+            }
+            if self.config.NTFY_AUTH_TOKEN:
+                headers["Authorization"] = f"Bearer {self.config.NTFY_AUTH_TOKEN}"
+            msg = "Your Ntfy notification channel is connected and working successfully!"
+            try:
+                res = await http.post(url, content=msg.encode("utf-8"), headers=headers)
+                if 200 <= res.status_code < 300:
+                    return True, "Ntfy test notification delivered successfully!"
+                return False, f"Ntfy returned HTTP {res.status_code}: {res.text[:150]}"
+            except Exception as e:
+                return False, f"Failed to connect to Ntfy: {e}"
+
+        elif ch == "pushover":
+            user_key = pushover_user_key or self._get_pushover_user_key()
+            api_token = pushover_api_token or self._get_pushover_api_token()
+            if not user_key or not api_token:
+                return False, "Pushover User Key or API Token is not configured."
+            url = "https://api.pushover.net/1/messages.json"
+            data = {
+                "token": api_token,
+                "user": user_key,
+                "title": "Omniscrobble Test Notification",
+                "message": "Your Pushover notification channel is connected and working successfully!",
+                "priority": self.config.PUSHOVER_PRIORITY,
+            }
+            try:
+                res = await http.post(url, data=data)
+                if 200 <= res.status_code < 300:
+                    return True, "Pushover test notification delivered successfully!"
+                return False, f"Pushover returned HTTP {res.status_code}: {res.text[:150]}"
+            except Exception as e:
+                return False, f"Failed to connect to Pushover: {e}"
+
+        return False, f"Unknown notification channel '{channel}'."
 
 
 notifier = Notifier()
