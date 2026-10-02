@@ -6822,7 +6822,7 @@ def test_activity_table_show_cowatch_alignment():
     assert dash_res.status_code == 200
     html = dash_res.text
     assert "✓ Co-Watching" in html
-    assert '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">' in html
+    assert '<div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">' in html
 
 
 def test_cache_control_headers_and_sw_invalidation():
@@ -7009,6 +7009,113 @@ def test_api_events_pagination_and_dashboard_controls():
         assert Config.MAX_EVENT_HISTORY >= 10
     finally:
         recent_events.clear()
+
+
+@pytest.mark.asyncio
+async def test_activity_table_ui_polish():
+    """Verify action label formatting, co-watch badge filtering, unhandled webhook skipping, and SSR styling."""
+    from app.main import (
+        format_action_label,
+        should_display_cowatch_badge,
+        recent_events,
+        log_event,
+        process_media_event,
+    )
+    from app.plex_parser import ParsedMedia
+    from app.config import Config
+
+    # 1. Action label formatting
+    assert format_action_label("scrobble_start") == "play"
+    assert format_action_label("scrobble_pause") == "pause"
+    assert format_action_label("scrobble_stop") == "scrobble"
+    assert format_action_label("mark_watched") == "scrobble"
+    assert format_action_label("playback_stopped") == "stop"
+    assert format_action_label("test_webhook") == "test"
+    assert format_action_label("none") == "ignored"
+    assert format_action_label("custom_action") == "custom_action"
+
+    # 2. Co-watch badge display eligibility
+    # False on ignored / error / 0% progress
+    assert should_display_cowatch_badge("scrobble_stop", "ignored", "100.0%") is False
+    assert should_display_cowatch_badge("mark_watched", "error", "100.0%") is False
+    assert should_display_cowatch_badge("scrobble_stop", "ok", "0.0%") is False
+    # False on interim playback states
+    assert should_display_cowatch_badge("scrobble_start", "ok", "10.0%") is False
+    assert should_display_cowatch_badge("scrobble_pause", "ok", "45.0%") is False
+    assert should_display_cowatch_badge("playback_stopped", "ok", "50.0%") is False
+    # True on valid completed scrobbles
+    assert should_display_cowatch_badge("scrobble_stop", "ok", "92.0%") is True
+    assert should_display_cowatch_badge("mark_watched", "ok", "100.0%") is True
+    assert should_display_cowatch_badge("scrobble", "200", "90.0%") is True
+
+    # 3. Unhandled webhook events in scrobble mode do NOT log "none"
+    parsed_unhandled = ParsedMedia(
+        event="library.on.deck",
+        username="selits",
+        media_type="show",
+        title="Unknown Deck Item",
+        progress=0.0,
+    )
+    recent_events.clear()
+    with patch.object(trakt, "is_authenticated", return_value=True):
+        res = await process_media_event(parsed_unhandled, endpoint_name="webhook")
+    assert res["status"] == "ignored"
+    assert "library.on.deck" in res["reason"]
+    # Verify nothing was added to recent_events with action "none"
+    assert len([e for e in recent_events if e.get("action") == "none"]) == 0
+
+    # 4. SSR Dashboard Table Verification
+    client = TestClient(app)
+    client.cookies.set("admin_token", "unlocked")
+
+    # Log a 0% stopped event (should NOT have unscrobble button or Solo badge)
+    parsed_zero = ParsedMedia(
+        event="media.stop",
+        username="selits",
+        media_type="movie",
+        title="Quick Sample Test Movie",
+        progress=0.0,
+    )
+    log_event(
+        parsed_zero,
+        "playback_stopped",
+        {"status": "ok"},
+        cowatch_status={"synced": False, "reason": "Not in shared co-watch list"},
+    )
+
+    # Log a 100% completed scrobble
+    parsed_completed = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Finished Blockbuster Movie",
+        progress=100.0,
+    )
+    log_event(
+        parsed_completed,
+        "mark_watched",
+        {"status": "ok"},
+        cowatch_status={"synced": True, "target": "partner", "reason": "Shared show whitelist match"},
+    )
+
+    dash_res = client.get("/")
+    assert dash_res.status_code == 200
+    html_text = dash_res.text
+
+    # Header styling
+    assert '<th style="white-space:nowrap;">Trakt Status</th>' in html_text
+    assert '<th style="min-width:220px;white-space:nowrap;">Actions</th>' in html_text
+
+    # Verify Co-Watched badge has white-space:nowrap
+    assert '👥 Co-Watched</span>' in html_text
+    assert 'white-space:nowrap;" title="Synced to @partner' in html_text
+
+    # Verify stop (0.0%) does NOT have Solo badge
+    assert 'title="Co-watch skipped: Not in shared co-watch list"' not in html_text
+
+    # Action buttons flex styling
+    assert 'display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;' in html_text
+
 
 
 

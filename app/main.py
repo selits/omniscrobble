@@ -738,8 +738,14 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                         result = await active_client.scrobble_stop(scrobble_payload)
                     else:
                         result = {"status": "ignored", "reason": "Progress below 1.0%"}
+            else:
+                action_taken = f"skipped_{event}"
         else:
             action_taken = f"skipped_{event}"
+
+        if action_taken == "none" or action_taken.startswith("skipped_"):
+            metrics_registry.record_request(endpoint_name, 200)
+            return {"status": "ignored", "event": event, "action": action_taken, "reason": f"Event '{event}' is not a scrobble playback trigger"}
 
         eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
         is_sync_trigger = (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= threshold))
@@ -2875,6 +2881,29 @@ async def dashboard(request: Request, response: Response):
     return await render_dashboard_response(request, response, is_demo=is_demo)
 
 
+def format_action_label(raw_action: str) -> str:
+    clean = str(raw_action or "").strip()
+    action_map = {
+        "scrobble_start": "play",
+        "scrobble_pause": "pause",
+        "scrobble_stop": "scrobble",
+        "mark_watched": "scrobble",
+        "playback_stopped": "stop",
+        "test_webhook": "test",
+        "none": "ignored",
+    }
+    return action_map.get(clean, clean)
+
+
+def should_display_cowatch_badge(action: str, result_status: str, progress: str) -> bool:
+    act = str(action or "").lower().strip()
+    status = str(result_status or "").lower().strip()
+    prog = str(progress or "").strip()
+    if status in ("ignored", "error") or prog == "0.0%":
+        return False
+    return act.startswith(("mark_watched", "scrobble_stop", "test_webhook")) or act in ("scrobble", "watched")
+
+
 async def render_dashboard_response(request: Request, response: Response, is_demo: bool = False) -> HTMLResponse:
     if is_demo:
         is_admin = True
@@ -3046,35 +3075,43 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 if show_title:
                     show_esc = urllib.parse.quote(show_title)
                     if cowatch_mgr.is_cowatch_show(show_title):
-                        action_buttons.append(f'<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>')
+                        action_buttons.append(f'<span class="btn-sm" style="padding:2px 6px;font-size:11px;background:#064e3b;color:#a7f3d0;border:1px solid #059669;cursor:default;white-space:nowrap;" title="This show is in your shared co-watch whitelist">✓ Co-Watching</span>')
                     else:
-                        action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;" title="Add show to co-watch whitelist">+ Co-Watch</button>')
+                        action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;white-space:nowrap;" title="Add show to co-watch whitelist">+ Co-Watch</button>')
                 if (Config.CO_WATCH_USER or is_demo) and ev.get("media_payload"):
                     media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
-                    action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
-                action_col = f'<td style="padding:12px 16px;"><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
+                    raw_act = str(ev.get("action", "")).lower().strip()
+                    res_stat = str(ev.get("result_status", "")).lower().strip()
+                    prog_val = str(ev.get("progress", "")).strip()
+                    is_completion = raw_act.startswith(("mark_watched", "scrobble_stop", "collection", "rate")) or raw_act in ("scrobble", "watched")
+                    if is_completion and res_stat != "ignored" and prog_val != "0.0%":
+                        action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
+                        if raw_act.startswith(("mark_watched", "scrobble_stop")) or raw_act in ("scrobble", "watched"):
+                            action_buttons.append(f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>')
+                action_col = f'<td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
 
             # Trakt Status column: show result + cowatch badge if present
             result_status_disp = html.escape(str(ev.get("result_status", "")))
             status_badge_html = f'<span style="color:{color};font-weight:600;font-size:13px;">{result_status_disp}</span>'
             cw = ev.get("cowatch_status")
-            if cw:
+            if cw and should_display_cowatch_badge(ev.get("action"), ev.get("result_status"), ev.get("progress")):
                 if cw.get("synced"):
                     target_txt = html.escape(f"@{cw['target']}" if cw.get("target") else "partner")
                     reason_txt = html.escape(cw.get("reason") or "Synced")
-                    status_badge_html += f' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
-                elif cw.get("reason") and any(x in str(ev.get("action")) for x in ("mark_watched", "scrobble_stop", "scrobble", "stop", "test_webhook")):
+                    status_badge_html += f' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
+                elif cw.get("reason"):
                     reason_txt = html.escape(cw.get("reason"))
-                    status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;margin-left:4px;" title="Co-watch skipped: {reason_txt}">👥 Solo</span>'
+                    status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;white-space:nowrap;" title="Co-watch skipped: {reason_txt}">👥 Solo</span>'
 
             title_disp = html.escape(str(ev.get('title', '')))
             type_disp = html.escape(str(ev.get('type', '')))
             user_disp = html.escape(str(u))
             action_raw = str(ev.get('action', ''))
             progress_raw = str(ev.get('progress', '')).strip()
-            action_disp = html.escape(action_raw)
+            clean_action = format_action_label(action_raw)
+            action_disp = html.escape(clean_action)
             progress_disp = html.escape(progress_raw)
-            if progress_disp and progress_raw not in action_raw and "(" not in action_raw and action_raw.lower() != "collection":
+            if progress_disp and progress_raw not in clean_action and "(" not in clean_action and clean_action.lower() not in ("collection", "ignored"):
                 action_text = f"{action_disp} ({progress_disp})"
             else:
                 action_text = action_disp
@@ -3082,12 +3119,12 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
             rows += f"""
             <tr style="border-bottom: 1px solid #334155;">
-                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;">{time_disp}</td>
-                <td style="padding:12px 16px;color:#f8fafc;font-weight:500;">{title_disp}</td>
-                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{type_disp}</span></td>
-                <td style="padding:12px 16px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{user_disp}</span></div></td>
-                <td style="padding:12px 16px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">{action_text}</span></td>
-                <td style="padding:12px 16px;">{status_badge_html}</td>
+                <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">{time_disp}</td>
+                <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">{title_disp}</td>
+                <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{type_disp}</span></td>
+                <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{user_disp}</span></div></td>
+                <td style="padding:10px 12px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">{action_text}</span></td>
+                <td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">{status_badge_html}</div></td>
                 {action_col}
             </tr>
             """
@@ -3954,7 +3991,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{MANUAL_SCROBBLE_BTN}}': manual_scrobble_btn_html,
         '{{RETRY_QUEUE_BTN}}': (f'<button onclick="retryQueue()" class="btn-sm" style="background:#d97706;color:#fff;font-weight:600;">🔄 Retry Queue ({pending_queue})</button>' if pending_queue > 0 else ''),
         '{{CLEAR_BUTTON}}': clear_button_html,
-        '{{ACTIONS_HEADER}}': ('<th>Actions</th>' if is_admin else ''),
+        '{{ACTIONS_HEADER}}': ('<th style="min-width:220px;white-space:nowrap;">Actions</th>' if is_admin else ''),
         '{{EVENT_ROWS}}': rows,
         '{{EVENTS_PAGE_INFO}}': events_page_info,
         '{{EVENTS_PAGE_NUM}}': events_page_num,
