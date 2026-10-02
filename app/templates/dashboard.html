@@ -313,21 +313,21 @@
                 </div>
                 <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:#f8fafc;">
                     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-trakt" checked> 🔴 Trakt
+                        <input type="checkbox" id="scrobble-trk-trakt" {{SCROBBLE_CHECKED_TRAKT}}> 🔴 Trakt{{SCROBBLE_BADGE_TRAKT}}
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-simkl" checked> ✨ Simkl
+                        <input type="checkbox" id="scrobble-trk-simkl" {{SCROBBLE_CHECKED_SIMKL}}> ✨ Simkl{{SCROBBLE_BADGE_SIMKL}}
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-anilist" checked> ⚡ AniList
+                        <input type="checkbox" id="scrobble-trk-anilist" {{SCROBBLE_CHECKED_ANILIST}}> ⚡ AniList{{SCROBBLE_BADGE_ANILIST}}
                     </label>
                     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-mal" checked> 🎌 MAL
+                        <input type="checkbox" id="scrobble-trk-mal" {{SCROBBLE_CHECKED_MAL}}> 🎌 MAL{{SCROBBLE_BADGE_MAL}}
                     </label>
                 </div>
                 <div style="margin-top:8px;border-top:1px solid #1e293b;padding-top:6px;">
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#f5d0fe;">
-                        <input type="checkbox" id="scrobble-cowatch-check" checked> 👥 Also sync to Co-Watch partner
+                        <input type="checkbox" id="scrobble-cowatch-check"> 👥 Also sync to Co-Watch partner{{SCROBBLE_BADGE_COWATCH}}
                     </label>
                 </div>
             </div>
@@ -1143,6 +1143,21 @@
             if (resBox) resBox.innerHTML = '<div style="color:#94a3b8;text-align:center;padding:24px;font-size:13px;">Type a title above and press Search</div>';
             cancelDisambiguation();
             switchScrobbleTab('search');
+
+            // Reset defaults: only configured trackers checked, co-watch partner unchecked
+            const cowatchChk = document.getElementById('scrobble-cowatch-check');
+            if (cowatchChk) cowatchChk.checked = false;
+
+            const defaultTrackers = {
+                'scrobble-trk-trakt': {{SCROBBLE_CHECKED_TRAKT_JS}},
+                'scrobble-trk-simkl': {{SCROBBLE_CHECKED_SIMKL_JS}},
+                'scrobble-trk-anilist': {{SCROBBLE_CHECKED_ANILIST_JS}},
+                'scrobble-trk-mal': {{SCROBBLE_CHECKED_MAL_JS}},
+            };
+            for (const [id, isChecked] of Object.entries(defaultTrackers)) {
+                const el = document.getElementById(id);
+                if (el) el.checked = isChecked;
+            }
         }
 
         function closeScrobbleModal() {

@@ -62,6 +62,12 @@ class UserClientManager:
         self._clients[clean] = client
         return client
 
+    def is_user_authenticated(self, username: Optional[str] = None) -> bool:
+        """Check if a specific user has valid authenticated Trakt credentials."""
+        if not username:
+            return False
+        return self.get_client(username).is_authenticated()
+
     def list_configured_users(self) -> list[dict[str, Any]]:
         """List all users with configured token profiles and authentication state."""
         users: list[dict[str, Any]] = []

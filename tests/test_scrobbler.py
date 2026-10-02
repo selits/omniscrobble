@@ -21,15 +21,26 @@ from app.services.demo_manager import demo_mgr
 
 @pytest.fixture(autouse=True)
 def _ensure_servers_enabled_for_tests():
-    """Ensure server ingestion is enabled during webhook pipeline tests unless explicitly disabled."""
+    """Ensure server ingestion is enabled during webhook pipeline tests and isolate settings."""
+    import copy
     from app.services.settings_manager import settings_mgr
-    orig_servers = dict(settings_mgr._settings["servers"])
+    from app.main import reverse_sync_mgr
+    orig_settings = copy.deepcopy(settings_mgr._settings)
     settings_mgr.set_server_enabled("plex", True)
     settings_mgr.set_server_enabled("jellyfin", True)
     settings_mgr.set_server_enabled("emby", True)
     yield
-    for k, v in orig_servers.items():
-        settings_mgr.set_server_enabled(k, v)
+    settings_mgr._settings = orig_settings
+    settings_mgr._save_settings()
+    orig_recon = orig_settings.get("reconciliation", {})
+    reverse_sync_mgr.update_config(
+        plex_url=orig_recon.get("plex_url", ""),
+        plex_token=orig_recon.get("plex_token", ""),
+        jellyfin_url=orig_recon.get("jellyfin_url", ""),
+        jellyfin_token=orig_recon.get("jellyfin_token", ""),
+        emby_url=orig_recon.get("emby_url", ""),
+        emby_token=orig_recon.get("emby_token", ""),
+    )
 
 
 def test_parse_plex_ids():
@@ -1961,56 +1972,59 @@ def test_dashboard_privacy_shield_and_script_syntax():
         cowatch_mgr._shows = ["Secret CoWatch Show Alpha", "Secret CoWatch Show Beta"]
         cowatch_mgr._devices = ["selits's Fire TV", "Google TV"]
 
-        # 1. Unauthenticated / Non-Admin Dashboard Request
-        client.cookies.clear()
-        res = client.get("/")
-        assert res.status_code == 200
-        html = res.text
+        try:
+            # 1. Unauthenticated / Non-Admin Dashboard Request
+            client.cookies.clear()
+            res = client.get("/")
+            assert res.status_code == 200
+            html = res.text
 
-        # Validate that scripts have perfectly balanced curly braces (no JavaScript syntax errors)
-        import re
-        scripts = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)
-        assert len(scripts) >= 1
-        for idx, s in enumerate(scripts):
-            open_count = s.count('{')
-            close_count = s.count('}')
-            assert open_count == close_count, f"Script {idx} in dashboard has unbalanced braces: open={open_count}, close={close_count}"
+            # Validate that scripts have perfectly balanced curly braces (no JavaScript syntax errors)
+            import re
+            scripts = re.findall(r'<script>(.*?)</script>', html, re.DOTALL)
+            assert len(scripts) >= 1
+            for idx, s in enumerate(scripts):
+                open_count = s.count('{')
+                close_count = s.count('}')
+                assert open_count == close_count, f"Script {idx} in dashboard has unbalanced braces: open={open_count}, close={close_count}"
 
-        # Privacy checks for non-admin viewers:
-        # Show titles must be hidden
-        assert "Secret CoWatch Show Alpha" not in html
-        assert "Secret CoWatch Show Beta" not in html
-        assert "2 shared shows configured" in html
-        assert "Unlock admin access to view titles" in html
+            # Privacy checks for non-admin viewers:
+            # Show titles must be hidden
+            assert "Secret CoWatch Show Alpha" not in html
+            assert "Secret CoWatch Show Beta" not in html
+            assert "2 shared shows configured" in html
+            assert "Unlock admin access to view titles" in html
 
-        # Personal device names and Devices rule must be completely hidden
-        assert "selits's Fire TV" not in html
-        assert "Google TV" not in html
-        assert "Devices:" not in html
+            # Personal device names and Devices rule must be completely hidden
+            assert "selits's Fire TV" not in html
+            assert "Google TV" not in html
+            assert "Devices:" not in html
 
-        # Partner username completely masked
-        assert "@bon.vivant" not in html
-        assert "@bo********" not in html
-        assert "@●●●●●●●●" in html
+            # Partner username completely masked
+            assert "@bon.vivant" not in html
+            assert "@bo********" not in html
+            assert "@●●●●●●●●" in html
 
-        # Webhook secret masked
-        assert "testsecret" not in html
+            # Webhook secret masked
+            assert "testsecret" not in html
 
-        # 2. Authenticated Admin Dashboard Request
-        client.cookies.set("admin_token", "testsecret")
-        res_admin = client.get("/")
-        assert res_admin.status_code == 200
-        html_admin = res_admin.text
+            # 2. Authenticated Admin Dashboard Request
+            client.cookies.set("admin_token", "testsecret")
+            res_admin = client.get("/")
+            assert res_admin.status_code == 200
+            html_admin = res_admin.text
 
-        # Admin sees full show titles and device names in allowed devices whitelist
-        assert "Secret CoWatch Show Alpha" in html_admin
-        assert "Secret CoWatch Show Beta" in html_admin
-        assert "selits&#x27;s Fire TV" in html_admin
-        assert "Google TV" in html_admin
-        assert "Allowed Devices Whitelist" in html_admin
-        assert "testsecret" in html_admin
-        client.cookies.clear()
-        cowatch_mgr._devices.clear()
+            # Admin sees full show titles and device names in allowed devices whitelist
+            assert "Secret CoWatch Show Alpha" in html_admin
+            assert "Secret CoWatch Show Beta" in html_admin
+            assert "selits&#x27;s Fire TV" in html_admin
+            assert "Google TV" in html_admin
+            assert "Allowed Devices Whitelist" in html_admin
+            assert "testsecret" in html_admin
+        finally:
+            client.cookies.clear()
+            cowatch_mgr._shows.clear()
+            cowatch_mgr._devices.clear()
 
 
 def test_auth_page_script_syntax():
@@ -4283,64 +4297,76 @@ async def test_sync_settings_api_and_connection_test():
     from app.main import reverse_sync_mgr
     client = TestClient(app)
 
-    with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
-        # 1. Unauthenticated -> 401
-        res = client.get("/api/sync/settings")
-        assert res.status_code == 401
+    orig_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+    try:
+        with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
+            # 1. Unauthenticated -> 401
+            res = client.get("/api/sync/settings")
+            assert res.status_code == 401
 
-        res_post = client.post("/api/sync/settings", json={"interval_minutes": 45})
-        assert res_post.status_code == 401
+            res_post = client.post("/api/sync/settings", json={"interval_minutes": 45})
+            assert res_post.status_code == 401
 
-        res_test = client.post("/api/sync/test-connection", json={"plex_url": "http://mock-plex:32400"})
-        assert res_test.status_code == 401
+            res_test = client.post("/api/sync/test-connection", json={"plex_url": "http://mock-plex:32400"})
+            assert res_test.status_code == 401
 
-        headers = {"x-webhook-secret": "test_secret"}
+            headers = {"x-webhook-secret": "test_secret"}
 
-        # 2. Authenticated GET /api/sync/settings
-        res_get = client.get("/api/sync/settings", headers=headers)
-        assert res_get.status_code == 200
-        data = res_get.json()
-        assert "interval_minutes" in data
-        assert "plex_url" in data
+            # 2. Connection test missing params when unconfigured -> status unconfigured
+            res_bad_test = client.post("/api/sync/test-connection", headers=headers, json={"url": "", "token": ""})
+            assert res_bad_test.status_code == 200
+            assert res_bad_test.json().get("status") in ("unconfigured", "error", "unreachable")
 
-        # 3. Authenticated POST /api/sync/settings
-        res_update = client.post("/api/sync/settings", headers=headers, json={
-            "plex_url": "http://plex.local:32400",
-            "plex_token": "test-new-token-9999",
-            "interval_minutes": 45,
-            "sync_ratings": True,
-            "sync_on_startup": False
-        })
-        assert res_update.status_code == 200
-        saved = res_update.json()["settings"]
-        assert saved["interval_minutes"] == 45
-        assert saved["sync_on_startup"] is False
-        assert saved["plex_token"] == "••••••••9999"
+            # 3. Authenticated GET /api/sync/settings
+            res_get = client.get("/api/sync/settings", headers=headers)
+            assert res_get.status_code == 200
+            data = res_get.json()
+            assert "interval_minutes" in data
+            assert "plex_url" in data
 
-        # 4. Connection test missing params -> status unconfigured, error, or unreachable
-        res_bad_test = client.post("/api/sync/test-connection", headers=headers, json={"url": "", "token": ""})
-        assert res_bad_test.status_code == 200
-        assert res_bad_test.json().get("status") in ("unconfigured", "error", "unreachable")
-
-        # 5. Connection test successful mock
-        with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test:
-            mock_test.return_value = {
-                "connected": True,
-                "server_name": "Living Room Plex",
-                "version": "1.41.0.8992",
-                "message": "Successfully connected to Living Room Plex (v1.41.0.8992)",
-            }
-            res_conn = client.post("/api/sync/test-connection", headers=headers, json={
+            # 4. Authenticated POST /api/sync/settings
+            res_update = client.post("/api/sync/settings", headers=headers, json={
                 "plex_url": "http://plex.local:32400",
-                "plex_token": "••••••••9999"
+                "plex_token": "test-new-token-9999",
+                "interval_minutes": 45,
+                "sync_ratings": True,
+                "sync_on_startup": False
             })
-            assert res_conn.status_code == 200
-            assert res_conn.json()["connected"] is True
-            assert res_conn.json()["server_name"] == "Living Room Plex"
-            # Verify test_connection used the actual unmasked token
-            mock_test.assert_called_once()
-            assert mock_test.call_args.kwargs.get("url") == "http://plex.local:32400"
-            assert mock_test.call_args.kwargs.get("token") == "test-new-token-9999"
+            assert res_update.status_code == 200
+            saved = res_update.json()["settings"]
+            assert saved["interval_minutes"] == 45
+            assert saved["sync_on_startup"] is False
+            assert saved["plex_token"] == "••••••••9999"
+
+            # 5. Connection test successful mock
+            with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test:
+                mock_test.return_value = {
+                    "connected": True,
+                    "server_name": "Living Room Plex",
+                    "version": "1.41.0.8992",
+                    "message": "Successfully connected to Living Room Plex (v1.41.0.8992)",
+                }
+                res_conn = client.post("/api/sync/test-connection", headers=headers, json={
+                    "plex_url": "http://plex.local:32400",
+                    "plex_token": "••••••••9999"
+                })
+                assert res_conn.status_code == 200
+                assert res_conn.json()["connected"] is True
+                assert res_conn.json()["server_name"] == "Living Room Plex"
+                # Verify test_connection used the actual unmasked token
+                mock_test.assert_called_once()
+                assert mock_test.call_args.kwargs.get("url") == "http://plex.local:32400"
+                assert mock_test.call_args.kwargs.get("token") == "test-new-token-9999"
+    finally:
+        settings_mgr.update_reconciliation_settings(orig_recon)
+        reverse_sync_mgr.update_config(
+            plex_url=orig_recon.get("plex_url", ""),
+            plex_token=orig_recon.get("plex_token", ""),
+            jellyfin_url=orig_recon.get("jellyfin_url", ""),
+            jellyfin_token=orig_recon.get("jellyfin_token", ""),
+            emby_url=orig_recon.get("emby_url", ""),
+            emby_token=orig_recon.get("emby_token", ""),
+        )
 
 
 @pytest.mark.asyncio
@@ -4555,83 +4581,95 @@ async def test_multi_server_sync_settings_and_test_connection_api():
     from app.main import reverse_sync_mgr
     client = TestClient(app)
 
-    with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
-        headers = {"x-webhook-secret": "test_secret"}
+    orig_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
+    try:
+        with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
+            headers = {"x-webhook-secret": "test_secret"}
 
-        # 1. Update Jellyfin & Emby settings
-        res = client.post("/api/sync/settings", headers=headers, json={
-            "server_type": "jellyfin",
-            "jellyfin_url": "http://jellyfin.local:8096",
-            "jellyfin_token": "jf-secret-token-5555",
-            "jellyfin_user_id": "jf-user-admin",
-            "emby_url": "http://emby.local:8096",
-            "emby_token": "emby-secret-token-7777",
-            "emby_user_id": "emby-user-admin",
-        })
-        assert res.status_code == 200
-        settings_data = res.json()["settings"]
-        assert settings_data["server_type"] == "jellyfin"
-        assert settings_data["jellyfin_url"] == "http://jellyfin.local:8096"
-        assert settings_data["jellyfin_token"] == "••••••••5555"
-        assert settings_data["emby_token"] == "••••••••7777"
-        assert settings_data["is_jellyfin_token_set"] is True
-        assert settings_data["is_emby_token_set"] is True
-
-        # 2. Test Connection for Jellyfin
-        with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test:
-            mock_test.return_value = {
-                "status": "connected",
-                "connected": True,
-                "server_name": "Living Room Jellyfin",
-                "version": "10.9.11",
-            }
-            res_jf_test = client.post("/api/sync/test-connection", headers=headers, json={
-                "server": "jellyfin",
-                "url": "http://jellyfin.local:8096",
-                "token": "••••••••5555"
+            # 1. Update Jellyfin & Emby settings
+            res = client.post("/api/sync/settings", headers=headers, json={
+                "server_type": "jellyfin",
+                "jellyfin_url": "http://jellyfin.local:8096",
+                "jellyfin_token": "jf-secret-token-5555",
+                "jellyfin_user_id": "jf-user-admin",
+                "emby_url": "http://emby.local:8096",
+                "emby_token": "emby-secret-token-7777",
+                "emby_user_id": "emby-user-admin",
             })
-            assert res_jf_test.status_code == 200
-            assert res_jf_test.json()["connected"] is True
-            mock_test.assert_called_once()
-            assert mock_test.call_args.kwargs.get("server") == "jellyfin"
-            assert mock_test.call_args.kwargs.get("token") == "jf-secret-token-5555"
+            assert res.status_code == 200
+            settings_data = res.json()["settings"]
+            assert settings_data["server_type"] == "jellyfin"
+            assert settings_data["jellyfin_url"] == "http://jellyfin.local:8096"
+            assert settings_data["jellyfin_token"] == "••••••••5555"
+            assert settings_data["emby_token"] == "••••••••7777"
+            assert settings_data["is_jellyfin_token_set"] is True
+            assert settings_data["is_emby_token_set"] is True
 
-        # 3. Test Connection for Emby
-        with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test_emby:
-            mock_test_emby.return_value = {
-                "status": "connected",
-                "connected": True,
-                "server_name": "Living Room Emby",
-                "version": "4.8.8",
-            }
-            res_emby_test = client.post("/api/sync/test-connection", headers=headers, json={
-                "server": "emby",
-                "url": "http://emby.local:8096",
-                "token": "••••••••7777"
+            # 2. Test Connection for Jellyfin
+            with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test:
+                mock_test.return_value = {
+                    "status": "connected",
+                    "connected": True,
+                    "server_name": "Living Room Jellyfin",
+                    "version": "10.9.11",
+                }
+                res_jf_test = client.post("/api/sync/test-connection", headers=headers, json={
+                    "server": "jellyfin",
+                    "url": "http://jellyfin.local:8096",
+                    "token": "••••••••5555"
+                })
+                assert res_jf_test.status_code == 200
+                assert res_jf_test.json()["connected"] is True
+                mock_test.assert_called_once()
+                assert mock_test.call_args.kwargs.get("server") == "jellyfin"
+                assert mock_test.call_args.kwargs.get("token") == "jf-secret-token-5555"
+
+            # 3. Test Connection for Emby
+            with patch.object(reverse_sync_mgr, "test_connection", new_callable=AsyncMock) as mock_test_emby:
+                mock_test_emby.return_value = {
+                    "status": "connected",
+                    "connected": True,
+                    "server_name": "Living Room Emby",
+                    "version": "4.8.8",
+                }
+                res_emby_test = client.post("/api/sync/test-connection", headers=headers, json={
+                    "server": "emby",
+                    "url": "http://emby.local:8096",
+                    "token": "••••••••7777"
+                })
+                assert res_emby_test.status_code == 200
+                assert res_emby_test.json()["connected"] is True
+                mock_test_emby.assert_called_once()
+                assert mock_test_emby.call_args.kwargs.get("server") == "emby"
+                assert mock_test_emby.call_args.kwargs.get("token") == "emby-secret-token-7777"
+
+            # 4. Clear tokens and restore server_type to plex
+            res_clear = client.post("/api/sync/settings", headers=headers, json={
+                "server_type": "plex",
+                "jellyfin_url": "",
+                "jellyfin_user_id": "",
+                "emby_url": "",
+                "emby_user_id": "",
+                "clear_jellyfin_token": True,
+                "clear_emby_token": True,
             })
-            assert res_emby_test.status_code == 200
-            assert res_emby_test.json()["connected"] is True
-            mock_test_emby.assert_called_once()
-            assert mock_test_emby.call_args.kwargs.get("server") == "emby"
-            assert mock_test_emby.call_args.kwargs.get("token") == "emby-secret-token-7777"
-
-        # 4. Clear tokens and restore server_type to plex
-        res_clear = client.post("/api/sync/settings", headers=headers, json={
-            "server_type": "plex",
-            "jellyfin_url": "",
-            "jellyfin_user_id": "",
-            "emby_url": "",
-            "emby_user_id": "",
-            "clear_jellyfin_token": True,
-            "clear_emby_token": True,
-        })
-        assert res_clear.status_code == 200
-        cleared = res_clear.json()["settings"]
-        assert cleared["server_type"] == "plex"
-        assert cleared["jellyfin_token"] == ""
-        assert cleared["emby_token"] == ""
-        assert cleared["is_jellyfin_token_set"] is False
-        assert cleared["is_emby_token_set"] is False
+            assert res_clear.status_code == 200
+            cleared = res_clear.json()["settings"]
+            assert cleared["server_type"] == "plex"
+            assert cleared["jellyfin_token"] == ""
+            assert cleared["emby_token"] == ""
+            assert cleared["is_jellyfin_token_set"] is False
+            assert cleared["is_emby_token_set"] is False
+    finally:
+        settings_mgr.update_reconciliation_settings(orig_recon)
+        reverse_sync_mgr.update_config(
+            plex_url=orig_recon.get("plex_url", ""),
+            plex_token=orig_recon.get("plex_token", ""),
+            jellyfin_url=orig_recon.get("jellyfin_url", ""),
+            jellyfin_token=orig_recon.get("jellyfin_token", ""),
+            emby_url=orig_recon.get("emby_url", ""),
+            emby_token=orig_recon.get("emby_token", ""),
+        )
 
 
 def test_manual_scrobble_action_start_and_playback():
@@ -6530,6 +6568,44 @@ def test_playback_activity_and_events_persistence(tmp_path, monkeypatch):
         assert cleared_stats["total"] == 0
     finally:
         Config.WEBHOOK_SECRET = orig_secret
+
+
+def test_quick_scrobble_modal_defaults_and_simkl_button():
+    """Verify that the quick scrobble modal only defaults to configured trackers and co-watch is unchecked."""
+    client = TestClient(app)
+
+    # 1. Test live dashboard (unauthenticated trackers by default in mock env)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    # Co-watch partner must be unchecked by default
+    assert '<input type="checkbox" id="scrobble-cowatch-check">' in html
+    assert '<input type="checkbox" id="scrobble-cowatch-check" checked>' not in html
+
+    # Reset JS logic must be present in openManualScrobbleModal
+    assert "cowatchChk.checked = false" in html
+    assert "'scrobble-trk-trakt':" in html
+
+    # 2. Test demo dashboard (all trackers active in demo)
+    resp_demo = client.get("/demo")
+    assert resp_demo.status_code == 200
+    demo_html = resp_demo.text
+
+    # Co-watch partner must be unchecked by default even in demo
+    assert '<input type="checkbox" id="scrobble-cowatch-check">' in demo_html
+    assert '<input type="checkbox" id="scrobble-cowatch-check" checked>' not in demo_html
+
+    # Configured trackers are checked in demo
+    assert '<input type="checkbox" id="scrobble-trk-trakt" checked>' in demo_html
+    assert '<input type="checkbox" id="scrobble-trk-simkl" checked>' in demo_html
+    assert '<input type="checkbox" id="scrobble-trk-anilist" checked>' in demo_html
+    assert '<input type="checkbox" id="scrobble-trk-mal" checked>' in demo_html
+
+    # Simkl card renders Quick Scrobble button
+    assert "🍿 Quick Scrobble" in demo_html
+    assert 'onclick="openManualScrobbleModal()"' in demo_html
+
 
 
 

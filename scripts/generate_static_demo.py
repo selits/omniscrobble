@@ -473,6 +473,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <span>Supported: <strong>Movies, Shows, Anime</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🍿 Quick Scrobble</button>
                 <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause Simkl</button>
                 <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt & Simkl</button>
                 <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Simkl Settings</button>
@@ -656,6 +657,19 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{IS_DEMO_JS}}': 'true',
         '{{APP_VERSION}}': APP_VERSION,
         '{{REPO_URL}}': REPO_URL,
+        '{{SCROBBLE_CHECKED_TRAKT}}': 'checked',
+        '{{SCROBBLE_CHECKED_SIMKL}}': 'checked',
+        '{{SCROBBLE_CHECKED_ANILIST}}': 'checked',
+        '{{SCROBBLE_CHECKED_MAL}}': 'checked',
+        '{{SCROBBLE_CHECKED_TRAKT_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_SIMKL_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_ANILIST_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_MAL_JS}}': 'true',
+        '{{SCROBBLE_BADGE_TRAKT}}': '',
+        '{{SCROBBLE_BADGE_SIMKL}}': '',
+        '{{SCROBBLE_BADGE_ANILIST}}': '',
+        '{{SCROBBLE_BADGE_MAL}}': '',
+        '{{SCROBBLE_BADGE_COWATCH}}': ' <span style="font-size:10px;color:#d8b4fe;">(@demo_partner)</span>',
     }
 
     for k, v in replacements.items():
