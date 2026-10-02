@@ -549,3 +549,11 @@ omniscrobble.yourdomain.com {
 ### Local Self-Signed SSL Certificates
 
 If your media servers use internal self-signed HTTPS certificates, ensure that the URL protocol is configured as `https://` and that your host system's certificate store trusts your local Certificate Authority (CA). Omniscrobble enforces `http://` or `https://` validation on all outbound connection tests to safeguard against SSRF.
+
+---
+
+> 📖 **Related Documentation:**
+> - [**Feature Guides & Deep Dives**](./docs/FEATURES.md) — In-depth walkthroughs for Co-Watching, Two-Way Reconciliation, and Content Bridge.
+> - [**Troubleshooting & Diagnostics**](./docs/TROUBLESHOOTING.md) — Solutions for common webhook error codes, health checks, and networking.
+> - [**Deployment Guide**](./DEPLOYMENT.md) — 24/7 background operation with systemd, Docker, and reverse proxies.
+

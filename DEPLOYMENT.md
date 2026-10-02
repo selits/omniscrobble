@@ -309,6 +309,8 @@ curl -i http://<your-server-ip>:8080/health
 
 A healthy response will return `HTTP/200 OK` with JSON health telemetry.
 
+> 🛠️ For webhook payloads, Plex 422 fixes, and reverse proxy configs, see the [**Troubleshooting & Diagnostics Guide**](./docs/TROUBLESHOOTING.md).
+
 ---
 
 ## 7. Automated Upgrades & Maintenance

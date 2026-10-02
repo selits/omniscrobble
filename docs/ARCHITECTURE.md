@@ -143,6 +143,8 @@ omniscrobble/
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
 │   ├── API.md                       # Full REST API specification (28 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
+│   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
+│   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
 │   └── .nojekyll                    # Bypass Jekyll processing on GitHub Pages
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo

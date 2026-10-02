@@ -15,10 +15,13 @@
 <p align="center">
   <a href="#-core-capabilities"><b>Features</b></a> •
   <a href="#-quickstart"><b>Quickstart</b></a> •
+  <a href="#-documentation-hub"><b>Documentation</b></a> •
   <a href="CONFIGURATION.md"><b>Configuration</b></a> •
   <a href="DEPLOYMENT.md"><b>Deployment</b></a> •
+  <a href="docs/FEATURES.md"><b>Guides</b></a> •
   <a href="docs/ARCHITECTURE.md"><b>Architecture</b></a> •
-  <a href="docs/API.md"><b>API Reference</b></a> •
+  <a href="docs/API.md"><b>API</b></a> •
+  <a href="docs/TROUBLESHOOTING.md"><b>FAQ</b></a> •
   <a href="https://selits.github.io/omniscrobble/"><b>Live Demo</b></a>
 </p>
 
@@ -59,7 +62,7 @@ Omniscrobble is developed in an active daily homelab environment. The matrix bel
 
 ## 🚀 Quickstart
 
-### 1. Prerequisites & Trakt Application
+### 1. Prerequisites
 
 1. **Trakt Account & API App**: Log in to [Trakt.tv](https://trakt.tv), open **[API Applications](https://trakt.tv/oauth/applications)**, click **"New Application"**, set Redirect URI to `urn:ietf:wg:oauth:2.0:oob`, click **"Save App"**, and copy your **Client ID** and **Client Secret**.
 2. **Media Server**: Plex (requires active Plex Pass for outgoing webhooks), Jellyfin (with Webhook plugin), or Emby.
@@ -99,57 +102,24 @@ SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
 ```
 
-> 💡 **Everything else is optional!**  
-> Omniscrobble works immediately with just the settings above. Advanced integrations like **Two-Way Sync**, **Simkl**, **AniList/MAL**, ***Arr Automation**, **Co-Watching**, and **Discord/Telegram alerts** can be configured anytime in `.env` or adjusted live without restarts via the **⚙️ Settings Hub** on the web dashboard.  
-> 📖 For the complete reference of all 45+ environment variables, credential retrieval guides, and homelab networking tips, see [**`CONFIGURATION.md`**](./CONFIGURATION.md).
+> 💡 **Everything else is optional!** Advanced integrations like Two-Way Sync, Simkl, AniList/MAL, *Arr Automation, Co-Watching, and Discord/Telegram alerts can be configured anytime in `.env` or adjusted live without restarts via the web dashboard. See [**`CONFIGURATION.md`**](./CONFIGURATION.md) for the complete reference.
 
 ---
 
-### 3. Authenticate with Trakt & Trackers (One-Time Setup)
+### 3. Authenticate with Trakt & Trackers
 
-You can authenticate either through your web browser or from the command line:
+Start Omniscrobble and authenticate via browser (recommended) or terminal:
 
-#### Trakt Authorization:
+- **Via Web Browser**: Open `http://<server-ip>:<PORT>/auth`, click the link to [trakt.tv/activate](https://trakt.tv/activate), enter the 8-character activation code, and click Authorize.
+- **Via CLI**: Run `.venv/bin/python auth.py` and follow the terminal instructions.
 
-##### Option A: Via Web Browser (Recommended)
-
-1. Start the server (see background/systemd setup below).
-2. Open **`http://<server-ip>:<PORT>/auth`** in your browser.
-3. The page will fetch your 8-character activation code. Click the link to **`https://trakt.tv/activate`**, enter the code, and click **Authorize**.
-4. The page will automatically detect approval and redirect to your dashboard!
-
-##### Option B: Via Terminal / CLI
-
-```bash
-.venv/bin/python auth.py
-```
-
-1. Open the activation URL displayed, enter the 8-character code, and authorize.
-2. The script will save your tokens to `trakt_tokens.json`.
-
-> 🎯 **Connecting Secondary Trackers (Simkl, AniList, MyAnimeList):**  
-> You can connect Simkl, AniList, and MyAnimeList anytime directly from their dedicated dashboard cards (`/auth/simkl`, `/auth/anilist`, `/auth/mal`). For developer app setup and API key guides, see [**Tracker Developer Applications & OAuth Setup**](./CONFIGURATION.md#4-tracker-developer-applications--oauth-setup) in `CONFIGURATION.md`.
+Secondary trackers (**Simkl**, **AniList**, **MyAnimeList**) can be connected anytime directly from their dedicated dashboard cards (`/auth/simkl`, `/auth/anilist`, `/auth/mal`).
 
 ---
 
-## 🌐 Deployment & Running 24/7
+### 4. Configure Media Server Webhooks
 
-Omniscrobble can be deployed natively on any Linux server, VPS, NAS, or containerized environment to run 24/7 in the background and survive system reboots:
-
-| Deployment Mode | Best For | Quick Start |
-| :--- | :--- | :--- |
-| **systemd User Service** | Linux Servers, VPS, Headless hosts | `systemctl --user enable --now omniscrobble` |
-| **Docker Compose** | Containerized environments, Unraid, TrueNAS | `docker compose up -d` |
-| **Direct / Shell** | Local testing & development | `python main.py` or `./start.sh` |
-
-> 📖 **Comprehensive Deployment Guide:**  
-> For complete instructions on systemd user services, process lingering, port binding, reverse proxy configuration (Caddy / Nginx), Docker Compose persistence, and headless operation, see [**`DEPLOYMENT.md`**](./DEPLOYMENT.md).
-
----
-
-## 🔗 Media Server Webhook Setup
-
-Add the webhook URL to your media server(s). If `WEBHOOK_SECRET` is set, append `?token=YOUR_WEBHOOK_SECRET` to the URL:
+Add the webhook URL to your media server. If `WEBHOOK_SECRET` is set, append `?token=YOUR_WEBHOOK_SECRET`:
 
 | Media Server | Webhook Destination URL | Required Event Triggers |
 | :--- | :--- | :--- |
@@ -157,174 +127,20 @@ Add the webhook URL to your media server(s). If `WEBHOOK_SECRET` is set, append 
 | **🟣 Jellyfin** | `http://<your-server-ip-or-domain>:<PORT>/webhook/jellyfin` | `Playback Start`, `Progress`, `Stop`, `User Data Saved` |
 | **🟢 Emby** | `http://<your-server-ip-or-domain>:<PORT>/webhook/emby` | `playback.start`, `pause`, `stop`, `item.rate`, `markfavorite` |
 
-> 📖 **Step-by-Step Media Server Setup Guides:**  
-> For visual walkthroughs, finding server URLs, generating API tokens, and user ID lookup, see [**Media Server Credentials & Webhook Setup**](./CONFIGURATION.md#2-media-server-credentials--webhook-setup) in `CONFIGURATION.md`.
-
 ---
 
-## 🗺️ Webhooks & REST API
+## 📚 Documentation Hub
 
-Omniscrobble provides a real-time web dashboard, universal media server webhook ingestion endpoints, and an extensive REST API for status, telemetry, multi-tracker management, and library reconciliation.
+For in-depth guides, variable references, and operational walk-throughs, explore the sub-documents below:
 
-### Primary Ingestion & Management Endpoints
-
-| Endpoint | Method | Purpose |
-| :--- | :---: | :--- |
-| **`/`** | `GET` | **Live Web Dashboard**: Real-time connected profiles, active streams, and control center. |
-| **`/webhook`** | `POST` | **Plex Webhook**: Ingests Plex playback, scrobble, rating, and library events. |
-| **`/webhook/jellyfin`** | `POST` / `GET` | **Jellyfin Webhook**: Ingests Jellyfin playback and user data notifications. |
-| **`/webhook/emby`** | `POST` / `GET` | **Emby Webhook**: Ingests Emby playback and rating notifications. |
-| **`/health`** | `GET` | **Healthcheck**: Returns JSON status, authentication state, and token diagnostics. |
-| **`/metrics`** | `GET` | **Prometheus Metrics**: Scrape real-time service, playback, and queue metrics. |
-
-> 📚 **Complete REST API Specification:**  
-> For full documentation of all 28 REST endpoints (including multi-tracker management, offline queue, library reconciliation, Co-Watch, manual scrobbling, and backup/restore), see [**`docs/API.md`**](./docs/API.md).
-
----
-
-## 👥 Watch Together & Multi-User Accounts
-
-When watching movies or TV shows together on a shared living room profile, Omniscrobble automatically dual-scrobbles watch history to **both** your Trakt profile and your partner's profile simultaneously, while keeping solo binges exclusive to your own account.
-
-- **Dynamic Show Whitelist**: Define shared series in `.env` or add them on the fly from the dashboard with live Sonarr autocomplete.
-- **Hardware Player Filtering**: Restrict dual-scrobbling to shared living room TVs (`CO_WATCH_PLAYERS`) so bedroom phone viewing stays solo.
-- **Movie Co-Watching**: Toggle movie dual-sync with 1 click on the dashboard (`POST /api/cowatch/settings`).
-
-```ini
-CO_WATCH_USER=partner_username
-CO_WATCH_SHOWS=The Bear, Severance, House of the Dragon
-CO_WATCH_PLAYERS=Living Room Apple TV, Main TV
-```
-
-Link their account once via `http://<server>:<PORT>/auth?user=partner_username` and shared viewing syncs automatically.
-
-> 📖 **Complete Co-Watching Guide:**  
-> For multi-device filtering, movie toggles, and Sonarr/Radarr collection webhooks, see [**Watch Together & Multi-User Accounts**](./CONFIGURATION.md#5-watch-together--multi-user-accounts) in `CONFIGURATION.md`.
-
----
-
-## 🔄 Two-Way Synchronization & Multi-Server Reconciliation
-
-Standard scrobbling is one-directional (Media Server $\to$ Trakt). Omniscrobble features a bi-directional reconciliation engine that bridges your media server libraries (**Plex**, **Jellyfin**, **Emby**) with your Trakt and Simkl cloud history.
-
-> [!NOTE]
-> **Media Server Support Status**:
-> - **Plex**: Fully tested, validated, and used daily in active production.
-> - **Jellyfin & Emby**: Direct API connection, library scanning, watched status toggling, and rating updates are implemented per official MediaBrowser REST specs and backed by comprehensive unit tests. Because the maintainer's homelab is Plex-only, Jellyfin/Emby direct API reconciliations are currently **Community Beta**. Feedback and bug reports are warmly welcomed!
-
-- **Intelligent GUID Matching**: Compares Trakt cloud history against your libraries via IMDb, TMDb, and TVDb IDs, detecting `Trakt Only`, `Server Only`, and `Rating Mismatch` items.
-- **Smart Loop Prevention**: An in-memory TTL cache (`LoopPreventionManager`) drops outgoing webhooks triggered by reconciliation updates, preventing infinite scrobble ping-pong loops.
-- **Interactive Diff & Sync UI**: Inspect discrepancies, select specific titles, and trigger 1-click batch syncs with live progress reporting on the web dashboard.
-
-```ini
-PLEX_URL=http://<your-server-ip-or-domain>:32400
-PLEX_TOKEN=your_plex_token_here
-```
-
-> 💡 **Need help finding your server URL, `X-Plex-Token`, or Jellyfin/Emby credentials?**  
-> See the [**Media Server Credentials Guide**](./CONFIGURATION.md#2-media-server-credentials--webhook-setup) in `CONFIGURATION.md`.
-
----
-
-## 📥 Content Bridge & *Arr Automation
-
-The **Content Bridge** connects your personal Trakt Watchlist (`/sync/watchlist`) directly to **Radarr** and **Sonarr**:
-
-- **Automated Ingestion**: Scans your Trakt Watchlist for newly bookmarked movies and shows, checking for duplicates before queuing.
-- **Intelligent Routing**: Queries Sonarr/Radarr lookup APIs by TMDb/TVDb ID, automatically selecting valid root folders and quality profiles.
-- **Instant Acquisition**: Adds media as monitored and triggers immediate indexer search when `SEARCH_ON_ADD=true`.
-- **Ecosystem Health Dashboard**: Monitor server latency, versions, and trigger 1-click manual watchlist syncs directly from the dashboard (`GET /api/ecosystem`).
-
-```ini
-AUTO_ADD_FROM_WATCHLIST=true
-SEARCH_ON_ADD=true
-ARR_WATCHLIST_INTERVAL=3600
-```
-
-> 💡 **Looking for Sonarr/Radarr API keys, Quality Profile IDs, or Root Folder setup?**  
-> Check the [**Acquisition Stack (*Arr Automation) Guide**](./CONFIGURATION.md#3-acquisition-stack-arr-automation) in `CONFIGURATION.md`.
-
----
-
-## 📊 Homelab Observability & Prometheus Metrics
-
-Omniscrobble exports standard Prometheus metrics on `/metrics` (`PROMETHEUS_METRICS_ENABLED=true`) tracking uptime, request tallies, scrobbles, ratings, queue depth, and active streams:
-
-```yaml
-scrape_configs:
-  - job_name: 'omniscrobble'
-    metrics_path: '/metrics'
-    static_configs:
-      - targets: ['<server-ip>:<PORT>']
-```
-
-- **Live Redacted Log Viewer**: Integrated dashboard terminal modal (`GET /api/logs`) backed by `journalctl` (systemd) and an in-memory ring buffer (Docker) with keyword search, log-level filters, and automatic secret redaction.
-- **Detailed Metrics Specification**: For exact metric types and descriptions, see [**Prometheus Metrics**](./docs/API.md#prometheus-metrics) in `docs/API.md`.
-
----
-
-## 🛡️ Persistent Offline Queue & Disaster Recovery
-
-- **Resilient SQLite Queue (`data/queue.db`)**: Automatically buffers failed scrobbles, ratings, or collections during Trakt API outages (5xx) or rate limits (429). A background worker drains the queue automatically with exponential backoff.
-- **1-Click System Backup & Restore**: Download a timestamped configuration archive (`GET /api/backup`) or drag-and-drop a `.zip` file on the dashboard (`POST /api/restore`) with automated Zip Slip path validation to restore tokens and settings instantly.
-
----
-
-## 🗃️ Library Filtering & Trakt Collection Sync
-
-- **Section Whitelisting/Blacklisting**: Use `ALLOWED_LIBRARIES="Movies, TV Shows"` or `EXCLUDED_LIBRARIES="Home Videos, Fitness"` to isolate personal libraries from scrobbling.
-- **Automated Collection Sync**: When `SYNC_COLLECTION=true`, newly imported media (`library.new`) is submitted directly to your Trakt collection with parsed technical specs (resolution, audio codec, and channels).
-
----
-
-## 🔔 Multi-Channel Notifications
-
-Deliver instant alerts with poster art, ratings, and direct links when media is scrobbled, rated, or added to your collection:
-
-- **Supported Channels**: **Discord** (`DISCORD_WEBHOOK_URL`), **Telegram** (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`), **Ntfy** (`NTFY_URL`), and **Pushover** (`PUSHOVER_USER_KEY`, `PUSHOVER_API_TOKEN`).
-- **Event Toggles**: `NOTIFY_ON_SCROBBLE`, `NOTIFY_ON_RATE`, and `NOTIFY_ON_COLLECTION`.
-- **Alert Throttling**: Built-in 30-minute deduplication cooldown prevents spamming notification channels during bulk operations or outages.
-
-> 📖 **Setup Guides:** See [**Multi-Channel Notification Setup**](./CONFIGURATION.md#6-multi-channel-notification-setup) in `CONFIGURATION.md` for bot creation and credential instructions.
-
----
-
-## 💡 Troubleshooting & FAQ
-
-<details>
-<summary><strong>1. Receiving 422 Unprocessable Content on Plex webhooks?</strong></summary>
-
-Plex sends webhooks with `filename="payload.json"` multipart file parts. Omniscrobble automatically handles both multipart file streams and standard form fields. Ensure your deployment is running the latest release.
-</details>
-
-<details>
-<summary><strong>2. Seeing "Trakt 409 Conflict / Already scrobbled" in logs?</strong></summary>
-
-This is expected and normal. When you finish an episode, Plex sends `media.scrobble` (marking it watched). Immediately afterward, Plex closes the player and fires `media.stop`. Trakt simply reports that the item was already scrobbled; Omniscrobble logs this as an informational event and returns `200 OK`.
-</details>
-
-<details>
-<summary><strong>3. Seeing "message: Progress is XX%. Use stop to scrobble"?</strong></summary>
-
-Trakt considers playback past 80% to be completed. If you pause a video after 80%, calling `/scrobble/pause` causes Trakt to return this message. Omniscrobble detects late pauses beyond `SCROBBLE_THRESHOLD` and automatically routes them to `/scrobble/stop`.
-</details>
-
-<details>
-<summary><strong>4. How to verify the service is running?</strong></summary>
-
-Run a health check from your terminal:
-
-```bash
-curl http://localhost:8080/health
-```
-
-Returns JSON containing token diagnostics, scrobble mode, and allowed users:
-```json
-{"status":"healthy","authenticated":true,"trakt_user":"your_trakt_username","allowed_users":["your_plex_username"],"scrobble_mode":"scrobble","webhook_secret_enabled":false}
-```
-</details>
-
-> 🛠️ **More Troubleshooting:** For reverse proxy configs, Docker networking, and SSL certificate troubleshooting, see [**Homelab Networking & Troubleshooting**](./CONFIGURATION.md#8-homelab-networking--troubleshooting) in `CONFIGURATION.md`.
+| Guide | Description & Scope |
+| :--- | :--- |
+| [**Configuration Reference**](./CONFIGURATION.md) | Exhaustive documentation of all 45+ environment variables, server credentials, and secrets. |
+| [**Deployment Guide**](./DEPLOYMENT.md) | systemd user service setup, Docker Compose, Unraid/TrueNAS, lingering, and reverse proxies. |
+| [**Feature Guides**](./docs/FEATURES.md) | Deep dives for Co-Watching, Two-Way Reconciliation, Content Bridge, Queue, and Notifications. |
+| [**Architecture Blueprint**](./docs/ARCHITECTURE.md) | Complete component layers, data flows, and file-by-file directory manifest. |
+| [**REST API Specification**](./docs/API.md) | Documentation for all 28 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
+| [**Troubleshooting & FAQ**](./docs/TROUBLESHOOTING.md) | Solutions for common errors (422, 409, 80%), health diagnostics, and networking setup. |
 
 ---
 
@@ -341,19 +157,16 @@ omniscrobble/
 │   ├── config.py            # Centralized settings & environment variables
 │   ├── main.py              # FastAPI app, route handlers & webhook ingestion
 │   └── metrics.py           # Thread-safe Prometheus metrics registry
-├── docs/                    # GitHub Pages static demo (docs/index.html) & API/Architecture specs
+├── docs/                    # Static demo (GitHub Pages), Architecture, API, Features & FAQ
 ├── scripts/                 # Demo compilation & branding asset generators
 └── tests/                   # Pytest test suite (171 unit & integration tests)
 ```
 
-> 🏛️ **Full Architectural Blueprint:**  
-> For the complete system architecture diagram, component layers, data flows, and full file-by-file directory manifest, see [**`docs/ARCHITECTURE.md`**](./docs/ARCHITECTURE.md).
+> 🏛️ For the complete architectural diagram, component layers, and detailed directory manifest, see [**`docs/ARCHITECTURE.md`**](./docs/ARCHITECTURE.md).
 
 ---
 
 ## 🗺️ Roadmap & Horizons
-
-Omniscrobble is developed with a modular multi-platform architecture.
 
 - [x] **Universal Media Server Ingestion**: Multi-server webhooks for Plex, Jellyfin, and Emby.
 - [x] **Multi-Tracker Synchronization**: Simultaneous dispatch across Trakt, Simkl, AniList, and MyAnimeList.
@@ -364,8 +177,7 @@ Omniscrobble is developed with a modular multi-platform architecture.
 - [ ] **Direct P2P Sync**: Mesh synchronization between distributed Omniscrobble instances.
 - [ ] **Dynamic Rules Engine**: In-app scrobble threshold and library filtering configuration editor.
 
-> 📦 **Release History & Changelogs:**  
-> For detailed release notes, changelogs, and upgrade instructions for every release (v1.0 &rarr; v2.3+), visit [**GitHub Releases**](https://github.com/selits/omniscrobble/releases).
+> 📦 For release notes, changelogs, and upgrade instructions, visit [**GitHub Releases**](https://github.com/selits/omniscrobble/releases).
 
 ---
 
@@ -377,13 +189,7 @@ To update your installation to the latest release on your server or host:
 ./upgrade.sh
 ```
 
-This automated script:
-
-1. Fetches the latest code from GitHub (`git fetch && git reset --hard origin/main`).
-2. Updates dependencies in your virtual environment (`.venv`).
-3. Refreshes and enables the `systemd` user service unit (`systemctl --user enable plex-trakt`).
-4. Ensures user background lingering is enabled (`loginctl enable-linger`).
-5. Restarts the service cleanly and outputs its live running status.
+This automated script fetches the latest code from GitHub, updates dependencies in `.venv`, refreshes and re-enables the systemd user service, enables user lingering, and restarts the service cleanly.
 
 ---
 
