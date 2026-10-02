@@ -130,106 +130,32 @@ cp .env.example .env
 nano .env
 ```
 
-Set your configuration:
+Configure your essential settings in `.env`:
 
 ```ini
+# Trakt API Application Credentials (Required)
 TRAKT_CLIENT_ID=your_client_id_from_trakt
 TRAKT_CLIENT_SECRET=your_client_secret_from_trakt
 
-# Media Server Ingestion (Optional, disabled by default on clean install; toggle via dashboard)
+# Media Server Ingestion (Disabled by default; enable whichever you use)
 PLEX_ENABLED=true
 JELLYFIN_ENABLED=false
 EMBY_ENABLED=false
 
-# (Recommended) Restrict scrobbling to your Plex username only (leave blank to allow all users)
-PLEX_ALLOWED_USERS=your_plex_username
+# (Recommended) Restrict scrobbling to your username (leave blank to allow all users)
+PLEX_ALLOWED_USERS=your_username
 
-# (Optional) Protect webhook endpoint from unauthorized requests and unlock dashboard admin tools
+# (Optional) Webhook Secret: Protects endpoints (?token=...) and locks the admin dashboard
 WEBHOOK_SECRET=your_optional_secret_token
 
-# Host & Port: Use 0.0.0.0 so Plex containers can reach this service
+# Network Host & Port: Use 0.0.0.0 so containers and LAN devices can connect
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
-
-# Scrobble behavior & granular thresholds
-SCROBBLE_MODE=scrobble
-SCROBBLE_THRESHOLD=80.0
-EPISODE_SCROBBLE_THRESHOLD=80.0
-MOVIE_SCROBBLE_THRESHOLD=90.0
-
-# Trakt Collection Sync (library.new events)
-SYNC_COLLECTION=true
-NOTIFY_ON_COLLECTION=true
-
-# Library Section Filtering (Optional)
-ALLOWED_LIBRARIES=
-EXCLUDED_LIBRARIES=Home Videos, Personal Videos, Fitness
-
-# Homelab & Prometheus Metrics
-PROMETHEUS_METRICS_ENABLED=true
-
-# (Optional) Real-time notifications (Discord, Telegram, Ntfy, Pushover)
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_CHAT_ID=
-NTFY_URL=https://ntfy.sh/your_topic
-NTFY_AUTH_TOKEN=
-PUSHOVER_USER_KEY=your_pushover_user_key_here
-PUSHOVER_API_TOKEN=your_pushover_api_token_here
-PUSHOVER_PRIORITY=0
-NOTIFY_ON_SCROBBLE=true
-NOTIFY_ON_RATE=true
-NOTIFY_ON_FAILURE=true
-
-# (Optional) Watch Together / Co-Watching
-CO_WATCH_USER=partner_username
-CO_WATCH_SHOWS=The Bear, Severance, House of the Dragon
-CO_WATCH_PLAYERS=Living Room Apple TV, Main TV
-CO_WATCH_MOVIES=false
-
-# (Optional) Sonarr & Radarr Integration
-SONARR_URL=http://localhost:8989
-SONARR_API_KEY=your_sonarr_api_key_here
-RADARR_URL=http://localhost:7878
-RADARR_API_KEY=your_radarr_api_key_here
-
-# (Optional) Content Bridge & Watchlist Auto-Acquisition
-AUTO_ADD_FROM_WATCHLIST=false
-SEARCH_ON_ADD=true
-ARR_WATCHLIST_INTERVAL=3600
-ARR_NOTIFY_ON_ADD=true
-SONARR_QUALITY_PROFILE_ID=
-SONARR_ROOT_FOLDER=
-RADARR_QUALITY_PROFILE_ID=
-RADARR_ROOT_FOLDER=
-
-# (Optional) Two-Way Reverse Sync & Multi-Server Reconciliation (Plex, Jellyfin, Emby)
-PLEX_URL=http://<your-server-ip-or-domain>:32400
-PLEX_TOKEN=your_plex_token_here
-JELLYFIN_URL=http://<your-server-ip-or-domain>:8096
-JELLYFIN_TOKEN=your_jellyfin_token_here
-JELLYFIN_USER_ID=your_jellyfin_user_id
-EMBY_URL=http://<your-server-ip-or-domain>:8096
-EMBY_TOKEN=your_emby_token_here
-EMBY_USER_ID=your_emby_user_id
-REVERSE_SYNC_INTERVAL=0
-REVERSE_SYNC_ON_STARTUP=false
-REVERSE_SYNC_RATINGS=true
-
-# (Optional) Multi-Tracker Architecture: Simkl Integration
-SIMKL_CLIENT_ID=your_simkl_client_id_here
-SIMKL_CLIENT_SECRET=your_simkl_client_secret_here
-SIMKL_ENABLED=true
-
-# (Optional) Anime Tracking Engine: AniList & MyAnimeList Integrations
-ANIME_AUTO_DETECT=true
-ANILIST_ENABLED=true
-ANILIST_CLIENT_ID=your_anilist_client_id_here
-ANILIST_CLIENT_SECRET=your_anilist_client_secret_here
-MAL_ENABLED=true
-MAL_CLIENT_ID=your_mal_client_id_here
-MAL_CLIENT_SECRET=your_mal_client_secret_here
 ```
+
+> 💡 **Everything else is optional!**  
+> Omniscrobble works immediately with just the settings above. Advanced integrations like **Two-Way Sync**, **Simkl**, **AniList/MAL**, ***Arr Automation**, **Co-Watching**, and **Discord/Telegram alerts** can be configured anytime in `.env` or adjusted live without restarts via the **⚙️ Settings Hub** on the web dashboard.  
+> 📖 For the complete reference of all 45+ environment variables, credential retrieval guides, and homelab networking tips, see [**`CONFIGURATION.md`**](./CONFIGURATION.md).
 
 ---
 
@@ -602,32 +528,16 @@ The web dashboard includes a dedicated **Library Reconciliation** card and inter
 
 ### 4. Reverse Sync Configuration
 
-Enable two-way synchronization in your `.env` (or configure dynamically in the dashboard):
+Configure your media server connection in `.env` or dynamically in the **⚙️ Settings Hub** on the web dashboard:
 
 ```ini
-# Direct Plex Media Server Connection
+# Direct Plex Media Server Connection (Example)
 PLEX_URL=http://<your-server-ip-or-domain>:32400
 PLEX_TOKEN=your_plex_token_here
-
-# Direct Jellyfin Media Server Connection (Community Beta)
-JELLYFIN_URL=http://<your-server-ip-or-domain>:8096
-JELLYFIN_TOKEN=your_jellyfin_token_here
-JELLYFIN_USER_ID=your_jellyfin_user_id
-
-# Direct Emby Media Server Connection (Community Beta)
-EMBY_URL=http://<your-server-ip-or-domain>:8096
-EMBY_TOKEN=your_emby_token_here
-EMBY_USER_ID=your_emby_user_id
-
-# Automated periodic reconciliation in seconds (0 = manual via UI only, 21600 = every 6 hours)
-REVERSE_SYNC_INTERVAL=0
-
-# Run reconciliation scan & sync automatically on service startup
-REVERSE_SYNC_ON_STARTUP=false
-
-# Reconcile numerical/star ratings alongside watched status
-REVERSE_SYNC_RATINGS=true
 ```
+
+> 💡 **Need help getting your server URL, `X-Plex-Token`, or Jellyfin/Emby User ID?**  
+> See the [**Plex Credentials Guide**](./CONFIGURATION.md#plex-media-server) or [**Jellyfin & Emby Guides**](./CONFIGURATION.md#jellyfin-media-server) in `CONFIGURATION.md` for fast, visual walkthroughs.
 
 ---
 
@@ -658,27 +568,16 @@ The web dashboard features an interactive **Multi-Server Ecosystem** widget (`GE
 
 ### 3. Content Bridge Configuration
 
-Enable watchlist automation and acquisition search in your `.env`:
+Enable watchlist automation and acquisition search in your `.env` (or configure dynamically in the dashboard):
 
 ```ini
-# Enable automated Trakt watchlist monitoring
 AUTO_ADD_FROM_WATCHLIST=true
-
-# Trigger immediate indexer search upon adding media
 SEARCH_ON_ADD=true
-
-# Polling interval in seconds (3600 = 1 hour, 0 = manual via UI only)
 ARR_WATCHLIST_INTERVAL=3600
-
-# Dispatch notifications when media is added
-ARR_NOTIFY_ON_ADD=true
-
-# (Optional) Explicit Quality Profile IDs and Root Folder Paths
-SONARR_QUALITY_PROFILE_ID=1
-SONARR_ROOT_FOLDER=/tv
-RADARR_QUALITY_PROFILE_ID=1
-RADARR_ROOT_FOLDER=/movies
 ```
+
+> 💡 **Looking for Sonarr/Radarr API keys, Quality Profile IDs, or Root Folder setup?**  
+> Check the [**Acquisition Stack (*Arr Automation) Guide**](./CONFIGURATION.md#3-acquisition-stack-arr-automation) in `CONFIGURATION.md`.
 
 ---
 
@@ -773,8 +672,10 @@ Deliver real-time alerts whenever a movie or episode is scrobbled, rated, or add
 Toggles:
 
 - `NOTIFY_ON_SCROBBLE=true`: Alerts on finished playback (`media.scrobble` / `scrobble_stop`).
-- `NOTIFY_ON_RATE=true`: Alerts when rating media in Plex.
+- `NOTIFY_ON_RATE=true`: Alerts when rating media in Plex, Jellyfin, or Emby.
 - `NOTIFY_ON_COLLECTION=true`: Alerts when new media is added to your collection.
+
+> 📖 **Channel Setup Guides**: For step-by-step instructions on generating Discord webhooks, Telegram bots (`@BotFather`), Ntfy topics, and Pushover keys, see [**Multi-Channel Notification Setup**](./CONFIGURATION.md#6-multi-channel-notification-setup) in `CONFIGURATION.md`.
 
 ---
 
