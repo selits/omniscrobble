@@ -2904,6 +2904,46 @@ def should_display_cowatch_badge(action: str, result_status: str, progress: str)
     return act.startswith(("mark_watched", "scrobble_stop", "test_webhook")) or act in ("scrobble", "watched")
 
 
+def render_status_badge(action: str, result_status: str, progress: str = "", cowatch_status: dict | None = None) -> str:
+    raw_act = str(action or "").lower().strip()
+    clean_act = format_action_label(raw_act).lower()
+    stat = str(result_status or "").lower().strip()
+    cw = cowatch_status or {}
+
+    if cw.get("synced") and should_display_cowatch_badge(action, result_status, progress):
+        target_txt = html.escape(f"@{cw['target']}" if cw.get("target") else "partner")
+        reason_txt = html.escape(cw.get("reason") or "Shared show whitelist match")
+        return f'<span style="background:#701a75;color:#f5d0fe;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
+
+    if stat in ("ok", "200", "201"):
+        label = "✓ OK"
+        tooltip = "Action successful"
+        if clean_act == "scrobble" or raw_act.startswith(("mark_watched", "scrobble_stop")):
+            label = "✓ Scrobbled"
+            if cw.get("reason"):
+                tooltip = f"Scrobbled (Solo: {html.escape(cw.get('reason'))})"
+            else:
+                tooltip = "Scrobbled to connected trackers"
+        elif clean_act == "collection" or raw_act == "collection":
+            label = "✓ Added"
+            tooltip = "Added to collection"
+        elif clean_act == "rate" or raw_act.startswith("rate"):
+            label = "✓ Rated"
+            tooltip = "Rating synchronized"
+        return f'<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="{tooltip}">{label}</span>'
+
+    if stat == "ignored":
+        return '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;" title="Playback or event skipped">Ignored</span>'
+
+    if stat == "queued":
+        return '<span style="background:#78350f;color:#fde68a;border:1px solid #d97706;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Saved to offline retry queue">⏳ Queued</span>'
+
+    if stat in ("error", "500", "502", "503", "504"):
+        return '<span style="background:#7f1d1d;color:#fecaca;border:1px solid #ef4444;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Action failed">✕ Failed</span>'
+
+    return f'<span style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;">{html.escape(str(result_status))}</span>'
+
+
 async def render_dashboard_response(request: Request, response: Response, is_demo: bool = False) -> HTMLResponse:
     if is_demo:
         is_admin = True
@@ -3090,18 +3130,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                             action_buttons.append(f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>')
                 action_col = f'<td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
 
-            # Trakt Status column: show result + cowatch badge if present
-            result_status_disp = html.escape(str(ev.get("result_status", "")))
-            status_badge_html = f'<span style="color:{color};font-weight:600;font-size:13px;">{result_status_disp}</span>'
-            cw = ev.get("cowatch_status")
-            if cw and should_display_cowatch_badge(ev.get("action"), ev.get("result_status"), ev.get("progress")):
-                if cw.get("synced"):
-                    target_txt = html.escape(f"@{cw['target']}" if cw.get("target") else "partner")
-                    reason_txt = html.escape(cw.get("reason") or "Synced")
-                    status_badge_html += f' <span style="background:#701a75;color:#f5d0fe;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
-                elif cw.get("reason"):
-                    reason_txt = html.escape(cw.get("reason"))
-                    status_badge_html += f' <span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 6px;border-radius:4px;font-size:11px;white-space:nowrap;" title="Co-watch skipped: {reason_txt}">👥 Solo</span>'
+            # Status column: show unified status badge
+            status_badge_html = render_status_badge(
+                ev.get("action"),
+                ev.get("result_status"),
+                ev.get("progress", ""),
+                ev.get("cowatch_status"),
+            )
 
             title_disp = html.escape(str(ev.get('title', '')))
             type_disp = html.escape(str(ev.get('type', '')))

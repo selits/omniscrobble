@@ -7017,6 +7017,7 @@ async def test_activity_table_ui_polish():
     from app.main import (
         format_action_label,
         should_display_cowatch_badge,
+        render_status_badge,
         recent_events,
         log_event,
         process_media_event,
@@ -7048,7 +7049,25 @@ async def test_activity_table_ui_polish():
     assert should_display_cowatch_badge("mark_watched", "ok", "100.0%") is True
     assert should_display_cowatch_badge("scrobble", "200", "90.0%") is True
 
-    # 3. Unhandled webhook events in scrobble mode do NOT log "none"
+    # 3. Status badge rendering helper
+    cw_synced = render_status_badge("mark_watched", "ok", "100.0%", {"synced": True, "target": "partner"})
+    assert "👥 Co-Watched" in cw_synced
+    assert "Synced to @partner" in cw_synced
+    assert "ok" not in cw_synced.lower() or "ok" not in cw_synced  # No awkward 'ok' prepended
+
+    cw_solo = render_status_badge("scrobble_stop", "ok", "95.0%", {"synced": False, "reason": "Not in whitelist"})
+    assert "✓ Scrobbled" in cw_solo
+    assert "Solo: Not in whitelist" in cw_solo
+    assert "👥 Solo" not in cw_solo  # Replaced noisy badge with clean tooltip
+
+    assert "✓ Added" in render_status_badge("collection", "ok")
+    assert "✓ Rated" in render_status_badge("rate", "ok")
+    assert "✓ OK" in render_status_badge("playback_stopped", "ok", "0.0%")
+    assert "Ignored" in render_status_badge("scrobble_start", "ignored")
+    assert "⏳ Queued" in render_status_badge("scrobble_stop", "queued")
+    assert "✕ Failed" in render_status_badge("scrobble_stop", "error")
+
+    # 4. Unhandled webhook events in scrobble mode do NOT log "none"
     parsed_unhandled = ParsedMedia(
         event="library.on.deck",
         username="selits",
@@ -7064,11 +7083,11 @@ async def test_activity_table_ui_polish():
     # Verify nothing was added to recent_events with action "none"
     assert len([e for e in recent_events if e.get("action") == "none"]) == 0
 
-    # 4. SSR Dashboard Table Verification
+    # 5. SSR Dashboard Table Verification
     client = TestClient(app)
     client.cookies.set("admin_token", "unlocked")
 
-    # Log a 0% stopped event (should NOT have unscrobble button or Solo badge)
+    # Log a 0% stopped event (should have clean ✓ OK badge, NOT Solo or raw ok)
     parsed_zero = ParsedMedia(
         event="media.stop",
         username="selits",
@@ -7102,15 +7121,16 @@ async def test_activity_table_ui_polish():
     assert dash_res.status_code == 200
     html_text = dash_res.text
 
-    # Header styling
-    assert '<th style="white-space:nowrap;">Trakt Status</th>' in html_text
+    # Header styling: renamed to clean universal "Status"
+    assert '<th style="white-space:nowrap;">Status</th>' in html_text
     assert '<th style="min-width:220px;white-space:nowrap;">Actions</th>' in html_text
 
-    # Verify Co-Watched badge has white-space:nowrap
+    # Verify Co-Watched badge has white-space:nowrap and NO awkward 'ok' prepended
     assert '👥 Co-Watched</span>' in html_text
     assert 'white-space:nowrap;" title="Synced to @partner' in html_text
 
-    # Verify stop (0.0%) does NOT have Solo badge
+    # Verify 0% stop gets clean ✓ OK badge and does NOT have Solo badge
+    assert '✓ OK</span>' in html_text
     assert 'title="Co-watch skipped: Not in shared co-watch list"' not in html_text
 
     # Action buttons flex styling
