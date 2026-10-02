@@ -220,6 +220,12 @@ NOTIFY_ON_COLLECTION=true
 NOTIFY_ON_FAILURE=true
 ```
 
+### Dashboard Runtime Configuration & Channel Testing
+
+All notification channels and event toggles can be configured and managed live from the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab in the dashboard without editing `.env` or restarting services.
+- **1-Click Test Buttons**: Verify delivery for Discord, Telegram, Ntfy, or Pushover with instant visual status feedback directly in the modal.
+- **Credential Privacy**: Webhook URLs, bot tokens, and user keys are shielded (`••••••••`) in UI inputs and API payloads.
+
 ### Alert Throttling & Cooldowns
 
 When upstream tracker API requests fail or during mass library additions, Omniscrobble applies an in-memory 30-minute deduplication cooldown per title to protect your notification channels from alert fatigue and webhook rate limits.

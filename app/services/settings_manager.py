@@ -39,8 +39,25 @@ class SettingsManager:
             "credentials": self._detect_default_credentials(),
             "reconciliation": self._detect_default_reconciliation(),
             "arr": self._detect_default_arr(),
+            "notifications": {},
         }
+        self._custom_notifications: dict[str, Any] = {}
         self._load_settings()
+
+    def _detect_default_notifications(self) -> dict[str, Any]:
+        """Detect initial default notification settings from Config."""
+        return {
+            "discord_webhook_url": getattr(self.config, "DISCORD_WEBHOOK_URL", "") or "",
+            "telegram_bot_token": getattr(self.config, "TELEGRAM_BOT_TOKEN", "") or "",
+            "telegram_chat_id": getattr(self.config, "TELEGRAM_CHAT_ID", "") or "",
+            "ntfy_url": getattr(self.config, "NTFY_URL", "") or "",
+            "pushover_user_key": getattr(self.config, "PUSHOVER_USER_KEY", "") or "",
+            "pushover_api_token": getattr(self.config, "PUSHOVER_API_TOKEN", "") or "",
+            "notify_on_scrobble": bool(getattr(self.config, "NOTIFY_ON_SCROBBLE", True)),
+            "notify_on_rate": bool(getattr(self.config, "NOTIFY_ON_RATE", True)),
+            "notify_on_collection": bool(getattr(self.config, "NOTIFY_ON_COLLECTION", True)),
+            "notify_on_failure": bool(getattr(self.config, "NOTIFY_ON_FAILURE", True)),
+        }
 
     def _detect_default_credentials(self) -> dict[str, dict[str, str]]:
         """Detect initial default API credentials from Config."""
@@ -226,6 +243,13 @@ class SettingsManager:
                             for ak, av in arr_data.items():
                                 if ak in current_arr and av is not None:
                                     current_arr[ak] = av
+
+                        notif_data = data.get("notifications", {})
+                        if isinstance(notif_data, dict):
+                            for nk, nv in notif_data.items():
+                                if nv is not None:
+                                    self._custom_notifications[nk] = nv
+                            self._settings["notifications"] = dict(self._custom_notifications)
             except Exception as e:
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
@@ -497,6 +521,63 @@ class SettingsManager:
         logger.info("*Arr settings saved to disk.")
         return self.get_arr_settings(mask=True)
 
+    def get_custom_notifications(self) -> dict[str, Any]:
+        """Returns explicitly customized notification overrides."""
+        return dict(self._custom_notifications)
+
+    def get_notifications(self, mask: bool = True) -> dict[str, Any]:
+        """Returns the current notifications settings with optional credential masking."""
+        res = self._detect_default_notifications()
+        res.update(self._custom_notifications)
+        if mask:
+            res["discord_webhook_url"] = self._mask_val(res.get("discord_webhook_url", ""))
+            res["telegram_bot_token"] = self._mask_val(res.get("telegram_bot_token", ""))
+            res["pushover_user_key"] = self._mask_val(res.get("pushover_user_key", ""))
+            res["pushover_api_token"] = self._mask_val(res.get("pushover_api_token", ""))
+        return res
+
+    def update_notifications(self, updates: dict[str, Any]) -> dict[str, Any]:
+        """Updates notifications settings and persists to disk."""
+        allowed_keys = {
+            "discord_webhook_url",
+            "telegram_bot_token",
+            "telegram_chat_id",
+            "ntfy_url",
+            "pushover_user_key",
+            "pushover_api_token",
+            "notify_on_scrobble",
+            "notify_on_rate",
+            "notify_on_collection",
+            "notify_on_failure",
+        }
+        boolean_keys = {
+            "notify_on_scrobble",
+            "notify_on_rate",
+            "notify_on_collection",
+            "notify_on_failure",
+        }
+        masked_keys = {
+            "discord_webhook_url",
+            "telegram_bot_token",
+            "pushover_user_key",
+            "pushover_api_token",
+        }
+        for k, v in updates.items():
+            if k in allowed_keys:
+                if k in boolean_keys:
+                    self._custom_notifications[k] = bool(v)
+                elif k in masked_keys:
+                    # Ignore if incoming is masked and not empty
+                    if v is not None and not self._is_masked(v):
+                        self._custom_notifications[k] = str(v).strip()
+                else:
+                    if v is not None:
+                        self._custom_notifications[k] = str(v).strip()
+        self._settings["notifications"] = dict(self._custom_notifications)
+        self._save_settings()
+        logger.info("Notification settings saved to disk.")
+        return self.get_notifications(mask=True)
+
     def get_all_settings(self, mask_token: bool = True) -> dict[str, Any]:
         """Returns the full runtime settings dictionary."""
         return {
@@ -508,6 +589,7 @@ class SettingsManager:
             },
             "reconciliation": self.get_reconciliation_settings(mask_token=mask_token),
             "arr": self.get_arr_settings(mask=mask_token),
+            "notifications": self.get_notifications(mask=mask_token),
         }
 
     def update_all_settings(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -533,6 +615,9 @@ class SettingsManager:
 
         if "arr" in data and isinstance(data["arr"], dict):
             self.update_arr_settings(data["arr"])
+
+        if "notifications" in data and isinstance(data["notifications"], dict):
+            self.update_notifications(data["notifications"])
 
         self._save_settings()
         return self.get_all_settings(mask_token=True)

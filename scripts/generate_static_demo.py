@@ -873,6 +873,18 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     has_radarr_key: true,
                     auto_add_watchlist: false,
                     search_on_add: true
+                }},
+                notifications: {{
+                    discord_webhook_url: "••••••••dcrd",
+                    telegram_bot_token: "••••••••tele",
+                    telegram_chat_id: "-1001234567890",
+                    ntfy_url: "https://ntfy.sh/demo-omniscrobble-alerts",
+                    pushover_user_key: "••••••••push",
+                    pushover_api_token: "••••••••tokn",
+                    notify_on_scrobble: true,
+                    notify_on_rate: true,
+                    notify_on_collection: true,
+                    notify_on_failure: true
                 }}
             }}
         }};
@@ -1136,9 +1148,16 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     }}
                     if (body.reconciliation) Object.assign(clientState.settings.reconciliation, body.reconciliation);
                     if (body.arr) Object.assign(clientState.settings.arr, body.arr);
+                    if (body.notifications) Object.assign(clientState.settings.notifications, body.notifications);
                     return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
                 }}
                 return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
+            }}
+
+            if (path.endsWith('/api/notifications/test')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                const ch = (body.channel || 'channel').toUpperCase();
+                return jsonResp({{ status: 'success', success: true, message: `Demo: ${{ch}} test notification delivered successfully!` }});
             }}
 
             if (path.endsWith('/api/arr/test-connection')) {{

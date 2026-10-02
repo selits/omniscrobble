@@ -26,11 +26,13 @@ def _ensure_servers_enabled_for_tests():
     from app.services.settings_manager import settings_mgr
     from app.main import reverse_sync_mgr
     orig_settings = copy.deepcopy(settings_mgr._settings)
+    orig_custom_notif = copy.deepcopy(settings_mgr._custom_notifications)
     settings_mgr.set_server_enabled("plex", True)
     settings_mgr.set_server_enabled("jellyfin", True)
     settings_mgr.set_server_enabled("emby", True)
     yield
     settings_mgr._settings = orig_settings
+    settings_mgr._custom_notifications = orig_custom_notif
     settings_mgr._save_settings()
     orig_recon = orig_settings.get("reconciliation", {})
     reverse_sync_mgr.update_config(
@@ -7158,6 +7160,210 @@ async def test_activity_table_ui_polish():
 
     # Action buttons flex styling
     assert 'display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;' in html_text
+
+
+def test_settings_api_notifications():
+    """Verify GET and POST /api/settings handles notifications configuration and masking."""
+    from app.services.settings_manager import settings_mgr
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "supersecret"):
+        headers = {"x-webhook-secret": "supersecret"}
+
+        # 1. GET settings includes notifications
+        res = client.get("/api/settings", headers=headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert "notifications" in data
+        notifs = data["notifications"]
+        assert "discord_webhook_url" in notifs
+        assert "notify_on_scrobble" in notifs
+        assert "notify_on_rate" in notifs
+        assert "notify_on_collection" in notifs
+        assert "notify_on_failure" in notifs
+
+        # 2. POST updates notifications
+        new_payload = {
+            "notifications": {
+                "discord_webhook_url": "https://discord.com/api/webhooks/12345/secret_token",
+                "telegram_bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+                "telegram_chat_id": "-100987654321",
+                "ntfy_url": "https://ntfy.sh/my-secret-test-topic",
+                "pushover_user_key": "user_key_9999",
+                "pushover_api_token": "app_token_8888",
+                "notify_on_scrobble": False,
+                "notify_on_rate": True,
+                "notify_on_collection": False,
+                "notify_on_failure": True,
+            }
+        }
+        res_post = client.post("/api/settings", headers=headers, json=new_payload)
+        assert res_post.status_code == 200
+        saved = res_post.json()["settings"]["notifications"]
+
+        # Sensitive values should be masked in API responses
+        assert "••••" in saved["discord_webhook_url"]
+        assert "••••" in saved["telegram_bot_token"]
+        assert "••••" in saved["pushover_user_key"]
+        assert "••••" in saved["pushover_api_token"]
+        assert saved["telegram_chat_id"] == "-100987654321"
+        assert saved["ntfy_url"] == "https://ntfy.sh/my-secret-test-topic"
+        assert saved["notify_on_scrobble"] is False
+        assert saved["notify_on_collection"] is False
+
+        # Raw values should be retained in settings_mgr
+        raw = settings_mgr.get_notifications(mask=False)
+        assert raw["discord_webhook_url"] == "https://discord.com/api/webhooks/12345/secret_token"
+        assert raw["telegram_bot_token"] == "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+
+        # Submitting masked value should preserve existing secret
+        res_masked = client.post(
+            "/api/settings",
+            headers=headers,
+            json={"notifications": {"discord_webhook_url": saved["discord_webhook_url"]}}
+        )
+        assert res_masked.status_code == 200
+        assert settings_mgr.get_notifications(mask=False)["discord_webhook_url"] == "https://discord.com/api/webhooks/12345/secret_token"
+
+        # Cleanup settings for subsequent tests
+        settings_mgr.update_notifications({
+            "discord_webhook_url": "",
+            "telegram_bot_token": "",
+            "telegram_chat_id": "",
+            "ntfy_url": "",
+            "pushover_user_key": "",
+            "pushover_api_token": "",
+        })
+
+
+def test_notifications_test_endpoint_auth():
+    """Verify authentication and validation on POST /api/notifications/test."""
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "supersecret"):
+        # 1. Unauthorized request
+        res_unauth = client.post("/api/notifications/test", json={"channel": "discord"})
+        assert res_unauth.status_code == 401
+
+        # 2. Authorized but invalid channel
+        headers = {"x-webhook-secret": "supersecret"}
+        res_invalid = client.post(
+            "/api/notifications/test",
+            headers=headers,
+            json={"channel": "unsupported_channel"}
+        )
+        assert res_invalid.status_code == 400
+        assert "Unknown notification channel" in res_invalid.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_notifications_test_endpoint_channels():
+    """Verify test notification dispatch across all supported channels."""
+    from app.services.settings_manager import settings_mgr
+    client = TestClient(app)
+
+    settings_mgr.update_notifications({
+        "discord_webhook_url": "",
+        "telegram_bot_token": "",
+        "telegram_chat_id": "",
+        "ntfy_url": "",
+        "pushover_user_key": "",
+        "pushover_api_token": "",
+    })
+
+    with patch.object(Config, "WEBHOOK_SECRET", "supersecret"), \
+         patch.object(Config, "DISCORD_WEBHOOK_URL", ""), \
+         patch.object(Config, "TELEGRAM_BOT_TOKEN", ""), \
+         patch.object(Config, "TELEGRAM_CHAT_ID", ""), \
+         patch.object(Config, "NTFY_URL", ""), \
+         patch.object(Config, "PUSHOVER_USER_KEY", ""), \
+         patch.object(Config, "PUSHOVER_API_TOKEN", ""):
+        headers = {"x-webhook-secret": "supersecret"}
+
+        # 1. Discord unconfigured
+        res_disc_none = client.post("/api/notifications/test", headers=headers, json={"channel": "discord"})
+        assert res_disc_none.status_code == 400
+        assert res_disc_none.json()["status"] == "error"
+        assert "not configured" in res_disc_none.json()["message"]
+
+        # Discord success
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=204, text="")
+            res_disc = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "discord", "discord_webhook_url": "https://discord.com/api/webhooks/test/123"}
+            )
+            assert res_disc.status_code == 200
+            assert res_disc.json()["status"] == "success"
+
+        # Discord failure
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=400, text="Bad Request")
+            res_disc_fail = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "discord", "discord_webhook_url": "https://discord.com/api/webhooks/test/123"}
+            )
+            assert res_disc_fail.status_code == 400
+            assert res_disc_fail.json()["status"] == "error"
+            assert "HTTP 400" in res_disc_fail.json()["message"]
+
+        # 2. Telegram unconfigured
+        res_tg_none = client.post("/api/notifications/test", headers=headers, json={"channel": "telegram"})
+        assert res_tg_none.status_code == 400
+        assert res_tg_none.json()["status"] == "error"
+
+        # Telegram success
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=200, text="{}")
+            res_tg = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "telegram", "telegram_bot_token": "bot123", "telegram_chat_id": "chat123"}
+            )
+            assert res_tg.status_code == 200
+            assert res_tg.json()["status"] == "success"
+
+        # 3. Ntfy success
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=200, text="ok")
+            res_ntfy = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "ntfy", "ntfy_url": "https://ntfy.sh/my-topic"}
+            )
+            assert res_ntfy.status_code == 200
+            assert res_ntfy.json()["status"] == "success"
+
+        # 4. Pushover success
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=200, text='{"status": 1}')
+            res_push = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "pushover", "pushover_user_key": "ukey", "pushover_api_token": "atoken"}
+            )
+            assert res_push.status_code == 200
+            assert res_push.json()["status"] == "success"
+
+
+def test_notifier_dynamic_settings_resolution():
+    """Verify Notifier respects SettingsManager overrides with Config fallback."""
+    from app.services.settings_manager import settings_mgr
+    test_notif = Notifier(Config)
+
+    # When no custom override exists, falls back to Config
+    with patch.object(Config, "NOTIFY_ON_RATE", True):
+        assert test_notif._is_event_enabled("notify_on_rate", "NOTIFY_ON_RATE") is True
+    with patch.object(Config, "NOTIFY_ON_RATE", False):
+        assert test_notif._is_event_enabled("notify_on_rate", "NOTIFY_ON_RATE") is False
+
+    # When custom override is set in settings_mgr, override takes precedence
+    settings_mgr.update_notifications({"notify_on_rate": False})
+    with patch.object(Config, "NOTIFY_ON_RATE", True):
+        assert test_notif._is_event_enabled("notify_on_rate", "NOTIFY_ON_RATE") is False
+
 
 
 

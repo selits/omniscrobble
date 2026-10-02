@@ -139,7 +139,7 @@ For in-depth guides, variable references, and operational walk-throughs, explore
 | [**Deployment Guide**](./DEPLOYMENT.md) | systemd user service setup, Docker Compose, Unraid/TrueNAS, lingering, and reverse proxies. |
 | [**Feature Guides**](./docs/FEATURES.md) | Deep dives for Co-Watching, Two-Way Reconciliation, Content Bridge, Queue, and Notifications. |
 | [**Architecture Blueprint**](./docs/ARCHITECTURE.md) | Complete component layers, data flows, and file-by-file directory manifest. |
-| [**REST API Specification**](./docs/API.md) | Documentation for all 28 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
+| [**REST API Specification**](./docs/API.md) | Documentation for all 29 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
 | [**Troubleshooting & FAQ**](./docs/TROUBLESHOOTING.md) | Solutions for common errors (422, 409, 80%), health diagnostics, and networking setup. |
 
 ---
@@ -174,6 +174,7 @@ omniscrobble/
 - [x] **Watch Together / Co-Watch**: Dynamic multi-user partner scrobbling with show and device whitelists.
 - [x] **Content Bridge**: Automated Trakt Watchlist sync to Sonarr and Radarr.
 - [x] **Offline Queue & Resilience**: SQLite persistence with exponential backoff and transient failure retries.
+- [x] **Dashboard Notification Configuration**: Live configuration of Discord, Telegram, Ntfy, and Pushover channels with per-channel test dispatch — no restarts required.
 - [ ] **Direct P2P Sync**: Mesh synchronization between distributed Omniscrobble instances.
 - [ ] **Dynamic Rules Engine**: In-app scrobble threshold and library filtering configuration editor.
 

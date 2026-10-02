@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from typing import Any, Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -1526,6 +1526,19 @@ class SettingsUpdateRequest(BaseModel):
     credentials: Optional[dict[str, dict[str, Any]]] = None
     reconciliation: Optional[dict[str, Any]] = None
     arr: Optional[dict[str, Any]] = None
+    notifications: Optional[dict[str, Any]] = None
+
+    model_config = {"extra": "ignore"}
+
+
+class NotificationTestRequest(BaseModel):
+    channel: str
+    discord_webhook_url: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    ntfy_url: Optional[str] = None
+    pushover_user_key: Optional[str] = None
+    pushover_api_token: Optional[str] = None
 
     model_config = {"extra": "ignore"}
 
@@ -1586,6 +1599,32 @@ def update_settings_endpoint(payload: SettingsUpdateRequest, request: Request):
         )
 
     return {"status": "success", "settings": updated}
+
+
+@app.post("/api/notifications/test")
+async def test_notification_endpoint(payload: NotificationTestRequest, request: Request):
+    """Send an immediate test alert to verify notification channel setup."""
+    if request and request.query_params.get("demo") == "true":
+        return {
+            "status": "success",
+            "success": True,
+            "message": f"Demo Mode: Test notification dispatched successfully to {payload.channel.capitalize()}!",
+        }
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    success, msg = await notifier.send_test_notification(
+        channel=payload.channel,
+        discord_webhook_url=payload.discord_webhook_url,
+        telegram_bot_token=payload.telegram_bot_token,
+        telegram_chat_id=payload.telegram_chat_id,
+        ntfy_url=payload.ntfy_url,
+        pushover_user_key=payload.pushover_user_key,
+        pushover_api_token=payload.pushover_api_token,
+    )
+    if not success:
+        return JSONResponse(status_code=400, content={"status": "error", "success": False, "message": msg})
+    return {"status": "success", "success": True, "message": msg}
 
 
 @app.post("/api/settings/toggle")
