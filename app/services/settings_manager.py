@@ -51,6 +51,7 @@ class SettingsManager:
             "telegram_bot_token": getattr(self.config, "TELEGRAM_BOT_TOKEN", "") or "",
             "telegram_chat_id": getattr(self.config, "TELEGRAM_CHAT_ID", "") or "",
             "ntfy_url": getattr(self.config, "NTFY_URL", "") or "",
+            "ntfy_auth_token": getattr(self.config, "NTFY_AUTH_TOKEN", "") or "",
             "pushover_user_key": getattr(self.config, "PUSHOVER_USER_KEY", "") or "",
             "pushover_api_token": getattr(self.config, "PUSHOVER_API_TOKEN", "") or "",
             "notify_on_scrobble": bool(getattr(self.config, "NOTIFY_ON_SCROBBLE", True)),
@@ -532,6 +533,7 @@ class SettingsManager:
         if mask:
             res["discord_webhook_url"] = self._mask_val(res.get("discord_webhook_url", ""))
             res["telegram_bot_token"] = self._mask_val(res.get("telegram_bot_token", ""))
+            res["ntfy_auth_token"] = self._mask_val(res.get("ntfy_auth_token", ""))
             res["pushover_user_key"] = self._mask_val(res.get("pushover_user_key", ""))
             res["pushover_api_token"] = self._mask_val(res.get("pushover_api_token", ""))
         return res
@@ -543,6 +545,7 @@ class SettingsManager:
             "telegram_bot_token",
             "telegram_chat_id",
             "ntfy_url",
+            "ntfy_auth_token",
             "pushover_user_key",
             "pushover_api_token",
             "notify_on_scrobble",
@@ -559,6 +562,7 @@ class SettingsManager:
         masked_keys = {
             "discord_webhook_url",
             "telegram_bot_token",
+            "ntfy_auth_token",
             "pushover_user_key",
             "pushover_api_token",
         }

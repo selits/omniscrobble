@@ -352,7 +352,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.5.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -1537,6 +1537,7 @@ class NotificationTestRequest(BaseModel):
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
     ntfy_url: Optional[str] = None
+    ntfy_auth_token: Optional[str] = None
     pushover_user_key: Optional[str] = None
     pushover_api_token: Optional[str] = None
 
@@ -1619,6 +1620,7 @@ async def test_notification_endpoint(payload: NotificationTestRequest, request: 
         telegram_bot_token=payload.telegram_bot_token,
         telegram_chat_id=payload.telegram_chat_id,
         ntfy_url=payload.ntfy_url,
+        ntfy_auth_token=payload.ntfy_auth_token,
         pushover_user_key=payload.pushover_user_key,
         pushover_api_token=payload.pushover_api_token,
     )
@@ -2632,6 +2634,8 @@ async def auth_start(request: Request, user: Optional[str] = None):
 async def auth_poll(payload: DevicePollRequest, request: Request):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not payload.device_code or not str(payload.device_code).strip() or payload.device_code == "undefined":
+        return {"status": "error", "message": "Missing device_code"}
     global trakt_user_profile
     target_client = user_mgr.get_client(payload.user)
     try:
@@ -2677,7 +2681,11 @@ async def get_simkl_pin(request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     try:
         data = await simkl.get_device_pin()
+        if isinstance(data, dict) and "error" in data:
+            raise HTTPException(status_code=400, detail=data.get("error", "Failed to obtain Simkl PIN"))
         return data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to generate Simkl device PIN: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2688,6 +2696,8 @@ async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
     """Poll Simkl to check if the user authorized the device PIN."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if not payload.user_code or not str(payload.user_code).strip() or payload.user_code == "undefined":
+        return {"status": "error", "result": "error", "message": "Missing user_code"}
     try:
         res = await simkl.poll_device_pin(payload.user_code)
         return res

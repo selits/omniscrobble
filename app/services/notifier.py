@@ -78,6 +78,13 @@ class Notifier:
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
 
+    @staticmethod
+    def _is_masked(val: Any) -> bool:
+        if not val:
+            return False
+        s = str(val).strip()
+        return s.startswith("••••") or s.startswith("●●●●") or "••••" in s
+
     def _get_setting(self, key: str, fallback_config_attr: str, default: Any = "") -> Any:
         """Retrieve dynamic runtime notification setting with fallback to Config."""
         if settings_mgr is not None:
@@ -99,6 +106,9 @@ class Notifier:
 
     def _get_ntfy_url(self) -> str:
         return self._get_setting("ntfy_url", "NTFY_URL", "")
+
+    def _get_ntfy_auth_token(self) -> str:
+        return self._get_setting("ntfy_auth_token", "NTFY_AUTH_TOKEN", "")
 
     def _get_pushover_user_key(self) -> str:
         return self._get_setting("pushover_user_key", "PUSHOVER_USER_KEY", "")
@@ -405,8 +415,9 @@ class Notifier:
             "Click": trakt_url,
             "Priority": self.config.NTFY_PRIORITY or "default",
         }
-        if self.config.NTFY_AUTH_TOKEN:
-            headers["Authorization"] = f"Bearer {self.config.NTFY_AUTH_TOKEN}"
+        ntfy_token = self._get_ntfy_auth_token()
+        if ntfy_token:
+            headers["Authorization"] = f"Bearer {ntfy_token}"
 
         cw_tag = f" with @{cowatch_partner}" if cowatch_partner else ""
         if action == "rate":
@@ -579,6 +590,7 @@ class Notifier:
         telegram_bot_token: Optional[str] = None,
         telegram_chat_id: Optional[str] = None,
         ntfy_url: Optional[str] = None,
+        ntfy_auth_token: Optional[str] = None,
         pushover_user_key: Optional[str] = None,
         pushover_api_token: Optional[str] = None,
         client: Optional[httpx.AsyncClient] = None,
@@ -588,7 +600,7 @@ class Notifier:
         http = client or self.get_client()
 
         if ch == "discord":
-            url = discord_webhook_url or self._get_discord_url()
+            url = discord_webhook_url if (discord_webhook_url and not self._is_masked(discord_webhook_url)) else self._get_discord_url()
             if not url:
                 return False, "Discord Webhook URL is not configured."
             payload = {
@@ -616,8 +628,8 @@ class Notifier:
                 return False, f"Failed to connect to Discord: {e}"
 
         elif ch == "telegram":
-            bot_token = telegram_bot_token or self._get_telegram_token()
-            chat_id = telegram_chat_id or self._get_telegram_chat_id()
+            bot_token = telegram_bot_token if (telegram_bot_token and not self._is_masked(telegram_bot_token)) else self._get_telegram_token()
+            chat_id = telegram_chat_id if (telegram_chat_id and not self._is_masked(telegram_chat_id)) else self._get_telegram_chat_id()
             if not bot_token or not chat_id:
                 return False, "Telegram Bot Token or Chat ID is not configured."
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -640,7 +652,7 @@ class Notifier:
                 return False, f"Failed to connect to Telegram: {e}"
 
         elif ch == "ntfy":
-            url = ntfy_url or self._get_ntfy_url()
+            url = (ntfy_url if (ntfy_url and not self._is_masked(ntfy_url)) else self._get_ntfy_url()).strip()
             if not url:
                 return False, "Ntfy Server URL is not configured."
             headers: dict[str, str] = {
@@ -648,8 +660,9 @@ class Notifier:
                 "Tags": "white_check_mark,bell,omniscrobble",
                 "Priority": self.config.NTFY_PRIORITY or "default",
             }
-            if self.config.NTFY_AUTH_TOKEN:
-                headers["Authorization"] = f"Bearer {self.config.NTFY_AUTH_TOKEN}"
+            auth_token = ntfy_auth_token if (ntfy_auth_token and not self._is_masked(ntfy_auth_token)) else self._get_ntfy_auth_token()
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
             msg = "Your Ntfy notification channel is connected and working successfully!"
             try:
                 res = await http.post(url, content=msg.encode("utf-8"), headers=headers)
@@ -660,8 +673,8 @@ class Notifier:
                 return False, f"Failed to connect to Ntfy: {e}"
 
         elif ch == "pushover":
-            user_key = pushover_user_key or self._get_pushover_user_key()
-            api_token = pushover_api_token or self._get_pushover_api_token()
+            user_key = pushover_user_key if (pushover_user_key and not self._is_masked(pushover_user_key)) else self._get_pushover_user_key()
+            api_token = pushover_api_token if (pushover_api_token and not self._is_masked(pushover_api_token)) else self._get_pushover_api_token()
             if not user_key or not api_token:
                 return False, "Pushover User Key or API Token is not configured."
             url = "https://api.pushover.net/1/messages.json"

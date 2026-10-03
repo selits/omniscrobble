@@ -58,11 +58,10 @@
         async function initAuth() {
             try {
                 const res = await fetch('/api/simkl/pin', { method: 'POST' });
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.detail || 'Failed to generate PIN from Simkl. Check SIMKL_CLIENT_ID in .env.');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.error || !data.user_code) {
+                    throw new Error(data.detail || data.error || 'Failed to generate PIN from Simkl. Check SIMKL_CLIENT_ID in .env or Settings Hub.');
                 }
-                const data = await res.json();
                 document.getElementById('code-display').textContent = data.user_code;
                 document.getElementById('activate-link').href = data.verification_url || ('https://simkl.com/pin?code=' + data.user_code);
                 document.getElementById('loading-view').style.display = 'none';

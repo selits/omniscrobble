@@ -879,6 +879,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     telegram_bot_token: "••••••••tele",
                     telegram_chat_id: "-1001234567890",
                     ntfy_url: "https://ntfy.sh/demo-omniscrobble-alerts",
+                    ntfy_auth_token: "••••••••auth",
                     pushover_user_key: "••••••••push",
                     pushover_api_token: "••••••••tokn",
                     notify_on_scrobble: true,

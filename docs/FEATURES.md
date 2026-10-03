@@ -208,7 +208,7 @@ Deliver real-time notifications with rich poster artwork, star ratings, and dire
 | :--- | :--- | :---: |
 | **Discord** | `DISCORD_WEBHOOK_URL` | Rich Embeds with Posters |
 | **Telegram** | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Markdown Messages |
-| **Ntfy** | `NTFY_URL` | Push Notifications |
+| **Ntfy** | `NTFY_URL`, `NTFY_AUTH_TOKEN` | Push Notifications |
 | **Pushover** | `PUSHOVER_USER_KEY`, `PUSHOVER_API_TOKEN` | Priority Push Alerts |
 
 ### Event Notification Toggles
@@ -224,7 +224,7 @@ NOTIFY_ON_FAILURE=true
 
 All notification channels and event toggles can be configured and managed live from the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab in the dashboard without editing `.env` or restarting services.
 - **1-Click Test Buttons**: Verify delivery for Discord, Telegram, Ntfy, or Pushover with instant visual status feedback directly in the modal.
-- **Credential Privacy**: Webhook URLs, bot tokens, and user keys are shielded (`••••••••`) in UI inputs and API payloads.
+- **Credential Privacy**: Webhook URLs, bot tokens, auth tokens, and user keys are shielded (`••••••••`) in UI inputs and API payloads.
 
 ### Alert Throttling & Cooldowns
 
