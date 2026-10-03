@@ -9,7 +9,9 @@
       "summary",
       "sub",
       "sup",
-      "kbd"
+      "kbd",
+      "a",
+      "b"
     ]
   },
   "MD041": false

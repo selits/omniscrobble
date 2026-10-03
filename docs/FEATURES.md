@@ -6,17 +6,17 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 
 ## Table of Contents
 
-1. [👥 Watch Together (Co-Watching) & Multi-User Accounts](#1-watch-together-co-watching-multi-user-accounts)
-2. [🔄 Two-Way Synchronization & Multi-Server Reconciliation](#2-two-way-synchronization-multi-server-reconciliation)
-3. [📥 Content Bridge & \*Arr Automation](#3-content-bridge-arr-automation)
-4. [🛡️ Persistent Offline Queue & Disaster Recovery](#4-persistent-offline-queue-disaster-recovery)
-5. [🗃️ Library Filtering & Trakt Collection Sync](#5-library-filtering-trakt-collection-sync)
-6. [🔔 Multi-Channel Notifications & Throttling](#6-multi-channel-notifications-throttling)
-7. [📊 Homelab Observability & Prometheus Scrape](#7-homelab-observability-prometheus-scrape)
+1. [Watch Together (Co-Watching) & Multi-User Accounts](#1-watch-together-co-watching--multi-user-accounts)
+2. [Two-Way Synchronization & Multi-Server Reconciliation](#2-two-way-synchronization--multi-server-reconciliation)
+3. [Content Bridge & *Arr Automation](#3-content-bridge--arr-automation)
+4. [Persistent Offline Queue & Disaster Recovery](#4-persistent-offline-queue--disaster-recovery)
+5. [Library Filtering & Trakt Collection Sync](#5-library-filtering--trakt-collection-sync)
+6. [Multi-Channel Notifications & Throttling](#6-multi-channel-notifications--throttling)
+7. [Homelab Observability & Prometheus Scrape](#7-homelab-observability--prometheus-scrape)
 
 ---
 
-## 1. 👥 Watch Together (Co-Watching) & Multi-User Accounts
+## 1. Watch Together (Co-Watching) & Multi-User Accounts
 
 When watching movies or TV series together on a shared living room profile, Omniscrobble automatically dual-scrobbles watch history to **both** your Trakt profile and your partner's profile simultaneously, while keeping solo binges exclusive to your own account.
 
@@ -58,7 +58,7 @@ CO_WATCH_PLAYERS=Living Room Apple TV, Shield TV Pro, LG OLED C2
 
 ---
 
-## 2. 🔄 Two-Way Synchronization & Multi-Server Reconciliation
+## 2. Two-Way Synchronization & Multi-Server Reconciliation
 
 Standard scrobbling is one-directional (Media Server $\to$ Trakt). Omniscrobble features a bi-directional reconciliation engine that bridges your media server libraries (**Plex**, **Jellyfin**, **Emby**) with your Trakt and Simkl cloud history.
 
@@ -81,7 +81,7 @@ Standard scrobbling is one-directional (Media Server $\to$ Trakt). Omniscrobble 
 - **Smart Echo Loop Prevention (`LoopPreventionManager`)**: An in-memory TTL cache drops outgoing webhooks triggered by server updates during reconciliation, preventing infinite scrobble ping-pong loops.
 - **Interactive Diff & Selective Sync UI**: Inspect all discrepancies on the dashboard, filter by discrepancy type, select specific titles, and trigger 1-click batch updates with real-time progress bars.
 
-### Configuration
+### Two-Way Sync Configuration
 
 ```ini
 # Direct Media Server API Access for Reconciliation
@@ -101,7 +101,7 @@ EMBY_USER_ID=your_emby_user_id_here
 
 ---
 
-## 3. 📥 Content Bridge & \*Arr Automation
+## 3. Content Bridge & *Arr Automation
 
 The **Content Bridge** connects your personal Trakt Watchlist (`/sync/watchlist`) directly to **Radarr** and **Sonarr** for automated media acquisition and instant Trakt collection sync upon download.
 
@@ -122,7 +122,7 @@ flowchart LR
 - **Download & Collection Webhooks**: Ingests Sonarr and Radarr `Download` notifications to instantly update your Trakt collection with exact media specs (resolution, audio codec, and channels).
 - **Ecosystem Health Monitor**: Monitor server latency, versions, and trigger 1-click manual watchlist syncs directly from the dashboard (`GET /api/ecosystem`).
 
-### Configuration
+### Content Bridge Configuration
 
 ```ini
 # Enable Trakt Watchlist -> *Arr Auto-Grab
@@ -145,7 +145,7 @@ RADARR_API_KEY=your_radarr_api_key_here
 
 ---
 
-## 4. 🛡️ Persistent Offline Queue & Disaster Recovery
+## 4. Persistent Offline Queue & Disaster Recovery
 
 Omniscrobble provides enterprise-grade resilience to protect your watch history during upstream tracker outages, internet interruptions, and host migrations.
 
@@ -175,7 +175,7 @@ stateDiagram-v2
 
 ---
 
-## 5. 🗃️ Library Filtering & Trakt Collection Sync
+## 5. Library Filtering & Trakt Collection Sync
 
 ### Library Section Whitelisting & Blacklisting
 
@@ -192,13 +192,14 @@ EXCLUDED_LIBRARIES="Home Videos, Fitness, Recorded TV"
 ### Automated Trakt Collection Sync
 
 When enabled (`SYNC_COLLECTION=true`), newly imported media (`library.new`) is submitted directly to your Trakt collection with parsed technical specifications:
+
 - **Resolution**: 4K UHD, 1080p, 720p, SD.
 - **Audio Codec**: TrueHD Atmos, DTS-HD MA, EAC3, AC3, AAC, FLAC.
 - **Audio Channels**: 7.1, 5.1, 2.0.
 
 ---
 
-## 6. 🔔 Multi-Channel Notifications & Throttling
+## 6. Multi-Channel Notifications & Throttling
 
 Deliver real-time notifications with rich poster artwork, star ratings, and direct links when media is scrobbled, rated, or added to your collection.
 
@@ -223,6 +224,7 @@ NOTIFY_ON_FAILURE=true
 ### Dashboard Runtime Configuration & Channel Testing
 
 All notification channels and event toggles can be configured and managed live from the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab in the dashboard without editing `.env` or restarting services.
+
 - **1-Click Test Buttons**: Verify delivery for Discord, Telegram, Ntfy, or Pushover with instant visual status feedback directly in the modal.
 - **Credential Privacy**: Webhook URLs, bot tokens, auth tokens, and user keys are shielded (`••••••••`) in UI inputs and API payloads.
 
@@ -234,7 +236,7 @@ When upstream tracker API requests fail or during mass library additions, Omnisc
 
 ---
 
-## 7. 📊 Homelab Observability & Prometheus Scrape
+## 7. Homelab Observability & Prometheus Scrape
 
 Omniscrobble exposes native Prometheus metrics at `/metrics` when `PROMETHEUS_METRICS_ENABLED=true`.
 

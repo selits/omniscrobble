@@ -22,4 +22,10 @@ elif command -v gitleaks >/dev/null 2>&1; then
     gitleaks detect
 fi
 
-echo "✓ Quality gates passed: 0 test failures, 0 leaked secrets."
+# 3. Run Markdown lint check
+echo "==> Running Markdown lint check..."
+if [ -f "scripts/lint_markdown.sh" ]; then
+    ./scripts/lint_markdown.sh
+fi
+
+echo "✓ Quality gates passed: 0 test failures, 0 leaked secrets, 0 lint errors."

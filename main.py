@@ -47,7 +47,11 @@ __all__ = [
 if __name__ == "__main__":
     import uvicorn
 
+    ssl_kwargs = {}
+    if Config.SSL_CERTFILE and Config.SSL_KEYFILE:
+        ssl_kwargs["ssl_certfile"] = Config.SSL_CERTFILE
+        ssl_kwargs["ssl_keyfile"] = Config.SSL_KEYFILE
     if Config.DEBUG:
-        uvicorn.run("app.main:app", host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=True, reload_excludes=["*.json", "data/*"])
+        uvicorn.run("app.main:app", host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=True, reload_excludes=["*.json", "data/*"], **ssl_kwargs)
     else:
-        uvicorn.run("app.main:app", host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=False)
+        uvicorn.run("app.main:app", host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=False, **ssl_kwargs)

@@ -256,3 +256,7 @@ class RadarrClient:
     def clear_cache(self) -> None:
         self._cached_movies = []
         self._cache_timestamp = 0.0
+
+
+# Expose parse_radarr_webhook for convenient client module access
+from app.clients.sonarr_client import parse_radarr_webhook  # noqa: E402

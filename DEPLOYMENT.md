@@ -84,19 +84,26 @@ services:
 ### Launching the Container
 
 1. Configure your `.env` file from the example:
+
    ```bash
    cp .env.example .env
    nano .env
    ```
+
 2. Start Omniscrobble in the background:
+
    ```bash
    docker compose up -d
    ```
+
 3. Check container logs and built-in health status:
+
    ```bash
    docker compose logs -f
    ```
+
 4. Verify the container healthcheck:
+
    ```bash
    docker inspect --format='{{json .State.Health.Status}}' omniscrobble
    ```
@@ -109,6 +116,7 @@ services:
 ## 3. Method 2: systemd User Service (Recommended for Linux & VPS)
 
 On Linux servers and VPS instances, running Omniscrobble as a **systemd user service** is the gold standard:
+
 - Runs entirely in user-space without root or `sudo` privileges.
 - Starts automatically on system boot.
 - Automatically recovers and restarts on unexpected crashes.
@@ -117,17 +125,20 @@ On Linux servers and VPS instances, running Omniscrobble as a **systemd user ser
 ### Step-by-Step Setup
 
 1. **Create the user service directory:**
+
    ```bash
    mkdir -p ~/.config/systemd/user
    ```
 
 2. **Copy the service definition:**
+
    ```bash
    cp plex-trakt.service ~/.config/systemd/user/omniscrobble.service
    ```
 
 3. **Verify the unit file paths:**
    Inspect `~/.config/systemd/user/omniscrobble.service`. It uses `%h` (expands automatically to your home directory):
+
    ```ini
    [Unit]
    Description=Omniscrobble - Universal Media Scrobbler for Plex, Jellyfin, and Emby to Trakt
@@ -145,15 +156,19 @@ On Linux servers and VPS instances, running Omniscrobble as a **systemd user ser
    [Install]
    WantedBy=default.target
    ```
-   *(Ensure `WorkingDirectory` and `ExecStart` match your project directory path).*
+
+   > [!NOTE]
+   > Ensure `WorkingDirectory` and `ExecStart` match your project directory path.
 
 4. **Enable lingering (Critical):**
    By default, user systemd processes terminate when you log out of your SSH session. Enabling lingering ensures the service starts on boot and runs 24/7 without requiring an active terminal:
+
    ```bash
    loginctl enable-linger $USER
    ```
 
 5. **Reload, enable, and start the service:**
+
    ```bash
    systemctl --user daemon-reload
    systemctl --user enable --now omniscrobble.service
@@ -182,13 +197,17 @@ systemctl --user stop omniscrobble.service
 If your hosting provider or environment does not support user-level systemd:
 
 1. Open your user crontab:
+
    ```bash
    crontab -e
    ```
+
 2. Add the following entry at the bottom:
+
    ```bash
    @reboot /home/<username>/omniscrobble/start.sh >> /home/<username>/omniscrobble/server.log 2>&1 &
    ```
+
 3. Save and exit. The startup wrapper script (`start.sh`) will launch the virtual environment on server reboots.
 
 ### GNU Screen / Tmux
@@ -275,6 +294,7 @@ services:
 ### Cloudflare Tunnels
 
 If using Cloudflare Tunnels (Zero Trust):
+
 1. In the Cloudflare Zero Trust Dashboard, navigate to **Networks &rarr; Tunnels**.
 2. Add a Public Hostname pointing to:
    - **Type**: `HTTP`
@@ -287,6 +307,7 @@ If using Cloudflare Tunnels (Zero Trust):
 If your media servers cannot send webhooks to Omniscrobble:
 
 ### UFW (Ubuntu / Debian)
+
 ```bash
 # Allow incoming traffic on your configured port
 sudo ufw allow 8080/tcp
@@ -294,12 +315,14 @@ sudo ufw status
 ```
 
 ### Firewalld (RHEL / Fedora / Rocky)
+
 ```bash
 sudo firewall-cmd --permanent --add-port=8080/tcp
 sudo firewall-cmd --reload
 ```
 
 ### Testing Connectivity Remotely
+
 From your client device or another terminal on the same network:
 
 ```bash
