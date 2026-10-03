@@ -4023,21 +4023,15 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         card_extra_attrs = 'onmouseenter="this.style.opacity=\'1\'" onmouseleave="this.style.opacity=\'0.65\'"' if is_disabled else ""
 
         toggle_btn = ""
-        if is_admin and sid in ("plex", "jellyfin", "emby", "trakt", "simkl", "anilist", "myanimelist"):
-            cat = "server" if sid in ("plex", "jellyfin", "emby") else "tracker"
-            key = "mal" if sid == "myanimelist" else sid
+        if is_admin and sid in ("plex", "jellyfin", "emby"):
+            cat = "server"
+            key = sid
             is_en = srv.get("enabled", True)
-            if cat == "server":
-                config_gear = f'<button onclick="openReconcileSettingsModal(\'{sid}\')" class="btn-sm" style="display:inline-flex;align-items:center;padding:3px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#38bdf8;cursor:pointer;" title="Configure {srv_name} Direct API">⚙️</button>'
-                if is_en:
-                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
-                else:
-                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
+            config_gear = f'<button onclick="openReconcileSettingsModal(\'{sid}\')" class="btn-sm" style="display:inline-flex;align-items:center;padding:3px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#38bdf8;cursor:pointer;" title="Configure {srv_name} Direct API">⚙️</button>'
+            if is_en:
+                toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
             else:
-                if is_en:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Pause {srv_name}"><span>⏸</span><span>Pause</span></button>'
-                else:
-                    toggle_btn = f'<button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Resume {srv_name}"><span>▶</span><span>Resume</span></button>'
+                toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
 
         eco_cards_html += f"""
         <div class="{card_class}" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;{card_extra_style}" {card_extra_attrs}>
@@ -4077,7 +4071,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Unified operational topology across all media servers, Trakt scrobble tracker, and automated media acquisition engines.
+            Unified operational topology across all media servers and automated acquisition engines.
         </p>
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
             {eco_cards_html}
@@ -4155,6 +4149,23 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         else:
             t_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Optional</span>'
 
+        # Quick interactive config button for each tracker in the grid
+        tm_id = tm["id"]
+        tm_name = tm["name"]
+        color_map = {
+            "trakt": "#f87171",
+            "simkl": "#38bdf8",
+            "tmdb": "#eab308",
+            "anilist": "#60a5fa",
+            "myanimelist": "#818cf8",
+            "kitsu": "#fb923c",
+            "letterboxd": "#34d399",
+            "serializd": "#facc15",
+            "mdblist": "#c084fc",
+        }
+        accent = color_map.get(tm_id, "#94a3b8")
+        cfg_btn = f'<button onclick="openSettingsModal(\'trackers\', \'{tm_id}\')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{accent};padding:2px 7px;font-size:11px;border-radius:4px;cursor:pointer;" title="{tm_name} Settings">⚙️</button>'
+
         hub_items_html += f"""
         <div class="hub-tracker-item" data-cat="{tm['cat']}" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
             <div style="display:flex;align-items:center;gap:10px;min-width:0;">
@@ -4166,6 +4177,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             </div>
             <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
                 {t_badge}
+                {cfg_btn}
             </div>
         </div>
         """
@@ -4174,7 +4186,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>🌐</span> Multi-Tracker Architecture &bull; Cloud Synchronization &amp; Simkl Integration
+                <span>🌐</span> Multi-Tracker Hub &bull; Cloud Synchronization
             </h3>
             <div style="display:flex;align-items:center;gap:8px;">
                 <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
@@ -4198,118 +4210,29 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         </div>
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <span>Simkl Dual-Scrobbler: <strong>{"Active" if simkl_auth else "Ready to link" if simkl_cfg else "Disabled in .env"}</strong></span>
+                <span>Active Trackers: <strong>{active_trackers_count}/9 Connected</strong></span>
+                <span style="color:#64748b;">&bull;</span>
+                <span>Anime Tracking Engine: <strong>{"Auto-Detect Active" if Config.ANIME_AUTO_DETECT else "Explicit Only"}</strong></span>
                 <span style="color:#64748b;">&bull;</span>
                 <span>Cross-Tracker Sync: <strong>{"Ready" if simkl_auth and (is_demo or trakt.is_authenticated()) else "Requires Trakt + Simkl Auth"}</strong></span>
-                <span style="color:#64748b;">&bull;</span>
-                <span>Categories: <strong>Universal, Anime, Diaries, Lists</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 {quick_scrobble_btn}
                 {cross_sync_btn}
-                {simkl_action_btn}
+                <button onclick="openSettingsModal('trackers')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 14px;font-size:12px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;">⚙️ Configure Trackers</button>
                 <a href="/api/letterboxd/export" download="letterboxd_diary.csv" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#34d399;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;" title="Export Letterboxd Watch Diary as CSV">📥 Letterboxd CSV</a>
-                <button onclick="openSettingsModal('trackers', 'simkl')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Tracker Settings</button>
-                <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">PIN Portal ↗</a>
+                <div style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;">
+                    <a href="/auth" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f87171;text-decoration:none;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;" title="Trakt Auth Portal">Trakt ↗</a>
+                    <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="Simkl Modal">Simkl PIN</button>
+                    <button onclick="openAnilistModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#60a5fa;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="AniList Auth Modal">AniList ↗</button>
+                    <button onclick="openMalModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="MyAnimeList Auth Modal">MAL ↗</button>
+                </div>
             </div>
         </div>
     </div>
     """
 
-    # Anime Tracking Engine Card (AniList, MyAnimeList & Kitsu)
-    ani_status = trackers_dict.get("anilist", {})
-    mal_status = trackers_dict.get("myanimelist", {})
-    kitsu_status = trackers_dict.get("kitsu", {})
-
-    ani_auth = ani_status.get("authenticated", False)
-    ani_user = ani_status.get("user")
-    ani_disp_user = (ani_user if is_admin else mask_username(ani_user)) if ani_user else "Linked"
-
-    if not settings_mgr.is_tracker_enabled("anilist"):
-        ani_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ AniList Paused</span>'
-    elif ani_auth:
-        ani_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● AniList Active (@{ani_disp_user})</span>'
-    else:
-        ani_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● AniList Unlinked</span>'
-
-    mal_auth = mal_status.get("authenticated", False)
-    mal_user = mal_status.get("user")
-    mal_disp_user = (mal_user if is_admin else mask_username(mal_user)) if mal_user else "Linked"
-
-    if not settings_mgr.is_tracker_enabled("mal"):
-        mal_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ MAL Paused</span>'
-    elif mal_auth:
-        mal_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● MAL Active (@{mal_disp_user})</span>'
-    else:
-        mal_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● MAL Unlinked</span>'
-
-    kitsu_auth = kitsu_status.get("authenticated", False) or kitsu_status.get("configured", False)
-    kitsu_user = kitsu_status.get("user")
-    kitsu_disp_user = (kitsu_user if is_admin else mask_username(kitsu_user)) if kitsu_user else "Linked"
-
-    if not settings_mgr.is_tracker_enabled("kitsu"):
-        kitsu_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ Kitsu Paused</span>'
-    elif kitsu_auth:
-        kitsu_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Kitsu Active (@{kitsu_disp_user})</span>'
-    else:
-        kitsu_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Kitsu Unlinked</span>'
-
-    ani_action_btn = ""
-    mal_action_btn = ""
-    if is_admin:
-        if ani_auth:
-            ani_paused = not settings_mgr.is_tracker_enabled("anilist")
-            ani_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'anilist\', {str(ani_paused).lower()}, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if ani_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">{"▶ Resume" if ani_paused else "⏸ Pause"}</button>'
-            ani_action_btn = f'{ani_toggle_btn} <button onclick="disconnectAnilist(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Disconnect AniList</button>'
-        else:
-            ani_action_btn = '<button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">⚡ Link AniList</button>'
-
-        if mal_auth:
-            mal_paused = not settings_mgr.is_tracker_enabled("mal")
-            mal_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'mal\', {str(mal_paused).lower()}, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if mal_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">{"▶ Resume" if mal_paused else "⏸ Pause"}</button>'
-            mal_action_btn = f'{mal_toggle_btn} <button onclick="disconnectMal(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Disconnect MAL</button>'
-        else:
-            mal_action_btn = '<button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🎌 Link MAL</button>'
-    else:
-        ani_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Manage AniList</button>'
-        mal_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Manage MAL</button>'
-
-    anime_card_html = f"""
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>⚡</span> Anime Tracking Engine &bull; AniList, MyAnimeList &amp; Kitsu
-            </h3>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                {ani_badge}
-                {mal_badge}
-                {kitsu_badge}
-            </div>
-        </div>
-        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Specialized anime detection with automatic ID resolution across AniList, MyAnimeList, and Kitsu. Scrobbles anime episode progress and synchronizes ratings in real-time with zero media playback latency.
-        </p>
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-            <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <span>Detection: <strong>{"Auto-Detect Active" if Config.ANIME_AUTO_DETECT else "Explicit Only"}</strong></span>
-                <span style="color:#64748b;">&bull;</span>
-                <span>AniList: <strong>{"Connected" if ani_auth else "Unlinked"}</strong></span>
-                <span style="color:#64748b;">&bull;</span>
-                <span>MAL: <strong>{"Connected" if mal_auth else "Unlinked"}</strong></span>
-                <span style="color:#64748b;">&bull;</span>
-                <span>Kitsu: <strong>{"Connected" if kitsu_auth else "Unlinked"}</strong></span>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                {ani_action_btn}
-                {mal_action_btn}
-                <button onclick="openSettingsModal('trackers', 'kitsu')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#fb923c;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">🟠 Kitsu Settings</button>
-                <button onclick="openSettingsModal('trackers', 'anilist')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Anime Settings</button>
-                <a href="/auth/anilist" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">AniList Portal ↗</a>
-                <a href="/auth/mal" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">MAL Portal ↗</a>
-            </div>
-        </div>
-    </div>
-    """
+    anime_card_html = ""
 
     # Arr Watchlist Automation Bridge Card
     arr_status = await arr_bridge.get_status(demo=is_demo)
@@ -4398,6 +4321,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             </div>
         </div>
         """
+
+    ani_status = trackers_dict.get("anilist", {})
+    mal_status = trackers_dict.get("myanimelist", {})
+    ani_auth = ani_status.get("authenticated", False)
+    mal_auth = mal_status.get("authenticated", False)
 
     stats_data = demo_mgr.get_demo_stats() if is_demo else scrobble_stats
 

@@ -108,6 +108,10 @@ This document defines the architectural rules, security boundaries, and developm
   - When upstream tracker API requests fail (5xx or rate limits) and `NOTIFY_ON_FAILURE` is active, alerts must pass through an in-memory deduplication cooldown (minimum 30 minutes per title) to avoid flooding notification channels.
 - **UI Flex Layout & Mobile Safety:**
   - Multi-button action rows (such as card headers, modal footers, and table action cells) must use `display: flex; flex-wrap: wrap; gap: 6px;` rather than `nowrap` or fixed widths to prevent buttons from overflowing or crowding adjacent cells on mobile displays.
+- **Holistic Application Design & Feature Integration:**
+  - When designing new features or extending architecture, always evaluate the application holistically rather than creating isolated or duplicate components.
+  - Integrate new services directly into existing frameworks (e.g., adding trackers into the unified tracker architecture and Multi-Tracker Hub, not creating separate cards or duplicate listings).
+  - Continuously audit and update card headers, subtitles, modals, and telemetry descriptions across the codebase so they accurately reflect the true scope (e.g., avoid legacy single-tracker names like "Simkl Integration" when multiple cloud trackers are supported).
 - **Admin Authorization & Security Gates:**
   - State-mutating endpoints (`POST`, `DELETE`) and sensitive telemetry endpoints (`/api/logs`, `/api/backup`, `/api/restore`) must check `is_admin_request(request)`.
   - Webhook endpoints must support `Config.WEBHOOK_SECRET` via query parameter `?token=` or header `x-webhook-secret`.

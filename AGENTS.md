@@ -29,3 +29,7 @@ All autonomous and pair-programming AI agents (Gemini, Claude, Copilot, Cursor, 
    - When the user instructs to commit, push, and create a pull request, execute the entire pipeline end-to-end without pausing to ask again.
    - For `gh pr create` in subshell environments, dynamically source the GitHub token from the local git credential helper:
      `GH_TOKEN=$(printf "protocol=https\nhost=github.com\n" | git credential fill 2>/dev/null | grep '^password=' | cut -d= -f2)`
+9. **Holistic Design & Non-Fragmented Architecture:**
+   - Always evaluate the application holistically when adding features or making modifications.
+   - Integrate new capabilities directly into existing components and models rather than creating fragmented standalone sections or duplicate entries.
+   - Always audit and modernize UI titles, descriptions, and labels across the dashboard and codebase to reflect the full, current scope rather than leaving outdated or legacy naming (e.g., renaming "Simkl Integration" when expanding to multi-tracker support).
