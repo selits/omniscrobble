@@ -1,6 +1,6 @@
 import logging
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger("plex_parser")
 
@@ -88,6 +88,96 @@ class ParsedMedia(BaseModel):
     rating_key: Optional[str] = None
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            ids = dict(data.get("ids") or {})
+            if "imdb_id" in data and data["imdb_id"]:
+                ids.setdefault("imdb", str(data["imdb_id"]))
+            if "tmdb_id" in data and data["tmdb_id"]:
+                ids.setdefault("tmdb", str(data["tmdb_id"]))
+            if "tvdb_id" in data and data["tvdb_id"]:
+                ids.setdefault("tvdb", str(data["tvdb_id"]))
+            data["ids"] = ids
+
+            if "grandparent_title" in data and not data.get("show_title"):
+                data["show_title"] = data["grandparent_title"]
+            if "parent_index" in data and data.get("season") is None:
+                data["season"] = data["parent_index"]
+            if "index" in data and data.get("episode") is None:
+                data["episode"] = data["index"]
+        return data
+
+    @property
+    def imdb_id(self) -> Optional[str]:
+        if self.ids and self.ids.get("imdb"):
+            return str(self.ids["imdb"])
+        return None
+
+    @imdb_id.setter
+    def imdb_id(self, value: Optional[str]) -> None:
+        if self.ids is None:
+            self.ids = {}
+        if value:
+            self.ids["imdb"] = str(value)
+        elif "imdb" in self.ids:
+            del self.ids["imdb"]
+
+    @property
+    def tmdb_id(self) -> Optional[str]:
+        if self.ids and self.ids.get("tmdb"):
+            return str(self.ids["tmdb"])
+        return None
+
+    @tmdb_id.setter
+    def tmdb_id(self, value: Any) -> None:
+        if self.ids is None:
+            self.ids = {}
+        if value:
+            self.ids["tmdb"] = str(value)
+        elif "tmdb" in self.ids:
+            del self.ids["tmdb"]
+
+    @property
+    def tvdb_id(self) -> Optional[str]:
+        if self.ids and self.ids.get("tvdb"):
+            return str(self.ids["tvdb"])
+        return None
+
+    @tvdb_id.setter
+    def tvdb_id(self, value: Any) -> None:
+        if self.ids is None:
+            self.ids = {}
+        if value:
+            self.ids["tvdb"] = str(value)
+        elif "tvdb" in self.ids:
+            del self.ids["tvdb"]
+
+    @property
+    def grandparent_title(self) -> Optional[str]:
+        return self.show_title
+
+    @grandparent_title.setter
+    def grandparent_title(self, value: Optional[str]) -> None:
+        self.show_title = value
+
+    @property
+    def parent_index(self) -> Optional[int]:
+        return self.season
+
+    @parent_index.setter
+    def parent_index(self, value: Optional[int]) -> None:
+        self.season = value
+
+    @property
+    def index(self) -> Optional[int]:
+        return self.episode
+
+    @index.setter
+    def index(self, value: Optional[int]) -> None:
+        self.episode = value
 
     def to_trakt_collection_payload(self) -> dict[str, Any]:
         """Convert to Trakt /sync/collection payload format."""
