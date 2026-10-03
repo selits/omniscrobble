@@ -217,51 +217,11 @@ class ArrBridgeManager:
                     "details": "215 Movies Monitored",
                     "icon": "radarr",
                 },
-                {
-                    "id": "trakt",
-                    "name": "Trakt.tv",
-                    "category": "Tracker",
-                    "status": "connected",
-                    "badge": "Authenticated",
-                    "version": "API v2",
-                    "details": "Connected as @demo_viewer (84 days left)",
-                    "icon": "trakt",
-                },
-                {
-                    "id": "simkl",
-                    "name": "Simkl",
-                    "category": "Tracker",
-                    "status": "connected",
-                    "badge": "Active",
-                    "version": "API v2",
-                    "details": "Connected as @demo_viewer (Dual-Scrobbler)",
-                    "icon": "simkl",
-                },
-                {
-                    "id": "anilist",
-                    "name": "AniList",
-                    "category": "Tracker",
-                    "status": "connected",
-                    "badge": "Active",
-                    "version": "GraphQL",
-                    "details": "Connected as @demo_otaku (Anime Scrobbler)",
-                    "icon": "anilist",
-                },
-                {
-                    "id": "myanimelist",
-                    "name": "MyAnimeList",
-                    "category": "Tracker",
-                    "status": "connected",
-                    "badge": "Active",
-                    "version": "API v2",
-                    "details": "Connected as @demo_otaku (Anime Scrobbler)",
-                    "icon": "myanimelist",
-                },
             ]
             for s in servers:
                 s["enabled"] = True
 
-            service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
+            service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr"]
             servers.sort(
                 key=lambda s: (
                     1 if not s.get("enabled", True) or s.get("status") == "disabled" or s.get("badge") in ("Disabled", "Paused") else 0,
@@ -467,144 +427,6 @@ class ArrBridgeManager:
                 "icon": "radarr",
             })
 
-        # 6. Trakt
-        trakt = self.get_trakt()
-        if trakt.is_authenticated():
-            token_info = trakt.get_token_info()
-            days = token_info.get("days_remaining", 0)
-            servers.append({
-                "id": "trakt",
-                "name": "Trakt.tv",
-                "category": "Tracker",
-                "status": "connected",
-                "badge": "Authenticated",
-                "version": "API v2",
-                "details": f"Token Healthy ({days}d remaining)" if token_info.get("healthy") else "Token Expired",
-                "icon": "trakt",
-            })
-        else:
-            servers.append({
-                "id": "trakt",
-                "name": "Trakt.tv",
-                "category": "Tracker",
-                "status": "unconfigured",
-                "badge": "Not Authenticated",
-                "version": "API v2",
-                "details": "Requires authorization at /auth",
-                "icon": "trakt",
-            })
-
-        # 7. Simkl Multi-Tracker
-        if simkl_client:
-            simkl_conn = await simkl_client.check_connection()
-            if simkl_conn.get("authenticated") and simkl_conn.get("enabled"):
-                servers.append({
-                    "id": "simkl",
-                    "name": "Simkl",
-                    "category": "Tracker",
-                    "status": "connected",
-                    "badge": "Active",
-                    "version": "API v2",
-                    "details": f"Connected as @{simkl_conn.get('user') or 'user'}",
-                    "icon": "simkl",
-                })
-            elif simkl_conn.get("configured"):
-                servers.append({
-                    "id": "simkl",
-                    "name": "Simkl",
-                    "category": "Tracker",
-                    "status": "error" if simkl_conn.get("status") == "expired" else "unconfigured",
-                    "badge": "Auth Required" if simkl_conn.get("status") == "not_authenticated" else "Expired",
-                    "version": "API v2",
-                    "details": "Requires authorization at /auth/simkl",
-                    "icon": "simkl",
-                })
-            else:
-                servers.append({
-                    "id": "simkl",
-                    "name": "Simkl",
-                    "category": "Tracker",
-                    "status": "unconfigured",
-                    "badge": "Disabled",
-                    "version": "API v2",
-                    "details": "Set SIMKL_CLIENT_ID to enable multi-tracking",
-                    "icon": "simkl",
-                })
-
-        # 8. AniList Tracker
-        if anilist_client:
-            ani_conn = await anilist_client.check_connection()
-            if ani_conn.get("authenticated") and ani_conn.get("enabled"):
-                servers.append({
-                    "id": "anilist",
-                    "name": "AniList",
-                    "category": "Tracker",
-                    "status": "connected",
-                    "badge": "Active",
-                    "version": "GraphQL",
-                    "details": f"Connected as @{ani_conn.get('user') or 'user'}",
-                    "icon": "anilist",
-                })
-            elif ani_conn.get("configured"):
-                servers.append({
-                    "id": "anilist",
-                    "name": "AniList",
-                    "category": "Tracker",
-                    "status": "unconfigured",
-                    "badge": "Token Required",
-                    "version": "GraphQL",
-                    "details": "Requires authorization at /auth/anilist",
-                    "icon": "anilist",
-                })
-            else:
-                servers.append({
-                    "id": "anilist",
-                    "name": "AniList",
-                    "category": "Tracker",
-                    "status": "unconfigured",
-                    "badge": "Disabled",
-                    "version": "GraphQL",
-                    "details": "Anime scrobbler disabled in config",
-                    "icon": "anilist",
-                })
-
-        # 9. MyAnimeList Tracker
-        if mal_client:
-            mal_conn = await mal_client.check_connection()
-            if mal_conn.get("authenticated") and mal_conn.get("enabled"):
-                servers.append({
-                    "id": "myanimelist",
-                    "name": "MyAnimeList",
-                    "category": "Tracker",
-                    "status": "connected",
-                    "badge": "Active",
-                    "version": "API v2",
-                    "details": f"Connected as @{mal_conn.get('user') or 'user'}",
-                    "icon": "myanimelist",
-                })
-            elif mal_conn.get("configured"):
-                servers.append({
-                    "id": "myanimelist",
-                    "name": "MyAnimeList",
-                    "category": "Tracker",
-                    "status": "unconfigured",
-                    "badge": "Auth Required",
-                    "version": "API v2",
-                    "details": "Requires authorization at /auth/mal",
-                    "icon": "myanimelist",
-                })
-            else:
-                servers.append({
-                    "id": "myanimelist",
-                    "name": "MyAnimeList",
-                    "category": "Tracker",
-                    "status": "unconfigured",
-                    "badge": "Disabled",
-                    "version": "API v2",
-                    "details": "Anime scrobbler disabled in config",
-                    "icon": "myanimelist",
-                })
-
         for s in servers:
             sid = s.get("id", "")
             if sid in ("plex", "jellyfin", "emby"):
@@ -619,22 +441,10 @@ class ArrBridgeManager:
                 if not is_cfg:
                     s["status"] = "unconfigured"
                     s["badge"] = "Disabled"
-            elif sid in ("trakt", "simkl", "anilist", "myanimelist"):
-                trk = "mal" if sid == "myanimelist" else sid
-                is_trk_en = settings_mgr.is_tracker_enabled(trk)
-                if not is_trk_en:
-                    s["enabled"] = False
-                    s["status"] = "disabled"
-                    s["badge"] = "Paused"
-                    s["details"] = "Sync paused in dashboard"
-                elif s.get("badge") == "Disabled":
-                    s["enabled"] = False
-                else:
-                    s["enabled"] = True
             else:
                 s["enabled"] = True
 
-        service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr", "trakt", "simkl", "anilist", "myanimelist"]
+        service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr"]
 
         def _is_ecosystem_disabled(srv: dict[str, Any]) -> bool:
             return (
