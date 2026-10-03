@@ -5403,6 +5403,199 @@ async def test_simkl_client_scrobble_actions(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_simkl_client_sync_history_and_ratings(tmp_path):
+    """Verify Simkl sync_history and sync_ratings with ParsedMedia objects."""
+    from app.clients.simkl_client import SimklClient
+    from app.plex_parser import ParsedMedia
+    import httpx
+
+    tokens_file = tmp_path / "simkl_tokens.json"
+    client = SimklClient(client_id="test_id", tokens_file=tokens_file)
+    client.save_tokens({"access_token": "valid_token"})
+
+    posted_requests = []
+
+    def mock_post_handler(request: httpx.Request):
+        posted_requests.append({
+            "url": str(request.url),
+            "body": json.loads(request.content.decode("utf-8")),
+        })
+        return httpx.Response(200, json={"result": "ok"})
+
+    transport = httpx.MockTransport(mock_post_handler)
+    client._client = httpx.AsyncClient(transport=transport)
+
+    # 1. Movie sync_history with ids dict
+    movie_media = ParsedMedia(
+        raw_payload={},
+        event="manual.scrobble",
+        media_type="movie",
+        title="Digger",
+        year=2026,
+        username="selits",
+        ids={"imdb": "tt1234567", "tmdb": 98765},
+    )
+    res_movie = await client.sync_history(movie_media)
+    assert res_movie.get("status") == "success"
+    assert "/sync/history" in posted_requests[-1]["url"]
+    movies_payload = posted_requests[-1]["body"].get("movies", [])
+    assert len(movies_payload) == 1
+    assert movies_payload[0]["title"] == "Digger"
+    assert movies_payload[0]["year"] == 2026
+    assert movies_payload[0]["ids"] == {"imdb": "tt1234567", "tmdb": "98765"}
+
+    # 2. Show / Episode sync_history
+    ep_media = ParsedMedia(
+        raw_payload={},
+        event="manual.scrobble",
+        media_type="episode",
+        title="Pilot",
+        show_title="Test Series",
+        show_year=2025,
+        season=1,
+        episode=1,
+        username="selits",
+        ids={"tvdb": 55555},
+    )
+    res_ep = await client.sync_history(ep_media)
+    assert res_ep.get("status") == "success"
+    shows_payload = posted_requests[-1]["body"].get("shows", [])
+    assert len(shows_payload) == 1
+    assert shows_payload[0]["title"] == "Test Series"
+    assert shows_payload[0]["year"] == 2025
+    assert shows_payload[0]["ids"] == {"tvdb": "55555"}
+    assert shows_payload[0]["seasons"][0]["number"] == 1
+    assert shows_payload[0]["seasons"][0]["episodes"][0]["number"] == 1
+
+    # 3. Movie sync_ratings
+    res_rate_movie = await client.sync_ratings(movie_media, rating=9)
+    assert res_rate_movie.get("status") == "success"
+    assert "/sync/ratings" in posted_requests[-1]["url"]
+    rate_movies = posted_requests[-1]["body"].get("movies", [])
+    assert len(rate_movies) == 1
+    assert rate_movies[0]["title"] == "Digger"
+    assert rate_movies[0]["rating"] == 9
+
+    # 4. Show sync_ratings
+    res_rate_show = await client.sync_ratings(ep_media, rating=10)
+    assert res_rate_show.get("status") == "success"
+    rate_shows = posted_requests[-1]["body"].get("shows", [])
+    assert len(rate_shows) == 1
+    assert rate_shows[0]["title"] == "Test Series"
+    assert rate_shows[0]["rating"] == 10
+
+    await client.close()
+
+
+def test_parsed_media_legacy_attributes_and_properties():
+    """Verify ParsedMedia backward compatibility properties and setters."""
+    from app.plex_parser import ParsedMedia
+
+    # Test legacy keyword initialization
+    media = ParsedMedia(
+        raw_payload={},
+        event="manual.scrobble",
+        media_type="episode",
+        title="Episode 1",
+        grandparent_title="Show Title",
+        parent_index=2,
+        index=4,
+        imdb_id="tt7654321",
+        tmdb_id=112233,
+        tvdb_id=445566,
+        username="selits",
+    )
+
+    # Test property getters
+    assert media.show_title == "Show Title"
+    assert media.grandparent_title == "Show Title"
+    assert media.season == 2
+    assert media.parent_index == 2
+    assert media.episode == 4
+    assert media.index == 4
+    assert media.imdb_id == "tt7654321"
+    assert media.tmdb_id == "112233"
+    assert media.tvdb_id == "445566"
+    assert media.ids["imdb"] == "tt7654321"
+    assert media.ids["tmdb"] == "112233"
+    assert media.ids["tvdb"] == "445566"
+
+    # Test property setters
+    media.imdb_id = "tt9999999"
+    assert media.imdb_id == "tt9999999"
+    assert media.ids["imdb"] == "tt9999999"
+
+    media.grandparent_title = "Updated Show"
+    assert media.grandparent_title == "Updated Show"
+    assert media.show_title == "Updated Show"
+
+    media.parent_index = 5
+    assert media.parent_index == 5
+    assert media.season == 5
+
+    media.index = 10
+    assert media.index == 10
+    assert media.episode == 10
+
+
+@pytest.mark.asyncio
+async def test_multi_tracker_manual_scrobble_simkl_live_dispatch(tmp_path):
+    """Verify dispatch_manual_scrobble works end-to-end with Simkl without AttributeError."""
+    from app.services.multi_tracker import MultiTrackerManager
+    from app.clients.simkl_client import SimklClient
+    from app.clients.trakt_client import TraktClient
+    from app.plex_parser import ParsedMedia
+    from unittest.mock import AsyncMock
+    import httpx
+
+    tokens_file = tmp_path / "simkl_tokens.json"
+    simkl = SimklClient(client_id="test_id", tokens_file=tokens_file)
+    simkl.save_tokens({"access_token": "valid_token"})
+
+    simkl_requests = []
+
+    def mock_simkl_handler(request: httpx.Request):
+        simkl_requests.append({
+            "url": str(request.url),
+            "body": json.loads(request.content.decode("utf-8")),
+        })
+        return httpx.Response(200, json={"result": "ok"})
+
+    simkl._client = httpx.AsyncClient(transport=httpx.MockTransport(mock_simkl_handler))
+
+    mock_trakt = AsyncMock(spec=TraktClient)
+    mock_trakt.is_authenticated.return_value = True
+    mock_trakt.sync_history.return_value = {"added": {"movies": 1}}
+
+    mt_mgr = MultiTrackerManager(simkl_client=simkl)
+
+    media = ParsedMedia(
+        raw_payload={},
+        event="manual.scrobble",
+        media_type="movie",
+        title="Digger",
+        year=2026,
+        username="selits",
+        ids={"imdb": "tt1234567"},
+    )
+
+    res = await mt_mgr.dispatch_manual_scrobble(
+        media=media,
+        trakt_client=mock_trakt,
+        selected_trackers=["simkl"],
+    )
+
+    assert res["status"] == "success"
+    assert "simkl" in res["synced_trackers"]
+    assert "simkl" not in res["errors"]
+    assert len(simkl_requests) == 1
+    assert "/sync/history" in simkl_requests[0]["url"]
+    assert simkl_requests[0]["body"]["movies"][0]["ids"]["imdb"] == "tt1234567"
+
+    await simkl.close()
+
+
+@pytest.mark.asyncio
 async def test_multi_tracker_manager_dispatch():
     """Verify MultiTrackerManager dual dispatch to Trakt and Simkl."""
     from app.services.multi_tracker import MultiTrackerManager

@@ -469,10 +469,16 @@ class SimklClient:
     def build_media_payload(self, media: ParsedMedia, progress: Optional[float] = None) -> dict[str, Any]:
         """Convert a ParsedMedia object into a Simkl-compliant scrobble payload."""
         ids: dict[str, str] = {}
-        if media.ids:
+        if getattr(media, "ids", None):
             for k, v in media.ids.items():
                 if v:
                     ids[str(k).lower()] = str(v)
+        if getattr(media, "imdb_id", None) and "imdb" not in ids:
+            ids["imdb"] = str(media.imdb_id)
+        if getattr(media, "tmdb_id", None) and "tmdb" not in ids:
+            ids["tmdb"] = str(media.tmdb_id)
+        if getattr(media, "tvdb_id", None) and "tvdb" not in ids:
+            ids["tvdb"] = str(media.tvdb_id)
 
         payload: dict[str, Any] = {}
         if media.media_type == "movie":
@@ -484,8 +490,8 @@ class SimklClient:
                 movie_data["year"] = media.year
             payload["movie"] = movie_data
         else:
-            show_title = media.show_title or media.title
-            show_year = media.show_year or media.year
+            show_title = getattr(media, "show_title", None) or getattr(media, "grandparent_title", None) or media.title
+            show_year = getattr(media, "show_year", None) or getattr(media, "year", None)
             show_data: dict[str, Any] = {
                 "title": show_title,
                 "ids": ids,
@@ -494,11 +500,18 @@ class SimklClient:
                 show_data["year"] = show_year
 
             episode_data: dict[str, Any] = {}
-            if media.season is not None:
-                episode_data["season"] = media.season
-            if media.episode is not None:
-                episode_data["number"] = media.episode
-            if media.title and media.show_title:
+            season_num = getattr(media, "season", None)
+            if season_num is None:
+                season_num = getattr(media, "parent_index", None)
+            ep_num = getattr(media, "episode", None)
+            if ep_num is None:
+                ep_num = getattr(media, "index", None)
+
+            if season_num is not None:
+                episode_data["season"] = season_num
+            if ep_num is not None:
+                episode_data["number"] = ep_num
+            if media.title and show_title and media.title != show_title:
                 episode_data["title"] = media.title
 
             payload["show"] = show_data
@@ -536,11 +549,15 @@ class SimklClient:
             return {"status": "skipped", "reason": "not_authenticated"}
 
         ids: dict[str, str] = {}
-        if media.imdb_id:
-            ids["imdb"] = media.imdb_id
-        if media.tmdb_id:
+        if getattr(media, "ids", None):
+            for k, v in media.ids.items():
+                if v:
+                    ids[str(k).lower()] = str(v)
+        if getattr(media, "imdb_id", None) and "imdb" not in ids:
+            ids["imdb"] = str(media.imdb_id)
+        if getattr(media, "tmdb_id", None) and "tmdb" not in ids:
             ids["tmdb"] = str(media.tmdb_id)
-        if media.tvdb_id:
+        if getattr(media, "tvdb_id", None) and "tvdb" not in ids:
             ids["tvdb"] = str(media.tvdb_id)
 
         if media.media_type == "movie":
@@ -549,12 +566,20 @@ class SimklClient:
                 item["year"] = media.year
             payload = {"movies": [item]}
         else:
-            show_title = media.grandparent_title or media.title
-            ep_item = {"number": media.index or 1}
-            season_item = {"number": media.parent_index or 1, "episodes": [ep_item]}
+            show_title = getattr(media, "show_title", None) or getattr(media, "grandparent_title", None) or media.title
+            show_year = getattr(media, "show_year", None) or getattr(media, "year", None)
+            ep_num = getattr(media, "episode", None)
+            if ep_num is None:
+                ep_num = getattr(media, "index", None) or 1
+            season_num = getattr(media, "season", None)
+            if season_num is None:
+                season_num = getattr(media, "parent_index", None) or 1
+
+            ep_item = {"number": ep_num}
+            season_item = {"number": season_num, "episodes": [ep_item]}
             show_item = {"title": show_title, "ids": ids, "seasons": [season_item]}
-            if media.year:
-                show_item["year"] = media.year
+            if show_year:
+                show_item["year"] = show_year
             payload = {"shows": [show_item]}
 
         return await self._post("/sync/history", payload)
@@ -565,11 +590,15 @@ class SimklClient:
             return {"status": "skipped", "reason": "not_authenticated"}
 
         ids: dict[str, str] = {}
-        if media.imdb_id:
-            ids["imdb"] = media.imdb_id
-        if media.tmdb_id:
+        if getattr(media, "ids", None):
+            for k, v in media.ids.items():
+                if v:
+                    ids[str(k).lower()] = str(v)
+        if getattr(media, "imdb_id", None) and "imdb" not in ids:
+            ids["imdb"] = str(media.imdb_id)
+        if getattr(media, "tmdb_id", None) and "tmdb" not in ids:
             ids["tmdb"] = str(media.tmdb_id)
-        if media.tvdb_id:
+        if getattr(media, "tvdb_id", None) and "tvdb" not in ids:
             ids["tvdb"] = str(media.tvdb_id)
 
         score = max(1, min(10, int(round(rating))))
@@ -579,10 +608,11 @@ class SimklClient:
                 item["year"] = media.year
             payload = {"movies": [item]}
         else:
-            show_title = media.grandparent_title or media.title
+            show_title = getattr(media, "show_title", None) or getattr(media, "grandparent_title", None) or media.title
+            show_year = getattr(media, "show_year", None) or getattr(media, "year", None)
             item = {"title": show_title, "ids": ids, "rating": score}
-            if media.year:
-                item["year"] = media.year
+            if show_year:
+                item["year"] = show_year
             payload = {"shows": [item]}
 
         return await self._post("/sync/ratings", payload)

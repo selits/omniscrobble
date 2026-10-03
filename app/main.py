@@ -1489,6 +1489,7 @@ class ManualScrobbleRequest(BaseModel):
     action: Optional[str] = "watched"  # "watched" or "start"
     media_type: Optional[str] = None
     title: Optional[str] = None
+    show_title: Optional[str] = None
     year: Optional[int] = None
     season: Optional[int] = None
     episode: Optional[int] = None
@@ -1503,6 +1504,7 @@ class ManualScrobbleRequest(BaseModel):
 class RemoveHistoryRequest(BaseModel):
     media_type: Optional[str] = None
     title: Optional[str] = None
+    show_title: Optional[str] = None
     year: Optional[int] = None
     season: Optional[int] = None
     episode: Optional[int] = None
@@ -1688,6 +1690,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
     m_dict = payload.media or {}
     m_type = payload.media_type or m_dict.get("media_type") or "movie"
     m_title = payload.title or m_dict.get("title") or m_dict.get("show_title") or "Unknown"
+    m_show_title = payload.show_title or m_dict.get("show_title")
     m_year = payload.year if payload.year is not None else m_dict.get("year")
     m_season = payload.season if payload.season is not None else m_dict.get("season")
     m_episode = payload.episode if payload.episode is not None else m_dict.get("episode")
@@ -1700,6 +1703,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
             username=admin_user,
             media_type=m_type,
             title=m_title,
+            show_title=m_show_title,
             year=m_year,
             season=m_season,
             episode=m_episode,
@@ -1729,6 +1733,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
                         username=partner_user,
                         media_type=m_type,
                         title=m_title,
+                        show_title=m_show_title,
                         year=m_year,
                         season=m_season,
                         episode=m_episode,
@@ -1768,6 +1773,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
             username=admin_user,
             media_type=m_type,
             title=m_title,
+            show_title=m_show_title,
             year=m_year,
             season=m_season,
             episode=m_episode,
@@ -1801,6 +1807,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
                         username=partner_user,
                         media_type=m_type,
                         title=m_title,
+                        show_title=m_show_title,
                         year=m_year,
                         season=m_season,
                         episode=m_episode,
@@ -1847,6 +1854,7 @@ async def remove_history_endpoint(payload: RemoveHistoryRequest, request: Reques
     m_dict = payload.media or {}
     m_type = payload.media_type or m_dict.get("media_type") or "movie"
     m_title = payload.title or m_dict.get("title") or m_dict.get("show_title") or "Unknown"
+    m_show_title = payload.show_title or m_dict.get("show_title")
     m_year = payload.year if payload.year is not None else m_dict.get("year")
     m_season = payload.season if payload.season is not None else m_dict.get("season")
     m_episode = payload.episode if payload.episode is not None else m_dict.get("episode")
@@ -1857,6 +1865,7 @@ async def remove_history_endpoint(payload: RemoveHistoryRequest, request: Reques
         username=admin_user,
         media_type=m_type,
         title=m_title,
+        show_title=m_show_title,
         year=m_year,
         season=m_season,
         episode=m_episode,
@@ -1879,13 +1888,14 @@ async def remove_history_endpoint(payload: RemoveHistoryRequest, request: Reques
                 partner_media = ParsedMedia(
                     event="manual.unscrobble",
                     username=partner_user,
-                    media_type=payload.media_type,
-                    title=payload.title,
-                    year=payload.year,
-                    season=payload.season,
-                    episode=payload.episode,
+                    media_type=m_type,
+                    title=m_title,
+                    show_title=m_show_title,
+                    year=m_year,
+                    season=m_season,
+                    episode=m_episode,
                     progress=0.0,
-                    ids=payload.ids,
+                    ids=m_ids,
                 )
                 await multi_tracker.dispatch_unscrobble(
                     media=partner_media,
