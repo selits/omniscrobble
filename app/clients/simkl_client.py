@@ -44,6 +44,9 @@ class SimklClient:
         self._client = client or httpx.AsyncClient(timeout=15.0)
 
         self.access_token: Optional[str] = None
+        self.refresh_token: Optional[str] = None
+        self.created_at: Optional[int] = None
+        self.expires_in: Optional[int] = None
         self.user_name: Optional[str] = None
         self.load_tokens()
 
@@ -65,13 +68,16 @@ class SimklClient:
             return getattr(self.config, "SIMKL_CLIENT_ID", "")
 
     def load_tokens(self) -> None:
-        """Load stored access token and user info from disk."""
+        """Load stored access token, refresh token, and user info from disk."""
         if not self.tokens_file.exists():
             return
         try:
             with open(self.tokens_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self.access_token = data.get("access_token")
+                self.refresh_token = data.get("refresh_token")
+                self.created_at = data.get("created_at")
+                self.expires_in = data.get("expires_in")
                 self.user_name = data.get("user_name")
         except Exception as e:
             logger.error("Failed to load Simkl tokens from %s: %s", self.tokens_file, e)
@@ -81,11 +87,20 @@ class SimklClient:
         try:
             self.tokens_file.parent.mkdir(parents=True, exist_ok=True)
             self.access_token = token_data.get("access_token")
+            if "refresh_token" in token_data:
+                self.refresh_token = token_data.get("refresh_token")
+            if "created_at" in token_data:
+                self.created_at = token_data.get("created_at")
+            if "expires_in" in token_data:
+                self.expires_in = token_data.get("expires_in")
             if "user_name" in token_data:
                 self.user_name = token_data.get("user_name")
 
             save_payload = {
                 "access_token": self.access_token,
+                "refresh_token": getattr(self, "refresh_token", None),
+                "created_at": getattr(self, "created_at", None),
+                "expires_in": getattr(self, "expires_in", None),
                 "user_name": self.user_name,
             }
             with open(self.tokens_file, "w", encoding="utf-8") as f:
@@ -97,6 +112,9 @@ class SimklClient:
     def delete_tokens(self) -> None:
         """Delete stored tokens from disk and memory."""
         self.access_token = None
+        self.refresh_token = None
+        self.created_at = None
+        self.expires_in = None
         self.user_name = None
         if self.tokens_file.exists():
             try:
@@ -135,33 +153,84 @@ class SimklClient:
     async def get_device_pin(self) -> dict[str, Any]:
         """Initiate OAuth Device PIN flow.
         
+        Attempts modern OAuth 2.0 Device Flow (AUTH V2) first; falls back to
+        legacy PIN flow (AUTH V1) if the client ID was registered on V1.
+
         Returns:
-            dict containing user_code, verification_url, expires_in, interval.
+            dict containing user_code, device_code, verification_url, expires_in, interval.
         """
         cid = self.effective_client_id
         if not cid:
             return {"error": "SIMKL_CLIENT_ID not configured"}
 
-        url = f"{self.base_url}/oauth/pin"
-        params = {"client_id": cid}
+        # 1. Try modern OAuth 2.0 Device Flow (AUTH V2)
+        v2_url = f"{self.base_url}/oauth2/device"
+        v2_data = {
+            "client_id": cid,
+            "scope": "media:read media:write",
+        }
         try:
-            resp = await self._client.get(url, params=params, headers={"Content-Type": "application/json"})
+            resp = await self._client.post(
+                v2_url,
+                data=v2_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Omniscrobble/2.5"},
+            )
             if resp.status_code == 200:
                 data = resp.json()
+                user_code = data.get("user_code", "")
+                verification_url = (
+                    data.get("verification_uri_complete")
+                    or data.get("verification_uri", "https://simkl.com/pin")
+                )
+                if verification_url == "https://simkl.com/pin" and user_code:
+                    verification_url = f"https://simkl.com/pin?user_code={user_code}"
                 return {
-                    "user_code": data.get("user_code"),
-                    "verification_url": data.get("verification_url", f"https://simkl.com/pin?code={data.get('user_code')}"),
+                    "auth_version": "v2",
+                    "device_code": data.get("device_code"),
+                    "user_code": user_code,
+                    "verification_url": verification_url,
+                    "expires_in": data.get("expires_in", 900),
+                    "interval": data.get("interval", 5),
+                }
+            v2_status = resp.status_code
+            logger.info("Simkl AUTH V2 device request returned %s; attempting legacy V1 fallback...", v2_status)
+        except httpx.RequestError as e:
+            logger.warning("Simkl AUTH V2 request failed (%s); trying V1...", e)
+
+        # 2. Fall back to legacy AUTH V1 PIN flow
+        v1_url = f"{self.base_url}/oauth/pin"
+        params = {"client_id": cid}
+        try:
+            resp = await self._client.get(
+                v1_url,
+                params=params,
+                headers={"Content-Type": "application/json", "User-Agent": "Omniscrobble/2.5"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                user_code = data.get("user_code", "")
+                return {
+                    "auth_version": "v1",
+                    "device_code": "DEVICE_CODE",
+                    "user_code": user_code,
+                    "verification_url": data.get("verification_url", f"https://simkl.com/pin?code={user_code}"),
                     "expires_in": data.get("expires_in", 900),
                     "interval": data.get("interval", 5),
                 }
             logger.warning("Simkl PIN request failed (%s): %s", resp.status_code, resp.text)
-            return {"error": f"Simkl API error: {resp.status_code}", "detail": resp.text}
+            detail = ""
+            try:
+                err_json = resp.json()
+                detail = err_json.get("message") or err_json.get("error_description") or err_json.get("error") or resp.text
+            except Exception:
+                detail = resp.text
+            return {"error": f"Simkl API error: {resp.status_code}", "detail": detail}
         except httpx.RequestError as e:
             logger.error("Network error during Simkl PIN request: %s", e)
             return {"error": "Network error", "detail": str(e)}
 
-    async def poll_device_pin(self, user_code: str) -> dict[str, Any]:
-        """Poll the status of an issued device PIN.
+    async def poll_device_pin(self, user_code: str, device_code: Optional[str] = None) -> dict[str, Any]:
+        """Poll the status of an issued device PIN (supports AUTH V2 and legacy V1).
         
         Returns:
             dict with 'status': 'success' | 'pending' | 'error'
@@ -170,10 +239,72 @@ class SimklClient:
         if not cid:
             return {"status": "error", "error": "SIMKL_CLIENT_ID not configured"}
 
+        # AUTH V2 flow when real device_code is provided
+        if device_code and device_code != "DEVICE_CODE":
+            token_url = f"{self.base_url}/oauth2/token"
+            data = {
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                "client_id": cid,
+                "device_code": device_code,
+            }
+            try:
+                resp = await self._client.post(
+                    token_url,
+                    data=data,
+                    headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Omniscrobble/2.5"},
+                )
+                if resp.status_code == 200:
+                    token_data = resp.json()
+                    self.access_token = token_data.get("access_token")
+                    self.refresh_token = token_data.get("refresh_token")
+                    import time
+                    self.created_at = int(time.time())
+                    self.expires_in = token_data.get("expires_in", 604800)
+
+                    profile = await self.get_user_profile()
+                    user_name = profile.get("user", {}).get("name") if isinstance(profile.get("user"), dict) else None
+                    if user_name:
+                        self.user_name = user_name
+
+                    self.save_tokens({
+                        "access_token": self.access_token,
+                        "refresh_token": self.refresh_token,
+                        "created_at": self.created_at,
+                        "expires_in": self.expires_in,
+                        "user_name": self.user_name,
+                    })
+                    return {
+                        "status": "success",
+                        "result": "OK",
+                        "access_token": self.access_token,
+                        "user_name": self.user_name,
+                    }
+                elif resp.status_code == 400:
+                    try:
+                        err_json = resp.json()
+                    except Exception:
+                        err_json = {}
+                    err = err_json.get("error", "")
+                    if err in ("authorization_pending", "slow_down"):
+                        return {"status": "pending", "message": err}
+                    elif err == "expired_token":
+                        return {"status": "error", "error": "Activation code expired", "message": "The PIN has expired. Please generate a new code."}
+                    return {"status": "error", "error": err or "Bad Request", "detail": err_json.get("error_description", resp.text)}
+                elif resp.status_code == 401:
+                    try:
+                        err_json = resp.json()
+                    except Exception:
+                        err_json = {}
+                    return {"status": "error", "error": "Invalid client", "detail": err_json.get("error_description", resp.text)}
+                return {"status": "error", "error": f"HTTP {resp.status_code}", "detail": resp.text}
+            except httpx.RequestError as e:
+                return {"status": "error", "error": "Network error", "detail": str(e)}
+
+        # Legacy AUTH V1 polling fallback
         url = f"{self.base_url}/oauth/pin/{user_code}"
         params = {"client_id": cid}
         try:
-            resp = await self._client.get(url, params=params, headers={"Content-Type": "application/json"})
+            resp = await self._client.get(url, params=params, headers={"Content-Type": "application/json", "User-Agent": "Omniscrobble/2.5"})
             if resp.status_code == 200:
                 data = resp.json()
                 result = data.get("result")
@@ -211,6 +342,49 @@ class SimklClient:
             return {"status": "error", "error": f"HTTP {resp.status_code}", "detail": resp.text}
         except httpx.RequestError as e:
             return {"status": "error", "error": "Network error", "detail": str(e)}
+
+    async def refresh_access_token(self) -> bool:
+        """Refresh expired AUTH V2 access token if refresh_token is present."""
+        if not getattr(self, "refresh_token", None):
+            return False
+        cid = self.effective_client_id
+        if not cid:
+            return False
+
+        token_url = f"{self.base_url}/oauth2/token"
+        data = {
+            "grant_type": "refresh_token",
+            "client_id": cid,
+            "refresh_token": self.refresh_token,
+        }
+        try:
+            resp = await self._client.post(
+                token_url,
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Omniscrobble/2.5"},
+            )
+            if resp.status_code == 200:
+                token_data = resp.json()
+                self.access_token = token_data.get("access_token")
+                if token_data.get("refresh_token"):
+                    self.refresh_token = token_data.get("refresh_token")
+                import time
+                self.created_at = int(time.time())
+                self.expires_in = token_data.get("expires_in", 604800)
+                self.save_tokens({
+                    "access_token": self.access_token,
+                    "refresh_token": self.refresh_token,
+                    "created_at": self.created_at,
+                    "expires_in": self.expires_in,
+                    "user_name": self.user_name,
+                })
+                logger.info("Successfully refreshed Simkl access token")
+                return True
+            logger.warning("Simkl token refresh failed (%s): %s", resp.status_code, resp.text)
+            return False
+        except Exception as e:
+            logger.error("Error refreshing Simkl access token: %s", e)
+            return False
 
     async def get_user_profile(self) -> dict[str, Any]:
         """Fetch authenticated user profile settings."""
@@ -448,6 +622,16 @@ class SimklClient:
                     return {}
             elif resp.status_code == 401:
                 logger.warning("Simkl authentication rejected (401 Unauthorized)")
+                if getattr(self, "refresh_token", None):
+                    refreshed = await self.refresh_access_token()
+                    if refreshed:
+                        retry_headers = self._get_headers(auth=True)
+                        retry_resp = await self._client.get(url, params=params, headers=retry_headers)
+                        if retry_resp.status_code == 200:
+                            try:
+                                return retry_resp.json()
+                            except Exception:
+                                return {}
                 return {"error": "unauthorized", "code": 401}
             elif resp.status_code == 429:
                 logger.warning("Simkl rate limit reached (429 Too Many Requests)")
@@ -472,6 +656,16 @@ class SimklClient:
                     return {"status": "success", "data": resp.text}
             elif resp.status_code == 401:
                 logger.warning("Simkl authentication rejected (401 Unauthorized)")
+                if getattr(self, "refresh_token", None):
+                    refreshed = await self.refresh_access_token()
+                    if refreshed:
+                        retry_headers = self._get_headers(auth=True)
+                        retry_resp = await self._client.post(url, json=payload, headers=retry_headers)
+                        if retry_resp.status_code in (200, 201):
+                            try:
+                                return {"status": "success", "data": retry_resp.json()}
+                            except Exception:
+                                return {"status": "success", "data": retry_resp.text}
                 return {"status": "error", "error": "unauthorized", "code": 401}
             elif resp.status_code == 429:
                 logger.warning("Simkl rate limit reached (429 Too Many Requests)")

@@ -62,8 +62,9 @@
                 if (!res.ok || data.error || !data.user_code) {
                     throw new Error(data.detail || data.error || 'Failed to generate PIN from Simkl. Check SIMKL_CLIENT_ID in .env or Settings Hub.');
                 }
+                const deviceCode = data.device_code || '';
                 document.getElementById('code-display').textContent = data.user_code;
-                document.getElementById('activate-link').href = data.verification_url || ('https://simkl.com/pin?code=' + data.user_code);
+                document.getElementById('activate-link').href = data.verification_url || ('https://simkl.com/pin?user_code=' + data.user_code);
                 document.getElementById('loading-view').style.display = 'none';
                 document.getElementById('auth-view').style.display = 'block';
 
@@ -73,16 +74,16 @@
                         const pollRes = await fetch('/api/simkl/poll', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ user_code: data.user_code })
+                            body: JSON.stringify({ user_code: data.user_code, device_code: deviceCode })
                         });
                         const pollData = await pollRes.json();
-                        if (pollData.status === 'success') {
+                        if (pollData.status === 'success' || (pollData.result === 'OK' && pollData.access_token)) {
                             clearInterval(pollInterval);
                             document.getElementById('status-text').innerHTML = '<span style="color:#10b981;font-weight:600;">&#10003; Simkl Connected as @' + (pollData.user_name || 'user') + '! Redirecting...</span>';
                             setTimeout(() => { window.location.href = '/'; }, 1500);
                         } else if (pollData.status === 'error') {
                             clearInterval(pollInterval);
-                            document.getElementById('status-text').innerHTML = '<span style="color:#ef4444;">Error: ' + (pollData.error || pollData.detail || 'Authorization failed') + '</span>';
+                            document.getElementById('status-text').innerHTML = '<span style="color:#ef4444;">Error: ' + (pollData.error || pollData.message || pollData.detail || 'Authorization failed') + '</span>';
                         }
                     } catch (e) {
                         console.error('Polling error', e);

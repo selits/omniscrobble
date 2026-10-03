@@ -4776,7 +4776,8 @@ SIMKL_ENABLED=true</pre>
                     throw new Error(data.detail || data.error || 'Simkl Client ID is not configured. Please add your credentials in Settings Hub or .env.');
                 }
                 const userCode = data.user_code;
-                const verifyUrl = data.verification_url || `https://simkl.com/pin?code=${encodeURIComponent(userCode)}`;
+                const deviceCode = data.device_code || '';
+                const verifyUrl = data.verification_url || `https://simkl.com/pin?user_code=${encodeURIComponent(userCode)}`;
 
                 container.innerHTML = `
                     <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:18px;text-align:center;">
@@ -4797,10 +4798,10 @@ SIMKL_ENABLED=true</pre>
                         const pRes = await fetch('/api/simkl/poll', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ user_code: userCode })
+                            body: JSON.stringify({ user_code: userCode, device_code: deviceCode })
                         });
                         const pollData = await pRes.json();
-                        if (pollData.result === 'OK' && pollData.access_token) {
+                        if ((pollData.result === 'OK' || pollData.status === 'success') && pollData.access_token) {
                             clearInterval(simklPollInterval);
                             simklPollInterval = null;
                             container.innerHTML = `
@@ -4812,6 +4813,10 @@ SIMKL_ENABLED=true</pre>
                             setTimeout(() => {
                                 window.location.reload();
                             }, 1500);
+                        } else if (pollData.status === 'error') {
+                            clearInterval(simklPollInterval);
+                            simklPollInterval = null;
+                            container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Authorization Error: ${escapeHtml(pollData.error || pollData.message || 'Polling failed')}</div>`;
                         }
                     } catch (e) {}
                 }, 4000);

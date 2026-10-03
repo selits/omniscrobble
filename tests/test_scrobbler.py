@@ -5512,10 +5512,97 @@ def test_simkl_api_endpoints_and_views():
             assert err_pin.status_code == 400
             assert "SIMKL_CLIENT_ID not configured" in err_pin.json()["detail"]
 
-        with patch.object(simkl, "get_device_pin", return_value={"user_code": "ABCD-1234", "verification_url": "https://simkl.com/pin?code=ABCD-1234"}):
+        with patch.object(simkl, "get_device_pin", return_value={"user_code": "ABCD-1234", "device_code": "dev_123", "verification_url": "https://simkl.com/pin?user_code=ABCD-1234"}):
             ok_pin = client.post("/api/simkl/pin?token=testsecret")
             assert ok_pin.status_code == 200
             assert ok_pin.json()["user_code"] == "ABCD-1234"
+            assert ok_pin.json()["device_code"] == "dev_123"
+
+        with patch.object(simkl, "poll_device_pin", return_value={"status": "success", "result": "OK", "access_token": "tok123"}) as mock_poll:
+            poll_resp = client.post("/api/simkl/poll?token=testsecret", json={"user_code": "ABCD-1234", "device_code": "dev_123"})
+            assert poll_resp.status_code == 200
+            assert poll_resp.json()["status"] == "success"
+            mock_poll.assert_called_once_with("ABCD-1234", device_code="dev_123")
+
+
+@pytest.mark.asyncio
+async def test_simkl_client_auth_v2_device_flow(tmp_path):
+    """Verify Simkl AUTH V2 Device PIN request, polling, and token refresh."""
+    from app.clients.simkl_client import SimklClient
+    import httpx
+
+    tokens_file = tmp_path / "simkl_v2_tokens.json"
+
+    def mock_v2_handler(request: httpx.Request):
+        url = str(request.url)
+        if "oauth2/device" in url:
+            assert request.method == "POST"
+            return httpx.Response(
+                200,
+                json={
+                    "device_code": "v2_device_xyz",
+                    "user_code": "WXYZ-1234",
+                    "verification_uri": "https://simkl.com/pin",
+                    "verification_uri_complete": "https://simkl.com/pin?user_code=WXYZ-1234",
+                    "expires_in": 900,
+                    "interval": 5,
+                },
+            )
+        elif "oauth2/token" in url:
+            body = request.content.decode("utf-8")
+            if "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code" in body:
+                if "pending" in body:
+                    return httpx.Response(400, json={"error": "authorization_pending"})
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "v2_access_token_123",
+                        "token_type": "Bearer",
+                        "expires_in": 604800,
+                        "refresh_token": "v2_refresh_token_456",
+                        "scope": "media:read media:write",
+                    },
+                )
+            elif "grant_type=refresh_token" in body:
+                return httpx.Response(
+                    200,
+                    json={
+                        "access_token": "v2_access_token_refreshed",
+                        "token_type": "Bearer",
+                        "expires_in": 604800,
+                        "refresh_token": "v2_refresh_token_456",
+                    },
+                )
+        elif "users/settings" in url:
+            return httpx.Response(200, json={"user": {"name": "simkl_user_test"}})
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(mock_v2_handler)
+    mock_http = httpx.AsyncClient(transport=transport)
+
+    client = SimklClient(client_id="test_v2_client_id", tokens_file=tokens_file, client=mock_http)
+    pin_data = await client.get_device_pin()
+    assert pin_data["auth_version"] == "v2"
+    assert pin_data["device_code"] == "v2_device_xyz"
+    assert pin_data["user_code"] == "WXYZ-1234"
+    assert "https://simkl.com/pin?user_code=WXYZ-1234" in pin_data["verification_url"]
+
+    # Poll pending
+    pending_data = await client.poll_device_pin("WXYZ-1234", device_code="v2_device_xyz_pending")
+    assert pending_data["status"] == "pending"
+
+    # Poll success
+    success_data = await client.poll_device_pin("WXYZ-1234", device_code="v2_device_xyz")
+    assert success_data["status"] == "success"
+    assert client.access_token == "v2_access_token_123"
+    assert client.refresh_token == "v2_refresh_token_456"
+    assert client.user_name == "simkl_user_test"
+
+    # Refresh token
+    refreshed = await client.refresh_access_token()
+    assert refreshed is True
+    assert client.access_token == "v2_access_token_refreshed"
+    await client.close()
 
 
 def test_dashboard_renders_simkl_card():
