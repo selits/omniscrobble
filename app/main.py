@@ -2653,6 +2653,7 @@ async def auth_poll(payload: DevicePollRequest, request: Request):
 
 class SimklPollRequest(BaseModel):
     user_code: str
+    device_code: Optional[str] = None
 
 
 @app.get("/api/simkl/status")
@@ -2682,7 +2683,10 @@ async def get_simkl_pin(request: Request):
     try:
         data = await simkl.get_device_pin()
         if isinstance(data, dict) and "error" in data:
-            raise HTTPException(status_code=400, detail=data.get("error", "Failed to obtain Simkl PIN"))
+            error_msg = data.get("error", "Failed to obtain Simkl PIN")
+            if data.get("detail"):
+                error_msg = f"{error_msg}: {data['detail']}"
+            raise HTTPException(status_code=400, detail=error_msg)
         return data
     except HTTPException:
         raise
@@ -2699,7 +2703,7 @@ async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
     if not payload.user_code or not str(payload.user_code).strip() or payload.user_code == "undefined":
         return {"status": "error", "result": "error", "message": "Missing user_code"}
     try:
-        res = await simkl.poll_device_pin(payload.user_code)
+        res = await simkl.poll_device_pin(payload.user_code, device_code=payload.device_code)
         return res
     except Exception as e:
         return {"result": "error", "message": str(e)}
