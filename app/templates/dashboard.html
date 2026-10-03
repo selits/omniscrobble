@@ -154,7 +154,7 @@
                     </svg>
                     <span>Omniscrobble</span>
                 </div>
-                <span class="title-sub">Plex • Jellyfin • Emby &rarr; Trakt</span>
+                <span class="title-sub" id="header-title-sub">Universal Media Scrobbler &amp; Multi-Tracker Hub</span>
             </div>
             <div class="header-actions">
                 <button type="button" onclick="toggleTheme()" id="theme-toggle-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;cursor:pointer;" title="Toggle OLED Dark Theme">🌙 OLED</button>
@@ -332,19 +332,43 @@
                     <div style="font-size:12px;font-weight:600;color:#cbd5e1;">Target Trackers:</div>
                     <div style="font-size:11px;color:#94a3b8;">Selected destinations receive this entry (works even if webhook auto-sync is paused)</div>
                 </div>
-                <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:#f8fafc;">
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-trakt" {{SCROBBLE_CHECKED_TRAKT}}> 🔴 Trakt{{SCROBBLE_BADGE_TRAKT}}
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-simkl" {{SCROBBLE_CHECKED_SIMKL}}> ✨ Simkl{{SCROBBLE_BADGE_SIMKL}}
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-anilist" {{SCROBBLE_CHECKED_ANILIST}}> ⚡ AniList{{SCROBBLE_BADGE_ANILIST}}
-                    </label>
-                    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                        <input type="checkbox" id="scrobble-trk-mal" {{SCROBBLE_CHECKED_MAL}}> 🎌 MAL{{SCROBBLE_BADGE_MAL}}
-                    </label>
+                <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#f8fafc;">
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <span style="font-size:11px;color:#94a3b8;font-weight:600;">Universal:</span>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-trakt" {{SCROBBLE_CHECKED_TRAKT}}> 🔴 Trakt{{SCROBBLE_BADGE_TRAKT}}
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-simkl" {{SCROBBLE_CHECKED_SIMKL}}> 🔵 Simkl{{SCROBBLE_BADGE_SIMKL}}
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-tmdb" {{SCROBBLE_CHECKED_TMDB}}> 🟡 TMDb{{SCROBBLE_BADGE_TMDB}}
+                        </label>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <span style="font-size:11px;color:#94a3b8;font-weight:600;">Anime:</span>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-anilist" {{SCROBBLE_CHECKED_ANILIST}}> 🔷 AniList{{SCROBBLE_BADGE_ANILIST}}
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-mal" {{SCROBBLE_CHECKED_MAL}}> 🟦 MAL{{SCROBBLE_BADGE_MAL}}
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-kitsu" {{SCROBBLE_CHECKED_KITSU}}> 🟠 Kitsu{{SCROBBLE_BADGE_KITSU}}
+                        </label>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <span style="font-size:11px;color:#94a3b8;font-weight:600;">Diaries &amp; Lists:</span>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-letterboxd" {{SCROBBLE_CHECKED_LETTERBOXD}}> 🟢 Letterboxd{{SCROBBLE_BADGE_LETTERBOXD}}
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-serializd" {{SCROBBLE_CHECKED_SERIALIZD}}> 🟨 Serializd{{SCROBBLE_BADGE_SERIALIZD}}
+                        </label>
+                        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;">
+                            <input type="checkbox" id="scrobble-trk-mdblist" {{SCROBBLE_CHECKED_MDBLIST}}> 🟣 MDBList{{SCROBBLE_BADGE_MDBLIST}}
+                        </label>
+                    </div>
                 </div>
                 <div style="margin-top:8px;border-top:1px solid #1e293b;padding-top:6px;">
                     <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#f5d0fe;">
@@ -587,8 +611,8 @@
             <!-- Filter tabs -->
             <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
                 <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('all', this)" style="background:#0284c7;color:#fff;">All (<span id="count-all">0</span>)</button>
-                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('trakt_only', this)" style="background:#1e293b;border:1px solid #334155;">Trakt Only &bull; Mark <span id="label-filter-dest">Plex</span> (<span id="count-trakt">0</span>)</button>
-                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('server_only', this)" style="background:#1e293b;border:1px solid #334155;"><span id="label-filter-src">Plex</span> Only &bull; Push Trakt (<span id="count-plex">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('trakt_only', this)" style="background:#1e293b;border:1px solid #334155;">Tracker Only &bull; Mark <span id="label-filter-dest">Server</span> (<span id="count-trakt">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('server_only', this)" style="background:#1e293b;border:1px solid #334155;"><span id="label-filter-src">Server</span> Only &bull; Push Tracker (<span id="count-plex">0</span>)</button>
                 <button type="button" class="btn-sm reconcile-tab" onclick="filterReconcile('rating_mismatch', this)" style="background:#1e293b;border:1px solid #334155;">Ratings (<span id="count-ratings">0</span>)</button>
             </div>
 
@@ -788,11 +812,20 @@
 
                 <!-- Tab 2: Trackers & Scrobblers -->
                 <div id="settings-panel-trackers" class="settings-content-panel" style="display:none;flex-direction:column;gap:14px;">
+                    <!-- Tracker Category Tabs Filter -->
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;background:#020617;padding:6px;border-radius:8px;border:1px solid #1e293b;">
+                        <button type="button" class="btn-sm settings-trk-cat-btn" data-cat="all" onclick="filterSettingsTrackers('all', this)" style="background:#0284c7;color:#fff;font-weight:600;padding:4px 10px;border-radius:4px;cursor:pointer;">All Trackers (9)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn" data-cat="universal" onclick="filterSettingsTrackers('universal', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:4px 10px;border-radius:4px;cursor:pointer;">Universal (3)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn" data-cat="anime" onclick="filterSettingsTrackers('anime', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:4px 10px;border-radius:4px;cursor:pointer;">Anime (3)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn" data-cat="social_diary" onclick="filterSettingsTrackers('social_diary', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:4px 10px;border-radius:4px;cursor:pointer;">Social Diaries (2)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn" data-cat="lists_ratings" onclick="filterSettingsTrackers('lists_ratings', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:4px 10px;border-radius:4px;cursor:pointer;">Lists &amp; Ratings (1)</button>
+                    </div>
+
                     <!-- Trakt Card -->
-                    <div id="settings-section-trakt" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div id="settings-section-trakt" data-tracker-cat="universal" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                             <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                                <span>🔴</span> Trakt.tv (Primary Tracker)
+                                <span>🔴</span> Trakt.tv (Universal)
                             </div>
                             <span id="settings-trk-status-trakt" style="font-size:11px;color:#10b981;font-weight:600;">● Connected</span>
                         </div>
@@ -818,10 +851,10 @@
                     </div>
 
                     <!-- Simkl Card -->
-                    <div id="settings-section-simkl" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div id="settings-section-simkl" data-tracker-cat="universal" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                             <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                                <span>✨</span> Simkl (Multi-Tracker Architecture)
+                                <span>🔵</span> Simkl (Universal)
                             </div>
                             <span id="settings-trk-status-simkl" style="font-size:11px;color:#94a3b8;">Not Configured</span>
                         </div>
@@ -846,11 +879,45 @@
                         </div>
                     </div>
 
-                    <!-- AniList Card -->
-                    <div id="settings-section-anilist" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <!-- TMDb Card -->
+                    <div id="settings-section-tmdb" data-tracker-cat="universal" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                             <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                                <span>⚡</span> AniList (Anime Engine)
+                                <span>🟡</span> The Movie Database (TMDb - Universal)
+                            </div>
+                            <span id="settings-trk-status-tmdb" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">Synchronizes personal TMDb watchlist, favorites, and 1–10 star ratings via v3/v4 APIs.</p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">TMDB_API_KEY (v3)</label>
+                                <input type="text" id="settings-tmdb-api-key" placeholder="TMDb API Key (v3)" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">TMDB_SESSION_ID</label>
+                                <div style="display:flex;gap:6px;">
+                                    <input type="password" id="settings-tmdb-session-id" placeholder="User Session ID" style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-tmdb-session-id','settings-tmdb-sec-btn')" id="settings-tmdb-sec-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">TMDB_ACCESS_TOKEN (v4 Read Token)</label>
+                            <div style="display:flex;gap:6px;">
+                                <input type="password" id="settings-tmdb-access-token" placeholder="TMDb v4 Read Access Token" style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-tmdb-access-token','settings-tmdb-tok-btn')" id="settings-tmdb-tok-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <button type="button" id="settings-trk-toggle-btn-tmdb" onclick="toggleTrackerFromSettings('tmdb')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- AniList Card -->
+                    <div id="settings-section-anilist" data-tracker-cat="anime" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                                <span>🔷</span> AniList (Anime Engine)
                             </div>
                             <span id="settings-trk-status-anilist" style="font-size:11px;color:#94a3b8;">Not Configured</span>
                         </div>
@@ -870,10 +937,10 @@
                     </div>
 
                     <!-- MyAnimeList Card -->
-                    <div id="settings-section-mal" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div id="settings-section-mal" data-tracker-cat="anime" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                             <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                                <span>🎌</span> MyAnimeList (Anime Engine)
+                                <span>🟦</span> MyAnimeList (Anime Engine)
                             </div>
                             <span id="settings-trk-status-mal" style="font-size:11px;color:#94a3b8;">Not Configured</span>
                         </div>
@@ -902,6 +969,94 @@
                             <button type="button" onclick="saveMalFromSettings()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 14px;">🎌 Save &amp; Connect MAL</button>
                             <button type="button" id="settings-trk-toggle-btn-mal" onclick="toggleTrackerFromSettings('mal')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;">Pause</button>
                             <button type="button" onclick="disconnectMal()" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <!-- Kitsu Card -->
+                    <div id="settings-section-kitsu" data-tracker-cat="anime" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                                <span>🟠</span> Kitsu (Anime Engine)
+                            </div>
+                            <span id="settings-trk-status-kitsu" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">Automated anime episode progress and rating sync via Kitsu JSON:API v1.</p>
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Kitsu OAuth API Token</label>
+                            <div style="display:flex;gap:6px;">
+                                <input type="password" id="settings-kitsu-token" placeholder="Paste Kitsu OAuth Bearer token" style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-kitsu-token','settings-kitsu-tok-btn')" id="settings-kitsu-tok-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <button type="button" id="settings-trk-toggle-btn-kitsu" onclick="toggleTrackerFromSettings('kitsu')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- Letterboxd Card -->
+                    <div id="settings-section-letterboxd" data-tracker-cat="social_diary" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                                <span>🟢</span> Letterboxd (Social Film Diary)
+                            </div>
+                            <span id="settings-trk-status-letterboxd" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">Logs completed movies and ratings into your persistent diary. Generates 1-click RFC-4180 CSV export files ready for import at letterboxd.com/import.</p>
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Letterboxd Username</label>
+                            <input type="text" id="settings-letterboxd-username" placeholder="Letterboxd profile username" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <a href="/api/letterboxd/export" class="btn-sm" style="background:#00e054;color:#0f172a;text-decoration:none;font-weight:600;padding:6px 14px;">📥 1-Click Export CSV</a>
+                            <button type="button" id="settings-trk-toggle-btn-letterboxd" onclick="toggleTrackerFromSettings('letterboxd')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- Serializd Card -->
+                    <div id="settings-section-serializd" data-tracker-cat="social_diary" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                                <span>🟨</span> Serializd (Social TV Diary)
+                            </div>
+                            <span id="settings-trk-status-serializd" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">Logs watched TV episodes and episode star ratings directly to Serializd.</p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Serializd Username</label>
+                                <input type="text" id="settings-serializd-username" placeholder="Serializd username" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">Serializd Auth Token / Cookie</label>
+                                <div style="display:flex;gap:6px;">
+                                    <input type="password" id="settings-serializd-token" placeholder="Session / Bearer token" style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-serializd-token','settings-ser-tok-btn')" id="settings-ser-tok-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <button type="button" id="settings-trk-toggle-btn-serializd" onclick="toggleTrackerFromSettings('serializd')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- MDBList Card -->
+                    <div id="settings-section-mdblist" data-tracker-cat="lists_ratings" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                            <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                                <span>🟣</span> MDBList (Multi-Source Ratings &amp; Lists)
+                            </div>
+                            <span id="settings-trk-status-mdblist" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">Enriches items with Rotten Tomatoes, Metacritic, Letterboxd, and IMDb aggregate scores and manages custom dynamic lists.</p>
+                        <div style="margin-bottom:10px;">
+                            <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">MDBList API Key</label>
+                            <div style="display:flex;gap:6px;">
+                                <input type="password" id="settings-mdblist-api-key" placeholder="Enter MDBList API key" style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-mdblist-api-key','settings-mdb-key-btn')" id="settings-mdb-key-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <button type="button" id="settings-trk-toggle-btn-mdblist" onclick="toggleTrackerFromSettings('mdblist')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;">Pause</button>
                         </div>
                     </div>
                 </div>
@@ -1597,8 +1752,13 @@
             const trks = [];
             if (document.getElementById('scrobble-trk-trakt')?.checked) trks.push('trakt');
             if (document.getElementById('scrobble-trk-simkl')?.checked) trks.push('simkl');
+            if (document.getElementById('scrobble-trk-tmdb')?.checked) trks.push('tmdb');
             if (document.getElementById('scrobble-trk-anilist')?.checked) trks.push('anilist');
             if (document.getElementById('scrobble-trk-mal')?.checked) trks.push('mal');
+            if (document.getElementById('scrobble-trk-kitsu')?.checked) trks.push('kitsu');
+            if (document.getElementById('scrobble-trk-letterboxd')?.checked) trks.push('letterboxd');
+            if (document.getElementById('scrobble-trk-serializd')?.checked) trks.push('serializd');
+            if (document.getElementById('scrobble-trk-mdblist')?.checked) trks.push('mdblist');
             return trks.length > 0 ? trks : ['trakt'];
         }
 
@@ -1645,8 +1805,13 @@
             const defaultTrackers = {
                 'scrobble-trk-trakt': {{SCROBBLE_CHECKED_TRAKT_JS}},
                 'scrobble-trk-simkl': {{SCROBBLE_CHECKED_SIMKL_JS}},
+                'scrobble-trk-tmdb': {{SCROBBLE_CHECKED_TMDB_JS}},
                 'scrobble-trk-anilist': {{SCROBBLE_CHECKED_ANILIST_JS}},
                 'scrobble-trk-mal': {{SCROBBLE_CHECKED_MAL_JS}},
+                'scrobble-trk-kitsu': {{SCROBBLE_CHECKED_KITSU_JS}},
+                'scrobble-trk-letterboxd': {{SCROBBLE_CHECKED_LETTERBOXD_JS}},
+                'scrobble-trk-serializd': {{SCROBBLE_CHECKED_SERIALIZD_JS}},
+                'scrobble-trk-mdblist': {{SCROBBLE_CHECKED_MDBLIST_JS}},
             };
             for (const [id, isChecked] of Object.entries(defaultTrackers)) {
                 const el = document.getElementById(id);
@@ -2131,6 +2296,54 @@
             });
         }
 
+        function filterSettingsTrackers(category, btn) {
+            const btns = document.querySelectorAll('.settings-trk-cat-btn');
+            btns.forEach(b => {
+                b.style.background = '#1e293b';
+                b.style.borderColor = '#334155';
+                b.style.color = '#cbd5e1';
+                b.style.fontWeight = 'normal';
+            });
+            if (btn) {
+                btn.style.background = '#0284c7';
+                btn.style.borderColor = '#0284c7';
+                btn.style.color = '#fff';
+                btn.style.fontWeight = '600';
+            }
+            const cards = document.querySelectorAll('#settings-panel-trackers div[data-tracker-cat]');
+            cards.forEach(card => {
+                if (category === 'all' || card.getAttribute('data-tracker-cat') === category) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        function filterHubTrackers(category, btn) {
+            const btns = document.querySelectorAll('.hub-cat-tab');
+            btns.forEach(b => {
+                b.style.background = '#1e293b';
+                b.style.borderColor = '#334155';
+                b.style.color = '#cbd5e1';
+                b.style.fontWeight = 'normal';
+            });
+            if (btn) {
+                btn.style.background = '#0284c7';
+                btn.style.borderColor = '#0284c7';
+                btn.style.color = '#fff';
+                btn.style.fontWeight = '600';
+            }
+            const items = document.querySelectorAll('#hub-trackers-grid .hub-tracker-item');
+            items.forEach(item => {
+                if (category === 'all' || item.getAttribute('data-cat') === category) {
+                    item.style.display = 'flex';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        }
+
         function switchSettingsServerSubTab(srv) {
             activeSettingsServerSubTab = srv;
             const servers = ['plex', 'jellyfin', 'emby'];
@@ -2317,6 +2530,137 @@
                     malToggleBtn.style.color = Boolean(trackers.mal) ? '#cbd5e1' : '#6ee7b7';
                 }
 
+                // TMDb
+                const tmdbCreds = creds.tmdb || {};
+                const tmdbApiKeyInput = document.getElementById('settings-tmdb-api-key');
+                const tmdbSessionInput = document.getElementById('settings-tmdb-session-id');
+                const tmdbTokenInput = document.getElementById('settings-tmdb-access-token');
+                if (tmdbApiKeyInput) tmdbApiKeyInput.value = tmdbCreds.masked_api_key || tmdbCreds.api_key || '';
+                if (tmdbSessionInput) tmdbSessionInput.value = tmdbCreds.masked_session_id || tmdbCreds.session_id || '';
+                if (tmdbTokenInput) tmdbTokenInput.value = tmdbCreds.masked_access_token || tmdbCreds.access_token || '';
+                const tmdbStatus = document.getElementById('settings-trk-status-tmdb');
+                const tmdbToggleBtn = document.getElementById('settings-trk-toggle-btn-tmdb');
+                const tmdbHasCreds = Boolean(tmdbCreds.api_key || tmdbCreds.access_token || tmdbCreds.has_credentials);
+                const tmdbActive = Boolean(trackers.tmdb && tmdbHasCreds);
+                if (tmdbStatus) {
+                    if (tmdbActive) {
+                        tmdbStatus.textContent = '● Active';
+                        tmdbStatus.style.color = '#10b981';
+                    } else if (tmdbHasCreds) {
+                        tmdbStatus.textContent = '● Paused';
+                        tmdbStatus.style.color = '#f59e0b';
+                    } else {
+                        tmdbStatus.textContent = 'Not Configured';
+                        tmdbStatus.style.color = '#94a3b8';
+                    }
+                }
+                if (tmdbToggleBtn) {
+                    tmdbToggleBtn.textContent = Boolean(trackers.tmdb) ? 'Pause' : 'Resume';
+                    tmdbToggleBtn.style.color = Boolean(trackers.tmdb) ? '#cbd5e1' : '#6ee7b7';
+                }
+
+                // Kitsu
+                const kitsuCreds = creds.kitsu || {};
+                const kitsuTokenInput = document.getElementById('settings-kitsu-token');
+                if (kitsuTokenInput) kitsuTokenInput.value = kitsuCreds.masked_api_token || kitsuCreds.api_token || '';
+                const kitsuStatus = document.getElementById('settings-trk-status-kitsu');
+                const kitsuToggleBtn = document.getElementById('settings-trk-toggle-btn-kitsu');
+                const kitsuHasCreds = Boolean(kitsuCreds.api_token || kitsuCreds.has_credentials);
+                const kitsuActive = Boolean(trackers.kitsu && kitsuHasCreds);
+                if (kitsuStatus) {
+                    if (kitsuActive) {
+                        kitsuStatus.textContent = '● Active';
+                        kitsuStatus.style.color = '#10b981';
+                    } else if (kitsuHasCreds) {
+                        kitsuStatus.textContent = '● Paused';
+                        kitsuStatus.style.color = '#f59e0b';
+                    } else {
+                        kitsuStatus.textContent = 'Not Configured';
+                        kitsuStatus.style.color = '#94a3b8';
+                    }
+                }
+                if (kitsuToggleBtn) {
+                    kitsuToggleBtn.textContent = Boolean(trackers.kitsu) ? 'Pause' : 'Resume';
+                    kitsuToggleBtn.style.color = Boolean(trackers.kitsu) ? '#cbd5e1' : '#6ee7b7';
+                }
+
+                // Letterboxd
+                const lbCreds = creds.letterboxd || {};
+                const lbUserInput = document.getElementById('settings-letterboxd-username');
+                if (lbUserInput) lbUserInput.value = lbCreds.username || '';
+                const lbStatus = document.getElementById('settings-trk-status-letterboxd');
+                const lbToggleBtn = document.getElementById('settings-trk-toggle-btn-letterboxd');
+                const lbHasCreds = Boolean(lbCreds.username);
+                const lbActive = Boolean(trackers.letterboxd && lbHasCreds);
+                if (lbStatus) {
+                    if (lbActive) {
+                        lbStatus.textContent = '● Active';
+                        lbStatus.style.color = '#10b981';
+                    } else if (lbHasCreds) {
+                        lbStatus.textContent = '● Paused';
+                        lbStatus.style.color = '#f59e0b';
+                    } else {
+                        lbStatus.textContent = 'Not Configured';
+                        lbStatus.style.color = '#94a3b8';
+                    }
+                }
+                if (lbToggleBtn) {
+                    lbToggleBtn.textContent = Boolean(trackers.letterboxd) ? 'Pause' : 'Resume';
+                    lbToggleBtn.style.color = Boolean(trackers.letterboxd) ? '#cbd5e1' : '#6ee7b7';
+                }
+
+                // Serializd
+                const serCreds = creds.serializd || {};
+                const serUserInput = document.getElementById('settings-serializd-username');
+                const serTokenInput = document.getElementById('settings-serializd-token');
+                if (serUserInput) serUserInput.value = serCreds.username || '';
+                if (serTokenInput) serTokenInput.value = serCreds.masked_token || serCreds.token || '';
+                const serStatus = document.getElementById('settings-trk-status-serializd');
+                const serToggleBtn = document.getElementById('settings-trk-toggle-btn-serializd');
+                const serHasCreds = Boolean(serCreds.username || serCreds.token || serCreds.has_credentials);
+                const serActive = Boolean(trackers.serializd && serHasCreds);
+                if (serStatus) {
+                    if (serActive) {
+                        serStatus.textContent = '● Active';
+                        serStatus.style.color = '#10b981';
+                    } else if (serHasCreds) {
+                        serStatus.textContent = '● Paused';
+                        serStatus.style.color = '#f59e0b';
+                    } else {
+                        serStatus.textContent = 'Not Configured';
+                        serStatus.style.color = '#94a3b8';
+                    }
+                }
+                if (serToggleBtn) {
+                    serToggleBtn.textContent = Boolean(trackers.serializd) ? 'Pause' : 'Resume';
+                    serToggleBtn.style.color = Boolean(trackers.serializd) ? '#cbd5e1' : '#6ee7b7';
+                }
+
+                // MDBList
+                const mdbCreds = creds.mdblist || {};
+                const mdbApiKeyInput = document.getElementById('settings-mdblist-api-key');
+                if (mdbApiKeyInput) mdbApiKeyInput.value = mdbCreds.masked_api_key || mdbCreds.api_key || '';
+                const mdbStatus = document.getElementById('settings-trk-status-mdblist');
+                const mdbToggleBtn = document.getElementById('settings-trk-toggle-btn-mdblist');
+                const mdbHasCreds = Boolean(mdbCreds.api_key || mdbCreds.has_credentials);
+                const mdbActive = Boolean(trackers.mdblist && mdbHasCreds);
+                if (mdbStatus) {
+                    if (mdbActive) {
+                        mdbStatus.textContent = '● Active';
+                        mdbStatus.style.color = '#10b981';
+                    } else if (mdbHasCreds) {
+                        mdbStatus.textContent = '● Paused';
+                        mdbStatus.style.color = '#f59e0b';
+                    } else {
+                        mdbStatus.textContent = 'Not Configured';
+                        mdbStatus.style.color = '#94a3b8';
+                    }
+                }
+                if (mdbToggleBtn) {
+                    mdbToggleBtn.textContent = Boolean(trackers.mdblist) ? 'Pause' : 'Resume';
+                    mdbToggleBtn.style.color = Boolean(trackers.mdblist) ? '#cbd5e1' : '#6ee7b7';
+                }
+
                 // 4. Automation & Arrs
                 const reconTypeSelect = document.getElementById('settings-recon-server-type');
                 const reconIntSelect = document.getElementById('settings-recon-interval');
@@ -2430,6 +2774,24 @@
                             client_id: document.getElementById('settings-mal-client-id')?.value.trim() || '',
                             client_secret: document.getElementById('settings-mal-client-secret')?.value.trim() || '',
                             access_token: document.getElementById('settings-mal-token')?.value.trim() || ''
+                        },
+                        tmdb: {
+                            api_key: document.getElementById('settings-tmdb-api-key')?.value.trim() || '',
+                            session_id: document.getElementById('settings-tmdb-session-id')?.value.trim() || '',
+                            access_token: document.getElementById('settings-tmdb-access-token')?.value.trim() || ''
+                        },
+                        kitsu: {
+                            api_token: document.getElementById('settings-kitsu-token')?.value.trim() || ''
+                        },
+                        letterboxd: {
+                            username: document.getElementById('settings-letterboxd-username')?.value.trim() || ''
+                        },
+                        serializd: {
+                            username: document.getElementById('settings-serializd-username')?.value.trim() || '',
+                            token: document.getElementById('settings-serializd-token')?.value.trim() || ''
+                        },
+                        mdblist: {
+                            api_key: document.getElementById('settings-mdblist-api-key')?.value.trim() || ''
                         }
                     },
                     reconciliation: {
@@ -3650,11 +4012,12 @@
         }
 
         function toggleAutoRefresh(cb) {
+            const val = cb.checked ? 'true' : 'false';
+            localStorage.setItem('omniscrobble_auto_refresh', val);
+            localStorage.setItem('plex_trakt_auto_refresh', val);
             if (cb.checked) {
-                localStorage.setItem('plex_trakt_auto_refresh', 'true');
                 refreshTimer = setInterval(fetchEvents, 30000);
             } else {
-                localStorage.setItem('plex_trakt_auto_refresh', 'false');
                 if (refreshTimer) clearInterval(refreshTimer);
                 refreshTimer = null;
             }
@@ -3926,7 +4289,7 @@
                 alert('Demo mode: linking simulated.');
                 return;
             }
-            const uname = prompt('Enter Plex username to link a Trakt account for:');
+            const uname = prompt('Enter media server username:');
             if (uname && uname.trim()) {
                 window.location.href = '/auth?user=' + encodeURIComponent(uname.trim());
             }
@@ -4194,7 +4557,8 @@
             }
         }
 
-        if (localStorage.getItem('plex_trakt_auto_refresh') === 'true') {
+        const savedAutoRefresh = localStorage.getItem('omniscrobble_auto_refresh') || localStorage.getItem('plex_trakt_auto_refresh');
+        if (savedAutoRefresh === 'true') {
             const toggle = document.getElementById('auto-refresh-toggle');
             if (toggle) toggle.checked = true;
             refreshTimer = setInterval(fetchEvents, 30000);
@@ -5458,6 +5822,47 @@ SIMKL_ENABLED=true</pre>
             }, 1000);
         }
 
+        // Dynamically update header subtitle reflecting active media servers -> connected cloud trackers
+        async function updateDynamicSubtitle() {
+            try {
+                const subEl = document.getElementById('header-title-sub');
+                if (!subEl) return;
+                const res = await fetch(isDemo ? '/api/trackers/status?demo=true' : '/api/trackers/status');
+                if (!res.ok) return;
+                const data = await res.json();
+                const trackerMap = {
+                    trakt: 'Trakt',
+                    simkl: 'Simkl',
+                    anilist: 'AniList',
+                    mal: 'MAL',
+                    myanimelist: 'MAL',
+                    tmdb: 'TMDb',
+                    kitsu: 'Kitsu',
+                    letterboxd: 'Letterboxd',
+                    serializd: 'Serializd',
+                    mdblist: 'MDBList'
+                };
+                const trackers = (data.active_trackers || []).map(t => trackerMap[t.toLowerCase()] || (t.charAt(0).toUpperCase() + t.slice(1)));
+
+                let servers = ['Plex'];
+                try {
+                    const sRes = await fetch(isDemo ? '/api/settings?demo=true' : '/api/settings');
+                    if (sRes.ok) {
+                        const sData = await sRes.json();
+                        const srvObj = sData.servers || {};
+                        const activeSrvs = Object.keys(srvObj).filter(k => srvObj[k]);
+                        if (activeSrvs.length > 0) {
+                            servers = activeSrvs.map(s => s.charAt(0).toUpperCase() + s.slice(1));
+                        }
+                    }
+                } catch (_) {}
+
+                if (trackers.length > 0) {
+                    subEl.innerHTML = `${servers.join(' • ')} &rarr; ${trackers.join(' • ')}`;
+                }
+            } catch (_) {}
+        }
+
         // Reset scroll position for co-watch chips on load and reload so refresh starts cleanly at top
         function resetCowatchScroll() {
             const cwChips = document.getElementById('cowatch-chips-container');
@@ -5469,6 +5874,7 @@ SIMKL_ENABLED=true</pre>
         document.addEventListener('DOMContentLoaded', () => {
             resetCowatchScroll();
             fetchEvents();
+            updateDynamicSubtitle();
         });
 
         // PWA Service Worker Registration

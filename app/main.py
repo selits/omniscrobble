@@ -16,6 +16,7 @@ from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 
 from app.config import Config
@@ -38,9 +39,14 @@ from app.services.demo_manager import demo_mgr
 from app.services.log_manager import log_mgr
 from app.clients.plex_api_client import PlexApiClient
 from app.clients.anilist_client import AniListClient
+from app.clients.kitsu_client import KitsuClient
+from app.clients.letterboxd_client import LetterboxdClient
 from app.clients.mal_client import MyAnimeListClient
+from app.clients.mdblist_client import MDBListClient
 from app.clients.radarr_client import RadarrClient
+from app.clients.serializd_client import SerializdClient
 from app.clients.simkl_client import SimklClient
+from app.clients.tmdb_client import TMDbClient
 from app.services.anime_resolver import AnimeResolver
 from app.services.multi_tracker import MultiTrackerManager
 from app.services.loop_prevention import loop_prevention
@@ -69,12 +75,28 @@ radarr = RadarrClient()
 simkl = SimklClient(Config)
 anilist = AniListClient(Config)
 mal = MyAnimeListClient(Config)
-anime_resolver = AnimeResolver(Config, anilist_client=anilist, mal_client=mal)
+kitsu = KitsuClient(Config)
+tmdb = TMDbClient(Config)
+letterboxd = LetterboxdClient(Config)
+serializd = SerializdClient(Config)
+mdblist = MDBListClient(Config)
+
+anime_resolver = AnimeResolver(
+    Config,
+    anilist_client=anilist,
+    mal_client=mal,
+    kitsu_client=kitsu,
+)
 multi_tracker = MultiTrackerManager(
     Config,
     simkl_client=simkl,
     anilist_client=anilist,
     mal_client=mal,
+    kitsu_client=kitsu,
+    tmdb_client=tmdb,
+    letterboxd_client=letterboxd,
+    serializd_client=serializd,
+    mdblist_client=mdblist,
     anime_resolver=anime_resolver,
 )
 cross_tracker_sync = CrossTrackerSyncManager(trakt_client=trakt, simkl_client=simkl)
@@ -321,6 +343,16 @@ async def lifespan(app: FastAPI):
             logger.info(f"Startup Diagnostics: MyAnimeList anime tracker connected (@{mal.user_name or 'user'}).")
         else:
             logger.info("Startup Diagnostics: MyAnimeList anime tracker enabled (visit /auth/mal to link account).")
+    if kitsu.is_configured():
+        logger.info(f"Startup Diagnostics: Kitsu anime tracker connected (@{kitsu.username or 'user'}).")
+    if tmdb.is_configured():
+        logger.info("Startup Diagnostics: TMDb universal tracker configured (v3/v4 sync enabled).")
+    if letterboxd.is_configured():
+        logger.info(f"Startup Diagnostics: Letterboxd diary store active (@{letterboxd.username or 'user'}).")
+    if serializd.is_configured():
+        logger.info(f"Startup Diagnostics: Serializd TV diary tracker connected (@{serializd.username or 'user'}).")
+    if mdblist.is_configured():
+        logger.info("Startup Diagnostics: MDBList multi-source rating aggregator configured.")
 
     yield
     if queue_worker_task:
@@ -347,6 +379,11 @@ async def lifespan(app: FastAPI):
     await simkl.close()
     await anilist.close()
     await mal.close()
+    await kitsu.close()
+    await tmdb.close()
+    await letterboxd.close()
+    await serializd.close()
+    await mdblist.close()
     await trakt.close()
     await user_mgr.close_all()
     await notifier.close()
@@ -356,6 +393,7 @@ APP_VERSION = "2.5.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 
 def is_https_request(request: Request) -> bool:
@@ -373,6 +411,10 @@ async def security_and_cache_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+    # Strict Transport Security (HSTS) - only emit when served over HTTPS
+    if is_https_request(request):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
     # Cache-busting headers for dynamic and control endpoints
     path = request.url.path
@@ -1307,6 +1349,9 @@ async def export_backup(request: Request):
             zf.write(EVENTS_FILE, arcname="data/events.json")
         if Config.SETTINGS_FILE.exists():
             zf.write(Config.SETTINGS_FILE, arcname="data/settings.json")
+        diary_file = getattr(Config, "LETTERBOXD_DIARY_FILE", None)
+        if diary_file and diary_file.exists():
+            zf.write(diary_file, arcname="data/letterboxd_diary.json")
 
     buffer.seek(0)
     filename = f"plex-trakt-backup-{datetime.date.today().isoformat()}.zip"
@@ -2943,6 +2988,199 @@ async def resolve_anime_api(request: Request, title: str, year: Optional[int] = 
     }
 
 
+# --- Multi-Tracker Hub & Cloud Tracker Diagnostic Endpoints ---
+@app.get("/api/trackers/status")
+async def get_multi_trackers_status(request: Request):
+    """Return categorized diagnostics and connectivity status across all 9 supported trackers."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_trackers_status()
+    status = await multi_tracker.get_status()
+    if not is_admin_request(request):
+        for tracker_info in status.get("trackers", {}).values():
+            if isinstance(tracker_info, dict):
+                if tracker_info.get("user"):
+                    tracker_info["user"] = mask_username(tracker_info["user"])
+                if tracker_info.get("username"):
+                    tracker_info["username"] = mask_username(tracker_info["username"])
+                if tracker_info.get("account_id"):
+                    tracker_info["account_id"] = "******"
+    return status
+
+
+@app.get("/api/tmdb/status")
+async def get_tmdb_status(request: Request):
+    """Return current connection and authentication status for TMDb."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_tmdb_status()
+    status = await tmdb.check_connection()
+    status["enabled"] = settings_mgr.is_tracker_enabled("tmdb")
+    return status
+
+
+@app.get("/api/kitsu/status")
+async def get_kitsu_status(request: Request):
+    """Return current connection and authentication status for Kitsu."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_kitsu_status()
+    status = await kitsu.check_connection()
+    status["enabled"] = settings_mgr.is_tracker_enabled("kitsu")
+    if not is_admin_request(request):
+        if status.get("user"):
+            status["user"] = mask_username(status["user"])
+        if status.get("username"):
+            status["username"] = mask_username(status["username"])
+        if status.get("message") and kitsu.user_name:
+            status["message"] = f"Connected as @{mask_username(kitsu.user_name)}"
+    return status
+
+
+@app.get("/api/letterboxd/status")
+async def get_letterboxd_status(request: Request):
+    """Return current status and diary telemetry for Letterboxd."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_letterboxd_status()
+    status = await letterboxd.check_connection()
+    status["enabled"] = settings_mgr.is_tracker_enabled("letterboxd")
+    if not is_admin_request(request):
+        if status.get("user"):
+            status["user"] = mask_username(status["user"])
+        if status.get("username"):
+            status["username"] = mask_username(status["username"])
+        if status.get("message") and letterboxd.username:
+            count = status.get("diary_count", 0)
+            status["message"] = f"Diary ready ({count} films logged for @{mask_username(letterboxd.username)})"
+    return status
+
+
+@app.get("/api/serializd/status")
+async def get_serializd_status(request: Request):
+    """Return current connection and authentication status for Serializd."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_serializd_status()
+    status = await serializd.check_connection()
+    status["enabled"] = settings_mgr.is_tracker_enabled("serializd")
+    if not is_admin_request(request):
+        if status.get("user"):
+            status["user"] = mask_username(status["user"])
+        if status.get("username"):
+            status["username"] = mask_username(status["username"])
+        if status.get("message") and serializd.username:
+            status["message"] = f"Connected as @{mask_username(serializd.username)}"
+    return status
+
+
+@app.get("/api/mdblist/status")
+async def get_mdblist_status(request: Request):
+    """Return current status and configuration for MDBList."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_mdblist_status()
+    status = await mdblist.check_connection()
+    status["enabled"] = settings_mgr.is_tracker_enabled("mdblist")
+    if not is_admin_request(request):
+        if status.get("user"):
+            status["user"] = mask_username(status["user"])
+        if status.get("username"):
+            status["username"] = mask_username(status["username"])
+    return status
+
+
+@app.get("/api/relay/status")
+async def get_relay_status(request: Request):
+    """Return connection instructions and compatibility status for SeriesGuide & Showly cloud relay."""
+    base_url = str(request.base_url).rstrip("/")
+    return {
+        "status": "active",
+        "supported_apps": ["SeriesGuide", "Showly"],
+        "description": "Mobile tracking applications connect via direct Trakt cloud synchronization or native webhook relay.",
+        "endpoints": {
+            "trakt_sync": "Automated two-way scrobble via Trakt Cloud OAuth",
+            "generic_webhook": f"{base_url}/webhook",
+        },
+        "apps": [
+            {
+                "name": "SeriesGuide",
+                "platform": "Android",
+                "mode": "Trakt Cloud Sync",
+                "status": "supported",
+                "docs_url": "https://seriesgui.de/",
+            },
+            {
+                "name": "Showly",
+                "platform": "Android",
+                "mode": "Trakt Cloud Sync",
+                "status": "supported",
+                "docs_url": "https://github.com/michaldrabik/Showly-2.0",
+            },
+        ],
+    }
+
+
+@app.get("/api/letterboxd/export")
+async def export_letterboxd_csv(request: Request):
+    """Generate and download RFC-4180 CSV export for 1-click import into Letterboxd."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required to export Letterboxd diary")
+    csv_content = letterboxd.generate_csv_export()
+    filename = f"letterboxd_diary_{datetime.datetime.now().strftime('%Y%m%d')}.csv"
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.get("/api/letterboxd/diary")
+async def get_letterboxd_diary(request: Request):
+    """Return logged Letterboxd diary entries."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return [
+            {"title": "Dune: Part Two", "year": 2024, "rating": 9, "watched_date": "2026-10-01", "imdb_id": "tt15239678"},
+            {"title": "Oppenheimer", "year": 2023, "rating": 10, "watched_date": "2026-09-28", "imdb_id": "tt15398776"},
+        ]
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required to view Letterboxd diary")
+    return letterboxd.get_diary_entries()
+
+
+@app.get("/api/mdblist/ratings")
+async def get_mdblist_ratings(
+    request: Request,
+    imdb_id: Optional[str] = None,
+    tmdb_id: Optional[int] = None,
+    media_type: str = "movie",
+):
+    """Enrich media with Rotten Tomatoes, Metacritic, Letterboxd, and IMDb scores via MDBList."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {
+            "title": "Dune: Part Two",
+            "year": 2024,
+            "score": 88,
+            "ratings": [
+                {"source": "imdb", "value": 8.6, "score": 86},
+                {"source": "metacritic", "value": 79, "score": 79},
+                {"source": "tomatoes", "value": 92, "score": 92},
+                {"source": "letterboxd", "value": 4.5, "score": 90},
+            ],
+        }
+    if not mdblist.is_configured():
+        raise HTTPException(status_code=400, detail="MDBList API key is not configured.")
+    if not imdb_id and not tmdb_id:
+        raise HTTPException(status_code=400, detail="Either imdb_id or tmdb_id must be provided.")
+    res = await mdblist.get_item_ratings(imdb_id=imdb_id, tmdb_id=tmdb_id, media_type=media_type)
+    if not res or (isinstance(res, dict) and res.get("status") == "error"):
+        err_msg = res.get("error", "Failed to retrieve ratings from MDBList.") if isinstance(res, dict) else "Failed to retrieve ratings from MDBList."
+        raise HTTPException(status_code=502, detail=err_msg)
+    return res
+
+
 @app.get('/auth', response_class=HTMLResponse)
 async def auth_page(request: Request, user: Optional[str] = None):
     if not is_admin_request(request):
@@ -3178,7 +3416,12 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             allowed_users_display = "All Users"
 
         # Base URL for webhooks
-        base_url = str(request.base_url).rstrip("/")
+        if Config.EXTERNAL_URL:
+            base_url = Config.EXTERNAL_URL.rstrip("/")
+        else:
+            base_url = str(request.base_url).rstrip("/")
+            if is_https_request(request) and base_url.startswith("http://"):
+                base_url = "https://" + base_url[len("http://"):]
         if Config.WEBHOOK_SECRET:
             full_webhook_url = f"{base_url}/webhook?token={Config.WEBHOOK_SECRET}"
             full_jellyfin_url = f"{base_url}/webhook/jellyfin?token={Config.WEBHOOK_SECRET}"
@@ -3286,7 +3529,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     webhook_html_section = f"""
     <div style="margin-top: 18px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
-            <div class="info-label">Universal Webhook URLs</div>
+            <div class="info-label">Media Server Webhook Endpoints</div>
             <div style="display:flex;gap:6px;">
                 <button type="button" onclick="switchWebhookTab('plex')" id="btn-tab-plex" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Plex</button>
                 <button type="button" onclick="switchWebhookTab('jellyfin')" id="btn-tab-jellyfin" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Jellyfin</button>
@@ -3308,7 +3551,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     """ if is_admin else f"""
     <div style="margin-top: 18px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <div class="info-label">Universal Webhook URLs (Plex • Jellyfin • Emby)</div>
+            <div class="info-label">Media Server Webhook Endpoints</div>
             <span style="color:#f59e0b;font-size:11px;font-weight:600;">🔒 Secret Masked</span>
         </div>
         <div class="webhook-row">
@@ -3842,33 +4085,20 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     </div>
     """
 
-    # Multi-Tracker Architecture Card (Simkl)
+    # -------------------------------------------------------------
+    # Multi-Tracker Architecture Hub Card & Cloud Diagnostics
+    # -------------------------------------------------------------
     if is_demo:
-        simkl_status = {
-            "enabled": True,
-            "configured": True,
-            "authenticated": True,
-            "user": "demo_viewer",
-            "account_id": 987654,
-        }
+        trk_status_all = demo_mgr.get_demo_trackers_status()
     else:
-        simkl_status = await simkl.check_connection()
-        simkl_status["enabled"] = simkl.is_enabled()
-        simkl_status["configured"] = bool(simkl.effective_client_id)
+        trk_status_all = await multi_tracker.get_status()
 
+    trackers_dict = trk_status_all.get("trackers", {})
+    simkl_status = trackers_dict.get("simkl", {})
     simkl_cfg = simkl_status.get("configured", False)
     simkl_auth = simkl_status.get("authenticated", False)
     simkl_user = simkl_status.get("user")
     simkl_disp_user = (simkl_user if is_admin else mask_username(simkl_user)) if simkl_user else "Linked"
-
-    if not settings_mgr.is_tracker_enabled("simkl"):
-        simkl_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ Paused (@{simkl_disp_user})</span>'
-    elif simkl_auth:
-        simkl_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@{simkl_disp_user})</span>'
-    elif simkl_cfg:
-        simkl_badge = '<span style="background:#1e293b;border:1px solid #eab308;color:#fde047;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● PIN Required</span>'
-    else:
-        simkl_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Optional Tracker</span>'
 
     quick_scrobble_btn = '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🍿 Quick Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Quick Scrobble</button>'
 
@@ -3890,50 +4120,106 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         else:
             cross_sync_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Reconcile</button>'
 
+    # Build 9 tracker items for #hub-trackers-grid
+    trackers_meta = [
+        {"id": "trakt", "cat": "universal", "icon": "🔴", "name": "Trakt.tv", "desc": "Universal &bull; Movies &amp; Shows"},
+        {"id": "simkl", "cat": "universal", "icon": "🔵", "name": "Simkl", "desc": "Universal &bull; Movies, Shows, Anime"},
+        {"id": "tmdb", "cat": "universal", "icon": "🟡", "name": "TMDb", "desc": "Universal &bull; Watchlist &amp; Ratings"},
+        {"id": "anilist", "cat": "anime", "icon": "🔷", "name": "AniList", "desc": "Anime &bull; Episodes &amp; Ratings"},
+        {"id": "myanimelist", "cat": "anime", "icon": "🟦", "name": "MyAnimeList", "desc": "Anime &bull; Episodes &amp; Ratings"},
+        {"id": "kitsu", "cat": "anime", "icon": "🟠", "name": "Kitsu", "desc": "Anime &bull; Progress &amp; Ratings"},
+        {"id": "letterboxd", "cat": "social_diary", "icon": "🟢", "name": "Letterboxd", "desc": "Social Diary &bull; Film Diary &amp; CSV"},
+        {"id": "serializd", "cat": "social_diary", "icon": "🟨", "name": "Serializd", "desc": "Social Diary &bull; TV Episode Diary"},
+        {"id": "mdblist", "cat": "lists_ratings", "icon": "🟣", "name": "MDBList", "desc": "Lists &amp; Ratings &bull; Score Aggregation"},
+    ]
+
+    hub_items_html = ""
+    active_trackers_count = 0
+    for tm in trackers_meta:
+        t_info = trackers_dict.get(tm["id"], {})
+        t_en = t_info.get("enabled", True)
+        t_auth = t_info.get("authenticated", False)
+        t_cfg = t_info.get("configured", False)
+        t_user = t_info.get("user")
+        t_disp_user = (t_user if is_admin else mask_username(t_user)) if t_user else ""
+
+        if not t_en:
+            t_badge = '<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ Paused</span>'
+        elif t_auth:
+            active_trackers_count += 1
+            u_suffix = f" (@{t_disp_user})" if t_disp_user else ""
+            t_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active{u_suffix}</span>'
+        elif t_cfg:
+            active_trackers_count += 1
+            t_badge = '<span style="background:#1e293b;border:1px solid #eab308;color:#fde047;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Ready</span>'
+        else:
+            t_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Optional</span>'
+
+        hub_items_html += f"""
+        <div class="hub-tracker-item" data-cat="{tm['cat']}" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                <span style="font-size:18px;flex-shrink:0;">{tm['icon']}</span>
+                <div style="min-width:0;">
+                    <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{tm['name']}</div>
+                    <div style="font-size:11px;color:#64748b;">{tm['desc']}</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                {t_badge}
+            </div>
+        </div>
+        """
+
     simkl_card_html = f"""
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>✨</span> Multi-Tracker Architecture &bull; Simkl Integration
+                <span>🌐</span> Multi-Tracker Architecture &bull; Cloud Synchronization &amp; Simkl Integration
             </h3>
             <div style="display:flex;align-items:center;gap:8px;">
-                {simkl_badge}
+                <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                    <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                    {active_trackers_count}/9 Trackers Active
+                </span>
             </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Broadcast playback scrobbles and ratings across both Trakt and Simkl simultaneously. Cross-tracker two-way sync reconciles historical watch states and ratings bi-directionally across Movies, TV Shows, and Anime.
+            Broadcast playback scrobbles, ratings, and diary entries across universal trackers, dedicated anime services, social diaries, and curated lists in real time.
         </p>
+        <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('all', this)" style="background:#0284c7;border:1px solid #0284c7;color:#fff;font-weight:600;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">All Trackers (9)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('universal', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Universal (3)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('anime', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Anime (3)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('social_diary', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Social Diaries (2)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('lists_ratings', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Lists &amp; Ratings (1)</button>
+        </div>
+        <div id="hub-trackers-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:10px;margin-bottom:14px;">
+            {hub_items_html}
+        </div>
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span>Simkl Dual-Scrobbler: <strong>{"Active" if simkl_auth else "Ready to link" if simkl_cfg else "Disabled in .env"}</strong></span>
                 <span style="color:#64748b;">&bull;</span>
                 <span>Cross-Tracker Sync: <strong>{"Ready" if simkl_auth and (is_demo or trakt.is_authenticated()) else "Requires Trakt + Simkl Auth"}</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
+                <span>Categories: <strong>Universal, Anime, Diaries, Lists</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 {quick_scrobble_btn}
                 {cross_sync_btn}
                 {simkl_action_btn}
-                <button onclick="openSettingsModal('trackers', 'simkl')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Simkl Settings</button>
+                <a href="/api/letterboxd/export" download="letterboxd_diary.csv" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#34d399;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;" title="Export Letterboxd Watch Diary as CSV">📥 Letterboxd CSV</a>
+                <button onclick="openSettingsModal('trackers', 'simkl')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Tracker Settings</button>
                 <a href="/auth/simkl" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">PIN Portal ↗</a>
             </div>
         </div>
     </div>
     """
 
-    # Anime Tracking Engine Card (AniList & MyAnimeList)
-    if is_demo:
-        ani_status = demo_mgr.get_demo_anilist_status()
-        mal_status = demo_mgr.get_demo_mal_status()
-    else:
-        ani_status = await anilist.check_connection()
-        ani_status["enabled"] = anilist.is_enabled()
-        ani_status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or anilist.is_authenticated())
-
-        mal_status = await mal.check_connection()
-        mal_status["enabled"] = mal.is_enabled()
-        mal_status["configured"] = bool(mal.effective_client_id or mal.is_authenticated())
+    # Anime Tracking Engine Card (AniList, MyAnimeList & Kitsu)
+    ani_status = trackers_dict.get("anilist", {})
+    mal_status = trackers_dict.get("myanimelist", {})
+    kitsu_status = trackers_dict.get("kitsu", {})
 
     ani_auth = ani_status.get("authenticated", False)
     ani_user = ani_status.get("user")
@@ -3956,6 +4242,17 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         mal_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● MAL Active (@{mal_disp_user})</span>'
     else:
         mal_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● MAL Unlinked</span>'
+
+    kitsu_auth = kitsu_status.get("authenticated", False) or kitsu_status.get("configured", False)
+    kitsu_user = kitsu_status.get("user")
+    kitsu_disp_user = (kitsu_user if is_admin else mask_username(kitsu_user)) if kitsu_user else "Linked"
+
+    if not settings_mgr.is_tracker_enabled("kitsu"):
+        kitsu_badge = f'<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ Kitsu Paused</span>'
+    elif kitsu_auth:
+        kitsu_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Kitsu Active (@{kitsu_disp_user})</span>'
+    else:
+        kitsu_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Kitsu Unlinked</span>'
 
     ani_action_btn = ""
     mal_action_btn = ""
@@ -3981,15 +4278,16 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>⚡</span> Anime Tracking Engine &bull; AniList &amp; MyAnimeList
+                <span>⚡</span> Anime Tracking Engine &bull; AniList, MyAnimeList &amp; Kitsu
             </h3>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 {ani_badge}
                 {mal_badge}
+                {kitsu_badge}
             </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Specialized anime detection with automatic ID resolution across AniList and MyAnimeList. Scrobbles anime episode progress and synchronizes ratings in real-time with zero media playback latency.
+            Specialized anime detection with automatic ID resolution across AniList, MyAnimeList, and Kitsu. Scrobbles anime episode progress and synchronizes ratings in real-time with zero media playback latency.
         </p>
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -3999,11 +4297,12 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <span style="color:#64748b;">&bull;</span>
                 <span>MAL: <strong>{"Connected" if mal_auth else "Unlinked"}</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>API: <strong>GraphQL &amp; REST v2</strong></span>
+                <span>Kitsu: <strong>{"Connected" if kitsu_auth else "Unlinked"}</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 {ani_action_btn}
                 {mal_action_btn}
+                <button onclick="openSettingsModal('trackers', 'kitsu')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#fb923c;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">🟠 Kitsu Settings</button>
                 <button onclick="openSettingsModal('trackers', 'anilist')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Anime Settings</button>
                 <a href="/auth/anilist" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">AniList Portal ↗</a>
                 <a href="/auth/mal" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;">MAL Portal ↗</a>
@@ -4102,10 +4401,27 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
     stats_data = demo_mgr.get_demo_stats() if is_demo else scrobble_stats
 
-    trakt_configured = bool(auth_status)
-    simkl_configured = bool(simkl_auth)
-    anilist_configured = bool(ani_auth)
-    mal_configured = bool(mal_auth)
+    if is_demo:
+        trakt_configured = True
+        simkl_configured = True
+        tmdb_configured = True
+        anilist_configured = True
+        mal_configured = True
+        kitsu_configured = True
+        letterboxd_configured = True
+        serializd_configured = True
+        mdblist_configured = True
+    else:
+        trakt_configured = bool(auth_status and settings_mgr.is_tracker_enabled("trakt"))
+        simkl_configured = bool(simkl_auth and settings_mgr.is_tracker_enabled("simkl"))
+        tmdb_configured = bool(tmdb.is_configured() and settings_mgr.is_tracker_enabled("tmdb"))
+        anilist_configured = bool(ani_auth and settings_mgr.is_tracker_enabled("anilist"))
+        mal_configured = bool(mal_auth and settings_mgr.is_tracker_enabled("mal"))
+        kitsu_configured = bool(kitsu.is_configured() and settings_mgr.is_tracker_enabled("kitsu"))
+        letterboxd_configured = bool(letterboxd.is_configured() and settings_mgr.is_tracker_enabled("letterboxd"))
+        serializd_configured = bool(serializd.is_configured() and settings_mgr.is_tracker_enabled("serializd"))
+        mdblist_configured = bool(mdblist.is_configured() and settings_mgr.is_tracker_enabled("mdblist"))
+
     cowatch_user = Config.CO_WATCH_USER
     cowatch_disp = (cowatch_user if is_admin else mask_username(cowatch_user)) if cowatch_user else ""
     has_cowatch_partner = bool(cowatch_user and (is_demo or user_mgr.is_user_authenticated(cowatch_user)))
@@ -4156,16 +4472,31 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{REPO_URL}}': REPO_URL,
         '{{SCROBBLE_CHECKED_TRAKT}}': ('checked' if trakt_configured else ''),
         '{{SCROBBLE_CHECKED_SIMKL}}': ('checked' if simkl_configured else ''),
+        '{{SCROBBLE_CHECKED_TMDB}}': ('checked' if tmdb_configured else ''),
         '{{SCROBBLE_CHECKED_ANILIST}}': ('checked' if anilist_configured else ''),
         '{{SCROBBLE_CHECKED_MAL}}': ('checked' if mal_configured else ''),
+        '{{SCROBBLE_CHECKED_KITSU}}': ('checked' if kitsu_configured else ''),
+        '{{SCROBBLE_CHECKED_LETTERBOXD}}': ('checked' if letterboxd_configured else ''),
+        '{{SCROBBLE_CHECKED_SERIALIZD}}': ('checked' if serializd_configured else ''),
+        '{{SCROBBLE_CHECKED_MDBLIST}}': ('checked' if mdblist_configured else ''),
         '{{SCROBBLE_CHECKED_TRAKT_JS}}': ('true' if trakt_configured else 'false'),
         '{{SCROBBLE_CHECKED_SIMKL_JS}}': ('true' if simkl_configured else 'false'),
+        '{{SCROBBLE_CHECKED_TMDB_JS}}': ('true' if tmdb_configured else 'false'),
         '{{SCROBBLE_CHECKED_ANILIST_JS}}': ('true' if anilist_configured else 'false'),
         '{{SCROBBLE_CHECKED_MAL_JS}}': ('true' if mal_configured else 'false'),
+        '{{SCROBBLE_CHECKED_KITSU_JS}}': ('true' if kitsu_configured else 'false'),
+        '{{SCROBBLE_CHECKED_LETTERBOXD_JS}}': ('true' if letterboxd_configured else 'false'),
+        '{{SCROBBLE_CHECKED_SERIALIZD_JS}}': ('true' if serializd_configured else 'false'),
+        '{{SCROBBLE_CHECKED_MDBLIST_JS}}': ('true' if mdblist_configured else 'false'),
         '{{SCROBBLE_BADGE_TRAKT}}': ('' if trakt_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
         '{{SCROBBLE_BADGE_SIMKL}}': ('' if simkl_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
+        '{{SCROBBLE_BADGE_TMDB}}': ('' if tmdb_configured else ' <span style="font-size:10px;color:#64748b;">(Not Configured)</span>'),
         '{{SCROBBLE_BADGE_ANILIST}}': ('' if anilist_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
         '{{SCROBBLE_BADGE_MAL}}': ('' if mal_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
+        '{{SCROBBLE_BADGE_KITSU}}': ('' if kitsu_configured else ' <span style="font-size:10px;color:#64748b;">(Not Linked)</span>'),
+        '{{SCROBBLE_BADGE_LETTERBOXD}}': ('' if letterboxd_configured else ' <span style="font-size:10px;color:#64748b;">(Not Configured)</span>'),
+        '{{SCROBBLE_BADGE_SERIALIZD}}': ('' if serializd_configured else ' <span style="font-size:10px;color:#64748b;">(Not Configured)</span>'),
+        '{{SCROBBLE_BADGE_MDBLIST}}': ('' if mdblist_configured else ' <span style="font-size:10px;color:#64748b;">(Not Configured)</span>'),
         '{{SCROBBLE_BADGE_COWATCH}}': (f' <span style="font-size:10px;color:#d8b4fe;">(@{cowatch_disp})</span>' if has_cowatch_partner else ' <span style="font-size:10px;color:#64748b;">(No partner linked)</span>'),
     }
     for k, v in replacements.items():
@@ -4181,7 +4512,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
 
 if __name__ == '__main__':
+    ssl_kwargs = {}
+    if Config.SSL_CERTFILE and Config.SSL_KEYFILE:
+        ssl_kwargs["ssl_certfile"] = Config.SSL_CERTFILE
+        ssl_kwargs["ssl_keyfile"] = Config.SSL_KEYFILE
     if Config.DEBUG:
-        uvicorn.run('app.main:app', host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=True, reload_excludes=['*.json', 'data/*'])
+        uvicorn.run('app.main:app', host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=True, reload_excludes=['*.json', 'data/*'], **ssl_kwargs)
     else:
-        uvicorn.run('app.main:app', host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=False)
+        uvicorn.run('app.main:app', host=Config.SERVER_HOST, port=Config.SERVER_PORT, reload=False, **ssl_kwargs)

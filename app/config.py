@@ -201,4 +201,40 @@ class Config:
         Path(_mal_tokens_env) if Path(_mal_tokens_env).is_absolute() else (BASE_DIR / _mal_tokens_env)
     )
 
+    # TMDb Integration
+    TMDB_API_KEY: str = os.getenv("TMDB_API_KEY", "").strip()
+    TMDB_READ_ACCESS_TOKEN: str = os.getenv("TMDB_READ_ACCESS_TOKEN", "").strip()
+    TMDB_SESSION_ID: str = os.getenv("TMDB_SESSION_ID", "").strip()
+    TMDB_ACCOUNT_ID: str = os.getenv("TMDB_ACCOUNT_ID", "").strip()
+    TMDB_ENABLED: bool = os.getenv("TMDB_ENABLED", "true").lower() in ("true", "1", "yes")
+
+    # Kitsu Integration
+    KITSU_API_KEY: str = os.getenv("KITSU_API_KEY", "").strip()
+    KITSU_USER_ID: str = os.getenv("KITSU_USER_ID", "").strip()
+    KITSU_ENABLED: bool = os.getenv("KITSU_ENABLED", "true").lower() in ("true", "1", "yes")
+
+    # Letterboxd Integration
+    LETTERBOXD_USERNAME: str = os.getenv("LETTERBOXD_USERNAME", "").strip()
+    LETTERBOXD_ENABLED: bool = os.getenv("LETTERBOXD_ENABLED", "true").lower() in ("true", "1", "yes")
+    _letterboxd_diary_env = os.getenv("LETTERBOXD_DIARY_FILE", "data/letterboxd_diary.json")
+    LETTERBOXD_DIARY_FILE: Path = (
+        Path(_letterboxd_diary_env) if Path(_letterboxd_diary_env).is_absolute() else (BASE_DIR / _letterboxd_diary_env)
+    )
+    LETTERBOXD_DATA_FILE: Path = LETTERBOXD_DIARY_FILE
+
+    # Serializd Integration
+    SERIALIZD_USERNAME: str = os.getenv("SERIALIZD_USERNAME", "").strip()
+    SERIALIZD_TOKEN: str = os.getenv("SERIALIZD_TOKEN", "").strip()
+    SERIALIZD_ENABLED: bool = os.getenv("SERIALIZD_ENABLED", "true").lower() in ("true", "1", "yes")
+
+    # MDBList Integration
+    MDBLIST_API_KEY: str = os.getenv("MDBLIST_API_KEY", "").strip()
+    MDBLIST_ENABLED: bool = os.getenv("MDBLIST_ENABLED", "true").lower() in ("true", "1", "yes")
+
+    # SSL & External Reverse Proxy Configuration
+    SSL_CERTFILE: str = os.getenv("SSL_CERTFILE", "").strip()
+    SSL_KEYFILE: str = os.getenv("SSL_KEYFILE", "").strip()
+    EXTERNAL_URL: str = os.getenv("EXTERNAL_URL", "").strip()
+
+
 

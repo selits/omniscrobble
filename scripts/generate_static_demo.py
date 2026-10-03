@@ -476,27 +476,148 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>✨</span> Multi-Tracker Architecture &bull; Simkl Integration
+                <span>🌐</span> Multi-Tracker Architecture &bull; Cloud Synchronization &amp; Simkl Integration
             </h3>
             <div style="display:flex;align-items:center;gap:8px;">
-                <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_viewer)</span>
+                <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                    <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                    9/9 Trackers Active
+                </span>
             </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Broadcast playback scrobbles and ratings across both Trakt and Simkl simultaneously. Perfect for Anime, TV shows, and movie watch histories with decoupled, zero-latency async dispatch.
+            Broadcast playback scrobbles, ratings, and diary entries across universal trackers, dedicated anime services, social diaries, and curated lists in real time.
         </p>
+        <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('all', this)" style="background:#0284c7;border:1px solid #0284c7;color:#fff;font-weight:600;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">All Trackers (9)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('universal', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Universal (3)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('anime', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Anime (3)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('social_diary', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Social Diaries (2)</button>
+            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('lists_ratings', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Lists &amp; Ratings (1)</button>
+        </div>
+        <div id="hub-trackers-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:10px;margin-bottom:14px;">
+            <div class="hub-tracker-item" data-cat="universal" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🔴</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Trakt.tv</div>
+                        <div style="font-size:11px;color:#64748b;">Universal &bull; Movies &amp; Shows</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_viewer)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="universal" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🔵</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Simkl</div>
+                        <div style="font-size:11px;color:#64748b;">Universal &bull; Movies, Shows, Anime</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_viewer)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="universal" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🟡</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">TMDb</div>
+                        <div style="font-size:11px;color:#64748b;">Universal &bull; Watchlist &amp; Ratings</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_cinephile)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="anime" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🔷</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">AniList</div>
+                        <div style="font-size:11px;color:#64748b;">Anime &bull; Episodes &amp; Ratings</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_otaku)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="anime" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🟦</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MyAnimeList</div>
+                        <div style="font-size:11px;color:#64748b;">Anime &bull; Episodes &amp; Ratings</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_otaku)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="anime" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🟠</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Kitsu</div>
+                        <div style="font-size:11px;color:#64748b;">Anime &bull; Progress &amp; Ratings</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_otaku)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="social_diary" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🟢</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Letterboxd</div>
+                        <div style="font-size:11px;color:#64748b;">Social Diary &bull; Film Diary &amp; CSV</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_critic)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="social_diary" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🟨</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Serializd</div>
+                        <div style="font-size:11px;color:#64748b;">Social Diary &bull; TV Episode Diary</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_binger)</span>
+                </div>
+            </div>
+            <div class="hub-tracker-item" data-cat="lists_ratings" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+                    <span style="font-size:18px;flex-shrink:0;">🟣</span>
+                    <div style="min-width:0;">
+                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MDBList</div>
+                        <div style="font-size:11px;color:#64748b;">Lists &amp; Ratings &bull; Score Aggregation</div>
+                    </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                    <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active (@demo_collector)</span>
+                </div>
+            </div>
+        </div>
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span>Simkl Dual-Scrobbler: <strong>Active</strong></span>
                 <span style="color:#64748b;">&bull;</span>
                 <span>Cross-Tracker Sync: <strong>Ready</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>Supported: <strong>Movies, Shows, Anime</strong></span>
+                <span>Categories: <strong>Universal, Anime, Diaries, Lists</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🍿 Quick Scrobble</button>
-                <button onclick="toggleSetting('tracker', 'simkl', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause Simkl</button>
-                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt & Simkl</button>
+                <button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt &amp; Simkl</button>
+                <a href="#letterboxd-csv" onclick="alert('In real mode, this downloads your persistent Letterboxd Diary CSV formatted to Letterboxd import specifications.');return false;" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#34d399;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">📥 Letterboxd CSV</a>
+                <button onclick="openSettingsModal('trackers', 'simkl')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#38bdf8;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;cursor:pointer;">⚙️ Tracker Settings</button>
                 <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Simkl Settings</button>
             </div>
         </div>
@@ -507,15 +628,16 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>⚡</span> Anime Tracking Engine &bull; AniList &amp; MyAnimeList
+                <span>⚡</span> Anime Tracking Engine &bull; AniList, MyAnimeList &amp; Kitsu
             </h3>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● AniList Active (@demo_viewer)</span>
                 <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● MAL Active (@demo_viewer)</span>
+                <span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Kitsu Active (@demo_viewer)</span>
             </div>
         </div>
         <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Specialized anime detection with automatic ID resolution across AniList and MyAnimeList. Scrobbles anime episode progress and synchronizes ratings in real-time with zero media playback latency.
+            Specialized anime detection with automatic ID resolution across AniList, MyAnimeList, and Kitsu. Scrobbles anime episode progress and synchronizes ratings in real-time with zero media playback latency.
         </p>
         <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
             <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -525,11 +647,12 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <span style="color:#64748b;">&bull;</span>
                 <span>MAL: <strong>Connected</strong></span>
                 <span style="color:#64748b;">&bull;</span>
-                <span>API: <strong>GraphQL &amp; REST v2</strong></span>
+                <span>Kitsu: <strong>Connected</strong></span>
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <button onclick="toggleSetting('tracker', 'anilist', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause AniList</button>
                 <button onclick="toggleSetting('tracker', 'mal', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">⏸ Pause MAL</button>
+                <button onclick="openSettingsModal('trackers', 'kitsu')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#fb923c;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🟠 Kitsu Settings</button>
                 <button onclick="openAnilistModal()" class="btn-sm" style="background:#02a9ff;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">⚡ AniList Settings</button>
                 <button onclick="openMalModal()" class="btn-sm" style="background:#2e51a2;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🎌 MAL Settings</button>
             </div>
@@ -571,7 +694,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     webhook_html_section = """
     <div style="margin-top: 18px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
-            <div class="info-label">Universal Webhook URLs</div>
+            <div class="info-label">Media Server Webhook Endpoints</div>
             <div style="display:flex;gap:6px;">
                 <button type="button" onclick="switchWebhookTab('plex')" id="btn-tab-plex" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Plex</button>
                 <button type="button" onclick="switchWebhookTab('jellyfin')" id="btn-tab-jellyfin" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Jellyfin</button>
@@ -717,16 +840,31 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{REPO_URL}}': REPO_URL,
         '{{SCROBBLE_CHECKED_TRAKT}}': 'checked',
         '{{SCROBBLE_CHECKED_SIMKL}}': 'checked',
+        '{{SCROBBLE_CHECKED_TMDB}}': 'checked',
         '{{SCROBBLE_CHECKED_ANILIST}}': 'checked',
         '{{SCROBBLE_CHECKED_MAL}}': 'checked',
+        '{{SCROBBLE_CHECKED_KITSU}}': 'checked',
+        '{{SCROBBLE_CHECKED_LETTERBOXD}}': 'checked',
+        '{{SCROBBLE_CHECKED_SERIALIZD}}': 'checked',
+        '{{SCROBBLE_CHECKED_MDBLIST}}': 'checked',
         '{{SCROBBLE_CHECKED_TRAKT_JS}}': 'true',
         '{{SCROBBLE_CHECKED_SIMKL_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_TMDB_JS}}': 'true',
         '{{SCROBBLE_CHECKED_ANILIST_JS}}': 'true',
         '{{SCROBBLE_CHECKED_MAL_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_KITSU_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_LETTERBOXD_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_SERIALIZD_JS}}': 'true',
+        '{{SCROBBLE_CHECKED_MDBLIST_JS}}': 'true',
         '{{SCROBBLE_BADGE_TRAKT}}': '',
         '{{SCROBBLE_BADGE_SIMKL}}': '',
+        '{{SCROBBLE_BADGE_TMDB}}': '',
         '{{SCROBBLE_BADGE_ANILIST}}': '',
         '{{SCROBBLE_BADGE_MAL}}': '',
+        '{{SCROBBLE_BADGE_KITSU}}': '',
+        '{{SCROBBLE_BADGE_LETTERBOXD}}': '',
+        '{{SCROBBLE_BADGE_SERIALIZD}}': '',
+        '{{SCROBBLE_BADGE_MDBLIST}}': '',
         '{{SCROBBLE_BADGE_COWATCH}}': ' <span style="font-size:10px;color:#d8b4fe;">(@demo_partner)</span>',
     }
 

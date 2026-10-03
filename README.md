@@ -18,6 +18,8 @@
   <a href="#-documentation-hub"><b>Documentation</b></a> •
   <a href="CONFIGURATION.md"><b>Configuration</b></a> •
   <a href="DEPLOYMENT.md"><b>Deployment</b></a> •
+  <a href="DEVELOPMENT.md"><b>Development</b></a> •
+  <a href="docs/LOCAL_TESTING.md"><b>Local Testing</b></a> •
   <a href="docs/FEATURES.md"><b>Guides</b></a> •
   <a href="docs/ARCHITECTURE.md"><b>Architecture</b></a> •
   <a href="docs/API.md"><b>API</b></a> •
@@ -194,10 +196,19 @@ This automated script fetches the latest code from GitHub, updates dependencies 
 
 ---
 
-## 🧪 Testing
+## 🧪 Testing & Local Simulation
 
-To run the automated test suite locally:
+Omniscrobble includes a complete local testing framework featuring a CLI webhook simulator and a unified quality gate runner.
 
 ```bash
+# 1. Run all quality gates (Pytest, Gitleaks, demo validation, git privacy audit)
+./scripts/test_local.sh
+
+# 2. Simulate media server webhooks locally without media playback
+./scripts/simulate_webhook.py --server plex --scenario movie-finish --title "Inception" --year 2010
+
+# 3. Run the unit test suite directly
 .venv/bin/pytest -v
 ```
+
+> 📖 For full webhook simulation options and scenario presets, see [**`docs/LOCAL_TESTING.md`**](./docs/LOCAL_TESTING.md).

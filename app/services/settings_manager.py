@@ -35,6 +35,11 @@ class SettingsManager:
                 "simkl": True,
                 "anilist": True,
                 "mal": True,
+                "tmdb": True,
+                "kitsu": True,
+                "letterboxd": True,
+                "serializd": True,
+                "mdblist": True,
             },
             "credentials": self._detect_default_credentials(),
             "reconciliation": self._detect_default_reconciliation(),
@@ -78,6 +83,24 @@ class SettingsManager:
             "trakt": {
                 "client_id": getattr(self.config, "TRAKT_CLIENT_ID", "") or "",
                 "client_secret": getattr(self.config, "TRAKT_CLIENT_SECRET", "") or "",
+            },
+            "tmdb": {
+                "api_key": getattr(self.config, "TMDB_API_KEY", "") or "",
+                "access_token": getattr(self.config, "TMDB_ACCESS_TOKEN", "") or "",
+                "session_id": getattr(self.config, "TMDB_SESSION_ID", "") or "",
+            },
+            "kitsu": {
+                "api_token": getattr(self.config, "KITSU_API_TOKEN", "") or "",
+            },
+            "letterboxd": {
+                "username": getattr(self.config, "LETTERBOXD_USERNAME", "") or "",
+            },
+            "serializd": {
+                "token": getattr(self.config, "SERIALIZD_TOKEN", "") or "",
+                "username": getattr(self.config, "SERIALIZD_USERNAME", "") or "",
+            },
+            "mdblist": {
+                "api_key": getattr(self.config, "MDBLIST_API_KEY", "") or "",
             },
         }
 
@@ -416,20 +439,32 @@ class SettingsManager:
         defaults = self._detect_default_credentials().get(trk, {})
         current = self._settings.setdefault("credentials", self._detect_default_credentials()).setdefault(trk, {})
 
-        cid = current.get("client_id") if current.get("client_id") is not None else defaults.get("client_id", "")
-        sec = current.get("client_secret") if current.get("client_secret") is not None else defaults.get("client_secret", "")
+        keys = set(list(defaults.keys()) + list(current.keys()))
+        if trk in ("trakt", "simkl", "anilist", "mal"):
+            keys.update(["client_id", "client_secret"])
 
-        cid = str(cid or "").strip()
-        sec = str(sec or "").strip()
+        result: dict[str, Any] = {}
+        for field in keys:
+            val = current.get(field) if current.get(field) is not None else defaults.get(field, "")
+            val_str = str(val or "").strip()
+            is_secret = any(s in field.lower() for s in ("secret", "token", "password", "key", "session_id"))
+            if is_secret:
+                masked = self._mask_val(val_str)
+                result[field] = masked if mask else val_str
+                result[f"masked_{field}"] = masked
+                result[f"has_{field}"] = bool(val_str)
+            else:
+                result[field] = val_str
+                result[f"has_{field}"] = bool(val_str)
 
-        masked_sec = self._mask_val(sec)
-        return {
-            "client_id": cid,
-            "client_secret": masked_sec if mask else sec,
-            "masked_client_secret": masked_sec,
-            "has_client_id": bool(cid),
-            "has_client_secret": bool(sec),
-        }
+        if "client_id" in result:
+            result.setdefault("has_client_id", bool(result.get("client_id")))
+        if "client_secret" in result:
+            raw_sec = str(current.get("client_secret") or defaults.get("client_secret") or "")
+            result.setdefault("has_client_secret", bool(raw_sec))
+            result.setdefault("masked_client_secret", self._mask_val(raw_sec))
+
+        return result
 
     def update_tracker_credentials(self, tracker: str, data: dict[str, Any]) -> dict[str, Any]:
         """Update tracker credentials and persist to disk."""
@@ -438,19 +473,14 @@ class SettingsManager:
             trk = "mal"
         current = self._settings.setdefault("credentials", self._detect_default_credentials()).setdefault(trk, {})
 
-        if data.get("clear_client_id"):
-            current["client_id"] = ""
-        elif "client_id" in data and data["client_id"] is not None:
-            cid = str(data["client_id"]).strip()
-            if not self._is_masked(cid):
-                current["client_id"] = cid
-
-        if data.get("clear_client_secret"):
-            current["client_secret"] = ""
-        elif "client_secret" in data and data["client_secret"] is not None:
-            sec = str(data["client_secret"]).strip()
-            if not self._is_masked(sec):
-                current["client_secret"] = sec
+        for k, v in data.items():
+            if k.startswith("clear_"):
+                target_field = k[len("clear_"):]
+                current[target_field] = ""
+            elif v is not None:
+                val = str(v).strip()
+                if not self._is_masked(val):
+                    current[k] = val
 
         self._save_settings()
         logger.info(f"Updated tracker credentials for '{trk}'")
@@ -589,7 +619,7 @@ class SettingsManager:
             "trackers": dict(self._settings["trackers"]),
             "credentials": {
                 t: self.get_tracker_credentials(t, mask=mask_token)
-                for t in ("simkl", "anilist", "mal", "trakt")
+                for t in ("trakt", "simkl", "tmdb", "anilist", "mal", "kitsu", "letterboxd", "serializd", "mdblist")
             },
             "reconciliation": self.get_reconciliation_settings(mask_token=mask_token),
             "arr": self.get_arr_settings(mask=mask_token),

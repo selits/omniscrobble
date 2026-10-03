@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.clients.anilist_client import AniListClient
+from app.clients.kitsu_client import KitsuClient
 from app.clients.mal_client import MyAnimeListClient
 from app.config import Config
 from app.plex_parser import ParsedMedia
@@ -22,18 +23,20 @@ logger = logging.getLogger("omniscrobble.anime_resolver")
 
 
 class AnimeResolver:
-    """Detects anime and resolves AniList and MyAnimeList identifiers."""
+    """Detects anime and resolves AniList, MyAnimeList, and Kitsu identifiers."""
 
     def __init__(
         self,
         config: type[Config] = Config,
         anilist_client: Optional[AniListClient] = None,
         mal_client: Optional[MyAnimeListClient] = None,
+        kitsu_client: Optional[KitsuClient] = None,
         cache_file: Optional[Path] = None,
     ) -> None:
         self.config = config
         self.anilist = anilist_client or AniListClient(config=config)
         self.mal = mal_client or MyAnimeListClient(config=config)
+        self.kitsu = kitsu_client or KitsuClient(config=config)
         self.cache_file = cache_file or config.ANIME_CACHE_FILE
         self._cache: dict[str, Any] = {}
         self.load_cache()
@@ -111,6 +114,7 @@ class AnimeResolver:
                 "title": entry.get("title", clean_t),
                 "anilist_id": entry.get("anilist_id"),
                 "mal_id": entry.get("mal_id"),
+                "kitsu_id": entry.get("kitsu_id"),
                 "format": entry.get("format"),
                 "episodes": entry.get("episodes"),
                 "episode_number": media.episode or 1,
@@ -120,6 +124,7 @@ class AnimeResolver:
         # 2. Check direct IDs present on media object
         anilist_id = media.ids.get("anilist")
         mal_id = media.ids.get("mal")
+        kitsu_id = media.ids.get("kitsu")
 
         if anilist_id:
             # We already have the AniList ID directly
@@ -129,6 +134,7 @@ class AnimeResolver:
                 "title": (media_info.get("title_preferred") if media_info else clean_t),
                 "anilist_id": int(anilist_id),
                 "mal_id": (media_info.get("idMal") if media_info else mal_id),
+                "kitsu_id": int(kitsu_id) if kitsu_id else None,
                 "format": media_info.get("format") if media_info else None,
                 "episodes": media_info.get("episodes") if media_info else None,
                 "episode_number": media.episode or 1,
@@ -138,6 +144,7 @@ class AnimeResolver:
                 "is_anime": True,
                 "anilist_id": resolved["anilist_id"],
                 "mal_id": resolved["mal_id"],
+                "kitsu_id": resolved["kitsu_id"],
                 "title": resolved["title"],
                 "format": resolved["format"],
                 "episodes": resolved["episodes"],
@@ -154,6 +161,7 @@ class AnimeResolver:
                     "title": search_res.get("title_preferred") or clean_t,
                     "anilist_id": search_res.get("id"),
                     "mal_id": search_res.get("idMal") or mal_id,
+                    "kitsu_id": int(kitsu_id) if kitsu_id else None,
                     "format": search_res.get("format"),
                     "episodes": search_res.get("episodes"),
                     "episode_number": media.episode or 1,
@@ -163,16 +171,18 @@ class AnimeResolver:
                     "is_anime": True,
                     "anilist_id": resolved["anilist_id"],
                     "mal_id": resolved["mal_id"],
+                    "kitsu_id": resolved["kitsu_id"],
                     "title": resolved["title"],
                     "format": resolved["format"],
                     "episodes": resolved["episodes"],
                 }
                 self.save_cache()
                 logger.info(
-                    "Anime resolved: '%s' -> AniList ID: %s, MAL ID: %s",
+                    "Anime resolved: '%s' -> AniList ID: %s, MAL ID: %s, Kitsu ID: %s",
                     clean_t,
                     resolved["anilist_id"],
                     resolved["mal_id"],
+                    resolved["kitsu_id"],
                 )
                 return resolved
 

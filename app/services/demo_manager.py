@@ -612,5 +612,215 @@ class DemoManager:
             "id": 1492084,
         }
 
+    def get_demo_tmdb_status(self) -> dict[str, Any]:
+        """Return simulated TMDb connectivity status for demo previews."""
+        return {
+            "configured": True,
+            "enabled": True,
+            "authenticated": True,
+            "status": "connected",
+            "user": "demo_cinephile",
+            "account_id": 9876543,
+            "avatar": "https://secure.gravatar.com/avatar/demo.jpg",
+        }
+
+    def get_demo_kitsu_status(self) -> dict[str, Any]:
+        """Return simulated Kitsu connectivity status for demo previews."""
+        return {
+            "configured": True,
+            "enabled": True,
+            "authenticated": True,
+            "status": "connected",
+            "user": "demo_otaku",
+            "user_id": "129841",
+            "avatar": "https://media.kitsu.io/users/avatars/129841/large.jpeg",
+        }
+
+    def get_demo_letterboxd_status(self) -> dict[str, Any]:
+        """Return simulated Letterboxd diary status for demo previews."""
+        return {
+            "configured": True,
+            "enabled": True,
+            "authenticated": True,
+            "status": "connected",
+            "user": "demo_critic",
+            "diary_count": 48,
+            "last_export": "2026-10-02T18:00:00Z",
+        }
+
+    def get_demo_serializd_status(self) -> dict[str, Any]:
+        """Return simulated Serializd status for demo previews."""
+        return {
+            "configured": True,
+            "enabled": True,
+            "authenticated": True,
+            "status": "connected",
+            "user": "demo_binger",
+            "logged_episodes": 312,
+        }
+
+    def get_demo_mdblist_status(self) -> dict[str, Any]:
+        """Return simulated MDBList status for demo previews."""
+        return {
+            "configured": True,
+            "enabled": True,
+            "authenticated": True,
+            "status": "connected",
+            "user": "demo_collector",
+            "api_tier": "Supporter",
+        }
+
+    def get_demo_trackers_status(self) -> dict[str, Any]:
+        """Return complete simulated multi-tracker diagnostics across all 4 categories."""
+        trackers = {
+            "trakt": {
+                "id": "trakt",
+                "name": "Trakt.tv",
+                "category": "universal",
+                "media_types": ["movie", "episode", "show"],
+                "supports_realtime_scrobble": True,
+                "supports_ratings": True,
+                "supports_watchlist": True,
+                "badge_color": "#ed1c24",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_viewer",
+            },
+            "simkl": {
+                "id": "simkl",
+                "name": "Simkl",
+                "category": "universal",
+                "media_types": ["movie", "episode", "show"],
+                "supports_realtime_scrobble": True,
+                "supports_ratings": True,
+                "supports_watchlist": True,
+                "badge_color": "#00aaff",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_viewer",
+            },
+            "tmdb": {
+                "id": "tmdb",
+                "name": "TMDb",
+                "category": "universal",
+                "media_types": ["movie", "episode", "show"],
+                "supports_realtime_scrobble": False,
+                "supports_ratings": True,
+                "supports_watchlist": True,
+                "badge_color": "#01d277",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_cinephile",
+            },
+            "anilist": {
+                "id": "anilist",
+                "name": "AniList",
+                "category": "anime",
+                "media_types": ["episode", "movie", "show"],
+                "supports_realtime_scrobble": False,
+                "supports_ratings": True,
+                "supports_watchlist": False,
+                "badge_color": "#02a9ff",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_otaku",
+            },
+            "myanimelist": {
+                "id": "myanimelist",
+                "name": "MyAnimeList",
+                "category": "anime",
+                "media_types": ["episode", "movie", "show"],
+                "supports_realtime_scrobble": False,
+                "supports_ratings": True,
+                "supports_watchlist": False,
+                "badge_color": "#2e51a2",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_otaku",
+            },
+            "kitsu": {
+                "id": "kitsu",
+                "name": "Kitsu",
+                "category": "anime",
+                "media_types": ["episode", "movie", "show"],
+                "supports_realtime_scrobble": False,
+                "supports_ratings": True,
+                "supports_watchlist": False,
+                "badge_color": "#fd755c",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_otaku",
+            },
+            "letterboxd": {
+                "id": "letterboxd",
+                "name": "Letterboxd",
+                "category": "social_diary",
+                "media_types": ["movie"],
+                "supports_realtime_scrobble": False,
+                "supports_ratings": True,
+                "supports_watchlist": False,
+                "badge_color": "#00e054",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_critic",
+            },
+            "serializd": {
+                "id": "serializd",
+                "name": "Serializd",
+                "category": "social_diary",
+                "media_types": ["episode", "show"],
+                "supports_realtime_scrobble": False,
+                "supports_ratings": True,
+                "supports_watchlist": False,
+                "badge_color": "#ffbe1a",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_binger",
+            },
+            "mdblist": {
+                "id": "mdblist",
+                "name": "MDBList",
+                "category": "lists_ratings",
+                "media_types": ["movie", "episode", "show"],
+                "supports_realtime_scrobble": False,
+                "supports_ratings": True,
+                "supports_watchlist": True,
+                "badge_color": "#8b5cf6",
+                "configured": True,
+                "authenticated": True,
+                "enabled": True,
+                "status": "connected",
+                "user": "demo_collector",
+            },
+        }
+        return {
+            "categories": {
+                "universal": ["trakt", "simkl", "tmdb"],
+                "anime": ["anilist", "myanimelist", "kitsu"],
+                "social_diary": ["letterboxd", "serializd"],
+                "lists_ratings": ["mdblist"],
+            },
+            "active_trackers": list(trackers.keys()),
+            "trackers": trackers,
+            **trackers,
+        }
+
 
 demo_mgr = DemoManager()
+
