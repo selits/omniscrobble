@@ -277,7 +277,7 @@ RADARR_ROOT_FOLDER=
      ```
    - **Permissions**: Check `/scrobble` and `/checkin`.
 4. Click **Save Application**.
-5. Copy the displayed **Client ID** and **Client Secret** into your `.env`:
+5. Copy the displayed **Client ID** and **Client Secret** into your `.env` (or configure them directly in **Settings Hub ⚙️ &rarr; Trackers**):
    ```ini
    TRAKT_CLIENT_ID=your_client_id_here
    TRAKT_CLIENT_SECRET=your_client_secret_here
@@ -299,7 +299,11 @@ RADARR_ROOT_FOLDER=
    SIMKL_CLIENT_ID=your_simkl_client_id_here
    SIMKL_CLIENT_SECRET=your_simkl_client_secret_here
    ```
-5. Authorize Simkl in Omniscrobble by opening `http://<your-server-ip>:8080/auth/simkl` and entering the generated PIN code on Simkl's activation page.
+
+> [!TIP]
+> **Client Secret Requirement**: If your Simkl application was created under **Server apps & services**, Simkl OAuth 2.0 strictly requires `SIMKL_CLIENT_SECRET` for token polling. You can enter both your Client ID and Client Secret in `.env` or in the web dashboard via **Settings Hub ⚙️ &rarr; Trackers**.
+
+5. Authorize Simkl in Omniscrobble by opening `http://<your-server-ip>:8080/auth/simkl` (or clicking **Link Simkl** in the dashboard) and entering the generated PIN code on Simkl's activation page.
 
 ---
 
@@ -460,8 +464,8 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`MOVIE_SCROBBLE_THRESHOLD`** | `90.0` | Float (0–100) | **Yes** | Completion percentage required to scrobble Movies (prevents premature scrobbling). |
 | **`MAX_EVENT_HISTORY`** | `100` | Integer | **Yes** | Maximum scrobble events retained in memory and persisted to `data/events.json`. |
 | **`SYNC_COLLECTION`** | `true` | Boolean | **Yes** | Automatically adds newly downloaded items (`library.new`) to Trakt collection. |
-| **`TRAKT_CLIENT_ID`** | `""` | String | No | Trakt API OAuth Application Client ID. |
-| **`TRAKT_CLIENT_SECRET`** | `""` | String | No | Trakt API OAuth Application Client Secret. |
+| **`TRAKT_CLIENT_ID`** | `""` | String | **Yes** | Trakt API OAuth Application Client ID. Configurable live in Settings Hub. |
+| **`TRAKT_CLIENT_SECRET`** | `""` | String | **Yes** | Trakt API OAuth Application Client Secret. Configurable live in Settings Hub. |
 | **`PLEX_URL`** | `""` | String | **Yes** | Direct connection URL to Plex Media Server for two-way sync. |
 | **`PLEX_TOKEN`** | `""` | String | **Yes** | Personal `X-Plex-Token` for Plex Media Server. |
 | **`JELLYFIN_URL`** | `""` | String | **Yes** | Direct connection URL to Jellyfin Media Server. |
@@ -481,15 +485,15 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`SEARCH_ON_ADD`** | `true` | Boolean | **Yes** | Trigger immediate download searches in Sonarr/Radarr when importing. |
 | **`ARR_WATCHLIST_INTERVAL`** | `0` | Integer | **Yes** | Watchlist sync polling frequency in seconds (`0` = manual, `1800` = 30m). |
 | **`SIMKL_ENABLED`** | `false` | Boolean | **Yes** | Enables secondary scrobbling and sync to Simkl. |
-| **`SIMKL_CLIENT_ID`** | `""` | String | No | Simkl OAuth developer application Client ID. |
-| **`SIMKL_CLIENT_SECRET`** | `""` | String | No | Simkl OAuth developer application Client Secret. |
+| **`SIMKL_CLIENT_ID`** | `""` | String | **Yes** | Simkl OAuth developer application Client ID. Configurable live in Settings Hub. |
+| **`SIMKL_CLIENT_SECRET`** | `""` | String | **Yes** | Simkl OAuth developer application Client Secret. Configurable live in Settings Hub. |
 | **`ANIME_AUTO_DETECT`** | `true` | Boolean | **Yes** | Detects anime titles and activates GraphQL AniList ID resolution. |
 | **`ANILIST_ENABLED`** | `false` | Boolean | **Yes** | Enables dispatch to AniList. |
-| **`ANILIST_CLIENT_ID`** | `""` | String | No | AniList API Client ID. |
-| **`ANILIST_CLIENT_SECRET`** | `""` | String | No | AniList API Client Secret. |
+| **`ANILIST_CLIENT_ID`** | `""` | String | **Yes** | AniList API Client ID. Configurable live in Settings Hub. |
+| **`ANILIST_CLIENT_SECRET`** | `""` | String | **Yes** | AniList API Client Secret. Configurable live in Settings Hub. |
 | **`MAL_ENABLED`** | `false` | Boolean | **Yes** | Enables dispatch to MyAnimeList. |
-| **`MAL_CLIENT_ID`** | `""` | String | No | MyAnimeList API Client ID. |
-| **`MAL_CLIENT_SECRET`** | `""` | String | No | MyAnimeList API Client Secret. |
+| **`MAL_CLIENT_ID`** | `""` | String | **Yes** | MyAnimeList API Client ID. Configurable live in Settings Hub. |
+| **`MAL_CLIENT_SECRET`** | `""` | String | **Yes** | MyAnimeList API Client Secret. Configurable live in Settings Hub. |
 | **`CO_WATCH_USER`** | `""` | String | **Yes** | Target partner Trakt username for dual-syncing watched media. |
 | **`CO_WATCH_SHOWS`** | `""` | String (CSV) | **Yes** | Whitelist of TV show titles eligible for dual-sync. |
 | **`CO_WATCH_PLAYERS`** | `""` | String (CSV) | **Yes** | Whitelist of player/device names eligible for dual-sync. |

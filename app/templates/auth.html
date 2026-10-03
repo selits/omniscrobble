@@ -59,7 +59,7 @@
                 const url = targetUser ? ('/api/auth/start?user=' + encodeURIComponent(targetUser)) : '/api/auth/start';
                 const res = await fetch(url, { method: 'POST' });
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok || data.error || !data.user_code) throw new Error(data.detail || data.error || 'Failed to generate device code from Trakt. Check client credentials in .env.');
+                if (!res.ok || data.error || !data.user_code) throw new Error(data.detail || data.error || 'Failed to generate device code from Trakt. Check client credentials in Settings Hub or .env.');
                 document.getElementById('code-display').textContent = data.user_code;
                 document.getElementById('activate-link').href = data.verification_url || 'https://trakt.tv/activate';
                 document.getElementById('loading-view').style.display = 'none';
@@ -80,14 +80,24 @@
                             setTimeout(() => { window.location.href = '/'; }, 1500);
                         } else if (pollData.status === 'error') {
                             clearInterval(pollInterval);
-                            document.getElementById('status-text').innerHTML = '<span style="color:#ef4444;">Error: ' + pollData.message + '</span>';
+                            document.getElementById('status-text').innerHTML = `
+                                <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+                                    <span style="color:#ef4444;line-height:1.4;">${pollData.message || 'Authorization failed.'}</span>
+                                    <button onclick="location.reload()" style="background:#334155;color:#f8fafc;padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:600;">Try Again</button>
+                                </div>
+                            `;
                         }
                     } catch (e) {
                         console.error('Polling error', e);
                     }
                 }, intervalMs);
             } catch (err) {
-                document.getElementById('loading-view').innerHTML = '<span style="color:#ef4444;">' + err.message + '</span>';
+                document.getElementById('loading-view').innerHTML = `
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+                        <span style="color:#ef4444;line-height:1.4;">${err.message}</span>
+                        <button onclick="location.reload()" style="background:#334155;color:#f8fafc;padding:6px 14px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:600;">Try Again</button>
+                    </div>
+                `;
             }
         }
         window.onload = initAuth;

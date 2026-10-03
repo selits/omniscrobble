@@ -5553,6 +5553,10 @@ async def test_simkl_client_auth_v2_device_flow(tmp_path):
             if "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code" in body:
                 if "pending" in body:
                     return httpx.Response(400, json={"error": "authorization_pending"})
+                if "unauth_test" in body:
+                    return httpx.Response(401, json={"error": "invalid_client", "error_description": "Missing client_secret"})
+                if "with_secret" in body:
+                    assert "client_secret=my_secret_123" in body
                 return httpx.Response(
                     200,
                     json={
@@ -5564,6 +5568,8 @@ async def test_simkl_client_auth_v2_device_flow(tmp_path):
                     },
                 )
             elif "grant_type=refresh_token" in body:
+                if "client_secret" in body:
+                    assert "client_secret=my_secret_123" in body
                 return httpx.Response(
                     200,
                     json={
@@ -5580,29 +5586,40 @@ async def test_simkl_client_auth_v2_device_flow(tmp_path):
     transport = httpx.MockTransport(mock_v2_handler)
     mock_http = httpx.AsyncClient(transport=transport)
 
-    client = SimklClient(client_id="test_v2_client_id", tokens_file=tokens_file, client=mock_http)
+    client = SimklClient(client_id="test_v2_client_id", client_secret="my_secret_123", tokens_file=tokens_file, client=mock_http)
+    assert client.effective_client_secret == "my_secret_123"
+
     pin_data = await client.get_device_pin()
     assert pin_data["auth_version"] == "v2"
     assert pin_data["device_code"] == "v2_device_xyz"
     assert pin_data["user_code"] == "WXYZ-1234"
     assert "https://simkl.com/pin?user_code=WXYZ-1234" in pin_data["verification_url"]
 
+    # Poll 401 without secret guidance test
+    client_no_secret = SimklClient(client_id="test_v2_client_id", tokens_file=tmp_path / "nosec.json", client=mock_http)
+    assert client_no_secret.effective_client_secret == ""
+    err_401_data = await client_no_secret.poll_device_pin("WXYZ-1234", device_code="unauth_test")
+    assert err_401_data["status"] == "error"
+    assert "Server apps & services" in err_401_data["error"]
+    assert "Client Secret" in err_401_data["error"]
+
     # Poll pending
     pending_data = await client.poll_device_pin("WXYZ-1234", device_code="v2_device_xyz_pending")
     assert pending_data["status"] == "pending"
 
-    # Poll success
-    success_data = await client.poll_device_pin("WXYZ-1234", device_code="v2_device_xyz")
+    # Poll success with client_secret passed
+    success_data = await client.poll_device_pin("WXYZ-1234", device_code="with_secret")
     assert success_data["status"] == "success"
     assert client.access_token == "v2_access_token_123"
     assert client.refresh_token == "v2_refresh_token_456"
     assert client.user_name == "simkl_user_test"
 
-    # Refresh token
+    # Refresh token with client_secret passed
     refreshed = await client.refresh_access_token()
     assert refreshed is True
     assert client.access_token == "v2_access_token_refreshed"
     await client.close()
+    await client_no_secret.close()
 
 
 def test_dashboard_renders_simkl_card():
@@ -7529,6 +7546,151 @@ def test_notifier_dynamic_settings_resolution():
 
     # Cleanup
     settings_mgr.update_notifications({"notify_on_rate": True, "ntfy_auth_token": ""})
+
+
+@pytest.mark.asyncio
+async def test_trakt_dynamic_credentials_and_token_management(tmp_path):
+    """Verify TraktClient dynamic credential resolution, update_credentials, is_enabled, and delete_tokens."""
+    from app.clients.trakt_client import TraktClient
+    from app.services.settings_manager import settings_mgr
+
+    tokens_file = tmp_path / "trakt_tokens.json"
+    tokens_file.write_text(json.dumps({"access_token": "valid_token", "refresh_token": "refr_123"}))
+
+    client = TraktClient(config=Config, tokens_file=tokens_file)
+    assert client.is_authenticated() is True
+
+    # Update in settings_mgr
+    settings_mgr.update_tracker_credentials("trakt", {"client_id": "dynamic_trakt_id", "client_secret": "dynamic_trakt_secret"})
+    client.update_credentials("dynamic_trakt_id", "dynamic_trakt_secret")
+    assert client.effective_client_id == "dynamic_trakt_id"
+    assert client.effective_client_secret == "dynamic_trakt_secret"
+
+    # Enabled status check
+    settings_mgr.set_tracker_enabled("trakt", False)
+    assert client.is_enabled() is False
+    settings_mgr.set_tracker_enabled("trakt", True)
+    assert client.is_enabled() is True
+
+    # delete_tokens
+    client.delete_tokens()
+    assert client.is_authenticated() is False
+    assert not tokens_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_trakt_poll_for_token_client_credentials_and_errors(tmp_path):
+    """Verify TraktClient.poll_for_token forwards client_secret and raises friendly error on 401."""
+    from app.clients.trakt_client import TraktClient
+
+    tokens_file = tmp_path / "trakt_tokens.json"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        data = json.loads(request.content.decode("utf-8"))
+        assert data.get("client_id") == "test_cid"
+        assert data.get("client_secret") == "test_csec"
+        assert data.get("code") == "dev_123"
+        return httpx.Response(401, json={"error": "invalid_client", "error_description": "Bad client credentials"})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    trakt = TraktClient(config=Config, tokens_file=tokens_file, client=mock_client, client_id="test_cid", client_secret="test_csec")
+
+    with pytest.raises(PermissionError) as exc_info:
+        await trakt.poll_for_token("dev_123")
+    assert "Invalid client credentials (401)" in str(exc_info.value)
+    assert "Settings Hub" in str(exc_info.value)
+
+
+def test_trakt_api_status_and_disconnect_endpoints(tmp_path):
+    """Verify /api/trakt/status and /api/trakt/disconnect API endpoints."""
+    from starlette.testclient import TestClient
+    from app.main import app, user_mgr, trakt
+
+    client = TestClient(app)
+
+    # 1. Demo mode status
+    resp = client.get("/api/trakt/status?demo=true")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["enabled"] is True
+    assert data["configured"] is True
+    assert data["authenticated"] is True
+    assert data["user"] == "demo_viewer"
+
+    # 2. Live status
+    resp = client.get("/api/trakt/status")
+    assert resp.status_code == 200
+    live_data = resp.json()
+    assert "enabled" in live_data
+    assert "configured" in live_data
+    assert "authenticated" in live_data
+
+    # 3. Disconnect requires admin (or open mode if WEBHOOK_SECRET is empty)
+    with patch.object(Config, "WEBHOOK_SECRET", "supersecret"):
+        unauth = client.post("/api/trakt/disconnect")
+        assert unauth.status_code == 401
+
+        auth = client.post("/api/trakt/disconnect", headers={"x-webhook-secret": "supersecret"})
+        assert auth.status_code == 200
+        assert auth.json()["status"] == "ok"
+
+
+def test_settings_hub_trakt_credential_sync_and_tracker_statuses():
+    """Verify PUT /api/settings syncs Trakt credentials to both trakt and user_mgr dynamically."""
+    from starlette.testclient import TestClient
+    from app.main import app, trakt, user_mgr, anilist, mal
+    from app.services.settings_manager import settings_mgr
+
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "adminkey"):
+        payload = {
+            "credentials": {
+                "trakt": {
+                    "client_id": "synced_trakt_id",
+                    "client_secret": "synced_trakt_secret",
+                },
+                "simkl": {
+                    "client_id": "synced_simkl_id",
+                    "client_secret": "synced_simkl_secret",
+                },
+                "mal": {
+                    "client_id": "synced_mal_id",
+                    "client_secret": "synced_mal_secret",
+                },
+            }
+        }
+        res = client.put("/api/settings", json=payload, headers={"x-webhook-secret": "adminkey"})
+        assert res.status_code == 200
+
+        # Verify trakt and user_mgr dynamically updated
+        assert trakt.client_id == "synced_trakt_id"
+        assert trakt.client_secret == "synced_trakt_secret"
+        default_client = user_mgr.get_client("default")
+        assert default_client.client_id == "synced_trakt_id"
+        assert default_client.client_secret == "synced_trakt_secret"
+
+        # Verify /api/anilist/status and /api/mal/status respect dynamic is_enabled
+        settings_mgr.set_tracker_enabled("anilist", False)
+        ani_res = client.get("/api/anilist/status")
+        assert ani_res.status_code == 200
+        assert ani_res.json()["enabled"] is False
+
+        settings_mgr.set_tracker_enabled("anilist", True)
+        ani_res2 = client.get("/api/anilist/status")
+        assert ani_res2.status_code == 200
+        assert ani_res2.json()["enabled"] is True
+
+        settings_mgr.set_tracker_enabled("mal", False)
+        mal_res = client.get("/api/mal/status")
+        assert mal_res.status_code == 200
+        assert mal_res.json()["enabled"] is False
+
+        settings_mgr.set_tracker_enabled("mal", True)
+        mal_res2 = client.get("/api/mal/status")
+        assert mal_res2.status_code == 200
+        assert mal_res2.json()["enabled"] is True
+
 
 
 

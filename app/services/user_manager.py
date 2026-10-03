@@ -30,6 +30,11 @@ class UserClientManager:
         """Register the primary default TraktClient instance."""
         self._clients["default"] = client
 
+    def update_credentials(self, client_id: Optional[str] = None, client_secret: Optional[str] = None) -> None:
+        """Update client credentials across all registered user clients."""
+        for client in self._clients.values():
+            client.update_credentials(client_id=client_id, client_secret=client_secret)
+
     def _clean_username(self, username: Optional[str]) -> str:
         if not username:
             return "default"

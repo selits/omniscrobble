@@ -11,6 +11,7 @@ This guide covers solutions to common webhook errors, diagnostic procedures, Doc
    - [Trakt 409 Conflict / "Already scrobbled"](#trakt-409-conflict-already-scrobbled)
    - [Progress is XX%. Use stop to scrobble](#progress-is-xx-use-stop-to-scrobble)
    - [Trakt 401 Unauthorized](#trakt-401-unauthorized)
+   - [Simkl 401 Unauthorized / "Invalid client"](#simkl-401-unauthorized--invalid-client)
    - [Trakt 429 Rate Limit Exceeded](#trakt-429-rate-limit-exceeded)
 2. [Service Diagnostics & Health Checks](#2-service-diagnostics-health-checks)
 3. [Docker Inter-Container Networking](#3-docker-inter-container-networking)
@@ -87,6 +88,23 @@ The Trakt OAuth access token has expired or was revoked.
    ```bash
    .venv/bin/python auth.py
    ```
+
+---
+
+### Simkl 401 Unauthorized / "Invalid client"
+
+**Symptom:**  
+Device PIN polling fails with:  
+`Authorization Error: Invalid client credentials. If your Simkl app was registered as 'Server apps & services', please configure your Client Secret in Settings Hub.`
+
+**Cause:**  
+Simkl OAuth 2.0 developer applications registered under the **Server apps & services** category strictly enforce `client_secret` verification when exchanging device authorization codes (`POST /oauth2/token`).
+
+**Resolution:**  
+1. Open the [Simkl Developer Applications](https://simkl.com/settings/developer/) dashboard and copy your application's **Client Secret**.
+2. Open Omniscrobble's web dashboard and navigate to **Settings Hub ⚙️ &rarr; Trackers &rarr; Simkl**.
+3. Paste the secret into the **`SIMKL_CLIENT_SECRET`** field.
+4. Click **Save & Link Simkl (PIN Flow)** to immediately authorize. Alternatively, define `SIMKL_CLIENT_SECRET=your_client_secret_here` in `.env`.
 
 ---
 

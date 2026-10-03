@@ -67,6 +67,16 @@ class SimklClient:
         except Exception:
             return getattr(self.config, "SIMKL_CLIENT_ID", "")
 
+    @property
+    def effective_client_secret(self) -> str:
+        if self.client_secret:
+            return self.client_secret
+        try:
+            from app.services.settings_manager import settings_mgr
+            return settings_mgr.get_tracker_credentials("simkl", mask=False).get("client_secret", "")
+        except Exception:
+            return getattr(self.config, "SIMKL_CLIENT_SECRET", "")
+
     def load_tokens(self) -> None:
         """Load stored access token, refresh token, and user info from disk."""
         if not self.tokens_file.exists():
@@ -247,6 +257,9 @@ class SimklClient:
                 "client_id": cid,
                 "device_code": device_code,
             }
+            c_secret = self.effective_client_secret
+            if c_secret:
+                data["client_secret"] = c_secret
             try:
                 resp = await self._client.post(
                     token_url,
@@ -295,7 +308,14 @@ class SimklClient:
                         err_json = resp.json()
                     except Exception:
                         err_json = {}
-                    return {"status": "error", "error": "Invalid client", "detail": err_json.get("error_description", resp.text)}
+                    desc = err_json.get("error_description") or err_json.get("message") or ""
+                    if not self.effective_client_secret:
+                        err_msg = "Invalid client credentials. If your Simkl app was registered as 'Server apps & services', please configure your Client Secret in Settings Hub."
+                    else:
+                        err_msg = "Invalid client credentials. Please check your Simkl Client ID and Client Secret in Settings Hub."
+                    if desc and desc not in err_msg:
+                        err_msg += f" ({desc})"
+                    return {"status": "error", "error": err_msg, "detail": desc or resp.text}
                 return {"status": "error", "error": f"HTTP {resp.status_code}", "detail": resp.text}
             except httpx.RequestError as e:
                 return {"status": "error", "error": "Network error", "detail": str(e)}
@@ -357,6 +377,9 @@ class SimklClient:
             "client_id": cid,
             "refresh_token": self.refresh_token,
         }
+        c_secret = self.effective_client_secret
+        if c_secret:
+            data["client_secret"] = c_secret
         try:
             resp = await self._client.post(
                 token_url,
