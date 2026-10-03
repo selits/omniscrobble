@@ -1048,7 +1048,10 @@
                                 </div>
                                 <span id="settings-notif-ntfy-badge" style="font-size:11px;color:#94a3b8;">Not Configured</span>
                             </div>
-                            <input type="text" id="settings-notif-ntfy-url" placeholder="https://ntfy.sh/your-topic" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                <input type="text" id="settings-notif-ntfy-url" placeholder="https://ntfy.sh/your-topic" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                                <input type="password" id="settings-notif-ntfy-auth" placeholder="Auth Token (Optional)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                            </div>
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;gap:6px;flex-wrap:wrap;">
                                 <button type="button" onclick="testNotificationChannel('ntfy')" id="settings-notif-ntfy-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #10b981;color:#34d399;font-size:11px;padding:4px 10px;">🔔 Test Ntfy</button>
                                 <span id="settings-notif-ntfy-status" style="font-size:11px;color:#94a3b8;"></span>
@@ -2350,8 +2353,10 @@
                 }
 
                 const ntfyUrl = document.getElementById('settings-notif-ntfy-url');
+                const ntfyAuth = document.getElementById('settings-notif-ntfy-auth');
                 const ntfyBadge = document.getElementById('settings-notif-ntfy-badge');
                 if (ntfyUrl) ntfyUrl.value = notifs.ntfy_url || '';
+                if (ntfyAuth) ntfyAuth.value = notifs.ntfy_auth_token || '';
                 if (ntfyBadge) {
                     const hasNtfy = Boolean(notifs.ntfy_url);
                     ntfyBadge.textContent = hasNtfy ? '✓ Configured' : 'Not Configured';
@@ -2430,6 +2435,7 @@
                         telegram_bot_token: document.getElementById('settings-notif-telegram-token')?.value.trim() || '',
                         telegram_chat_id: document.getElementById('settings-notif-telegram-chat')?.value.trim() || '',
                         ntfy_url: document.getElementById('settings-notif-ntfy-url')?.value.trim() || '',
+                        ntfy_auth_token: document.getElementById('settings-notif-ntfy-auth')?.value.trim() || '',
                         pushover_user_key: document.getElementById('settings-notif-pushover-user')?.value.trim() || '',
                         pushover_api_token: document.getElementById('settings-notif-pushover-token')?.value.trim() || '',
                         notify_on_scrobble: Boolean(document.getElementById('settings-notif-scrobble-check')?.checked),
@@ -2607,6 +2613,7 @@
                     body.telegram_chat_id = document.getElementById('settings-notif-telegram-chat')?.value.trim() || '';
                 } else if (ch === 'ntfy') {
                     body.ntfy_url = document.getElementById('settings-notif-ntfy-url')?.value.trim() || '';
+                    body.ntfy_auth_token = document.getElementById('settings-notif-ntfy-auth')?.value.trim() || '';
                 } else if (ch === 'pushover') {
                     body.pushover_user_key = document.getElementById('settings-notif-pushover-user')?.value.trim() || '';
                     body.pushover_api_token = document.getElementById('settings-notif-pushover-token')?.value.trim() || '';
@@ -4764,8 +4771,10 @@ SIMKL_ENABLED=true</pre>
                     openUnlockModal();
                     return;
                 }
-                if (!res.ok) throw new Error('Failed to obtain Simkl PIN');
-                const data = await res.json();
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.error || !data.user_code) {
+                    throw new Error(data.detail || data.error || 'Simkl Client ID is not configured. Please add your credentials in Settings Hub or .env.');
+                }
                 const userCode = data.user_code;
                 const verifyUrl = data.verification_url || `https://simkl.com/pin?code=${encodeURIComponent(userCode)}`;
 

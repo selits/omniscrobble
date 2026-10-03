@@ -2315,7 +2315,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v2.4.1" in html
+    assert "v2.5.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -5501,6 +5501,22 @@ def test_simkl_api_endpoints_and_views():
         assert auth_disc.status_code == 200
         assert auth_disc.json()["status"] == "ok"
 
+    # 5. Simkl PIN endpoint
+    from app.main import simkl
+    with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
+        unauth_pin = client.post("/api/simkl/pin")
+        assert unauth_pin.status_code == 401
+
+        with patch.object(simkl, "get_device_pin", return_value={"error": "SIMKL_CLIENT_ID not configured"}):
+            err_pin = client.post("/api/simkl/pin?token=testsecret")
+            assert err_pin.status_code == 400
+            assert "SIMKL_CLIENT_ID not configured" in err_pin.json()["detail"]
+
+        with patch.object(simkl, "get_device_pin", return_value={"user_code": "ABCD-1234", "verification_url": "https://simkl.com/pin?code=ABCD-1234"}):
+            ok_pin = client.post("/api/simkl/pin?token=testsecret")
+            assert ok_pin.status_code == 200
+            assert ok_pin.json()["user_code"] == "ABCD-1234"
+
 
 def test_dashboard_renders_simkl_card():
     """Verify that the dashboard template renders the Simkl Multi-Tracker card and modal."""
@@ -7177,6 +7193,7 @@ def test_settings_api_notifications():
         assert "notifications" in data
         notifs = data["notifications"]
         assert "discord_webhook_url" in notifs
+        assert "ntfy_auth_token" in notifs
         assert "notify_on_scrobble" in notifs
         assert "notify_on_rate" in notifs
         assert "notify_on_collection" in notifs
@@ -7189,6 +7206,7 @@ def test_settings_api_notifications():
                 "telegram_bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
                 "telegram_chat_id": "-100987654321",
                 "ntfy_url": "https://ntfy.sh/my-secret-test-topic",
+                "ntfy_auth_token": "secret_ntfy_tk_9999",
                 "pushover_user_key": "user_key_9999",
                 "pushover_api_token": "app_token_8888",
                 "notify_on_scrobble": False,
@@ -7204,6 +7222,7 @@ def test_settings_api_notifications():
         # Sensitive values should be masked in API responses
         assert "••••" in saved["discord_webhook_url"]
         assert "••••" in saved["telegram_bot_token"]
+        assert "••••" in saved["ntfy_auth_token"]
         assert "••••" in saved["pushover_user_key"]
         assert "••••" in saved["pushover_api_token"]
         assert saved["telegram_chat_id"] == "-100987654321"
@@ -7215,6 +7234,7 @@ def test_settings_api_notifications():
         raw = settings_mgr.get_notifications(mask=False)
         assert raw["discord_webhook_url"] == "https://discord.com/api/webhooks/12345/secret_token"
         assert raw["telegram_bot_token"] == "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+        assert raw["ntfy_auth_token"] == "secret_ntfy_tk_9999"
 
         # Submitting masked value should preserve existing secret
         res_masked = client.post(
@@ -7231,6 +7251,7 @@ def test_settings_api_notifications():
             "telegram_bot_token": "",
             "telegram_chat_id": "",
             "ntfy_url": "",
+            "ntfy_auth_token": "",
             "pushover_user_key": "",
             "pushover_api_token": "",
         })
@@ -7325,7 +7346,7 @@ async def test_notifications_test_endpoint_channels():
             assert res_tg.status_code == 200
             assert res_tg.json()["status"] == "success"
 
-        # 3. Ntfy success
+        # 3. Ntfy success (without auth and with auth token)
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, text="ok")
             res_ntfy = client.post(
@@ -7335,6 +7356,18 @@ async def test_notifications_test_endpoint_channels():
             )
             assert res_ntfy.status_code == 200
             assert res_ntfy.json()["status"] == "success"
+            assert "Authorization" not in mock_post.call_args[1]["headers"]
+
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=200, text="ok")
+            res_ntfy_auth = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "ntfy", "ntfy_url": "https://ntfy.sh/my-topic", "ntfy_auth_token": "secret_token_123"}
+            )
+            assert res_ntfy_auth.status_code == 200
+            assert res_ntfy_auth.json()["status"] == "success"
+            assert mock_post.call_args[1]["headers"]["Authorization"] == "Bearer secret_token_123"
 
         # 4. Pushover success
         with patch.object(httpx.AsyncClient, "post") as mock_post:
@@ -7346,6 +7379,41 @@ async def test_notifications_test_endpoint_channels():
             )
             assert res_push.status_code == 200
             assert res_push.json()["status"] == "success"
+
+        # 5. Masked credentials fallback to saved settings
+        settings_mgr.update_notifications({
+            "discord_webhook_url": "https://discord.com/api/webhooks/saved/real_token",
+            "telegram_bot_token": "bot_saved_real_token",
+            "telegram_chat_id": "chat_12345",
+        })
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=204, text="")
+            res_masked = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "discord", "discord_webhook_url": "••••••••dcrd"}
+            )
+            assert res_masked.status_code == 200
+            assert res_masked.json()["status"] == "success"
+            assert mock_post.call_args[0][0] == "https://discord.com/api/webhooks/saved/real_token"
+
+        with patch.object(httpx.AsyncClient, "post") as mock_post:
+            mock_post.return_value = MagicMock(status_code=200, text="{}")
+            res_masked_tg = client.post(
+                "/api/notifications/test",
+                headers=headers,
+                json={"channel": "telegram", "telegram_bot_token": "••••••••tele", "telegram_chat_id": "chat_12345"}
+            )
+            assert res_masked_tg.status_code == 200
+            assert res_masked_tg.json()["status"] == "success"
+            assert "bot_saved_real_token" in mock_post.call_args[0][0]
+
+        # Reset cleanup
+        settings_mgr.update_notifications({
+            "discord_webhook_url": "",
+            "telegram_bot_token": "",
+            "telegram_chat_id": "",
+        })
 
 
 def test_notifier_dynamic_settings_resolution():
@@ -7363,6 +7431,17 @@ def test_notifier_dynamic_settings_resolution():
     settings_mgr.update_notifications({"notify_on_rate": False})
     with patch.object(Config, "NOTIFY_ON_RATE", True):
         assert test_notif._is_event_enabled("notify_on_rate", "NOTIFY_ON_RATE") is False
+
+    # Check _get_ntfy_auth_token resolution
+    with patch.object(Config, "NTFY_AUTH_TOKEN", "config_token"):
+        settings_mgr.update_notifications({"ntfy_auth_token": ""})
+        assert test_notif._get_ntfy_auth_token() == "config_token"
+
+        settings_mgr.update_notifications({"ntfy_auth_token": "custom_token"})
+        assert test_notif._get_ntfy_auth_token() == "custom_token"
+
+    # Cleanup
+    settings_mgr.update_notifications({"notify_on_rate": True, "ntfy_auth_token": ""})
 
 
 

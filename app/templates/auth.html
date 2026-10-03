@@ -58,8 +58,8 @@
             try {
                 const url = targetUser ? ('/api/auth/start?user=' + encodeURIComponent(targetUser)) : '/api/auth/start';
                 const res = await fetch(url, { method: 'POST' });
-                if (!res.ok) throw new Error('Failed to generate device code from Trakt. Check client credentials in .env.');
-                const data = await res.json();
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.error || !data.user_code) throw new Error(data.detail || data.error || 'Failed to generate device code from Trakt. Check client credentials in .env.');
                 document.getElementById('code-display').textContent = data.user_code;
                 document.getElementById('activate-link').href = data.verification_url || 'https://trakt.tv/activate';
                 document.getElementById('loading-view').style.display = 'none';
