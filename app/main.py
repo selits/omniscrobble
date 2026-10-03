@@ -1556,6 +1556,7 @@ def get_settings_endpoint(request: Request):
 
 
 @app.post("/api/settings")
+@app.put("/api/settings")
 def update_settings_endpoint(payload: SettingsUpdateRequest, request: Request):
     """Update runtime settings, tracker credentials, reconciliation, or arr settings."""
     if request and request.query_params.get("demo") == "true":
@@ -1568,6 +1569,10 @@ def update_settings_endpoint(payload: SettingsUpdateRequest, request: Request):
 
     # Dynamic in-memory reconfiguration
     if payload.credentials:
+        if "trakt" in payload.credentials:
+            trakt_creds = settings_mgr.get_tracker_credentials("trakt", mask=False)
+            trakt.update_credentials(client_id=trakt_creds.get("client_id"), client_secret=trakt_creds.get("client_secret"))
+            user_mgr.update_credentials(client_id=trakt_creds.get("client_id"), client_secret=trakt_creds.get("client_secret"))
         if "simkl" in payload.credentials:
             simkl_creds = settings_mgr.get_tracker_credentials("simkl", mask=False)
             simkl.update_credentials(client_id=simkl_creds.get("client_id"), client_secret=simkl_creds.get("client_secret"))
@@ -2651,6 +2656,50 @@ async def auth_poll(payload: DevicePollRequest, request: Request):
         return {"status": "error", "message": str(e)}
 
 
+@app.get("/api/trakt/status")
+async def get_trakt_status(request: Request, user: Optional[str] = None):
+    """Return current connection and authentication status for Trakt."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {
+            "enabled": True,
+            "configured": True,
+            "authenticated": True,
+            "user": "demo_viewer",
+        }
+    query_user = request.query_params.get("user") or user
+    target_client = user_mgr.get_client(query_user)
+    auth = target_client.is_authenticated()
+    username = None
+    if auth:
+        if not query_user or query_user == "default":
+            prof = await get_cached_trakt_profile()
+            username = prof.get("username") if prof else None
+        else:
+            username = query_user
+    return {
+        "enabled": target_client.is_enabled(),
+        "configured": bool(target_client.effective_client_id),
+        "authenticated": auth,
+        "user": username,
+        "token_info": target_client.get_token_info(),
+    }
+
+
+@app.post("/api/trakt/disconnect")
+async def disconnect_trakt(request: Request, user: Optional[str] = None):
+    """Disconnect Trakt account and delete saved tokens."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    query_user = request.query_params.get("user") or user
+    target_client = user_mgr.get_client(query_user)
+    target_client.delete_tokens()
+    global trakt_user_profile
+    if not query_user or query_user == "default":
+        trakt_user_profile = None
+    return {"status": "ok", "message": "Trakt disconnected"}
+
+
 class SimklPollRequest(BaseModel):
     user_code: str
     device_code: Optional[str] = None
@@ -2670,8 +2719,8 @@ async def get_simkl_status(request: Request):
             "timezone": "America/New_York",
         }
     status = await simkl.check_connection()
-    status["enabled"] = Config.SIMKL_ENABLED
-    status["configured"] = bool(Config.SIMKL_CLIENT_ID)
+    status["enabled"] = simkl.is_enabled()
+    status["configured"] = bool(simkl.effective_client_id)
     return status
 
 
@@ -2738,8 +2787,8 @@ async def get_anilist_status(request: Request):
     if is_demo:
         return demo_mgr.get_demo_anilist_status()
     status = await anilist.check_connection()
-    status["enabled"] = Config.ANILIST_ENABLED
-    status["configured"] = bool(Config.ANILIST_CLIENT_ID or anilist.is_authenticated())
+    status["enabled"] = anilist.is_enabled()
+    status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or anilist.is_authenticated())
     return status
 
 
@@ -2803,8 +2852,8 @@ async def get_mal_status(request: Request):
     if is_demo:
         return demo_mgr.get_demo_mal_status()
     status = await mal.check_connection()
-    status["enabled"] = Config.MAL_ENABLED
-    status["configured"] = bool(Config.MAL_CLIENT_ID or mal.is_authenticated())
+    status["enabled"] = mal.is_enabled()
+    status["configured"] = bool(mal.effective_client_id or mal.is_authenticated())
     return status
 
 
@@ -3081,9 +3130,16 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             token_health_color = "#94a3b8"
 
         # Header status badge
+        trakt_enabled = settings_mgr.is_tracker_enabled("trakt")
         if auth_status:
             user_label = f"Connected as @{display_username}" if display_username else "Connected"
-            if is_admin:
+            if not trakt_enabled:
+                paused_label = f"Paused (@{display_username})" if display_username else "Trakt Paused"
+                if is_admin:
+                    status_badge = f'<a href="/auth" style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">⏸️ {paused_label} &bull; Manage</a>'
+                else:
+                    status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#1e293b;border:1px solid #475569;color:#94a3b8;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">⏸️ {paused_label} &bull; 🔒 Locked</a>'
+            elif is_admin:
                 status_badge = f'<a href="/auth" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">{user_label} &bull; Manage</a>'
             else:
                 status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#065f46;color:#a7f3d0;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">{user_label} &bull; 🔒 Locked</a>'
@@ -3787,8 +3843,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         }
     else:
         simkl_status = await simkl.check_connection()
-        simkl_status["enabled"] = Config.SIMKL_ENABLED
-        simkl_status["configured"] = bool(Config.SIMKL_CLIENT_ID)
+        simkl_status["enabled"] = simkl.is_enabled()
+        simkl_status["configured"] = bool(simkl.effective_client_id)
 
     simkl_cfg = simkl_status.get("configured", False)
     simkl_auth = simkl_status.get("authenticated", False)
@@ -3862,12 +3918,12 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         mal_status = demo_mgr.get_demo_mal_status()
     else:
         ani_status = await anilist.check_connection()
-        ani_status["enabled"] = Config.ANILIST_ENABLED
-        ani_status["configured"] = bool(Config.ANILIST_CLIENT_ID or anilist.is_authenticated())
+        ani_status["enabled"] = anilist.is_enabled()
+        ani_status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or anilist.is_authenticated())
 
         mal_status = await mal.check_connection()
-        mal_status["enabled"] = Config.MAL_ENABLED
-        mal_status["configured"] = bool(Config.MAL_CLIENT_ID or mal.is_authenticated())
+        mal_status["enabled"] = mal.is_enabled()
+        mal_status["configured"] = bool(mal.effective_client_id or mal.is_authenticated())
 
     ani_auth = ani_status.get("authenticated", False)
     ani_user = ani_status.get("user")

@@ -21,15 +21,74 @@ class TraktClient:
         config: type[Config] = Config,
         tokens_file: Optional[Path] = None,
         client: Optional[httpx.AsyncClient] = None,
+        client_id: Optional[str] = None,
+        client_secret: Optional[str] = None,
     ):
         self.config = config
-        self.client_id = config.TRAKT_CLIENT_ID
-        self.client_secret = config.TRAKT_CLIENT_SECRET
-        self.api_url = config.TRAKT_API_URL
+        try:
+            from app.services.settings_manager import settings_mgr
+            stored_creds = settings_mgr.get_tracker_credentials("trakt", mask=False)
+        except Exception:
+            stored_creds = {}
+        self.client_id = client_id or stored_creds.get("client_id") or getattr(config, "TRAKT_CLIENT_ID", "")
+        self.client_secret = client_secret or stored_creds.get("client_secret") or getattr(config, "TRAKT_CLIENT_SECRET", "")
+        self.api_url = getattr(config, "TRAKT_API_URL", "https://api.trakt.tv")
         self.tokens_file = tokens_file if tokens_file is not None else config.TRAKT_TOKENS_FILE
         self._tokens: Optional[dict[str, Any]] = None
         self._http_client: Optional[httpx.AsyncClient] = client
         self.access_token: Optional[str] = None
+
+    def update_credentials(self, client_id: Optional[str] = None, client_secret: Optional[str] = None) -> None:
+        """Update client credentials in-memory dynamically."""
+        if client_id is not None:
+            self.client_id = client_id
+        if client_secret is not None:
+            self.client_secret = client_secret
+
+    @property
+    def effective_client_id(self) -> str:
+        if self.client_id:
+            return self.client_id
+        try:
+            from app.services.settings_manager import settings_mgr
+            val = settings_mgr.get_tracker_credentials("trakt", mask=False).get("client_id", "")
+            if val:
+                return val
+        except Exception:
+            pass
+        return getattr(self.config, "TRAKT_CLIENT_ID", "")
+
+    @property
+    def effective_client_secret(self) -> str:
+        if self.client_secret:
+            return self.client_secret
+        try:
+            from app.services.settings_manager import settings_mgr
+            val = settings_mgr.get_tracker_credentials("trakt", mask=False).get("client_secret", "")
+            if val:
+                return val
+        except Exception:
+            pass
+        return getattr(self.config, "TRAKT_CLIENT_SECRET", "")
+
+    def is_enabled(self) -> bool:
+        """Check if Trakt tracking is enabled in dynamic settings or configuration."""
+        try:
+            from app.services.settings_manager import settings_mgr
+            return settings_mgr.is_tracker_enabled("trakt")
+        except Exception:
+            return getattr(self.config, "TRAKT_ENABLED", True)
+
+    def delete_tokens(self) -> None:
+        """Clear tokens from memory and delete tokens file from disk."""
+        self._tokens = None
+        self.access_token = None
+        if self.tokens_file.exists():
+            try:
+                self.tokens_file.unlink()
+                logger.info(f"Successfully deleted Trakt tokens file: {self.tokens_file}")
+            except Exception as e:
+                logger.error(f"Failed to delete Trakt tokens file {self.tokens_file}: {e}")
 
     def get_client(self) -> httpx.AsyncClient:
         if self._http_client is None or self._http_client.is_closed:
@@ -44,7 +103,7 @@ class TraktClient:
         headers = {
             "Content-Type": "application/json",
             "trakt-api-version": "2",
-            "trakt-api-key": self.client_id,
+            "trakt-api-key": self.effective_client_id,
         }
         if authenticated:
             token = await self.get_valid_token()
@@ -138,12 +197,13 @@ class TraktClient:
 
     async def generate_device_code(self) -> dict[str, Any]:
         """Request a device code from Trakt."""
-        if not self.client_id:
-            raise ValueError("TRAKT_CLIENT_ID is not configured in .env")
+        cid = self.effective_client_id
+        if not cid:
+            raise ValueError("TRAKT_CLIENT_ID is not configured in Settings Hub or .env")
 
         url = f"{self.api_url}/oauth/device/code"
         client = self.get_client()
-        res = await client.post(url, json={"client_id": self.client_id})
+        res = await client.post(url, json={"client_id": cid})
         if res.status_code != 200:
             raise RuntimeError(f"Failed to generate device code ({res.status_code}): {res.text}")
         return res.json()
@@ -153,14 +213,16 @@ class TraktClient:
 
         Returns tokens dict when approved, or raises an exception.
         """
-        if not self.client_id or not self.client_secret:
-            raise ValueError("TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET are required for authentication.")
+        cid = self.effective_client_id
+        csec = self.effective_client_secret
+        if not cid or not csec:
+            raise ValueError("TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET are required for authentication. Please configure them in Settings Hub or .env.")
 
         url = f"{self.api_url}/oauth/device/token"
         payload = {
             "code": device_code,
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
+            "client_id": cid,
+            "client_secret": csec,
         }
         client = self.get_client()
         res = await client.post(url, json=payload)
@@ -173,6 +235,8 @@ class TraktClient:
             return tokens
         elif res.status_code == 400:
             return {"status": "pending"}
+        elif res.status_code == 401:
+            raise PermissionError(f"Invalid client credentials ({res.status_code}). Please verify your Trakt Client ID and Client Secret in Settings Hub.")
         elif res.status_code == 404:
             raise RuntimeError("Invalid device code.")
         elif res.status_code == 409:
@@ -194,11 +258,17 @@ class TraktClient:
             logger.error("No refresh token available.")
             return None
 
+        cid = self.effective_client_id
+        csec = self.effective_client_secret
+        if not cid or not csec:
+            logger.error("TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET are required for token refresh.")
+            return None
+
         url = f"{self.api_url}/oauth/token"
         payload = {
             "refresh_token": tokens["refresh_token"],
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
+            "client_id": cid,
+            "client_secret": csec,
             "redirect_uri": "urn:ietf:wg:oauth:2.0:oob",
             "grant_type": "refresh_token",
         }

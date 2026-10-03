@@ -789,7 +789,7 @@
                 <!-- Tab 2: Trackers & Scrobblers -->
                 <div id="settings-panel-trackers" class="settings-content-panel" style="display:none;flex-direction:column;gap:14px;">
                     <!-- Trakt Card -->
-                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                    <div id="settings-section-trakt" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                             <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
                                 <span>🔴</span> Trakt.tv (Primary Tracker)
@@ -797,9 +797,23 @@
                             <span id="settings-trk-status-trakt" style="font-size:11px;color:#10b981;font-weight:600;">● Connected</span>
                         </div>
                         <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;">Primary scrobbling target for watch history, playback sessions, and ratings.</p>
-                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">TRAKT_CLIENT_ID</label>
+                                <input type="text" id="settings-trakt-client-id" placeholder="Trakt API Client ID" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:4px;">TRAKT_CLIENT_SECRET</label>
+                                <div style="display:flex;gap:6px;">
+                                    <input type="password" id="settings-trakt-client-secret" placeholder="Trakt Client Secret" style="flex:1;background:#020617;border:1px solid #475569;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;outline:none;" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-trakt-client-secret','settings-trakt-sec-btn')" id="settings-trakt-sec-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:8px 10px;">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                             <a href="/auth" class="btn-sm" style="background:#ed1c24;color:#fff;text-decoration:none;font-weight:600;padding:6px 12px;">🔑 Link Trakt Account</a>
                             <button type="button" id="settings-trk-toggle-btn-trakt" onclick="toggleTrackerFromSettings('trakt')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:6px 12px;">Pause</button>
+                            <button type="button" onclick="disconnectTrakt(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;">Disconnect</button>
                         </div>
                     </div>
 
@@ -2201,6 +2215,12 @@
                 const creds = data.credentials || {};
 
                 // Trakt
+                const traktCreds = creds.trakt || {};
+                const traktIdInput = document.getElementById('settings-trakt-client-id');
+                const traktSecretInput = document.getElementById('settings-trakt-client-secret');
+                if (traktIdInput) traktIdInput.value = traktCreds.client_id || '';
+                if (traktSecretInput) traktSecretInput.value = traktCreds.masked_client_secret || '';
+
                 const traktEnabled = Boolean(trackers.trakt);
                 const traktStatus = document.getElementById('settings-trk-status-trakt');
                 const traktToggleBtn = document.getElementById('settings-trk-toggle-btn-trakt');
@@ -2395,6 +2415,10 @@
             try {
                 const payload = {
                     credentials: {
+                        trakt: {
+                            client_id: document.getElementById('settings-trakt-client-id')?.value.trim() || '',
+                            client_secret: document.getElementById('settings-trakt-client-secret')?.value.trim() || ''
+                        },
                         simkl: {
                             client_id: document.getElementById('settings-simkl-client-id')?.value.trim() || '',
                             client_secret: document.getElementById('settings-simkl-client-secret')?.value.trim() || ''
@@ -4816,7 +4840,17 @@ SIMKL_ENABLED=true</pre>
                         } else if (pollData.status === 'error') {
                             clearInterval(simklPollInterval);
                             simklPollInterval = null;
-                            container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Authorization Error: ${escapeHtml(pollData.error || pollData.message || 'Polling failed')}</div>`;
+                            const errDetail = pollData.detail && pollData.detail !== pollData.error ? `<div style="font-size:12px;color:#94a3b8;margin-top:6px;">${escapeHtml(pollData.detail)}</div>` : '';
+                            container.innerHTML = `
+                                <div style="color:#f87171;text-align:center;padding:16px;">
+                                    <div style="font-weight:600;margin-bottom:6px;">Authorization Error</div>
+                                    <div style="font-size:13px;line-height:1.5;">${escapeHtml(pollData.error || pollData.message || 'Polling failed')}</div>
+                                    ${errDetail}
+                                    <div style="margin-top:14px;">
+                                        <button onclick="fetchSimklStatus()" class="btn-sm" style="background:#334155;color:#fff;">Try Again</button>
+                                    </div>
+                                </div>
+                            `;
                         }
                     } catch (e) {}
                 }, 4000);
@@ -4824,6 +4858,29 @@ SIMKL_ENABLED=true</pre>
                 if (container) {
                     container.innerHTML = `<div style="color:#f87171;text-align:center;padding:16px;">Error initiating PIN flow: ${escapeHtml(err.message)}</div>`;
                 }
+            }
+        }
+
+        async function disconnectTrakt(btn) {
+            if (!isAdmin && !isDemo) {
+                openUnlockModal();
+                return;
+            }
+            if (!confirm('Are you sure you want to disconnect your Trakt account? This will remove saved Trakt tokens.')) return;
+            if (isDemo) {
+                alert('Trakt disconnected (Demo simulation)');
+                window.location.reload();
+                return;
+            }
+            try {
+                const res = await fetch('/api/trakt/disconnect', { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    alert('Failed to disconnect Trakt');
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
             }
         }
 

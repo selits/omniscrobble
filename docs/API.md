@@ -24,7 +24,7 @@ This document provides the complete API reference for **Omniscrobble**, includin
 8. [Watch Together & Multi-User Accounts](#8-watch-together--multi-user-accounts)
 9. [Two-Way Media Server Reconciliation](#9-two-way-media-server-reconciliation)
 10. [Content Bridge (*Arr Automation)](#10-content-bridge-arr-automation)
-11. [Multi-Tracker Engines (Simkl, AniList, MAL)](#11-multi-tracker-engines-simkl-anilist-mal)
+11. [Multi-Tracker Engines (Trakt, Simkl, AniList, MAL)](#11-multi-tracker-engines-trakt-simkl-anilist-mal)
 12. [Cross-Tracker Reconciliation (Trakt ⇄ Simkl)](#12-cross-tracker-reconciliation-trakt--simkl)
 13. [Runtime Settings Hub](#13-runtime-settings-hub)
 14. [Synthetic Webhook Testing](#14-synthetic-webhook-testing)
@@ -155,10 +155,12 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 ---
 
-## 11. Multi-Tracker Engines (Simkl, AniList, MAL)
+## 11. Multi-Tracker Engines (Trakt, Simkl, AniList, MAL)
 
 | Endpoint | Method | Auth | Description |
 |---|:---:|:---:|---|
+| **`/api/trakt/status`** | `GET` | Public | **Trakt Status**: Connection status, token health, and authenticated username. |
+| **`/api/trakt/disconnect`** | `POST` | Admin | **Disconnect Trakt**: Purges local Trakt OAuth tokens (`?user=username` for partner). |
 | **`/api/simkl/status`** | `GET` | Public | **Simkl Status**: Connection health and authenticated username. |
 | **`/api/simkl/pin`** | `POST` | Admin | **Request Device PIN**: Generates an OAuth device PIN for headless browser activation. |
 | **`/api/simkl/poll`** | `POST` | Admin | **Poll Device PIN**: Polls Simkl for user authorization confirmation. |

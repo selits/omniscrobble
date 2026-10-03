@@ -590,10 +590,17 @@ class MultiTrackerManager:
         ):
             active.append("myanimelist")
 
+        trakt_cid = getattr(self.config, "TRAKT_CLIENT_ID", "")
+        if not trakt_cid:
+            try:
+                trakt_cid = settings_mgr.get_tracker_credentials("trakt", mask=False).get("client_id", "")
+            except Exception:
+                pass
+
         return {
             "active_trackers": active,
             "trakt": {
-                "configured": bool(self.config.TRAKT_CLIENT_ID),
+                "configured": bool(trakt_cid),
                 "name": "Trakt",
                 "enabled": settings_mgr.is_tracker_enabled("trakt"),
             },
