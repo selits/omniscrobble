@@ -2624,6 +2624,10 @@ def test_dashboard_mobile_responsiveness():
         assert 'Media Server Webhook Endpoints' in html
         assert 'Tracker Only &bull; Mark' in html
         assert 'omniscrobble_auto_refresh' in html
+        assert 'grid-template-columns: 1fr !important' in html
+        assert 'word-break: break-word' in html
+        assert 'settings-trk-cat-btn' in html
+        assert 'scrobble-trk-kitsu' in html
 
 
 @pytest.mark.asyncio

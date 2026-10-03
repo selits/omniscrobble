@@ -42,6 +42,7 @@ Start the FastAPI application with Uvicorn:
 ```
 
 Once running:
+
 - **Interactive Dashboard**: [http://localhost:8000](http://localhost:8000)
 - **OpenAPI / Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
@@ -60,6 +61,7 @@ The Webhook Simulator crafts and dispatches realistic media server payloads to O
 ```
 
 Or make it executable:
+
 ```bash
 ./scripts/simulate_webhook.py --server plex --scenario movie-finish
 ```
@@ -94,31 +96,37 @@ Or make it executable:
 ### 2.4 Simulation Examples
 
 #### Plex Movie Completion Scrobble
+
 ```bash
 ./scripts/simulate_webhook.py --server plex --scenario movie-finish --title "Dune: Part Two" --year 2024
 ```
 
 #### Jellyfin Episode Playback Start
+
 ```bash
 ./scripts/simulate_webhook.py --server jellyfin --scenario episode-start --show "Severance" --season 2 --episode 1
 ```
 
 #### Emby Rating (10/10)
+
 ```bash
 ./scripts/simulate_webhook.py --server emby --scenario rate-movie --title "Oppenheimer" --year 2023 --rating 10
 ```
 
 #### Sonarr Download Ingestion
+
 ```bash
 ./scripts/simulate_webhook.py --server sonarr --scenario download --show "Lanterns" --season 1 --episode 1
 ```
 
 #### Radarr Movie Acquisition
+
 ```bash
 ./scripts/simulate_webhook.py --server radarr --scenario download --title "Gladiator II" --year 2024
 ```
 
 #### Inspect Payload with Dry Run
+
 ```bash
 ./scripts/simulate_webhook.py --server plex --scenario episode-finish --show "The Bear" --season 3 --episode 1 --dry-run
 ```
@@ -164,6 +172,43 @@ The hook automatically runs unit tests and secret scanning before every `git com
 ## 5. Security & Privacy Rules
 
 When testing and contributing to Omniscrobble:
+
 - **Never commit real credentials**: Do not commit media server hostnames, tokens, API keys, or personal email addresses.
 - **Always use generic placeholders**: `<your-server-ip-or-domain>`, `<PORT>`, `your_trakt_client_id_here`.
 - **Feature Branches**: Never commit directly to `main`. Always create a dedicated branch (`feature/...`, `fix/...`, `docs/...`).
+
+---
+
+## 6. Testing Tiers & Live Verification Status
+
+To ensure complete transparency regarding test coverage, Omniscrobble categorizes all supported integrations into two distinct tiers:
+
+### 6.1 Tier 1: Verified (Live Production)
+
+These services are part of the maintainer's active homelab setup. They have been verified against real, live accounts and real media hardware:
+
+| Platform | Verification Scope | Testing Method |
+| :--- | :--- | :--- |
+| **Plex** | Webhook ingestion, playback progress, rating sync, two-way library diffs | Live media server webhooks & daily scrobbling |
+| **Trakt.tv** | OAuth device flow, scrobble dispatch, ratings, watchlist, collection sync | Live Trakt API v2 with production OAuth tokens |
+| **Simkl** | OAuth device flow, simultaneous scrobble, rating sync, full sync | Live Simkl API with production OAuth tokens |
+| **Sonarr & Radarr** | Trakt Watchlist auto-acquisition, download webhooks, co-watch autocomplete | Live instances with production API keys |
+
+### 6.2 Tier 2: Community Beta (Unit-Tested & Simulated)
+
+These services are built against official platform API specifications and tested with automated unit test suites (`tests/test_scrobbler.py`) using mocked HTTP responses and synthetic webhook simulator payloads (`scripts/simulate_webhook.py`). **They have not yet been live-tested with active user accounts in production**:
+
+| Platform | Capability | Testing Status |
+| :--- | :--- | :--- |
+| **Jellyfin** | Webhook ingestion, scrobbles, ratings | Unit-tested & simulated via `simulate_webhook.py --server jellyfin` |
+| **Emby** | Webhook ingestion, scrobbles, ratings | Unit-tested & simulated via `simulate_webhook.py --server emby` |
+| **AniList** | GraphQL anime scrobble & progress | Unit-tested with mock GraphQL HTTP fixtures |
+| **MyAnimeList** | REST v2 anime scrobble & progress | Unit-tested with mock REST HTTP fixtures |
+| **Kitsu** | JSON:API v1 anime scrobble & progress | Unit-tested with mock JSON:API fixtures; not live-tested |
+| **Letterboxd** | Automated CSV diary export | Unit-tested CSV formatting; awaiting user import verification |
+| **Serializd** | TV diary & episode progress sync | Unit-tested with mock REST fixtures; not live-tested |
+| **TMDb** | Watchlist & star rating sync | Unit-tested with mock TMDb v3/v4 fixtures; not live-tested |
+| **MDBList** | Aggregated critic & user ratings | Unit-tested with mock API fixtures; not live-tested |
+| **SeriesGuide / Showly** | Trakt mobile sync relay | Unit-tested Trakt relay logic |
+
+> 💬 **Feedback & Bug Reports**: If you use any Community Beta integrations with live accounts, please share feedback or submit PRs/issues on GitHub. Your logs and real-world results help move platforms into Tier 1!

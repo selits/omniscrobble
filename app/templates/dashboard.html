@@ -89,7 +89,7 @@
             .header .title { font-size: 20px; flex-direction: column; align-items: flex-start; gap: 2px; }
             .header .title-brand { font-size: 20px; }
             .header .title-brand svg { width: 24px; height: 24px; }
-            .header .title-sub { font-size: 11px; margin-left: 34px; color: #94a3b8; }
+            .header .title-sub { font-size: 11px; margin-left: 34px; color: #94a3b8; word-break: break-word; }
             .header-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
             .card { padding: 16px 14px; margin-bottom: 16px; border-radius: 10px; }
             .card h3 { font-size: 15px; }
@@ -108,6 +108,10 @@
             .activity-actions { width: 100%; gap: 6px; }
             table th, table td { padding: 8px 10px !important; font-size: 12px !important; }
             .modal-dialog { padding: 18px 14px; width: 95%; max-height: 90vh; }
+            .modal-dialog div[style*="grid-template-columns:1fr 1fr"],
+            .modal-dialog div[style*="grid-template-columns: 1fr 1fr"] {
+                grid-template-columns: 1fr !important;
+            }
             .search-form-row { flex-direction: column; align-items: stretch; }
             .search-form-row button { width: 100%; padding: 11px; }
             .scrobble-item { flex-direction: column; align-items: stretch; gap: 10px; }

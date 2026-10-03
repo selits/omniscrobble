@@ -8,7 +8,7 @@ This document outlines the architectural design, component layers, data flows, a
 
 Omniscrobble operates as an asynchronous, decoupled media event bus and synchronization engine. It receives webhooks from media servers, parses and normalizes media payloads, evaluates business rules (user filters, library filters, co-watching eligibility), and dispatches scrobbles, ratings, and collections across connected tracking platforms and acquisition engines.
 
-```
+```text
                            ┌───────────────────────────────┐
                            │ Media Servers (Plex/JF/Emby)  │
                            └───────────────┬───────────────┘
@@ -55,21 +55,25 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ## 🧩 Architectural Layers
 
 ### 1. Ingestion & Routing Layer
+
 - **`app/main.py`**: The core FastAPI application. Handles route registration, application lifespan (startup/shutdown of HTTP clients and background workers), authenticated admin endpoints, SSR dashboard rendering, and webhook ingestion.
 - **Fast-Bypass Architecture**: Webhook endpoints (`/webhook`, `/webhook/jellyfin`, `/webhook/emby`) immediately drop incoming requests if the corresponding media server listener is disabled in `SettingsManager`, saving CPU and memory.
 
 ### 2. Normalization & Parsing Layer
+
 - **`app/plex_parser.py`**: Parses Plex JSON and multipart/form-data webhooks. Normalizes progress, rating keys, player devices, and library sections into structured `ParsedMedia` objects.
 - **`app/jellyfin_parser.py`**: Parses Jellyfin webhook notifications and translates provider IDs (`Imdb`, `Tmdb`, `Tvdb`) into unified metadata models.
 - **`app/emby_parser.py`**: Parses Emby server webhooks, extracting playback events, playback progress, and media ratings.
 
 ### 3. Business Logic & Dispatch Layer
+
 - **`app/services/multi_tracker.py`**: Coordinates simultaneous multi-tracker dispatch. Determines which trackers receive scrobbles, pause signals, or ratings based on media type (e.g. anime detection) and runtime pause states.
 - **`app/services/cowatch_manager.py`**: Evaluates watch-together eligibility. Checks whether an episode or movie matches configured show whitelists, allowed players, and user profiles. Returns structured `(eligible, reason)` tuples for transparent telemetry.
 - **`app/services/loop_prevention.py`**: Thread-safe in-memory cache tracking recently synced rating keys and GUIDs with automated TTL cleanup to prevent infinite ping-pong loops between media servers and trackers.
 - **`app/services/anime_resolver.py`**: Intelligent anime detection using title heuristic scoring, regex normalization, and cached AniList/MAL mappings (`data/anime_cache.json`).
 
 ### 4. Client Layer
+
 - **`app/clients/trakt_client.py`**: Trakt API client featuring OAuth Device Code flow, proactive token refresh (refreshes within 24h of expiration), automatic 401 retries, 429 rate limit backoff, and TV show year extraction.
 - **`app/clients/simkl_client.py`**: Simkl REST API client for OAuth Device PIN authorization, dual-scrobbling, and ratings synchronization.
 - **`app/clients/anilist_client.py`**: AniList GraphQL API client for scrobbling anime episode progress and synchronizing user lists.
@@ -78,17 +82,20 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 - **`app/clients/sonarr_client.py`**, **`radarr_client.py`**: Direct REST clients for *Arr acquisition automation, library duplicate checks, and live show autocomplete.
 
 ### 5. Offline Queue & Persistence Layer
+
 - **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. A background worker drains the queue with exponential backoff.
 - **`app/services/settings_manager.py`**: Thread-safe runtime settings manager (`data/settings.json`). Preserves media server listener states, tracker pause states, and active servers across reboots without modifying `.env`.
 - **`app/services/user_manager.py`**: Manages isolated multi-user tokens in `data/tokens/{username}_tokens.json`.
 
 ### 6. Background Workers & Automation Engines
+
 - **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation.
 - **`app/services/cross_tracker_sync.py`**: Cross-tracker reconciliation engine for Trakt and Simkl.
 - **`app/services/arr_bridge.py`**: Content Bridge background worker. Polls Trakt Watchlists and automatically triggers searches in Radarr and Sonarr for newly bookmarked media.
 - **`app/services/notifier.py`**: Multi-channel alert dispatcher (Discord, Telegram, Ntfy, Pushover) with an in-memory 30-minute deduplication cooldown.
 
 ### 7. Observability & UI Layer
+
 - **`app/templates/dashboard.html`**: Fully responsive, single-file HTML/CSS/JavaScript dashboard. Features real-time active stream cards, ecosystem health dots, paginated activity history, interactive reconciliation diff modals, and live settings management.
 - **`app/metrics.py`**: Custom thread-safe Prometheus metrics registry exporting directly on `/metrics`.
 - **`app/services/log_manager.py`**: Real-time log streamer combining `journalctl --user` with an in-memory 1,000-line ring buffer. Features strict privacy redaction for query parameters and authorization headers.

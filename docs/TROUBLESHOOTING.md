@@ -6,17 +6,17 @@ This guide covers solutions to common webhook errors, diagnostic procedures, Doc
 
 ## Table of Contents
 
-1. [Common Webhook & Scrobble Errors](#1-common-webhook-scrobble-errors)
+1. [Common Webhook & Scrobble Errors](#1-common-webhook--scrobble-errors)
    - [Plex 422 Unprocessable Content](#plex-422-unprocessable-content)
-   - [Trakt 409 Conflict / "Already scrobbled"](#trakt-409-conflict-already-scrobbled)
+   - [Trakt 409 Conflict / "Already scrobbled"](#trakt-409-conflict--already-scrobbled)
    - [Progress is XX%. Use stop to scrobble](#progress-is-xx-use-stop-to-scrobble)
    - [Trakt 401 Unauthorized](#trakt-401-unauthorized)
    - [Simkl 401 Unauthorized / "Invalid client"](#simkl-401-unauthorized--invalid-client)
    - [Trakt 429 Rate Limit Exceeded](#trakt-429-rate-limit-exceeded)
-2. [Service Diagnostics & Health Checks](#2-service-diagnostics-health-checks)
+2. [Service Diagnostics & Health Checks](#2-service-diagnostics--health-checks)
 3. [Docker Inter-Container Networking](#3-docker-inter-container-networking)
-4. [Reverse Proxy & SSL Headers](#4-reverse-proxy-ssl-headers)
-5. [Media Server Connectivity & Token Diagnostics](#5-media-server-connectivity-token-diagnostics)
+4. [Reverse Proxy & SSL Headers](#4-reverse-proxy--ssl-headers)
+5. [Media Server Connectivity & Token Diagnostics](#5-media-server-connectivity--token-diagnostics)
 
 ---
 
@@ -24,100 +24,75 @@ This guide covers solutions to common webhook errors, diagnostic procedures, Doc
 
 ### Plex 422 Unprocessable Content
 
-**Symptom:**  
-Plex webhook deliveries fail with HTTP status `422 Unprocessable Content` in Plex server logs.
+- **Symptom**: Plex webhook deliveries fail with HTTP status `422 Unprocessable Content` in Plex server logs.
+- **Cause**: Plex sends webhooks as multipart form uploads where the JSON data can be delivered either as a form field or as an attached file part (`filename="payload.json"`).
+- **Resolution**: Omniscrobble automatically parses both multipart file streams and standard form field payloads. Ensure your deployment is running the latest release:
 
-**Cause:**  
-Plex sends webhooks as multipart form uploads where the JSON data can be delivered either as a form field or as an attached file part (`filename="payload.json"`). 
+  ```bash
+  ./upgrade.sh
+  ```
 
-**Resolution:**  
-Omniscrobble automatically parses both multipart file streams and standard form field payloads. Ensure your deployment is running the latest release:
-```bash
-./upgrade.sh
-```
-If containerized with Docker, pull the latest image and restart:
-```bash
-docker compose pull && docker compose up -d
-```
+  If containerized with Docker, pull the latest image and restart:
+
+  ```bash
+  docker compose pull && docker compose up -d
+  ```
 
 ---
 
 ### Trakt 409 Conflict / "Already scrobbled"
 
-**Symptom:**  
-The terminal or dashboard log displays:  
-`Trakt scrobble info: 409 Conflict - Already scrobbled`
-
-**Cause:**  
-This is normal and expected behavior. When an episode or movie finishes, Plex fires `media.scrobble` (marking the item watched on Trakt). Immediately afterward, closing the player triggers a second event: `media.stop`. When Omniscrobble submits the stop payload, Trakt responds with `409 Conflict` because the media was already registered as watched seconds prior.
-
-**Resolution:**  
-No action required. Omniscrobble handles this gracefully, logs it as an informational notice, and returns `200 OK` to your media server.
+- **Symptom**: The terminal or dashboard log displays: `Trakt scrobble info: 409 Conflict - Already scrobbled`
+- **Cause**: This is normal and expected behavior. When an episode or movie finishes, Plex fires `media.scrobble` (marking the item watched on Trakt). Immediately afterward, closing the player triggers a second event: `media.stop`. When Omniscrobble submits the stop payload, Trakt responds with `409 Conflict` because the media was already registered as watched seconds prior.
+- **Resolution**: No action required. Omniscrobble handles this gracefully, logs it as an informational notice, and returns `200 OK` to your media server.
 
 ---
 
 ### Progress is XX%. Use stop to scrobble
 
-**Symptom:**  
-Logs display:  
-`Trakt scrobble warning: message: Progress is 85%. Use stop to scrobble`
-
-**Cause:**  
-Trakt's scrobble API considers any playback past 80% to be finished. If you pause a video after 80%, calling Trakt's `/scrobble/pause` endpoint causes Trakt to reject the pause with this notice.
-
-**Resolution:**  
-Omniscrobble automatically intercepts late pauses that exceed `EPISODE_SCROBBLE_THRESHOLD` (default: 80%) or `MOVIE_SCROBBLE_THRESHOLD` (default: 90%) and converts them to `/scrobble/stop` requests so your watch history is accurately saved.
+- **Symptom**: Logs display: `Trakt scrobble warning: message: Progress is 85%. Use stop to scrobble`
+- **Cause**: Trakt's scrobble API considers any playback past 80% to be finished. If you pause a video after 80%, calling Trakt's `/scrobble/pause` endpoint causes Trakt to reject the pause with this notice.
+- **Resolution**: Omniscrobble automatically intercepts late pauses that exceed `EPISODE_SCROBBLE_THRESHOLD` (default: 80%) or `MOVIE_SCROBBLE_THRESHOLD` (default: 90%) and converts them to `/scrobble/stop` requests so your watch history is accurately saved.
 
 ---
 
 ### Trakt 401 Unauthorized
 
-**Symptom:**  
-Webhooks or dashboard actions fail with HTTP status `401 Unauthorized`.
+- **Symptom**: Webhooks or dashboard actions fail with HTTP status `401 Unauthorized`.
+- **Cause**: The Trakt OAuth access token has expired or was revoked.
+- **Resolution**:
+  1. Omniscrobble includes proactive token refreshing (refreshing tokens within 24 hours of expiration) and automatic 401 retry handling.
+  2. If the refresh token itself has expired or was invalidated, re-authenticate via the web browser:
 
-**Cause:**  
-The Trakt OAuth access token has expired or was revoked.
+     ```text
+     http://<your-server-ip-or-domain>:<PORT>/auth
+     ```
 
-**Resolution:**  
-1. Omniscrobble includes proactive token refreshing (refreshing tokens within 24 hours of expiration) and automatic 401 retry handling.
-2. If the refresh token itself has expired or was invalidated, re-authenticate via the web browser:
-   ```text
-   http://<your-server-ip-or-domain>:<PORT>/auth
-   ```
-   Or via the CLI:
-   ```bash
-   .venv/bin/python auth.py
-   ```
+     Or via the CLI:
+
+     ```bash
+     .venv/bin/python auth.py
+     ```
 
 ---
 
 ### Simkl 401 Unauthorized / "Invalid client"
 
-**Symptom:**  
-Device PIN polling fails with:  
-`Authorization Error: Invalid client credentials. If your Simkl app was registered as 'Server apps & services', please configure your Client Secret in Settings Hub.`
-
-**Cause:**  
-Simkl OAuth 2.0 developer applications registered under the **Server apps & services** category strictly enforce `client_secret` verification when exchanging device authorization codes (`POST /oauth2/token`).
-
-**Resolution:**  
-1. Open the [Simkl Developer Applications](https://simkl.com/settings/developer/) dashboard and copy your application's **Client Secret**.
-2. Open Omniscrobble's web dashboard and navigate to **Settings Hub ⚙️ &rarr; Trackers &rarr; Simkl**.
-3. Paste the secret into the **`SIMKL_CLIENT_SECRET`** field.
-4. Click **Save & Link Simkl (PIN Flow)** to immediately authorize. Alternatively, define `SIMKL_CLIENT_SECRET=your_client_secret_here` in `.env`.
+- **Symptom**: Device PIN polling fails with: `Authorization Error: Invalid client credentials. If your Simkl app was registered as 'Server apps & services', please configure your Client Secret in Settings Hub.`
+- **Cause**: Simkl OAuth 2.0 developer applications registered under the **Server apps & services** category strictly enforce `client_secret` verification when exchanging device authorization codes (`POST /oauth2/token`).
+- **Resolution**:
+  1. Open the [Simkl Developer Applications](https://simkl.com/settings/developer/) dashboard and copy your application's **Client Secret**.
+  2. Open Omniscrobble's web dashboard and navigate to **Settings Hub ⚙️ &rarr; Trackers &rarr; Simkl**.
+  3. Paste the secret into the **`SIMKL_CLIENT_SECRET`** field.
+  4. Click **Save & Link Simkl (PIN Flow)** to immediately authorize. Alternatively, define `SIMKL_CLIENT_SECRET=your_client_secret_here` in `.env`.
 
 ---
 
 ### Trakt 429 Rate Limit Exceeded
 
-**Symptom:**  
-Logs report HTTP 429 errors during bulk scrobbling or synchronization.
-
-**Cause:**  
-Trakt enforces an API rate limit of 1 request per second for scrobbling endpoints.
-
-**Resolution:**  
-Omniscrobble automatically intercepts 429 responses, buffers the failed requests into the SQLite offline queue (`data/queue.db`), and retries them using exponential backoff respecting the upstream `Retry-After` header.
+- **Symptom**: Logs report HTTP 429 errors during bulk scrobbling or synchronization.
+- **Cause**: Trakt enforces an API rate limit of 1 request per second for scrobbling endpoints.
+- **Resolution**: Omniscrobble automatically intercepts 429 responses, buffers the failed requests into the SQLite offline queue (`data/queue.db`), and retries them using exponential backoff respecting the upstream `Retry-After` header.
 
 ---
 
@@ -152,10 +127,13 @@ curl http://localhost:8080/health
 
 - **Web Dashboard**: Click **Logs** in the dashboard header to open the interactive live terminal modal with search and log level filters.
 - **systemd (Linux Host)**:
+
   ```bash
   journalctl --user -u omniscrobble -f
   ```
+
 - **Docker Compose**:
+
   ```bash
   docker compose logs -f
   ```
@@ -189,11 +167,14 @@ JELLYFIN_URL=http://jellyfin:8096
 If Omniscrobble is containerized but your media server (like Plex) runs natively on the host:
 
 1. Add `host.docker.internal` to your `docker-compose.yml`:
+
    ```yaml
    extra_hosts:
      - "host.docker.internal:host-gateway"
    ```
+
 2. Reference the host using:
+
    ```ini
    PLEX_URL=http://host.docker.internal:32400
    ```
@@ -239,12 +220,14 @@ If your media servers utilize internal self-signed HTTPS certificates, ensure th
 ### Testing Server Connectivity from the Dashboard
 
 Open the **⚙️ Settings Hub** modal on the web dashboard:
+
 - Click **Test Connection** under Plex, Jellyfin, or Emby to verify API keys and URLs.
 - The dashboard performs an immediate non-blocking test request and displays the server name, version, and latency.
 
 ### Inspecting Webhook Deliveries
 
 If a media server is playing media but no scrobbles appear on Trakt:
+
 1. Verify the server is enabled in `.env` (`PLEX_ENABLED=true`, `JELLYFIN_ENABLED=true`, or `EMBY_ENABLED=true`).
 2. Check if your username is listed under `PLEX_ALLOWED_USERS`.
 3. If `WEBHOOK_SECRET` is configured, verify that `?token=YOUR_SECRET` is appended to the webhook URL in your media server settings.

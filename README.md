@@ -4,7 +4,7 @@
 
 # Omniscrobble — Universal Media Scrobbler & Webhook Bridge
 
-> *Watch anywhere. Track everywhere.*
+> Watch anywhere. Track everywhere.
 
 [![CI](https://github.com/selits/omniscrobble/actions/workflows/ci.yml/badge.svg)](https://github.com/selits/omniscrobble/actions/workflows/ci.yml)
 [![Live Demo](https://img.shields.io/badge/demo-live_preview-blue?logo=github&style=flat)](https://selits.github.io/omniscrobble/)
@@ -44,21 +44,31 @@ A lightweight, high-performance Python service that receives media server webhoo
 
 ## 🚦 Integration & Verification Matrix
 
-Omniscrobble is developed in an active daily homelab environment. The matrix below details capabilities that are **verified in live production** by the maintainer versus those that are **implemented and unit-tested to specification awaiting community validation**:
+Omniscrobble is developed in an active daily homelab environment. The matrix below details capabilities that are **verified in live production** by the maintainer versus those that are **implemented and unit-tested to specification with mock fixtures and simulations awaiting live community validation**:
 
-| Category | Service / Platform | Capabilities | Status |
+| Category | Service / Platform | Capabilities | Status & Verification Tier |
 | :--- | :--- | :--- | :--- |
-| **Media Servers** | **Plex** | Webhook Ingestion, Scrobble, Rating/Collection Sync, Two-Way Reconciliation | ✅ **Verified** (Maintainer daily driver) |
-| | **Jellyfin** | Webhook Ingestion, Scrobble, Rating Sync, Library Reconciliation | 🧪 **Community Beta** (Unit-tested to spec) |
-| | **Emby** | Webhook Ingestion, Scrobble, Rating Sync, Library Reconciliation | 🧪 **Community Beta** (Unit-tested to spec) |
-| **Trackers** | **Trakt.tv** | Playback Scrobble, Rating Sync, Two-Way Library Reconciliation | ✅ **Verified** (Primary cloud tracker) |
-| | **Simkl** | Simultaneous Dual-Scrobble, Rating Sync, Cross-Tracker Sync | ✅ **Verified** (Multi-Tracker engine) |
-| | **AniList** | Dedicated GraphQL Anime Scrobble & List Synchronization | 🧪 **Community Beta** (Unit-tested to spec) |
-| | **MyAnimeList** | REST v2 Anime Scrobble & Rating Synchronization | 🧪 **Community Beta** (Unit-tested to spec) |
-| **Automation** | **Sonarr & Radarr** | Trakt Watchlist Auto-Grab, Download & Collection Sync, Co-Watch Autocomplete | ✅ **Verified** |
+| **Media Servers** | **Plex** | Webhook Ingestion, Scrobble, Rating/Collection Sync, Two-Way Reconciliation | ✅ **Verified** (Maintainer daily driver; live production) |
+| | **Jellyfin** | Webhook Ingestion, Scrobble, Rating Sync, Library Reconciliation | 🧪 **Community Beta** (Unit-tested to MediaBrowser spec; simulated) |
+| | **Emby** | Webhook Ingestion, Scrobble, Rating Sync, Library Reconciliation | 🧪 **Community Beta** (Unit-tested to MediaBrowser spec; simulated) |
+| **Universal Trackers** | **Trakt.tv** | Playback Scrobble, Rating Sync, Two-Way Library Reconciliation | ✅ **Verified** (Primary cloud tracker; live production) |
+| | **Simkl** | Simultaneous Dual-Scrobble, Rating Sync, Cross-Tracker Sync | ✅ **Verified** (Live API verified; multi-tracker engine) |
+| **Anime Trackers** | **AniList** | Dedicated GraphQL Anime Scrobble & List Synchronization | 🧪 **Community Beta** (Unit-tested to GraphQL spec with mock fixtures) |
+| | **MyAnimeList** | REST v2 Anime Scrobble & Rating Synchronization | 🧪 **Community Beta** (Unit-tested to REST spec with mock fixtures) |
+| | **Kitsu** | JSON:API v1 Anime Progress & Rating Synchronization | 🧪 **Community Beta** (Unit-tested to spec; mock-verified; not live-tested) |
+| **Social Diaries** | **Letterboxd** | Automated CSV Diary Exporter & Watched History Sync | 🧪 **Community Beta** (Unit-tested CSV format; awaiting live import verification) |
+| | **Serializd** | TV Diary & Episode Progress Sync | 🧪 **Community Beta** (Unit-tested to REST spec; mock-verified; not live-tested) |
+| **Lists & Ratings** | **TMDb** | Watchlist & Star Rating Sync (API v3/v4) | 🧪 **Community Beta** (Unit-tested to TMDb spec; mock-verified; not live-tested) |
+| | **MDBList** | Multi-Platform Aggregated Critic & User Ratings | 🧪 **Community Beta** (Unit-tested to API spec; mock-verified; not live-tested) |
+| | **SeriesGuide / Showly** | Mobile Trakt Relay & Quick Scrobble Sync | 🧪 **Community Beta** (Unit-tested Trakt relay) |
+| **Automation Stack** | **Sonarr & Radarr** | Trakt Watchlist Auto-Grab, Download & Collection Sync, Co-Watch Autocomplete | ✅ **Verified** (Maintainer daily driver; live production) |
 
-> [!TIP]
-> **Community Feedback Welcomed**: If you run Jellyfin, Emby, AniList, or MyAnimeList, please report your experience or open an issue on GitHub! 100% of unit tests pass, and your real-world feedback helps verify and refine them.
+> [!IMPORTANT]
+> **Live Production vs. Unit/Mock Testing Disclosure**:
+>
+> - **Live Tested (Verified)**: Plex, Trakt.tv, Simkl, Sonarr, and Radarr are actively run and validated against real production accounts and physical hardware playback in the maintainer's daily homelab.
+> - **Unit & Simulated Tested (Community Beta)**: The newly added cloud trackers (Kitsu, Letterboxd, Serializd, TMDb, MDBList), secondary media servers (Jellyfin, Emby), and anime engines (AniList, MyAnimeList) are fully implemented and verified via automated unit test suites (194 tests) and synthetic webhook simulations. They have **not yet been live-tested with real upstream user accounts**.
+> - **Community Testers Welcome**: If you use any Community Beta integrations, please report your experience or open an issue on GitHub! Your real-world feedback validates and refines each platform integration.
 
 ---
 

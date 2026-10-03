@@ -59,6 +59,7 @@ Before submitting pull requests or proposing commits, execute the unified local 
 ```
 
 This script verifies:
+
 1. **Git Privacy Verification**: Asserts that `git config user.email` uses the privacy email `selits@users.noreply.github.com`.
 2. **State Isolation**: Asserts no `.env` or files under `data/` are tracked by git.
 3. **Unit Tests**: Runs `.venv/bin/pytest -v` (0 failures allowed).
@@ -79,6 +80,22 @@ This script verifies:
    - Use placeholders: `<your-server-ip-or-domain>`, `<PORT>`, `your_client_id_here`.
 4. **Static Demo Synchronization**:
    - Whenever dashboard templates (`app/templates/dashboard.html`) change, regenerate the static demo:
+
      ```bash
      .venv/bin/python scripts/generate_static_demo.py
      ```
+
+---
+
+## 6. Testing Tiers & Live Verification Transparency
+
+Omniscrobble maintains a strict and transparent distinction between integrations that are live-tested in active production versus those that are unit-tested and simulated:
+
+- **Tier 1 (Verified / Daily Driver)**:
+  - **Platforms**: Plex, Trakt.tv, Simkl, Sonarr, Radarr.
+  - **Scope**: Continuously tested and verified in the maintainer's primary homelab against physical media playback and real user account APIs.
+- **Tier 2 (Community Beta / Mock Tested)**:
+  - **Platforms**: Jellyfin, Emby, AniList, MyAnimeList, Kitsu, Letterboxd, Serializd, TMDb, MDBList, and SeriesGuide/Showly.
+  - **Scope**: Implemented to official vendor API specifications and rigorously verified via 194 unit tests and synthetic webhook simulations (`scripts/simulate_webhook.py`). **Not yet live-tested with active user accounts in production**.
+
+For complete details on testing scenarios and simulator flags, consult [**`docs/LOCAL_TESTING.md`**](./docs/LOCAL_TESTING.md).

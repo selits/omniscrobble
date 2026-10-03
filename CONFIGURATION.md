@@ -30,6 +30,11 @@ This document is the comprehensive reference manual for configuring **Omniscrobb
    - [Simkl (Movies, Shows, Anime)](#simkl-movies-shows-anime)
    - [AniList (Anime Engine)](#anilist-anime-engine)
    - [MyAnimeList (MAL Anime Engine)](#myanimelist-mal-anime-engine)
+   - [Kitsu (Anime Engine)](#kitsu-anime-engine)
+   - [Letterboxd (Social Film Diary)](#letterboxd-social-film-diary)
+   - [Serializd (Social TV Diary)](#serializd-social-tv-diary)
+   - [The Movie Database - TMDb (Lists & Ratings)](#the-movie-database---tmdb-lists--ratings)
+   - [MDBList (Aggregated Ratings)](#mdblist-aggregated-ratings)
 5. [Watch Together & Multi-User Accounts](#5-watch-together--multi-user-accounts)
    - [Co-Watching Architecture](#co-watching-architecture)
    - [Configuring Partner Synchronization](#configuring-partner-synchronization)
@@ -105,18 +110,22 @@ Your Plex URL is the network address where Omniscrobble can send HTTP API reques
 The `X-Plex-Token` is your personal Plex authentication token required for two-way library reconciliation and ratings synchronization.
 
 ##### Method A: "View XML" in Plex Web (Recommended — 15 Seconds)
+
 1. Open [Plex Web](https://app.plex.tv/desktop) in your browser.
 2. Navigate to **any** movie or episode in your library.
 3. Click the three dots menu (**`...`**) on the media poster or details page.
 4. Select **Get Info** (or *View Info*).
 5. In the lower-left corner of the modal, click **View XML**.
 6. A new browser tab opens displaying raw XML. Look at your browser's **address bar** (the URL):
+
    ```text
    https://...plex.direct:32400/library/metadata/12345?X-Plex-Token=<your-plex-token>
    ```
+
 7. Copy the alphanumeric string after `X-Plex-Token=`. This is your personal Plex token.
 
 ##### Method B: Browser Developer Tools
+
 1. Open [Plex Web](https://app.plex.tv/desktop) while signed into your Plex account.
 2. Press `F12` (or right-click &rarr; *Inspect* &rarr; switch to the **Application** or **Storage** tab).
 3. Under **Local Storage**, select `https://app.plex.tv`.
@@ -124,15 +133,18 @@ The `X-Plex-Token` is your personal Plex authentication token required for two-w
 5. Copy the associated value.
 
 #### Adding the Webhook to Plex Media Server
-*(Requires Plex Pass)*
+
+> ℹ️ **Requirement:** Requires Plex Pass.
 
 1. Open Plex Web &rarr; Click **Settings** (wrench icon top-right).
 2. Under your account settings in the left sidebar, click **Webhooks**.
 3. Click **Add Webhook**.
 4. Enter your Omniscrobble webhook URL:
+
    ```text
    http://<your-omniscrobble-ip>:8080/webhook
    ```
+
    *(If you configured a `WEBHOOK_SECRET`, append `?token=<your-webhook-secret>`)*.
 5. Click **Save Changes**.
 
@@ -141,10 +153,12 @@ The `X-Plex-Token` is your personal Plex authentication token required for two-w
 ### Jellyfin Media Server
 
 #### Finding Your Jellyfin Server URL
+
 - **Local Network**: `http://<your-server-ip>:8096` *(e.g., `http://192.168.1.50:8096`)*.
 - **Secure Reverse Proxy**: `https://jellyfin.<your-domain>.com`.
 
 #### Generating a Jellyfin API Key
+
 1. Log into your Jellyfin web interface with an **Administrator** account.
 2. Click the hamburger menu (top left) &rarr; **Administration Dashboard**.
 3. In the left navigation sidebar under **Advanced**, click **API Keys**.
@@ -153,16 +167,20 @@ The `X-Plex-Token` is your personal Plex authentication token required for two-w
 6. Copy the generated 32-character API key string.
 
 #### Finding Your Jellyfin User ID
+
 1. In the Jellyfin **Administration Dashboard**, click **Users** under the *Server* section.
 2. Click on the user profile you want Omniscrobble to sync with Trakt.
 3. Look at the browser's address bar (URL):
+
    ```text
    http://<your-server-ip>:8096/web/#/useredit.html?userId=<your-32-character-user-id>
    ```
+
 4. Copy the 32-character string following `userId=`. This is your Jellyfin `user_id`.
 
 #### Adding the Webhook to Jellyfin
-*(Free & Open Source — No premium pass required)*
+
+> ℹ️ **License:** Free & Open Source — No premium pass required.
 
 1. In the Jellyfin Dashboard &rarr; **Plugins** &rarr; **Catalog**.
 2. Find and install the official **Webhook** plugin, then restart Jellyfin if prompted.
@@ -180,10 +198,12 @@ The `X-Plex-Token` is your personal Plex authentication token required for two-w
 ### Emby Media Server
 
 #### Finding Your Emby Server URL
+
 - **Local Network**: `http://<your-server-ip>:8096` *(e.g., `http://192.168.1.50:8096`)*.
 - **Reverse Proxy**: `https://emby.<your-domain>.com`.
 
 #### Generating an Emby API Key
+
 1. Open the Emby web client &rarr; Click the **Settings** (gear) icon in the top right.
 2. In the left sidebar under **Advanced**, select **API Keys**.
 3. Click **New API Key**.
@@ -191,23 +211,29 @@ The `X-Plex-Token` is your personal Plex authentication token required for two-w
 5. Copy the generated API Key.
 
 #### Finding Your Emby User ID
+
 1. In the Emby Server Dashboard, select **Users** in the left sidebar.
 2. Click on your user account name.
 3. Inspect the browser address bar:
+
    ```text
    http://<your-server-ip>:8096/web/index.html#!/users/useredit.html?userId=<your-user-id>
    ```
+
 4. Copy the value of `userId=`.
 
 #### Adding the Webhook to Emby
-*(Requires Emby Premiere)*
+
+> ℹ️ **Requirement:** Requires Emby Premiere.
 
 1. In Emby Server Settings, click **Webhooks** under the *Server* category.
 2. Click **Add Webhook**.
 3. Set **Webhook URL** to:
+
    ```text
    http://<your-omniscrobble-ip>:8080/webhook/emby?token=<WEBHOOK_SECRET>
    ```
+
 4. Under **Events**, enable:
    - *Playback*: Playback Start, Playback Pause, Playback Unpause, Playback Stop.
    - *User Data*: Rating Changed / User Data Changed.
@@ -271,17 +297,21 @@ RADARR_ROOT_FOLDER=
 3. Fill in the application fields:
    - **Name**: `Omniscrobble` (or any label you prefer).
    - **Description**: `Media server scrobbler bridge`.
-   - **Redirect URI**: 
+   - **Redirect URI**:
+
      ```text
      urn:ietf:wg:oauth:2.0:oob
      ```
+
    - **Permissions**: Check `/scrobble` and `/checkin`.
 4. Click **Save Application**.
 5. Copy the displayed **Client ID** and **Client Secret** into your `.env` (or configure them directly in **Settings Hub ⚙️ &rarr; Trackers**):
+
    ```ini
    TRAKT_CLIENT_ID=your_client_id_here
    TRAKT_CLIENT_SECRET=your_client_secret_here
    ```
+
 6. Complete initial authorization by starting Omniscrobble and visiting `http://<your-server-ip>:8080/auth`.
 
 ---
@@ -294,6 +324,7 @@ RADARR_ROOT_FOLDER=
    - **App Name**: `Omniscrobble`
    - **Redirect URI**: `http://localhost` (or `urn:ietf:wg:oauth:2.0:oob`)
 4. Copy the generated **Client ID** and **Client Secret**:
+
    ```ini
    SIMKL_ENABLED=true
    SIMKL_CLIENT_ID=your_simkl_client_id_here
@@ -303,7 +334,7 @@ RADARR_ROOT_FOLDER=
 > [!TIP]
 > **Client Secret Requirement**: If your Simkl application was created under **Server apps & services**, Simkl OAuth 2.0 strictly requires `SIMKL_CLIENT_SECRET` for token polling. You can enter both your Client ID and Client Secret in `.env` or in the web dashboard via **Settings Hub ⚙️ &rarr; Trackers**.
 
-5. Authorize Simkl in Omniscrobble by opening `http://<your-server-ip>:8080/auth/simkl` (or clicking **Link Simkl** in the dashboard) and entering the generated PIN code on Simkl's activation page.
+1. Authorize Simkl in Omniscrobble by opening `http://<your-server-ip>:8080/auth/simkl` (or clicking **Link Simkl** in the dashboard) and entering the generated PIN code on Simkl's activation page.
 
 ---
 
@@ -313,19 +344,23 @@ RADARR_ROOT_FOLDER=
 2. Navigate to [AniList Developer Settings](https://anilist.co/settings/developer).
 3. Click **Create New Client**:
    - **Name**: `Omniscrobble`
-   - **Redirect URL**: 
+   - **Redirect URL**:
+
      ```text
      http://<your-omniscrobble-ip>:8080/auth/anilist/callback
      ```
+
      *(If using a reverse proxy with a custom domain, use `https://omniscrobble.yourdomain.com/auth/anilist/callback`)*.
 4. Click **Save**.
 5. Copy your **Client ID** and **Client Secret**:
+
    ```ini
    ANIME_AUTO_DETECT=true
    ANILIST_ENABLED=true
    ANILIST_CLIENT_ID=your_anilist_client_id_here
    ANILIST_CLIENT_SECRET=your_anilist_client_secret_here
    ```
+
 6. Authorize AniList by navigating to `http://<your-server-ip>:8080/auth/anilist`.
 
 ---
@@ -337,18 +372,116 @@ RADARR_ROOT_FOLDER=
 3. Click **Create ID**:
    - **App Name**: `Omniscrobble`
    - **App Type**: Select **`other`**.
-   - **App Redirect URL**: 
+   - **App Redirect URL**:
+
      ```text
      http://<your-omniscrobble-ip>:8080/auth/mal/callback
      ```
+
 4. Submit the form.
 5. Copy your **Client ID** and **Client Secret**:
+
    ```ini
    MAL_ENABLED=true
    MAL_CLIENT_ID=your_mal_client_id_here
    MAL_CLIENT_SECRET=your_mal_client_secret_here
    ```
+
 6. Authorize MyAnimeList by visiting `http://<your-server-ip>:8080/auth/mal`.
+
+---
+
+### Kitsu (Anime Engine)
+
+> 🧪 **Community Beta** — Implemented to JSON:API v1 spec; unit-tested with mock fixtures; awaiting live user verification.
+
+Kitsu provides automated anime episode progress scrobbling and rating synchronization.
+
+1. Sign in to [Kitsu](https://kitsu.app).
+2. Generate an OAuth API token or retrieve your account Bearer token from Developer Settings.
+3. Configure in `.env` (or configure via **Settings Hub ⚙️ &rarr; Trackers**):
+
+   ```ini
+   KITSU_ENABLED=true
+   KITSU_API_KEY=your_kitsu_oauth_token_here
+   KITSU_USER_ID=your_kitsu_user_id_here
+   ```
+
+---
+
+### Letterboxd (Social Film Diary)
+
+> 🧪 **Community Beta** — Implemented to Letterboxd CSV import spec; unit-tested; awaiting live user import validation.
+
+Because Letterboxd does not provide an open public write API for free tiers, Omniscrobble automatically builds and updates a local Letterboxd-compatible diary (`data/letterboxd_diary.json`). You can export this diary as a standard CSV file directly from the dashboard or API (`/api/letterboxd/export`) and import it into Letterboxd.
+
+1. Configure in `.env`:
+
+   ```ini
+   LETTERBOXD_ENABLED=true
+   LETTERBOXD_USERNAME=your_letterboxd_username
+   ```
+
+2. When movies are scrobbled or rated via your media server, Omniscrobble appends entries with movie title, year, IMDb/TMDb ID, rating, and watch date.
+3. Navigate to **Dashboard &rarr; Social Diaries** to view your diary and click **Export Letterboxd CSV** to download a ready-to-import CSV file for [Letterboxd Import](https://letterboxd.com/import/).
+
+---
+
+### Serializd (Social TV Diary)
+
+> 🧪 **Community Beta** — Implemented to Serializd REST spec; unit-tested with mock fixtures; awaiting live user verification.
+
+Serializd is a social network and diary dedicated to TV show logging and episode tracking.
+
+1. Configure in `.env` (or configure via **Settings Hub ⚙️ &rarr; Trackers**):
+
+   ```ini
+   SERIALIZD_ENABLED=true
+   SERIALIZD_USERNAME=your_serializd_username
+   SERIALIZD_TOKEN=your_serializd_session_or_api_token
+   ```
+
+2. Omniscrobble synchronizes completed TV episodes and season ratings directly to your Serializd profile.
+
+---
+
+### The Movie Database - TMDb (Lists & Ratings)
+
+> 🧪 **Community Beta** — Implemented to TMDb API v3/v4 spec; unit-tested with mock fixtures; awaiting live user verification.
+
+Sync your watch history, watchlist, and star ratings directly with TMDb.
+
+1. Sign in to [The Movie Database (TMDb)](https://www.themoviedb.org).
+2. Go to **Settings &rarr; API** and request a Developer API key.
+3. Generate a User Session ID (via v3/v4 authentication) or API Read Access Token (v4).
+4. Configure in `.env` (or configure via **Settings Hub ⚙️ &rarr; Trackers**):
+
+   ```ini
+   TMDB_ENABLED=true
+   TMDB_API_KEY=your_tmdb_api_key_here
+   TMDB_SESSION_ID=your_tmdb_user_session_id_here
+   # Optional: v4 Bearer token
+   TMDB_READ_ACCESS_TOKEN=your_v4_read_access_token
+   ```
+
+---
+
+### MDBList (Aggregated Ratings)
+
+> 🧪 **Community Beta** — Implemented to MDBList API spec; unit-tested with mock fixtures; awaiting live user verification.
+
+MDBList aggregates critic scores (IMDb, TMDb, Trakt, Rotten Tomatoes, Metacritic, Letterboxd, AniList) into unified ratings and manages dynamic lists.
+
+1. Sign in to [MDBList](https://mdblist.com).
+2. Go to **Preferences &rarr; API Key** and generate an API key.
+3. Configure in `.env` (or configure via **Settings Hub ⚙️ &rarr; Trackers**):
+
+   ```ini
+   MDBLIST_ENABLED=true
+   MDBLIST_API_KEY=your_mdblist_api_key_here
+   ```
+
+4. Query aggregated critic and audience scores via `/api/mdblist/ratings?title=...&year=...` or view ratings directly on the dashboard.
 
 ---
 
@@ -370,13 +503,17 @@ flowchart LR
 ### Configuring Partner Synchronization
 
 1. Set the partner Trakt username in `.env`:
+
    ```ini
    CO_WATCH_USER=partner_username
    ```
+
 2. Authorize the partner's Trakt account by visiting:
+
    ```text
    http://<your-omniscrobble-ip>:8080/auth?user=partner_username
    ```
+
    Tokens are saved in an isolated credential file (`data/tokens/partner_username_tokens.json`).
 
 ### Whitelisting Shows & Hardware Players
@@ -402,26 +539,32 @@ CO_WATCH_MOVIES=false
 Omniscrobble can send instant notifications when media is scrobbled, rated, added to collections, or when tracker APIs encounter rate limits or outages.
 
 ### Discord Webhook
+
 1. In your Discord server, go to **Channel Settings &rarr; Integrations &rarr; Webhooks**.
 2. Click **New Webhook**, customize the name and avatar, and click **Copy Webhook URL**.
 3. In `.env`:
+
    ```ini
    DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<your_webhook_id>/<your_webhook_token>
    ```
 
 ### Telegram Bot & Chat ID
+
 1. Open Telegram and search for `@BotFather`. Send `/newbot`, choose a name, and copy the generated **Bot Token**.
 2. Start a chat with your new bot and send `/start`.
 3. To find your numeric **Chat ID**, send a message to `@userinfobot` on Telegram.
 4. In `.env`:
+
    ```ini
    TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
    TELEGRAM_CHAT_ID=your_telegram_chat_id_here
    ```
 
 ### Ntfy Push Notifications
+
 1. Choose a topic name on public [ntfy.sh](https://ntfy.sh) or your self-hosted Ntfy server.
 2. In `.env`:
+
    ```ini
    NTFY_URL=https://ntfy.sh/your_topic_name
    NTFY_PRIORITY=default
@@ -430,9 +573,11 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
    ```
 
 ### Pushover Push Alerts
+
 1. Log in to [Pushover](https://pushover.net) and copy your **User Key**.
 2. Click **Create an Application/API Token**, name it `Omniscrobble`, and copy the **API Token**.
 3. In `.env`:
+
    ```ini
    PUSHOVER_USER_KEY=your_pushover_user_key_here
    PUSHOVER_API_TOKEN=your_pushover_api_token_here
@@ -448,7 +593,7 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 ## 7. Complete Environment Variable Reference
 
 | Variable | Default | Type | Runtime Editable? | Description |
-|---|---|---|:---:|---|
+| --- | --- | --- | :---: | --- |
 | **`SERVER_HOST`** | `0.0.0.0` | String | No | Network interface binding. Must be `0.0.0.0` for Docker, LAN, and remote VPS access. |
 | **`SERVER_PORT`** | `8080` | Integer | No | TCP port Omniscrobble listens on. |
 | **`DEBUG`** | `false` | Boolean | No | Enables verbose debug logging and traceback outputs. |
@@ -521,17 +666,21 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 When running Omniscrobble alongside Plex, Jellyfin, Sonarr, or Radarr in Docker, `localhost` refers to the container itself, **not** your host machine.
 
 - **Bridge Network (Recommended)**: Place containers on a shared Docker network (e.g., `media-net`):
+
   ```yaml
   networks:
     media-net:
       external: true
   ```
+
   You can then address services directly by their container names:
+
   ```text
   SONARR_URL=http://sonarr:8989
   RADARR_URL=http://radarr:7878
   JELLYFIN_URL=http://jellyfin:8096
   ```
+
 - **Host Networking**: If using `network_mode: host`, services can communicate via `http://127.0.0.1:<PORT>`.
 - **Docker Host Gateway**: If Omniscrobble is containerized but Plex runs natively on the host:
   - Use `http://172.17.0.1:32400` or add `extra_hosts: ["host.docker.internal:host-gateway"]` and use `http://host.docker.internal:32400`.
@@ -541,6 +690,7 @@ When running Omniscrobble alongside Plex, Jellyfin, Sonarr, or Radarr in Docker,
 If you host Omniscrobble behind a reverse proxy (Nginx, Traefik, Caddy, Cloudflare Tunnels, or SWAG), ensure standard forwarding headers are preserved so that Omniscrobble properly validates secure cookies and reconstructs webhook callback URLs:
 
 #### Nginx Configuration Snippet
+
 ```nginx
 location / {
     proxy_pass http://127.0.0.1:8080;
@@ -552,6 +702,7 @@ location / {
 ```
 
 #### Caddy Configuration Snippet
+
 ```caddy
 omniscrobble.yourdomain.com {
     reverse_proxy 127.0.0.1:8080
@@ -565,7 +716,7 @@ If your media servers use internal self-signed HTTPS certificates, ensure that t
 ---
 
 > 📖 **Related Documentation:**
+>
 > - [**Feature Guides & Deep Dives**](./docs/FEATURES.md) — In-depth walkthroughs for Co-Watching, Two-Way Reconciliation, and Content Bridge.
 > - [**Troubleshooting & Diagnostics**](./docs/TROUBLESHOOTING.md) — Solutions for common webhook error codes, health checks, and networking.
 > - [**Deployment Guide**](./DEPLOYMENT.md) — 24/7 background operation with systemd, Docker, and reverse proxies.
-

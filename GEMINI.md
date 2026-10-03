@@ -47,6 +47,7 @@ This document defines the architectural rules, security boundaries, and developm
 - **Pull Request Automation (`gh` CLI):**
   - When the user explicitly requests to commit, push, and create a PR, execute the full pipeline autonomously without intermediate stops.
   - In non-interactive subshell environments, dynamically source `GH_TOKEN` from the git credential helper:
+
     ```bash
     GH_TOKEN=$(printf "protocol=https\nhost=github.com\n" | git credential fill 2>/dev/null | grep '^password=' | cut -d= -f2) gh pr create ...
     ```

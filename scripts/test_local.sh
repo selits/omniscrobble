@@ -59,7 +59,7 @@ fi
 echo "✓ Zero secret leaks detected."
 
 # Gate 5: Static Demo Generation & Verification
-echo "==> [Gate 5/5] Verifying Static Demo Generation..."
+echo "==> [Gate 5/6] Verifying Static Demo Generation..."
 if [ -f ".venv/bin/python" ]; then
     .venv/bin/python scripts/generate_static_demo.py
 else
@@ -70,6 +70,12 @@ if [ ! -f "docs/index.html" ]; then
     exit 1
 fi
 echo "✓ Static demo generated successfully at docs/index.html."
+
+# Gate 6: Markdown Quality & Linting
+echo "==> [Gate 6/6] Checking Markdown Linting..."
+if [ -f "${SCRIPT_DIR}/lint_markdown.sh" ]; then
+    "${SCRIPT_DIR}/lint_markdown.sh"
+fi
 
 echo "========================================================"
 echo "  ✓ All quality gates passed successfully! Ready to push."

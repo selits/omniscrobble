@@ -29,4 +29,3 @@ All autonomous and pair-programming AI agents (Gemini, Claude, Copilot, Cursor, 
    - When the user instructs to commit, push, and create a pull request, execute the entire pipeline end-to-end without pausing to ask again.
    - For `gh pr create` in subshell environments, dynamically source the GitHub token from the local git credential helper:
      `GH_TOKEN=$(printf "protocol=https\nhost=github.com\n" | git credential fill 2>/dev/null | grep '^password=' | cut -d= -f2)`
-
