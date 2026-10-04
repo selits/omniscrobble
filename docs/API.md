@@ -28,6 +28,8 @@ This document provides the complete API reference for **Omniscrobble**, includin
 12. [Cross-Tracker Reconciliation (Trakt ⇄ Simkl)](#12-cross-tracker-reconciliation-trakt--simkl)
 13. [Runtime Settings Hub](#13-runtime-settings-hub)
 14. [Synthetic Webhook Testing](#14-synthetic-webhook-testing)
+15. [Diagnostics & Webhook Debugger](#15-diagnostics--webhook-debugger)
+16. [Personal Analytics & OmniWrapped](#16-personal-analytics--omniwrapped)
 
 ---
 
@@ -235,3 +237,22 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
 | **`/api/test/webhook`** | `POST` | Admin | **Webhook Simulator**: Simulates playback events (`media.play`, `media.pause`, `media.scrobble`), tests filter rules, inspects Co-Watch eligibility reasons, and optionally dispatches live to Trakt and partner. |
+
+---
+
+## 15. Diagnostics & Webhook Debugger
+
+| Endpoint | Method | Auth | Description |
+| --- | :---: | :---: | --- |
+| **`/api/debug/webhooks`** | `GET` | Admin | **Webhook Inspector History**: Returns recently captured raw webhook payloads (up to 25 items) with sanitized tokens, endpoint provenance, and processing status. Supports `?limit=15` and `?demo=true`. |
+| **`/api/debug/webhooks`** | `DELETE` | Admin | **Clear Debugger Buffer**: Purges the in-memory ring buffer of captured raw webhook events. |
+| **`/api/debug/replay`** | `POST` | Admin | **Replay & Test Payload**: Replays or tests a captured webhook payload through parser logic. Supports dry-run simulation (`dispatch: false`) or live pipeline execution (`dispatch: true`). |
+
+---
+
+## 16. Personal Analytics & OmniWrapped
+
+| Endpoint | Method | Auth | Description |
+| --- | :---: | :---: | --- |
+| **`/api/analytics/summary`** | `GET` | Public | **Viewing Analytics Summary**: Returns aggregated watch metrics (cumulative watch time, completed movies/episodes, star ratings, solo vs shared co-watching ratios, and media server platform distribution). Supports `?period=all\|year\|month\|week` and `?demo=true`. |
+| **`/api/analytics/wrapped`** | `GET` | Public | **OmniWrapped Retrospective**: Computes an annual viewing celebration card including personality archetype heuristics, top binge show, co-watch breakdown, and genre telemetry. Supports `?year=YYYY` and `?demo=true`. |

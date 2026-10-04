@@ -11036,5 +11036,255 @@ def test_chunked_discrepancy_streamer():
         assert c_data["diff"][0]["id"] == "plex:movie:2"
 
 
+def test_webhook_debugger_unit():
+    """Verify in-memory ring buffer recording, sanitization, and history management."""
+    from app.services.webhook_debugger import WebhookDebugger, sanitize_headers, sanitize_payload
+
+    # 1. Header and payload sanitization
+    headers = {
+        "User-Agent": "PlexMediaServer/1.32",
+        "Authorization": "Bearer secret_oauth_token",
+        "X-Plex-Token": "secret_plex_token",
+        "X-Webhook-Secret": "my_webhook_secret",
+        "Content-Type": "application/json",
+    }
+    clean_h = sanitize_headers(headers)
+    assert clean_h["User-Agent"] == "PlexMediaServer/1.32"
+    assert clean_h["Authorization"] == "[REDACTED]"
+    assert clean_h["X-Plex-Token"] == "[REDACTED]"
+    assert clean_h["X-Webhook-Secret"] == "[REDACTED]"
+
+    payload = {
+        "event": "media.scrobble",
+        "token": "sensitive_plex_token_xyz",
+        "nested": {
+            "password": "secret_password",
+            "api_key": "sensitive_key",
+            "title": "Severance",
+        },
+        "list": [{"secret": "item_secret", "name": "val"}],
+    }
+    clean_p = sanitize_payload(payload)
+    assert clean_p["event"] == "media.scrobble"
+    assert clean_p["token"] == "[REDACTED]"
+    assert clean_p["nested"]["password"] == "[REDACTED]"
+    assert clean_p["nested"]["api_key"] == "[REDACTED]"
+    assert clean_p["nested"]["title"] == "Severance"
+    assert clean_p["list"][0]["secret"] == "[REDACTED]"
+    assert clean_p["list"][0]["name"] == "val"
+
+    # 2. Ring buffer operations
+    debugger = WebhookDebugger(maxlen=3)
+    e1 = debugger.record(source="plex", endpoint="/webhook", payload={"title": "Movie 1", "token": "p1"}, status="received")
+    e2 = debugger.record(source="jellyfin", endpoint="/webhook/jellyfin", payload={"Item": {"title": "Show 1"}}, status="received")
+    e3 = debugger.record(source="emby", endpoint="/webhook/emby", payload={"Item": {"title": "Show 2"}}, status="received")
+
+    history = debugger.get_history()
+    assert len(history) == 3
+    assert history[0]["id"] == e3["id"]  # Most recent first
+    assert history[0]["payload"]["Item"]["title"] == "Show 2"
+
+    # Update status
+    updated = debugger.update_status(e2["id"], status="processed", reason="Scrobbled successfully")
+    assert updated is True
+    found = debugger.get_payload(e2["id"])
+    assert found is not None
+    assert found["status"] == "processed"
+    assert found["reason"] == "Scrobbled successfully"
+
+    # Maxlen eviction
+    e4 = debugger.record(source="radarr", endpoint="/radarr", payload={"title": "Movie 2"}, status="received")
+    history_after = debugger.get_history()
+    assert len(history_after) == 3
+    assert debugger.get_payload(e1["id"]) is None  # e1 evicted
+
+    # Clear
+    debugger.clear()
+    assert len(debugger.get_history()) == 0
+
+
+def test_analytics_manager_unit(tmp_path):
+    """Verify watch statistics aggregation, period filtering, and OmniWrapped retrospectives."""
+    from app.services.analytics_manager import AnalyticsManager
+
+    events_file = tmp_path / "test_events.json"
+    stats_file = tmp_path / "test_stats.json"
+
+    # Demo summary
+    mgr = AnalyticsManager(events_file=events_file, stats_file=stats_file)
+    demo_sum = mgr.get_summary(demo=True)
+    assert demo_sum["total_scrobbles"] == 182
+    assert demo_sum["movies_watched"] == 42
+    assert demo_sum["cowatch_ratio_percent"] == 37
+    assert "Plex" in demo_sum["server_distribution"]
+
+    # Demo OmniWrapped
+    demo_wrapped = mgr.get_omniwrapped(year=2026, demo=True)
+    assert demo_wrapped["year"] == 2026
+    assert "OmniWrapped" in demo_wrapped["headline"]
+    assert demo_wrapped["archetype"] in [
+        "The Living Room Co-Watcher",
+        "The Silver Screen Cinephile",
+        "The Grand Homelab Binger",
+        "The Curated Media Connoisseur",
+    ]
+    assert demo_wrapped["total_scrobbles"] == 182
+
+    # Real data calculation
+    import datetime
+    now = datetime.datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    events_data = [
+        {
+            "timestamp": now_str,
+            "action": "scrobble (100.0%)",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "details": "Plex Scrobbler",
+            "player": "Apple TV",
+            "cowatch_status": {"synced": False},
+        },
+        {
+            "timestamp": now_str,
+            "action": "scrobble (100.0%)",
+            "type": "episode",
+            "title": "Severance S01E01",
+            "details": "Jellyfin Scrobbler",
+            "player": "Shield TV",
+            "cowatch_status": {"synced": True, "reason": "Whitelisted"},
+        },
+        {
+            "timestamp": now_str,
+            "action": "rating",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "rating": 9,
+        },
+    ]
+    with open(events_file, "w", encoding="utf-8") as f:
+        json.dump(events_data, f)
+
+    summary = mgr.get_summary(period="all")
+    assert summary["total_scrobbles"] == 2
+    assert summary["movies_watched"] == 1
+    assert summary["episodes_watched"] == 1
+    assert summary["ratings_submitted"] == 1
+    assert summary["cowatch_ratio_percent"] > 0
+    assert "Plex" in summary["server_distribution"]
+    assert "Jellyfin" in summary["server_distribution"]
+
+    wrapped = mgr.get_omniwrapped(year=2026)
+    assert wrapped["movies_watched"] == 1
+    assert wrapped["episodes_watched"] == 1
+    assert wrapped["cowatch_breakdown"]["shared_hours"] > 0
+
+
+def test_webhook_debugger_and_replay_endpoints():
+    """Verify REST API endpoints for /api/debug/webhooks and /api/debug/replay."""
+    client = TestClient(app)
+
+    # 1. Access control when WEBHOOK_SECRET is active
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # Unauthorized without admin token
+        res_unauth = client.get("/api/debug/webhooks")
+        assert res_unauth.status_code == 403
+
+        res_del_unauth = client.delete("/api/debug/webhooks")
+        assert res_del_unauth.status_code == 403
+
+        res_rep_unauth = client.post("/api/debug/replay", json={"source": "plex", "payload": {}})
+        assert res_rep_unauth.status_code == 403
+
+        # Demo mode bypasses authorization
+        res_demo = client.get("/api/debug/webhooks?demo=true")
+        assert res_demo.status_code == 200
+        assert "webhooks" in res_demo.json()
+        assert len(res_demo.json()["webhooks"]) > 0
+
+        # Authorized with admin cookie
+        client.cookies.set("admin_token", "admin_secret")
+        res_auth = client.get("/api/debug/webhooks")
+        assert res_auth.status_code == 200
+
+        # Delete / clear buffer
+        res_del = client.delete("/api/debug/webhooks")
+        assert res_del.status_code == 200
+        assert res_del.json()["status"] == "ok"
+
+        # Replay dry-run simulation
+        replay_plex = {
+            "source": "plex",
+            "dispatch": False,
+            "payload": {
+                "event": "media.scrobble",
+                "Account": {"title": "selits"},
+                "Metadata": {
+                    "type": "movie",
+                    "title": "Replay Sci-Fi Movie",
+                    "year": 2026,
+                    "librarySectionTitle": "Movies",
+                },
+                "Player": {"title": "Living Room TV"},
+            },
+        }
+        res_rep_sim = client.post("/api/debug/replay", json=replay_plex)
+        assert res_rep_sim.status_code == 200
+        data_sim = res_rep_sim.json()
+        assert data_sim["status"] == "simulated"
+        assert data_sim["parsed"]["title"] == "Replay Sci-Fi Movie"
+
+        # Replay with unsupported source
+        res_rep_bad = client.post("/api/debug/replay", json={"source": "unknown_app", "payload": {}})
+        assert res_rep_bad.status_code == 200
+        assert res_rep_bad.json()["status"] == "error"
+
+        # Replay standalone player payload
+        replay_standalone = {
+            "source": "standalone",
+            "dispatch": False,
+            "payload": {
+                "title": "Standalone Stream",
+                "media_type": "movie",
+                "year": 2025,
+                "player": "Infuse",
+            },
+        }
+        res_rep_st = client.post("/api/debug/replay", json=replay_standalone)
+        assert res_rep_st.status_code == 200
+        assert res_rep_st.json()["status"] == "simulated"
+        assert res_rep_st.json()["parsed"]["title"] == "Standalone Stream"
+
+
+def test_analytics_endpoints_and_dashboard_integration():
+    """Verify /api/analytics/summary, /api/analytics/wrapped, and dashboard rendering."""
+    client = TestClient(app)
+
+    # 1. GET /api/analytics/summary
+    res_sum = client.get("/api/analytics/summary?period=all&demo=true")
+    assert res_sum.status_code == 200
+    sum_data = res_sum.json()
+    assert "total_watch_hours" in sum_data
+    assert "server_distribution" in sum_data
+    assert "top_shows" in sum_data
+
+    # 2. GET /api/analytics/wrapped
+    res_wrp = client.get("/api/analytics/wrapped?year=2026&demo=true")
+    assert res_wrp.status_code == 200
+    wrp_data = res_wrp.json()
+    assert wrp_data["year"] == 2026
+    assert "archetype" in wrp_data
+    assert "cowatch_breakdown" in wrp_data
+
+    # 3. Dashboard rendering includes Analytics Card and Inspector Modal
+    res_dash = client.get("/")
+    assert res_dash.status_code == 200
+    html = res_dash.text
+    assert "Personal Analytics & Viewing Habits" in html
+    assert "OmniWrapped" in html
+    assert "webhook-debugger-modal" in html
+    assert "omniwrapped-modal" in html
+
+
+
 
 

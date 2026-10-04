@@ -17,6 +17,8 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 9. [Ambient Visuals, Display Density & Card Customization](#9-ambient-visuals-display-density--card-customization)
 10. [Production Security & Self-Healing Resilience](#10-production-security--self-healing-resilience)
 11. [Scrobbler Fidelity & Multi-Server Real-Time Mirroring](#11-scrobbler-fidelity--multi-server-real-time-mirroring)
+12. [In-Browser Webhook Inspector & Payload Debugger](#12-in-browser-webhook-inspector--payload-debugger)
+13. [Personal Viewing Analytics & OmniWrapped](#13-personal-viewing-analytics--omniwrapped)
 
 ---
 
@@ -464,3 +466,43 @@ For lightweight or portable setups running without a centralized media server (s
 - **Self-Documenting Info Endpoint (`GET /api/scrobble`)**: Returns endpoint documentation, parameter definitions, and JSON payload schemas.
 - **Unified Action Ingestion (`POST /api/scrobble`)**: Ingests direct playback lifecycle payloads (`action: "play" | "pause" | "stop" | "scrobble"`) with title, media type, season/episode, and metadata provider IDs (`imdb`, `tmdb`, `tvdb`).
 - **Webhook Secret Protection**: Secures standalone player scrobbling via `?token=<SECRET>` query parameters or `x-webhook-secret` headers.
+
+---
+
+## 12. In-Browser Webhook Inspector & Payload Debugger
+
+Omniscrobble includes an in-memory raw webhook ring buffer and debugger (`WebhookDebugger`) that captures incoming media server payloads across Plex, Jellyfin, Emby, Radarr, Sonarr, and standalone players.
+
+```mermaid
+flowchart LR
+    A["Raw Webhook Ingestion\n(/webhook, /jellyfin, /emby, /api/scrobble)"] --> B["Token Redaction & Sanitization\n(Strip secrets, Bearer tokens, cookies)"]
+    B --> C["Ring Buffer Memory Cache\n(Latest 25 Events)"]
+    C --> D["In-Browser Inspector Modal\n(Expandable JSON Syntax Highlighter)"]
+    D --> E["1-Click Replay & Dry-Run Engine\n(POST /api/debug/replay)"]
+```
+
+### Webhook Inspector Capabilities
+
+- **Automatic Credential Sanitization**: Redacts sensitive authorization tokens, cookies, webhooks secrets, and passwords in both request headers and JSON payloads (`[REDACTED]`).
+- **Processing Provenance & Status**: Tracks whether events were scrobbled, queued, test-verified, or ignored (due to library filters or user whitelists) with detailed rationale.
+- **Interactive Syntax Highlighting**: Inspect formatted, syntax-highlighted JSON trees with copy-to-clipboard buttons directly inside the dashboard.
+- **1-Click Replay Bridge**: Test webhook payloads against your current scrobbling rules in dry-run mode or dispatch them through the live multi-tracker pipeline.
+
+---
+
+## 13. Personal Viewing Analytics & OmniWrapped
+
+The **Statistics Hub** computes lifetime and time-windowed viewing telemetry directly from activity events and scrobble counters, powering rich metrics and the yearly **OmniWrapped** retrospective.
+
+### Telemetry & Metrics
+
+- **Cumulative Watch Hours**: Formatted viewing time calculations across movies (110m avg) and TV episodes (45m avg).
+- **Solo vs. Co-Watch Ratio**: Visual distribution bar comparing solo screen time against shared viewing sessions with your partner.
+- **Multi-Server Distribution**: Percentage badges tracking where playback originated (Plex vs. Jellyfin vs. Emby).
+- **Top Series & Genre Affinity**: Live aggregation of your most-watched shows and genre breakdown.
+- **Personality Archetypes**: Evaluates annual viewing habits and assigns custom homelab archetypes:
+  - *The Living Room Co-Watcher* (&ge; 40% co-watch ratio)
+  - *The Silver Screen Cinephile* (movie-dominated viewing)
+  - *The Grand Homelab Binger* (> 100 watch hours)
+  - *The Curated Media Connoisseur* (selective, high-fidelity viewing)
+- **Exportable Retrospectives**: Export complete OmniWrapped JSON summaries for archiving or sharing.

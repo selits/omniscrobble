@@ -437,6 +437,8 @@
 
         {{COWATCH_CARD}}
 
+        {{ANALYTICS_CARD}}
+
         {{RECONCILIATION_CARD}}
 
         {{BACKUP_CARD}}
@@ -2077,6 +2079,85 @@
                     <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Save Rule</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- In-Browser Webhook Inspector & Payload Debugger Modal -->
+    <div id="webhook-debugger-modal" onclick="if(event.target===this)closeWebhookDebuggerModal()">
+        <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;display:flex;flex-direction:column;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>🔍</span> Webhook Inspector & Payload Debugger
+                    </h3>
+                    <span id="webhook-debugger-count" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;">0 events</span>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button onclick="loadDebugWebhooks()" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:5px 10px;font-size:11px;cursor:pointer;">🔄 Refresh</button>
+                    <button onclick="clearDebugWebhooks()" class="btn-sm" style="background:#7f1d1d;color:#fecaca;border:none;padding:5px 10px;font-size:11px;cursor:pointer;">🗑️ Clear</button>
+                    <button onclick="closeWebhookDebuggerModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+                </div>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Inspect recent incoming raw webhook requests from Plex, Jellyfin, Emby, and standalone players. Tokens are automatically redacted for privacy. Click <strong>Replay</strong> to test or edit any payload.
+            </p>
+            <div id="webhook-debugger-list" style="overflow-y:auto;flex:1;max-height:60vh;padding-right:4px;">
+                <div style="color:#64748b;font-size:12px;font-style:italic;padding:12px 0;">Loading webhook history...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Personal Analytics OmniWrapped Modal -->
+    <div id="omniwrapped-modal" onclick="if(event.target===this)closeOmniWrappedModal()">
+        <div class="modal-dialog modal-dialog-md" style="max-height:88vh;background:linear-gradient(145deg, #0f172a, #1e1b4b);border:1px solid #6366f1;box-shadow:0 10px 25px -5px rgba(99,102,241,0.4);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:24px;">✨</span>
+                    <h3 id="omniwrapped-headline" style="margin:0;font-size:20px;color:#fff;font-weight:700;">Your 2026 OmniWrapped</h3>
+                </div>
+                <button onclick="closeOmniWrappedModal()" style="background:none;border:none;color:#cbd5e1;font-size:22px;cursor:pointer;">&times;</button>
+            </div>
+
+            <!-- Archetype Badge -->
+            <div style="text-align:center;padding:16px 12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:10px;margin-bottom:14px;">
+                <div style="font-size:11px;text-transform:uppercase;color:#a5b4fc;font-weight:700;letter-spacing:1px;margin-bottom:4px;">Your Viewing Archetype</div>
+                <div id="omniwrapped-archetype" style="font-size:20px;font-weight:800;color:#fbcfe8;text-shadow:0 0 12px rgba(244,114,182,0.4);">The Living Room Co-Watcher</div>
+                <div id="omniwrapped-description" style="font-size:12px;color:#cbd5e1;margin-top:6px;max-width:380px;margin-left:auto;margin-right:auto;line-height:1.4;">
+                    You cherish shared cinema moments, watching nearly half your media together with family and partners.
+                </div>
+            </div>
+
+            <!-- Big Stats Grid -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+                <div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-size:11px;color:#94a3b8;">Total Watch Time</div>
+                    <div id="omniwrapped-watchtime" style="font-size:22px;font-weight:800;color:#38bdf8;margin-top:2px;">146h 30m</div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-size:11px;color:#94a3b8;">Titles Watched</div>
+                    <div id="omniwrapped-titles" style="font-size:22px;font-weight:800;color:#f8fafc;margin-top:2px;">182</div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-size:11px;color:#94a3b8;">Top Binge Series</div>
+                    <div id="omniwrapped-top-show" style="font-size:14px;font-weight:700;color:#c084fc;margin-top:4px;">Severance</div>
+                    <div id="omniwrapped-top-show-sub" style="font-size:10px;color:#64748b;">18 episodes logged</div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;text-align:center;">
+                    <div style="font-size:11px;color:#94a3b8;">Co-Watch Share</div>
+                    <div id="omniwrapped-cowatch-pct" style="font-size:18px;font-weight:700;color:#f472b6;margin-top:4px;">37% Shared</div>
+                    <div id="omniwrapped-cowatch-partner" style="font-size:10px;color:#64748b;">with @demo_partner</div>
+                </div>
+            </div>
+
+            <!-- Footer Action Buttons -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+                <button onclick="downloadOmniWrappedJson()" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;font-size:11px;cursor:pointer;">
+                    📥 Export JSON
+                </button>
+                <button onclick="closeOmniWrappedModal()" class="btn-sm" style="background:#4f46e5;color:#fff;font-weight:600;border:none;padding:6px 16px;cursor:pointer;">
+                    Close
+                </button>
+            </div>
         </div>
     </div>
 
@@ -7387,6 +7468,213 @@ SIMKL_ENABLED=true</pre>
                 }
                 return;
             }
+        }
+
+        // ==========================================
+        // Webhook Inspector & Payload Debugger Logic
+        // ==========================================
+        let currentDebugWebhooks = [];
+
+        function openWebhookDebuggerModal() {
+            if (!isAdmin && !isDemo) { openUnlockModal(); return; }
+            document.getElementById('webhook-debugger-modal').style.display = 'flex';
+            loadDebugWebhooks();
+        }
+
+        function closeWebhookDebuggerModal() {
+            document.getElementById('webhook-debugger-modal').style.display = 'none';
+        }
+
+        async function loadDebugWebhooks() {
+            const listEl = document.getElementById('webhook-debugger-list');
+            const countBadge = document.getElementById('webhook-debugger-count');
+            if (!listEl) return;
+            listEl.innerHTML = '<div style="color:#64748b;font-size:12px;font-style:italic;padding:12px 0;">Loading webhook history...</div>';
+            try {
+                const url = isDemo ? '/api/debug/webhooks?demo=true' : '/api/debug/webhooks';
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    currentDebugWebhooks = data.webhooks || [];
+                    if (countBadge) countBadge.innerText = `${currentDebugWebhooks.length} events`;
+                    renderDebugWebhooksList(currentDebugWebhooks);
+                } else {
+                    listEl.innerHTML = '<div style="color:#f87171;font-size:12px;padding:8px 0;">Failed to load webhook history.</div>';
+                }
+            } catch (e) {
+                listEl.innerHTML = `<div style="color:#f87171;font-size:12px;padding:8px 0;">Error: ${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        async function clearDebugWebhooks() {
+            if (!isAdmin && !isDemo) { openUnlockModal(); return; }
+            if (!confirm('Are you sure you want to clear the captured webhook history?')) return;
+            try {
+                const url = isDemo ? '/api/debug/webhooks?demo=true' : '/api/debug/webhooks';
+                const res = await fetch(url, { method: 'DELETE' });
+                if (res.ok) {
+                    loadDebugWebhooks();
+                }
+            } catch (e) {
+                alert('Error clearing webhooks: ' + e.message);
+            }
+        }
+
+        function renderDebugWebhooksList(webhooks) {
+            const listEl = document.getElementById('webhook-debugger-list');
+            if (!listEl) return;
+            if (!webhooks.length) {
+                listEl.innerHTML = '<div style="color:#64748b;font-size:12px;font-style:italic;padding:12px 0;">No incoming webhooks recorded yet. Incoming media server and standalone scrobbles will appear here automatically.</div>';
+                return;
+            }
+
+            listEl.innerHTML = webhooks.map((wh, idx) => {
+                const wid = escapeHtml(wh.id || `wh_${idx}`);
+                const src = escapeHtml((wh.source || 'webhook').toUpperCase());
+                const event = escapeHtml(wh.event || 'media.event');
+                const title = escapeHtml(wh.media_title || 'Media Event');
+                const ts = escapeHtml(wh.timestamp || '');
+                const status = escapeHtml(wh.status || 'received');
+                const reason = escapeHtml(wh.reason || '');
+                const payloadJson = escapeHtml(JSON.stringify(wh.payload || {}, null, 2));
+
+                let statusBadge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:1px 6px;border-radius:4px;font-size:10px;">Received</span>';
+                if (status === 'processed') {
+                    statusBadge = '<span style="background:#065f46;color:#34d399;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:600;">Processed</span>';
+                } else if (status === 'ignored') {
+                    statusBadge = '<span style="background:#451a03;color:#fbbf24;padding:1px 6px;border-radius:4px;font-size:10px;">Ignored</span>';
+                } else if (status === 'error') {
+                    statusBadge = '<span style="background:#7f1d1d;color:#fca5a5;padding:1px 6px;border-radius:4px;font-size:10px;">Error</span>';
+                }
+
+                let srcColor = '#38bdf8';
+                if (src === 'PLEX') srcColor = '#e5a00d';
+                else if (src === 'JELLYFIN') srcColor = '#aa5cc3';
+                else if (src === 'EMBY') srcColor = '#52b54b';
+                else if (src === 'STANDALONE') srcColor = '#00aaff';
+
+                return `
+                <div class="debug-webhook-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span style="background:#1e293b;border:1px solid ${srcColor};color:${srcColor};font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;">${src}</span>
+                            <strong style="color:#f8fafc;font-size:13px;">${title}</strong>
+                            ${statusBadge}
+                            <span style="font-size:11px;color:#64748b;">${event}</span>
+                        </div>
+                        <div style="display:flex;gap:6px;align-items:center;">
+                            <span style="font-size:10px;color:#64748b;margin-right:4px;">${ts}</span>
+                            <button onclick="togglePayloadViewer('${wid}')" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#e2e8f0;cursor:pointer;">
+                                View Payload
+                            </button>
+                            <button onclick="replayPayloadFromDebugger('${wid}')" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#2563eb;color:#fff;border:none;cursor:pointer;font-weight:600;">
+                                🔁 Replay
+                            </button>
+                        </div>
+                    </div>
+                    ${reason ? `<div style="font-size:11px;color:#94a3b8;margin-bottom:6px;">${reason}</div>` : ''}
+                    <div id="payload-viewer-${wid}" style="display:none;margin-top:8px;background:#020617;border:1px solid #1e293b;border-radius:6px;padding:8px 10px;">
+                        <pre style="margin:0;font-size:11px;color:#38bdf8;font-family:monospace;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow-y:auto;">${payloadJson}</pre>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function togglePayloadViewer(wid) {
+            const el = document.getElementById(`payload-viewer-${wid}`);
+            if (el) {
+                el.style.display = (el.style.display === 'none' || !el.style.display) ? 'block' : 'none';
+            }
+        }
+
+        function replayPayloadFromDebugger(wid) {
+            const wh = currentDebugWebhooks.find(w => w.id === wid);
+            if (!wh) return;
+            closeWebhookDebuggerModal();
+            openTestWebhookModal();
+            const payload = wh.payload || {};
+            const metadata = payload.Metadata || payload.Item || payload;
+            const titleInput = document.getElementById('test-media-title');
+            if (titleInput && (metadata.title || payload.title)) {
+                titleInput.value = metadata.title || payload.title;
+            }
+            const typeInput = document.getElementById('test-media-type');
+            if (typeInput && (metadata.type || payload.media_type)) {
+                typeInput.value = (metadata.type || payload.media_type).toLowerCase() === 'movie' ? 'movie' : 'episode';
+            }
+        }
+
+        // ==========================================
+        // Personal Analytics & OmniWrapped Logic
+        // ==========================================
+        let currentOmniWrappedData = null;
+
+        function openOmniWrappedModal() {
+            document.getElementById('omniwrapped-modal').style.display = 'flex';
+            loadOmniWrapped();
+        }
+
+        function closeOmniWrappedModal() {
+            document.getElementById('omniwrapped-modal').style.display = 'none';
+        }
+
+        async function loadOmniWrapped(year = 2026) {
+            try {
+                const url = isDemo ? `/api/analytics/wrapped?year=${year}&demo=true` : `/api/analytics/wrapped?year=${year}`;
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    currentOmniWrappedData = data;
+                    renderOmniWrappedModal(data);
+                }
+            } catch (e) {
+                console.error('Failed to load OmniWrapped:', e);
+            }
+        }
+
+        function renderOmniWrappedModal(data) {
+            if (!data) return;
+            const headlineEl = document.getElementById('omniwrapped-headline');
+            if (headlineEl) headlineEl.innerText = data.headline || `Your ${data.year || 2026} OmniWrapped`;
+
+            const archetypeEl = document.getElementById('omniwrapped-archetype');
+            if (archetypeEl) archetypeEl.innerText = data.archetype || 'The Media Connoisseur';
+
+            const descEl = document.getElementById('omniwrapped-description');
+            if (descEl) descEl.innerText = data.description || '';
+
+            const wtEl = document.getElementById('omniwrapped-watchtime');
+            if (wtEl) wtEl.innerText = data.total_watch_time || `${data.total_watch_hours || 0}h`;
+
+            const titlesEl = document.getElementById('omniwrapped-titles');
+            if (titlesEl) titlesEl.innerText = data.total_scrobbles || 0;
+
+            const topShowEl = document.getElementById('omniwrapped-top-show');
+            const topShowSubEl = document.getElementById('omniwrapped-top-show-sub');
+            if (topShowEl && data.top_binge) {
+                topShowEl.innerText = data.top_binge.show || 'Series';
+                if (topShowSubEl) topShowSubEl.innerText = `${data.top_binge.episodes || 0} episodes logged`;
+            }
+
+            const cwPctEl = document.getElementById('omniwrapped-cowatch-pct');
+            const cwPartnerEl = document.getElementById('omniwrapped-cowatch-partner');
+            if (cwPctEl && data.cowatch_breakdown) {
+                cwPctEl.innerText = `${data.cowatch_breakdown.cowatch_percentage || 0}% Shared`;
+                if (cwPartnerEl) cwPartnerEl.innerText = `with @${data.cowatch_breakdown.partner_user || 'Partner'}`;
+            }
+        }
+
+        function downloadOmniWrappedJson() {
+            if (!currentOmniWrappedData) return;
+            const blob = new Blob([JSON.stringify(currentOmniWrappedData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `omniwrapped_${currentOmniWrappedData.year || 2026}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         }
 
         // Reset scroll position for co-watch chips on load and reload so refresh starts cleanly at top

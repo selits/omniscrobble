@@ -61,6 +61,8 @@ from app.services.arr_bridge import arr_bridge
 from app.services.cross_tracker_sync import CrossTrackerSyncManager
 from app.services.settings_manager import settings_mgr
 from app.services.cloud_sync_manager import cloud_sync_mgr
+from app.services.webhook_debugger import webhook_debugger
+from app.services.analytics_manager import analytics_mgr
 from app.services.dashboard_renderer import (
     format_action_label,
     should_display_cowatch_badge,
@@ -1207,6 +1209,14 @@ async def plex_webhook(request: Request):
         metrics_registry.record_request("webhook", 400)
         raise HTTPException(status_code=400, detail="No payload found in request")
 
+    debug_entry = webhook_debugger.record(
+        source="plex",
+        endpoint="/webhook",
+        payload=raw_data if isinstance(raw_data, dict) else {"raw": str(raw_data)},
+        headers=dict(request.headers),
+        status="processing",
+    )
+
     parsed = parse_plex_webhook(
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
@@ -1215,9 +1225,12 @@ async def plex_webhook(request: Request):
     )
     if not parsed:
         metrics_registry.record_request("webhook", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Non-media event, filtered user/library, or unsupported media type")
         return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
-    return await process_media_event(parsed, endpoint_name="webhook")
+    res = await process_media_event(parsed, endpoint_name="webhook")
+    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+    return res
 
 
 @app.get("/webhook/jellyfin")
@@ -1247,6 +1260,14 @@ async def jellyfin_webhook(request: Request):
         metrics_registry.record_request("webhook_jellyfin", 400)
         raise HTTPException(status_code=400, detail="No payload found in request")
 
+    debug_entry = webhook_debugger.record(
+        source="jellyfin",
+        endpoint="/webhook/jellyfin",
+        payload=raw_data if isinstance(raw_data, dict) else {"raw": str(raw_data)},
+        headers=dict(request.headers),
+        status="processing",
+    )
+
     parsed = parse_jellyfin_webhook(
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
@@ -1255,9 +1276,12 @@ async def jellyfin_webhook(request: Request):
     )
     if not parsed:
         metrics_registry.record_request("webhook_jellyfin", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Non-media event, filtered user/library, or unsupported media type")
         return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
-    return await process_media_event(parsed, endpoint_name="webhook_jellyfin")
+    res = await process_media_event(parsed, endpoint_name="webhook_jellyfin")
+    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+    return res
 
 
 @app.get("/webhook/emby")
@@ -1287,6 +1311,14 @@ async def emby_webhook(request: Request):
         metrics_registry.record_request("webhook_emby", 400)
         raise HTTPException(status_code=400, detail="No payload found in request")
 
+    debug_entry = webhook_debugger.record(
+        source="emby",
+        endpoint="/webhook/emby",
+        payload=raw_data if isinstance(raw_data, dict) else {"raw": str(raw_data)},
+        headers=dict(request.headers),
+        status="processing",
+    )
+
     parsed = parse_emby_webhook(
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
@@ -1295,9 +1327,12 @@ async def emby_webhook(request: Request):
     )
     if not parsed:
         metrics_registry.record_request("webhook_emby", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Non-media event, filtered user/library, or unsupported media type")
         return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
-    return await process_media_event(parsed, endpoint_name="webhook_emby")
+    res = await process_media_event(parsed, endpoint_name="webhook_emby")
+    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+    return res
 
 
 class StandaloneScrobblePayload(BaseModel):
@@ -1349,6 +1384,14 @@ async def standalone_scrobble_endpoint(request: Request, payload: StandaloneScro
     """Direct scrobble bridge endpoint for standalone players (Infuse, Kodi, VLC, Stremio)."""
     verify_webhook_token(request, "api_scrobble")
 
+    debug_entry = webhook_debugger.record(
+        source=payload.player or "standalone",
+        endpoint="/api/scrobble",
+        payload=payload.model_dump(),
+        headers=dict(request.headers),
+        status="processing",
+    )
+
     action_lower = payload.action.strip().lower()
     if action_lower in ("play", "start", "resume"):
         event = "media.play"
@@ -1397,7 +1440,9 @@ async def standalone_scrobble_endpoint(request: Request, payload: StandaloneScro
         view_offset_ms=payload.view_offset_ms,
     )
 
-    return await process_media_event(parsed, endpoint_name="api_scrobble")
+    res = await process_media_event(parsed, endpoint_name="api_scrobble")
+    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+    return res
 
 
 @app.get("/sonarr")
@@ -1428,19 +1473,30 @@ async def sonarr_webhook(request: Request):
         metrics_registry.record_request("sonarr", 400)
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
+    debug_entry = webhook_debugger.record(
+        source="sonarr",
+        endpoint="/sonarr",
+        payload=payload if isinstance(payload, dict) else {"raw": str(payload)},
+        headers=dict(request.headers),
+        status="processing",
+    )
+
     event_type, trakt_payload, parsed = parse_sonarr_webhook(payload)
 
     if event_type == "test":
         logger.info("Received Sonarr test webhook - connection verified!")
         metrics_registry.record_request("sonarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="test", reason="Connection verified")
         return {"status": "success", "message": "Sonarr webhook received successfully"}
 
     if event_type == "ignored" or not trakt_payload or not parsed:
         metrics_registry.record_request("sonarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="ignored", reason=f"Event '{payload.get('eventType')}' ignored")
         return {"status": "ignored", "reason": f"Event '{payload.get('eventType')}' ignored"}
 
     if not Config.SYNC_COLLECTION:
         metrics_registry.record_request("sonarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Collection sync is disabled (SYNC_COLLECTION=false)")
         return {"status": "ignored", "reason": "Collection sync is disabled (SYNC_COLLECTION=false)"}
 
     active_client = user_mgr.get_client()
@@ -1461,6 +1517,7 @@ async def sonarr_webhook(request: Request):
             asyncio.create_task(notifier.dispatch(parsed, "collection"))
 
         metrics_registry.record_request("sonarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="processed", reason="Collection sync success")
         return {"status": "success", "event": "sonarr.download", "action": "collection", "result": result}
     except Exception as e:
         logger.error(f"Error processing Sonarr collection sync: {e}")
@@ -1468,6 +1525,7 @@ async def sonarr_webhook(request: Request):
         metrics_registry.record_collection("episode", "queued")
         log_event(parsed, action_taken, {"error": str(e), "queued": True})
         metrics_registry.record_request("sonarr", 500)
+        webhook_debugger.update_status(debug_entry["id"], status="error", reason=str(e))
         return {"status": "error", "error": str(e), "queued": True}
 
 
@@ -1499,19 +1557,30 @@ async def radarr_webhook(request: Request):
         metrics_registry.record_request("radarr", 400)
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
+    debug_entry = webhook_debugger.record(
+        source="radarr",
+        endpoint="/radarr",
+        payload=payload if isinstance(payload, dict) else {"raw": str(payload)},
+        headers=dict(request.headers),
+        status="processing",
+    )
+
     event_type, trakt_payload, parsed = parse_radarr_webhook(payload)
 
     if event_type == "test":
         logger.info("Received Radarr test webhook - connection verified!")
         metrics_registry.record_request("radarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="test", reason="Connection verified")
         return {"status": "success", "message": "Radarr webhook received successfully"}
 
     if event_type == "ignored" or not trakt_payload or not parsed:
         metrics_registry.record_request("radarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="ignored", reason=f"Event '{payload.get('eventType')}' ignored")
         return {"status": "ignored", "reason": f"Event '{payload.get('eventType')}' ignored"}
 
     if not Config.SYNC_COLLECTION:
         metrics_registry.record_request("radarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Collection sync is disabled (SYNC_COLLECTION=false)")
         return {"status": "ignored", "reason": "Collection sync is disabled (SYNC_COLLECTION=false)"}
 
     active_client = user_mgr.get_client()
@@ -1532,6 +1601,7 @@ async def radarr_webhook(request: Request):
             asyncio.create_task(notifier.dispatch(parsed, "collection"))
 
         metrics_registry.record_request("radarr", 200)
+        webhook_debugger.update_status(debug_entry["id"], status="processed", reason="Collection sync success")
         return {"status": "success", "event": "radarr.download", "action": "collection", "result": result}
     except Exception as e:
         logger.error(f"Error processing Radarr collection sync: {e}")
@@ -1539,6 +1609,7 @@ async def radarr_webhook(request: Request):
         metrics_registry.record_collection("movie", "queued")
         log_event(parsed, action_taken, {"error": str(e), "queued": True})
         metrics_registry.record_request("radarr", 500)
+        webhook_debugger.update_status(debug_entry["id"], status="error", reason=str(e))
         return {"status": "error", "error": str(e), "queued": True}
 
 
@@ -4046,6 +4117,163 @@ async def get_mdblist_ratings(
     return res
 
 
+class ReplayWebhookRequest(BaseModel):
+    source: str = Field(..., description="Source format: plex, jellyfin, emby, radarr, sonarr, or standalone")
+    payload: dict[str, Any] = Field(..., description="Raw JSON webhook payload")
+    dispatch: bool = Field(False, description="If True, dispatches to actual scrobbler / multi_tracker pipeline; if False, only performs parser dry-run simulation")
+
+
+@app.get("/api/debug/webhooks")
+async def get_debug_webhooks(request: Request, limit: int = 15, demo: bool = False):
+    """Retrieve recent captured raw webhook payloads for in-browser inspection."""
+    is_demo = demo or request.query_params.get("demo") == "true"
+    if is_demo:
+        return {"webhooks": demo_mgr.get_demo_webhook_debug_history()[:limit]}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=403, detail="Admin authorization required to view raw webhook payloads")
+    return {"webhooks": webhook_debugger.get_history(limit=limit)}
+
+
+@app.delete("/api/debug/webhooks")
+async def clear_debug_webhooks(request: Request):
+    """Purge the in-memory raw webhook ring buffer."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=403, detail="Admin authorization required to clear webhook payloads")
+    webhook_debugger.clear()
+    return {"status": "ok", "message": "Webhook debugger buffer cleared"}
+
+
+@app.post("/api/debug/replay")
+async def replay_debug_webhook(request: Request, body: ReplayWebhookRequest):
+    """Replay or simulate a captured webhook payload through parser and pipeline."""
+    is_demo = request.query_params.get("demo") == "true"
+    if not is_admin_request(request) and not is_demo:
+        raise HTTPException(status_code=403, detail="Admin authorization required to replay webhooks")
+
+    source = body.source.lower().strip()
+    raw = body.payload
+    parsed: Optional[ParsedMedia] = None
+
+    if source == "plex":
+        parsed = parse_plex_webhook(
+            raw,
+            allowed_users=Config.PLEX_ALLOWED_USERS,
+            allowed_libraries=Config.ALLOWED_LIBRARIES,
+            excluded_libraries=get_effective_excluded_libraries(),
+        )
+    elif source == "jellyfin":
+        parsed = parse_jellyfin_webhook(
+            raw,
+            allowed_users=Config.PLEX_ALLOWED_USERS,
+            allowed_libraries=Config.ALLOWED_LIBRARIES,
+            excluded_libraries=get_effective_excluded_libraries(),
+        )
+    elif source == "emby":
+        parsed = parse_emby_webhook(
+            raw,
+            allowed_users=Config.PLEX_ALLOWED_USERS,
+            allowed_libraries=Config.ALLOWED_LIBRARIES,
+            excluded_libraries=get_effective_excluded_libraries(),
+        )
+    elif source == "sonarr":
+        _, _, parsed = parse_sonarr_webhook(raw)
+    elif source == "radarr":
+        _, _, parsed = parse_radarr_webhook(raw)
+    elif source in ("standalone", "player"):
+        try:
+            sp = StandaloneScrobblePayload(**raw)
+            action_lower = sp.action.strip().lower()
+            if action_lower in ("play", "start", "resume"):
+                event = "media.play"
+            elif action_lower in ("pause",):
+                event = "media.pause"
+            elif action_lower in ("stop",):
+                event = "media.stop"
+            elif action_lower in ("scrobble", "finish", "watched", "complete"):
+                event = "media.scrobble"
+            elif action_lower in ("rate", "rating"):
+                event = "media.rate"
+            else:
+                event = f"media.{action_lower}"
+
+            clean_ids = {str(k).lower().strip(): str(v).strip() for k, v in (sp.ids or {}).items() if v}
+            parsed = ParsedMedia(
+                event=event,
+                media_type=sp.media_type,
+                title=sp.title,
+                year=sp.year,
+                progress=sp.progress,
+                rating=sp.rating,
+                season=sp.season,
+                episode=sp.episode,
+                show_title=sp.show_title,
+                grandparent_title=sp.show_title,
+                ids=clean_ids,
+                player=sp.player or "Standalone Player",
+                device=sp.device or sp.player or "Standalone Device",
+                username=sp.user or (Config.PLEX_ALLOWED_USERS[0] if Config.PLEX_ALLOWED_USERS else "user"),
+                duration_ms=sp.duration_ms,
+                view_offset_ms=sp.view_offset_ms,
+            )
+        except Exception as e:
+            return {"status": "error", "message": f"Invalid standalone scrobble payload: {e}"}
+    else:
+        return {"status": "error", "message": f"Unsupported webhook source '{source}'"}
+
+    if not parsed:
+        return {
+            "status": "filtered",
+            "message": "Payload was filtered out or ignored (non-media event, excluded user/library, or invalid format)",
+            "source": source,
+        }
+
+    parsed_dict = {
+        "event": parsed.event,
+        "media_type": parsed.media_type,
+        "title": parsed.title,
+        "year": parsed.year,
+        "progress": parsed.progress,
+        "show_title": parsed.show_title,
+        "season": parsed.season,
+        "episode": parsed.episode,
+        "user": parsed.username or parsed.user,
+        "player": parsed.player,
+        "ids": parsed.ids,
+        "rating": parsed.rating,
+    }
+
+    if not body.dispatch:
+        return {
+            "status": "simulated",
+            "message": "Payload successfully parsed in dry-run mode (not dispatched)",
+            "parsed": parsed_dict,
+        }
+
+    dispatch_res = await process_media_event(parsed, endpoint_name=f"debug_replay_{source}")
+    return {
+        "status": "dispatched",
+        "message": "Payload parsed and dispatched through pipeline",
+        "parsed": parsed_dict,
+        "result": dispatch_res,
+    }
+
+
+@app.get("/api/analytics/summary")
+async def get_analytics_summary(request: Request, period: str = "all", demo: bool = False):
+    """Retrieve viewing analytics metrics across a given time window (all, year, month, week)."""
+    is_demo = demo or request.query_params.get("demo") == "true"
+    summary = analytics_mgr.get_summary(period=period, demo=is_demo)
+    return summary
+
+
+@app.get("/api/analytics/wrapped")
+async def get_analytics_wrapped(request: Request, year: int = 2026, demo: bool = False):
+    """Retrieve the OmniWrapped annual viewing retrospective and archetype summary."""
+    is_demo = demo or request.query_params.get("demo") == "true"
+    wrapped = analytics_mgr.get_omniwrapped(year=year, demo=is_demo)
+    return wrapped
+
+
 @app.get('/auth', response_class=HTMLResponse)
 async def auth_page(request: Request, user: Optional[str] = None):
     if not is_admin_request(request):
@@ -4337,6 +4565,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
     backup_card_html = dashboard_renderer.render_backup_card(is_admin=is_admin)
 
+    # Personal Analytics & Statistics Hub Card
+    if is_demo:
+        analytics_data = demo_mgr.get_demo_analytics_summary()
+    else:
+        analytics_data = analytics_mgr.get_summary(period="all")
+    analytics_card_html = dashboard_renderer.render_analytics_card(analytics_data, is_admin=is_admin)
+
     # Multi-Server Ecosystem Health Card
     eco_data = await arr_bridge.get_ecosystem_status(
         demo=is_demo,
@@ -4439,6 +4674,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{ANIME_CARD}}': anime_card_html,
         '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
+        '{{ANALYTICS_CARD}}': analytics_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,
         '{{BACKUP_CARD}}': backup_card_html,
         '{{MANUAL_SCROBBLE_BTN}}': manual_scrobble_btn_html,

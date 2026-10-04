@@ -1175,6 +1175,109 @@ class DashboardRenderer:
             """
 
     @staticmethod
+    def render_analytics_card(analytics: dict[str, Any], is_admin: bool) -> str:
+        """Render the Personal Analytics, Viewing Habits & OmniWrapped card."""
+        watch_time = analytics.get("total_watch_formatted", "0h 0m")
+        total_scrobbles = analytics.get("total_scrobbles", 0)
+        movies = analytics.get("movies_watched", 0)
+        episodes = analytics.get("episodes_watched", 0)
+        ratings = analytics.get("ratings_submitted", 0)
+
+        solo_hours = analytics.get("solo_hours", 0.0)
+        cowatch_hours = analytics.get("cowatch_hours", 0.0)
+        cw_pct = analytics.get("cowatch_ratio_percent", 0)
+        solo_pct = 100 - cw_pct if (solo_hours + cowatch_hours > 0) else 100
+
+        server_dist = analytics.get("server_distribution", {"Plex": 100})
+        server_badges = "".join(
+            f'<span style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-right:6px;">{s}: <strong style="color:#38bdf8;">{pct}%</strong></span>'
+            for s, pct in server_dist.items()
+        )
+
+        top_shows = analytics.get("top_shows", [])
+        top_show_label = f"📺 {top_shows[0]['show']} ({top_shows[0]['episodes']} eps)" if top_shows else "📺 No series logged yet"
+
+        top_genres = analytics.get("top_genres", [])
+        genre_tags = "".join(
+            f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 7px;border-radius:4px;font-size:10px;margin-right:4px;">{g["genre"]}</span>'
+            for g in top_genres[:4]
+        )
+
+        admin_debugger_btn = ""
+        if is_admin:
+            admin_debugger_btn = """
+            <button onclick="openWebhookDebuggerModal()" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">
+                <span>🔍</span><span>Webhook Inspector</span>
+            </button>
+            """
+
+        return f"""
+        <div class="card" style="margin-bottom:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <h3 style="margin:0;font-size:15px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>📊</span> Personal Analytics & Viewing Habits
+                    </h3>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    {admin_debugger_btn}
+                    <button onclick="openOmniWrappedModal()" class="btn-sm" style="background:linear-gradient(135deg, #8b5cf6, #3b82f6);color:#fff;border:none;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;box-shadow:0 2px 4px rgba(139,92,246,0.3);">
+                        <span>✨</span><span>OmniWrapped</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Metrics Grid -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-bottom:14px;">
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Watch Time</div>
+                    <div style="font-size:18px;font-weight:700;color:#38bdf8;">{watch_time}</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Across all devices</div>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Completed Titles</div>
+                    <div style="font-size:18px;font-weight:700;color:#f8fafc;">{total_scrobbles}</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{movies} movies &bull; {episodes} eps</div>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Co-Watch Ratio</div>
+                    <div style="font-size:18px;font-weight:700;color:#c084fc;">{cw_pct}%</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{cowatch_hours}h shared / {solo_hours}h solo</div>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Star Ratings</div>
+                    <div style="font-size:18px;font-weight:700;color:#fbbf24;">{ratings}</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Synced across trackers</div>
+                </div>
+            </div>
+
+            <!-- Co-Watch Ratio Progress Bar -->
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-bottom:6px;">
+                    <span style="color:#94a3b8;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;margin-right:4px;"></span>Solo Viewing ({solo_pct}%)</span>
+                    <span style="color:#94a3b8;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#c084fc;margin-right:4px;"></span>Shared Co-Watching ({cw_pct}%)</span>
+                </div>
+                <div style="width:100%;height:6px;background:#1e293b;border-radius:9999px;overflow:hidden;display:flex;">
+                    <div style="height:100%;width:{solo_pct}%;background:#38bdf8;"></div>
+                    <div style="height:100%;width:{cw_pct}%;background:#c084fc;"></div>
+                </div>
+            </div>
+
+            <!-- Distribution & Highlights Footer -->
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;font-size:12px;color:#94a3b8;">
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+                    <span style="color:#64748b;margin-right:4px;">Servers:</span>
+                    {server_badges}
+                </div>
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                    <strong style="color:#cbd5e1;font-size:11px;">{top_show_label}</strong>
+                    {genre_tags}
+                </div>
+            </div>
+        </div>
+        """
+
+    @staticmethod
     def render_template(template: str, replacements: dict[str, str]) -> str:
         """Substitute all replacement tokens into dashboard HTML template."""
         rendered = template

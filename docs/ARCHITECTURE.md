@@ -118,6 +118,8 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ### 7. Observability & UI Layer
 
 - **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, and activity feed rows, separating UI presentation logic from HTTP route handling.
+- **`app/services/analytics_manager.py`**: Personal analytics computation engine and "OmniWrapped" annual retrospective generator. Aggregates lifetime and windowed watch telemetry (hours watched, completed titles, solo vs shared co-watching ratios, multi-server distributions, top binged shows and genres) with viewer personality archetype heuristics.
+- **`app/services/webhook_debugger.py`**: In-memory raw webhook ring buffer and payload debugger. Securely captures incoming payloads across Plex, Jellyfin, Emby, Radarr, Sonarr, and standalone players with automatic token redaction, live in-browser inspection, and interactive dry-run / live replay execution.
 - **`app/templates/dashboard.html`**: Fully responsive, single-file HTML/CSS/JavaScript dashboard. Features real-time active stream cards, ecosystem health dots, paginated activity history, interactive reconciliation diff modals, live settings management, a multi-theme palette engine (8 dark modes, 9 accent highlights with zero-FOUC initialization), and global keyboard shortcuts.
 - **`app/metrics.py`**: Custom thread-safe Prometheus metrics registry exporting directly on `/metrics`.
 - **`app/services/log_manager.py`**: Real-time log streamer combining `journalctl --user` with an in-memory 1,000-line ring buffer. Features strict privacy redaction for query parameters and authorization headers.
@@ -148,6 +150,7 @@ omniscrobble/
 │   │   ├── radarr_client.py         # Radarr REST API client for movies, quality profiles & root folders
 │   │   └── overseerr_client.py      # Overseerr / Jellyseerr REST API client for media request management
 │   ├── services/                    # Core business logic and background services
+│   │   ├── analytics_manager.py     # Personal viewing analytics, watch time calculation, co-watch ratio & OmniWrapped engine
 │   │   ├── anime_resolver.py        # Anime detection heuristics, title normalization & GUID caching
 │   │   ├── arr_bridge.py            # Content Bridge manager for Trakt watchlist sync & ecosystem health
 │   │   ├── atomic_writer.py         # Crash-resilient atomic JSON/text file persistence with fsync
@@ -168,7 +171,8 @@ omniscrobble/
 │   │   ├── reverse_sync_manager.py  # Bi-directional library reconciliation & reverse sync engine
 │   │   ├── settings_manager.py      # Persistent runtime media server listeners, tracker pause toggles & rules engine
 │   │   ├── token_health_monitor.py  # Proactive token expiration evaluation, automated renewal & push alerts
-│   │   └── user_manager.py          # Multi-user account client cache & token persistence
+│   │   ├── user_manager.py          # Multi-user account client cache & token persistence
+│   │   └── webhook_debugger.py      # In-memory raw webhook ring buffer, credential redaction & live payload inspector
 │   ├── templates/                   # Externalized dashboard and authorization views
 │   │   ├── dashboard.html           # Main real-time status dashboard view
 │   │   ├── auth.html                # Trakt device activation view
@@ -184,7 +188,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (101 endpoints)
+│   ├── API.md                       # Full REST API specification (106 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
@@ -192,7 +196,10 @@ omniscrobble/
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
-├── tests/                           # Comprehensive test suite (234 tests, 0 external calls)
+├── templates/                       # Community deployment templates & app stores
+│   ├── unraid-omniscrobble.xml      # Official Unraid Community Applications template
+│   └── docker-compose.portainer.yml # Portainer stack & TrueNAS SCALE compose specification
+├── tests/                           # Comprehensive test suite (238 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool

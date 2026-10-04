@@ -941,6 +941,85 @@ class DemoManager:
             },
         }
 
+    def get_demo_webhook_debug_history(self) -> list[dict[str, Any]]:
+        now = datetime.datetime.now()
+        return [
+            {
+                "id": "wh_demo001",
+                "timestamp": (now - datetime.timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M:%S"),
+                "iso_timestamp": (now - datetime.timedelta(minutes=3)).isoformat(),
+                "source": "plex",
+                "endpoint": "/webhook",
+                "headers": {"host": "omniscrobble.local:8080", "user-agent": "PlexMediaServer/1.40.2"},
+                "payload": {
+                    "event": "media.scrobble",
+                    "Account": {"title": "demo_viewer"},
+                    "Server": {"title": "HomeLab-Plex"},
+                    "Player": {"title": "Living Room Apple TV"},
+                    "Metadata": {
+                        "type": "episode",
+                        "grandparentTitle": "Severance",
+                        "title": "Good News About Hell",
+                        "year": 2022,
+                        "duration": 3600000,
+                        "viewOffset": 3600000,
+                    },
+                },
+                "status": "processed",
+                "reason": "Scrobbled to Trakt + Co-Watch dual-sync (@demo_partner)",
+                "event": "media.scrobble",
+                "media_title": "Severance - Good News About Hell",
+            },
+            {
+                "id": "wh_demo002",
+                "timestamp": (now - datetime.timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S"),
+                "iso_timestamp": (now - datetime.timedelta(minutes=45)).isoformat(),
+                "source": "jellyfin",
+                "endpoint": "/webhook/jellyfin",
+                "headers": {"host": "omniscrobble.local:8080", "user-agent": "Jellyfin-Webhook/10.9"},
+                "payload": {
+                    "NotificationType": "PlaybackStop",
+                    "ItemType": "Movie",
+                    "Name": "Dune: Part Two",
+                    "Year": 2024,
+                    "PlayedToCompletion": True,
+                    "PlaybackPositionTicks": 99600000000,
+                },
+                "status": "processed",
+                "reason": "Scrobbled to Trakt & Simkl (100%)",
+                "event": "PlaybackStop",
+                "media_title": "Dune: Part Two (2024)",
+            },
+            {
+                "id": "wh_demo003",
+                "timestamp": (now - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                "iso_timestamp": (now - datetime.timedelta(hours=2)).isoformat(),
+                "source": "standalone",
+                "endpoint": "/api/scrobble",
+                "headers": {"host": "omniscrobble.local:8080", "user-agent": "Infuse/7.7"},
+                "payload": {
+                    "action": "scrobble",
+                    "media_type": "movie",
+                    "title": "Gladiator II",
+                    "year": 2024,
+                    "progress": 92.5,
+                    "player": "Infuse Apple TV",
+                },
+                "status": "processed",
+                "reason": "Scrobbled to Trakt (92.5%)",
+                "event": "scrobble",
+                "media_title": "Gladiator II (2024)",
+            },
+        ]
+
+    def get_demo_analytics_summary(self, period: str = "all") -> dict[str, Any]:
+        from app.services.analytics_manager import analytics_mgr
+        return analytics_mgr.get_summary(period=period, demo=True)
+
+    def get_demo_omniwrapped(self, year: int = 2026) -> dict[str, Any]:
+        from app.services.analytics_manager import analytics_mgr
+        return analytics_mgr.get_omniwrapped(year=year, demo=True)
+
 
 demo_mgr = DemoManager()
 
