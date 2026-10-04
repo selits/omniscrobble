@@ -50,7 +50,7 @@ class AniListClient:
                 data = json.load(f)
                 if not self.access_token:
                     self.access_token = data.get("access_token")
-                self.user_name = data.get("user_name")
+                self.user_name = data.get("user_name") or data.get("user")
                 self.user_avatar = data.get("user_avatar")
                 self.user_id = data.get("user_id")
         except Exception as e:

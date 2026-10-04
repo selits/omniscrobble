@@ -5986,6 +5986,119 @@ SIMKL_ENABLED=true</pre>
             } catch (_) {}
         }
 
+        async function triggerBackgroundCloudSync(btn) {
+            if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+            try {
+                const url = isDemo ? '/api/sync/background/run?demo=true' : '/api/sync/background/run';
+                const res = await fetch(url, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('Automated cloud synchronization completed successfully! ' + (data.items_reconciled || 0) + ' items reconciled.');
+                    window.location.reload();
+                } else {
+                    alert('Cloud sync failed: ' + (data.detail || data.message || 'Unknown error'));
+                    if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Cloud Sync Now'; }
+                }
+            } catch (e) {
+                alert('Network error: ' + e.message);
+                if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Cloud Sync Now'; }
+            }
+        }
+
+        async function disconnectPartnerTracker(tracker, user) {
+            if (!confirm(`Disconnect ${tracker.toUpperCase()} for partner @${user}?`)) return;
+            try {
+                const res = await fetch(`/api/${tracker}/disconnect?user=${encodeURIComponent(user)}`, { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    const data = await res.json();
+                    alert(`Failed to disconnect: ${data.detail || data.message || 'Error'}`);
+                }
+            } catch (e) {
+                alert(`Network error: ${e.message}`);
+            }
+        }
+
+        async function openPartnerTrackerAuth(tracker, user) {
+            if (tracker === 'trakt') {
+                window.location.href = `/auth?user=${encodeURIComponent(user)}`;
+                return;
+            }
+            if (tracker === 'simkl') {
+                try {
+                    const res = await fetch(`/api/simkl/pin?user=${encodeURIComponent(user)}`, { method: 'POST' });
+                    const data = await res.json();
+                    if (res.ok && data.user_code) {
+                        const url = data.verification_url || 'https://simkl.com/pin';
+                        window.open(url, '_blank');
+                        const confirmPoll = confirm(`Simkl PIN: ${data.user_code}\n\nAuthorize Omniscrobble on Simkl at ${url} with code ${data.user_code}, then click OK to verify.`);
+                        if (confirmPoll) {
+                            const pollRes = await fetch('/api/simkl/poll', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ user_code: data.user_code, device_code: data.device_code, user: user })
+                            });
+                            const pollData = await pollRes.json();
+                            if (pollRes.ok && (pollData.result === 'OK' || pollData.status === 'success' || pollData.access_token)) {
+                                alert(`✓ Simkl successfully linked for partner @${user}!`);
+                                window.location.reload();
+                            } else {
+                                alert(`Simkl authorization not completed: ${pollData.message || 'Pending authorization'}`);
+                            }
+                        }
+                    } else {
+                        alert(`Failed to get Simkl PIN: ${data.detail || data.error || 'Error'}`);
+                    }
+                } catch (e) {
+                    alert(`Network error: ${e.message}`);
+                }
+                return;
+            }
+            if (tracker === 'anilist') {
+                const token = prompt(`Enter AniList Personal Access Token for partner @${user}:\n(Generated from AniList Settings > Developer)`);
+                if (!token || !token.trim()) return;
+                try {
+                    const res = await fetch('/api/anilist/token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token.trim(), user: user })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.status === 'success') {
+                        alert(`✓ AniList connected for @${user} (@${data.user || 'user'})!`);
+                        window.location.reload();
+                    } else {
+                        alert(`Failed to link AniList: ${data.detail || data.error || 'Invalid token'}`);
+                    }
+                } catch (e) {
+                    alert(`Network error: ${e.message}`);
+                }
+                return;
+            }
+            if (tracker === 'mal') {
+                const token = prompt(`Enter MyAnimeList Access Token for partner @${user}:`);
+                if (!token || !token.trim()) return;
+                try {
+                    const res = await fetch('/api/mal/token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token.trim(), user: user })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.status === 'success') {
+                        alert(`✓ MyAnimeList connected for @${user} (@${data.user || 'user'})!`);
+                        window.location.reload();
+                    } else {
+                        alert(`Failed to link MyAnimeList: ${data.detail || data.error || 'Invalid token'}`);
+                    }
+                } catch (e) {
+                    alert(`Network error: ${e.message}`);
+                }
+                return;
+            }
+        }
+
         // Reset scroll position for co-watch chips on load and reload so refresh starts cleanly at top
         function resetCowatchScroll() {
             const cwChips = document.getElementById('cowatch-chips-container');

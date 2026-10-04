@@ -88,7 +88,7 @@ class SimklClient:
                 self.refresh_token = data.get("refresh_token")
                 self.created_at = data.get("created_at")
                 self.expires_in = data.get("expires_in")
-                self.user_name = data.get("user_name")
+                self.user_name = data.get("user_name") or data.get("user")
         except Exception as e:
             logger.error("Failed to load Simkl tokens from %s: %s", self.tokens_file, e)
 
@@ -103,8 +103,8 @@ class SimklClient:
                 self.created_at = token_data.get("created_at")
             if "expires_in" in token_data:
                 self.expires_in = token_data.get("expires_in")
-            if "user_name" in token_data:
-                self.user_name = token_data.get("user_name")
+            if "user_name" in token_data or "user" in token_data:
+                self.user_name = token_data.get("user_name") or token_data.get("user")
 
             save_payload = {
                 "access_token": self.access_token,
@@ -112,6 +112,7 @@ class SimklClient:
                 "created_at": getattr(self, "created_at", None),
                 "expires_in": getattr(self, "expires_in", None),
                 "user_name": self.user_name,
+                "user": self.user_name,
             }
             with open(self.tokens_file, "w", encoding="utf-8") as f:
                 json.dump(save_payload, f, indent=2)

@@ -54,6 +54,7 @@ from app.services.reverse_sync_manager import reverse_sync_mgr
 from app.services.arr_bridge import arr_bridge
 from app.services.cross_tracker_sync import CrossTrackerSyncManager
 from app.services.settings_manager import settings_mgr
+from app.services.cloud_sync_manager import cloud_sync_mgr
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
@@ -269,6 +270,8 @@ async def reverse_sync_worker_loop():
 
 
 arr_watchlist_worker_task: Optional[asyncio.Task] = None
+partner_refresh_worker_task: Optional[asyncio.Task] = None
+background_cloud_sync_task: Optional[asyncio.Task] = None
 
 
 async def arr_watchlist_worker_loop():
@@ -289,13 +292,74 @@ async def arr_watchlist_worker_loop():
             logger.error(f"Error in periodic Arr watchlist worker: {e}")
 
 
+async def partner_token_refresh_loop():
+    """Background worker periodically refreshing secondary partner and multi-user OAuth tokens before expiration."""
+    while True:
+        try:
+            # Check every 12 hours
+            await asyncio.sleep(43200)
+            users_to_check = set()
+            if Config.CO_WATCH_USER:
+                users_to_check.add(Config.CO_WATCH_USER)
+            for u in user_mgr.list_configured_users():
+                uname = u.get("username")
+                if uname:
+                    users_to_check.add(uname)
+
+            for target_user in users_to_check:
+                # 1. Partner Trakt token refresh
+                trakt_client = user_mgr.get_client(target_user)
+                if trakt_client and trakt_client.is_authenticated():
+                    token_info = trakt_client.get_token_info()
+                    if token_info.get("days_remaining", 999) <= 2:
+                        logger.info(f"Proactive token refresh: refreshing Trakt token for @{target_user}...")
+                        await trakt_client.refresh_token()
+                # 2. Partner MAL token refresh
+                mal_client = user_mgr.get_tracker_client(target_user, "mal")
+                if mal_client and mal_client.is_authenticated() and hasattr(mal_client, "refresh_token"):
+                    token_info = getattr(mal_client, "get_token_info", lambda: {})()
+                    if token_info.get("expires_in", 999999) < 86400:
+                        logger.info(f"Proactive token refresh: refreshing MAL token for @{target_user}...")
+                        await mal_client.refresh_token()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in partner token refresh loop: {e}")
+
+
+async def background_cloud_sync_worker_loop():
+    """Background worker periodically executing automated cloud reconciliation and Letterboxd diary export."""
+    interval_hours = max(1, getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24))
+    interval_seconds = interval_hours * 3600
+    logger.info(f"Background cloud sync worker started (running every {interval_hours}h)...")
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            logger.info("Executing periodic background cloud sync cycle...")
+            await cloud_sync_mgr.run_sync_cycle(
+                trigger="scheduled",
+                letterboxd_client=letterboxd,
+                reverse_sync_mgr=reverse_sync_mgr,
+                cross_tracker_sync=cross_tracker_sync,
+                arr_bridge=arr_bridge,
+            )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic background cloud sync worker: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global queue_worker_task, reverse_sync_worker_task, arr_watchlist_worker_task
+    global partner_refresh_worker_task, background_cloud_sync_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
     reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
     if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
         arr_watchlist_worker_task = asyncio.create_task(arr_watchlist_worker_loop())
+    partner_refresh_worker_task = asyncio.create_task(partner_token_refresh_loop())
+    if getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24) > 0:
+        background_cloud_sync_task = asyncio.create_task(background_cloud_sync_worker_loop())
 
     # Startup self-diagnostics check
     token_info = trakt.get_token_info()
@@ -328,6 +392,9 @@ async def lifespan(app: FastAPI):
     int_mins = recon_startup.get("interval_minutes", Config.REVERSE_SYNC_INTERVAL)
     if int_mins > 0 and reverse_sync_mgr.plex.is_configured():
         logger.info(f"Startup Diagnostics: Reverse sync interval active ({int_mins}m).")
+    bg_sync_interval = getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24)
+    if bg_sync_interval > 0:
+        logger.info(f"Startup Diagnostics: Background cloud reconciliation enabled ({bg_sync_interval}h interval).")
     if simkl.is_enabled():
         if simkl.is_authenticated():
             logger.info(f"Startup Diagnostics: Simkl multi-tracker connected (@{simkl.user_name or 'user'}).")
@@ -371,6 +438,18 @@ async def lifespan(app: FastAPI):
         arr_watchlist_worker_task.cancel()
         try:
             await arr_watchlist_worker_task
+        except asyncio.CancelledError:
+            pass
+    if partner_refresh_worker_task:
+        partner_refresh_worker_task.cancel()
+        try:
+            await partner_refresh_worker_task
+        except asyncio.CancelledError:
+            pass
+    if background_cloud_sync_task:
+        background_cloud_sync_task.cancel()
+        try:
+            await background_cloud_sync_task
         except asyncio.CancelledError:
             pass
     await reverse_sync_mgr.plex.close()
@@ -560,28 +639,89 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
 
 
 async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
-    """Dual-scrobble/sync watched history to the partner Trakt account (CO_WATCH_USER)."""
+    """Dual-scrobble/sync watched history to the partner's authenticated cloud trackers (Trakt, Simkl, AniList, MAL)."""
     target_user = Config.CO_WATCH_USER
     if not target_user:
         return
-    cw_client = user_mgr.get_client(target_user)
-    if not cw_client.is_authenticated():
-        logger.warning(f"Co-watch target user '{target_user}' Trakt is not authenticated. Skipping co-watch.")
-        return
-    try:
-        logger.info(f"Co-watching dual-sync triggering for partner @{target_user}: {parsed.title}")
-        history_payload = parsed.to_trakt_history_payload()
-        res = await cw_client.sync_history(history_payload)
-        if is_temporary_error(res):
-            queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
-            metrics_registry.record_cowatch("queued")
-        else:
-            logger.info(f"Co-watch dual-sync succeeded for partner @{target_user}: {parsed.title}")
-            metrics_registry.record_cowatch("success")
-    except Exception as e:
-        logger.error(f"Error during co-watch dual-sync for @{target_user}: {e}")
-        queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=target_user)
-        metrics_registry.record_cowatch("failed")
+
+    tasks = []
+
+    # 1. Partner Trakt
+    cw_trakt = user_mgr.get_client(target_user)
+    if cw_trakt and cw_trakt.is_authenticated():
+        async def _sync_trakt():
+            try:
+                logger.info(f"Co-watching dual-sync triggering for partner @{target_user} (Trakt): {parsed.title}")
+                history_payload = parsed.to_trakt_history_payload()
+                res = await cw_trakt.sync_history(history_payload)
+                if is_temporary_error(res):
+                    queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
+                    metrics_registry.record_cowatch("queued")
+                elif isinstance(res, dict) and res.get("status") == "error":
+                    logger.warning(f"Co-watch Trakt error for @{target_user}: {res.get('error')}")
+                    metrics_registry.record_cowatch("failed")
+                else:
+                    logger.info(f"Co-watch dual-sync succeeded for partner @{target_user} (Trakt): {parsed.title}")
+                    metrics_registry.record_cowatch("success")
+            except Exception as e:
+                logger.error(f"Error during co-watch Trakt dual-sync for @{target_user}: {e}")
+                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=target_user)
+                metrics_registry.record_cowatch("failed")
+        tasks.append(_sync_trakt())
+    else:
+        logger.debug(f"Co-watch partner @{target_user} Trakt is not authenticated.")
+
+    # 2. Partner Simkl
+    cw_simkl = user_mgr.get_tracker_client(target_user, "simkl")
+    if cw_simkl and cw_simkl.is_authenticated():
+        async def _sync_simkl():
+            try:
+                logger.info(f"Co-watching dual-sync triggering for partner @{target_user} (Simkl): {parsed.title}")
+                if action == "rate":
+                    await cw_simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
+                else:
+                    res = await cw_simkl.scrobble_stop(parsed, progress=parsed.progress)
+                    if isinstance(res, dict) and res.get("status") == "error":
+                        logger.warning(f"Co-watch Simkl error for @{target_user}: {res.get('error')}")
+            except Exception as e:
+                logger.warning(f"Error during co-watch Simkl dual-sync for @{target_user}: {e}")
+        tasks.append(_sync_simkl())
+
+    # 3. Partner Anime Trackers (AniList & MAL)
+    cw_anilist = user_mgr.get_tracker_client(target_user, "anilist")
+    cw_mal = user_mgr.get_tracker_client(target_user, "mal")
+    ani_auth = bool(cw_anilist and cw_anilist.is_authenticated())
+    mal_auth = bool(cw_mal and cw_mal.is_authenticated())
+
+    if ani_auth or mal_auth:
+        async def _sync_anime():
+            try:
+                resolved_anime = await anime_resolver.resolve(parsed)
+                if resolved_anime and resolved_anime.get("is_anime"):
+                    if action == "rate":
+                        if ani_auth:
+                            await cw_anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
+                        if mal_auth and resolved_anime.get("mal_id"):
+                            await cw_mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+                    else:
+                        if ani_auth:
+                            await cw_anilist.update_progress(
+                                resolved_anime["anilist_id"],
+                                resolved_anime["episode_number"],
+                                resolved_anime.get("episodes"),
+                            )
+                        if mal_auth and resolved_anime.get("mal_id"):
+                            await cw_mal.update_progress(
+                                resolved_anime["mal_id"],
+                                resolved_anime["episode_number"],
+                                resolved_anime.get("episodes"),
+                            )
+            except Exception as e:
+                logger.warning(f"Error during co-watch anime dual-sync for @{target_user}: {e}")
+        tasks.append(_sync_anime())
+
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @app.get("/webhook")
@@ -2203,6 +2343,26 @@ def update_cowatch_settings(payload: CowatchSettingsRequest, request: Request):
     return {"status": "ok", "co_watch_movies": cowatch_mgr.config.CO_WATCH_MOVIES}
 
 
+@app.get("/api/cowatch/trackers")
+def get_cowatch_trackers_status(request: Request):
+    """Return configured and authenticated trackers matrix for the co-watch partner."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_cowatch_trackers()
+    target_user = request.query_params.get("user") or Config.CO_WATCH_USER
+    if not target_user:
+        return {"configured": False, "user": None, "trackers": {}}
+    trackers = user_mgr.get_user_trackers_status(target_user)
+    is_admin = is_admin_request(request)
+    display_user = target_user if is_admin else mask_username(target_user)
+    return {
+        "configured": True,
+        "user": display_user,
+        "raw_user": target_user if is_admin else None,
+        "trackers": trackers,
+    }
+
+
 class ReconcileRequest(BaseModel):
     item_ids: Optional[list[str]] = None
     direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt", "trakt_to_server", "server_to_trakt"
@@ -2412,18 +2572,57 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
         return await reverse_sync_mgr.execute_reconciliation(demo=True, server=payload.server)
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    res = await reverse_sync_mgr.execute_reconciliation(
-        item_ids=payload.item_ids,
-        direction=payload.direction,
-        server=payload.server,
-    )
-    return res
+    if cloud_sync_mgr.sync_mutex.locked():
+        raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
+    async with cloud_sync_mgr.sync_mutex:
+        res = await reverse_sync_mgr.execute_reconciliation(
+            item_ids=payload.item_ids,
+            direction=payload.direction,
+            server=payload.server,
+        )
+        return res
 
 
 @app.get("/api/sync/progress")
 async def get_sync_progress(request: Request):
     """Poll reconciliation progress."""
     return reverse_sync_mgr._sync_progress
+
+
+@app.get("/api/sync/background/status")
+async def get_background_sync_status(request: Request):
+    """Return current background synchronization state and telemetry."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_background_sync_status()
+    return cloud_sync_mgr.get_status()
+
+
+@app.post("/api/sync/background/run")
+async def trigger_background_sync(request: Request):
+    """Manually trigger an automated background cloud reconciliation cycle."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {
+            "status": "success",
+            "message": "Demo background cloud reconciliation completed successfully.",
+            "last_run_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "items_reconciled": 3,
+        }
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if cloud_sync_mgr.sync_mutex.locked():
+        raise HTTPException(status_code=409, detail="A cloud synchronization or reconciliation is already in progress")
+    result = await cloud_sync_mgr.run_sync_cycle(
+        trigger="manual",
+        letterboxd_client=letterboxd,
+        reverse_sync_mgr=reverse_sync_mgr,
+        cross_tracker_sync=cross_tracker_sync,
+        arr_bridge=arr_bridge,
+    )
+    if isinstance(result, dict) and result.get("status") == "conflict":
+        raise HTTPException(status_code=409, detail=result.get("message"))
+    return result
 
 
 class ArrTestConnectionRequest(BaseModel):
@@ -2551,7 +2750,10 @@ async def execute_cross_sync(payload: CrossSyncExecuteRequest, request: Request)
         return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, demo=True)
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction)
+    if cloud_sync_mgr.sync_mutex.locked():
+        raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
+    async with cloud_sync_mgr.sync_mutex:
+        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction)
 
 
 @app.get("/api/cross-sync/progress")
@@ -2811,6 +3013,7 @@ async def disconnect_trakt(request: Request, user: Optional[str] = None):
 class SimklPollRequest(BaseModel):
     user_code: str
     device_code: Optional[str] = None
+    user: Optional[str] = None
 
 
 @app.get("/api/simkl/status")
@@ -2826,9 +3029,11 @@ async def get_simkl_status(request: Request):
             "account_id": 123456,
             "timezone": "America/New_York",
         }
-    status = await simkl.check_connection()
-    status["enabled"] = simkl.is_enabled()
-    status["configured"] = bool(simkl.effective_client_id)
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
+    status = await target_client.check_connection()
+    status["enabled"] = target_client.is_enabled()
+    status["configured"] = bool(target_client.effective_client_id)
     return status
 
 
@@ -2837,8 +3042,10 @@ async def get_simkl_pin(request: Request):
     """Obtain a new Device PIN / user_code to authorize Simkl via browser."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
     try:
-        data = await simkl.get_device_pin()
+        data = await target_client.get_device_pin()
         if isinstance(data, dict) and "error" in data:
             error_msg = data.get("error", "Failed to obtain Simkl PIN")
             if data.get("detail"):
@@ -2859,8 +3066,10 @@ async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if not payload.user_code or not str(payload.user_code).strip() or payload.user_code == "undefined":
         return {"status": "error", "result": "error", "message": "Missing user_code"}
+    target_user = payload.user or request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
     try:
-        res = await simkl.poll_device_pin(payload.user_code, device_code=payload.device_code)
+        res = await target_client.poll_device_pin(payload.user_code, device_code=payload.device_code)
         return res
     except Exception as e:
         return {"result": "error", "message": str(e)}
@@ -2871,6 +3080,10 @@ async def disconnect_simkl(request: Request):
     """Disconnect Simkl account and delete saved tokens."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    if target_user:
+        user_mgr.disconnect_user_tracker(target_user, "simkl")
+        return {"status": "ok", "message": f"Simkl disconnected for {target_user}"}
     simkl.delete_tokens()
     return {"status": "ok", "message": "Simkl disconnected"}
 
@@ -2885,6 +3098,7 @@ async def auth_simkl_page(request: Request):
 
 class TokenSubmitRequest(BaseModel):
     token: str
+    user: Optional[str] = None
 
 
 # --- AniList Anime Tracker Endpoints ---
@@ -2894,9 +3108,11 @@ async def get_anilist_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return demo_mgr.get_demo_anilist_status()
-    status = await anilist.check_connection()
-    status["enabled"] = anilist.is_enabled()
-    status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or anilist.is_authenticated())
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
+    status = await target_client.check_connection()
+    status["enabled"] = target_client.is_enabled()
+    status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or target_client.is_authenticated())
     return status
 
 
@@ -2908,10 +3124,12 @@ async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
     token_str = payload.token.strip()
     if not token_str:
         raise HTTPException(status_code=400, detail="Token cannot be empty")
-    anilist.access_token = token_str
-    conn = await anilist.check_connection()
+    target_user = payload.user or request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
+    target_client.access_token = token_str
+    conn = await target_client.check_connection()
     if conn.get("status") == "connected":
-        anilist.save_tokens({
+        target_client.save_tokens({
             "access_token": token_str,
             "user_name": conn.get("user"),
             "user_avatar": conn.get("avatar"),
@@ -2919,7 +3137,7 @@ async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
         })
         return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
     else:
-        anilist.load_tokens()
+        target_client.load_tokens()
         raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided AniList token"))
 
 
@@ -2928,6 +3146,10 @@ async def disconnect_anilist(request: Request):
     """Disconnect AniList account and delete stored tokens."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    if target_user:
+        user_mgr.disconnect_user_tracker(target_user, "anilist")
+        return {"status": "ok", "message": f"AniList disconnected for {target_user}"}
     anilist.delete_tokens()
     return {"status": "ok", "message": "AniList disconnected"}
 
@@ -2959,9 +3181,11 @@ async def get_mal_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return demo_mgr.get_demo_mal_status()
-    status = await mal.check_connection()
-    status["enabled"] = mal.is_enabled()
-    status["configured"] = bool(mal.effective_client_id or mal.is_authenticated())
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
+    status = await target_client.check_connection()
+    status["enabled"] = target_client.is_enabled()
+    status["configured"] = bool(target_client.effective_client_id or target_client.is_authenticated())
     return status
 
 
@@ -2973,10 +3197,12 @@ async def save_mal_token(payload: TokenSubmitRequest, request: Request):
     token_str = payload.token.strip()
     if not token_str:
         raise HTTPException(status_code=400, detail="Token cannot be empty")
-    mal.access_token = token_str
-    conn = await mal.check_connection()
+    target_user = payload.user or request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
+    target_client.access_token = token_str
+    conn = await target_client.check_connection()
     if conn.get("status") == "connected":
-        mal.save_tokens({
+        target_client.save_tokens({
             "access_token": token_str,
             "user_name": conn.get("user"),
             "user_avatar": conn.get("avatar"),
@@ -2984,7 +3210,7 @@ async def save_mal_token(payload: TokenSubmitRequest, request: Request):
         })
         return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
     else:
-        mal.load_tokens()
+        target_client.load_tokens()
         raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided MyAnimeList token"))
 
 
@@ -2993,6 +3219,10 @@ async def disconnect_mal(request: Request):
     """Disconnect MyAnimeList account and delete stored tokens."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    if target_user:
+        user_mgr.disconnect_user_tracker(target_user, "mal")
+        return {"status": "ok", "message": f"MyAnimeList disconnected for {target_user}"}
     mal.delete_tokens()
     return {"status": "ok", "message": "MyAnimeList disconnected"}
 
@@ -3804,6 +4034,57 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         else '<span style="color:#64748b;font-size:11px;">Configure SONARR_URL & SONARR_API_KEY in .env for library search</span>'
     )
 
+    partner_trackers_html = ""
+    if cw_user:
+        cw_trackers = user_mgr.get_user_trackers_status(cw_user) if not is_demo else demo_mgr.get_demo_cowatch_trackers()["trackers"]
+        tracker_badges = []
+        for trk_key, trk_name, trk_color in [
+            ("trakt", "Trakt", "#ed1c24"),
+            ("simkl", "Simkl", "#00e054"),
+            ("anilist", "AniList", "#02a9ff"),
+            ("mal", "MyAnimeList", "#2e51a2"),
+        ]:
+            info = cw_trackers.get(trk_key, {})
+            auth = info.get("authenticated", False)
+            badge_color = "#10b981" if auth else "#64748b"
+            status_txt = "Connected" if auth else "Not Linked"
+
+            act_btn = ""
+            if is_admin:
+                if auth and trk_key != "trakt":
+                    act_btn = f'<button onclick="disconnectPartnerTracker(\'{trk_key}\', \'{cw_user}\')" class="btn-sm" style="padding:1px 6px;font-size:10px;background:#334155;color:#f87171;" title="Disconnect {trk_name}">Disconnect</button>'
+                elif not auth and trk_key == "trakt":
+                    act_btn = f'<a href="/auth?user={cw_user}" class="btn-sm" style="padding:1px 6px;font-size:10px;background:#1e293b;border:1px solid #475569;color:#38bdf8;text-decoration:none;">+ Link</a>'
+                elif not auth:
+                    act_btn = f'<button onclick="openPartnerTrackerAuth(\'{trk_key}\', \'{cw_user}\')" class="btn-sm" style="padding:1px 6px;font-size:10px;background:#1e293b;border:1px solid #475569;color:#38bdf8;" title="Connect {trk_name}">+ Connect</button>'
+
+            tracker_badges.append(f"""
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{badge_color};"></span>
+                    <strong style="font-size:12px;color:#f1f5f9;">{trk_name}</strong>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="font-size:11px;color:{badge_color};">{status_txt}</span>
+                    {act_btn}
+                </div>
+            </div>
+            """)
+
+        partner_trackers_html = f"""
+        <div style="margin-top:16px;border-top:1px solid #334155;padding-top:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                    <span>Partner Multi-Tracker Cloud Destinations (@{cw_user_display})</span>
+                </div>
+                <span style="font-size:11px;color:#94a3b8;">Multi-Tracker Co-Watch</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:8px;">
+                {''.join(tracker_badges)}
+            </div>
+        </div>
+        """
+
     cowatch_card_html = f"""
     <div class="card">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
@@ -3841,6 +4122,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 {device_form_html}
             </div>
         </div>
+        {partner_trackers_html}
 
         <!-- Bottom Section: Shared Media & Shows Whitelist (Full Width) -->
         <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
@@ -3859,13 +4141,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 <div class="cowatch-form-row">
                     <div style="flex:1;min-width:0;position:relative;">
                         <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Severance, Lanterns)..."
-                               style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
-                               oninput="onCowatchShowInput(this.value)"
-                               onfocus="onCowatchShowInput(this.value)"
-                               autocomplete="off"
-                               data-lpignore="true"
-                               data-1p-ignore="true"
-                               onkeydown="if(event.key==='Enter')addCowatchShow()" />
+                                style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                                oninput="onCowatchShowInput(this.value)"
+                                onfocus="onCowatchShowInput(this.value)"
+                                autocomplete="off"
+                                data-lpignore="true"
+                                data-1p-ignore="true"
+                                onkeydown="if(event.key==='Enter')addCowatchShow()" />
                         <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
                     </div>
                     <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;flex-shrink:0;">+ Add Show</button>
@@ -3923,6 +4205,44 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     int_mins = sync_status.get("interval_minutes", 0)
     auto_sync_badge = f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Every {int_mins}m</span>' if int_mins > 0 else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Manual</span>'
 
+    # Background cloud sync telemetry
+    bg_sync_state = cloud_sync_mgr.get_status() if not is_demo else demo_mgr.get_demo_background_sync_status()
+    bg_last_run = bg_sync_state.get("last_run_timestamp")
+    bg_next_run = bg_sync_state.get("next_scheduled_run")
+    bg_status_txt = bg_sync_state.get("last_run_status", "never_run")
+    bg_run_display = "Never"
+    if bg_last_run:
+        try:
+            dt = datetime.datetime.fromisoformat(bg_last_run.replace("Z", "+00:00"))
+            bg_run_display = dt.strftime("%b %d, %H:%M UTC")
+        except Exception:
+            bg_run_display = str(bg_last_run)[:16]
+
+    bg_next_display = "Manual"
+    if bg_next_run:
+        try:
+            dt = datetime.datetime.fromisoformat(bg_next_run.replace("Z", "+00:00"))
+            bg_next_display = dt.strftime("%b %d, %H:%M UTC")
+        except Exception:
+            bg_next_display = str(bg_next_run)[:16]
+
+    bg_status_color = "#10b981" if bg_status_txt == "success" else ("#f59e0b" if bg_status_txt == "partial_error" else "#64748b")
+    bg_interval_hours = getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24)
+
+    cloud_sync_panel_html = f"""
+    <div style="margin-top:12px;background:#090d16;border:1px solid #1e293b;border-radius:6px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:#94a3b8;">
+            <span>Automated Cloud Sync: <strong style="color:#f1f5f9;">Every {bg_interval_hours}h</strong></span>
+            <span>Last Run: <strong style="color:#f1f5f9;">{bg_run_display}</strong> (<span style="color:{bg_status_color};">{bg_status_txt}</span>)</span>
+            <span>Next: <strong style="color:#38bdf8;">{bg_next_display}</strong></span>
+            <span>Export: <strong style="color:#10b981;">Letterboxd CSV</strong></span>
+        </div>
+        <div>
+            {f'<button onclick="triggerBackgroundCloudSync(this)" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;font-weight:600;padding:4px 10px;">⚡ Run Cloud Sync Now</button>' if is_admin else ''}
+        </div>
+    </div>
+    """
+
     any_server_configured = plex_cfg or jf_cfg or emby_cfg
     if any_server_configured:
         reconcile_card_html = f"""
@@ -3955,6 +4275,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     {f'<button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; {active_srv.capitalize()})</button>' if is_admin else ''}
                 </div>
             </div>
+            {cloud_sync_panel_html}
         </div>
         """
     else:
@@ -3976,6 +4297,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                     <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
                 </div>
             </div>
+            {cloud_sync_panel_html}
         </div>
         """
 

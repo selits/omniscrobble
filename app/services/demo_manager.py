@@ -821,6 +821,69 @@ class DemoManager:
             **trackers,
         }
 
+    def get_demo_cowatch_trackers(self) -> dict[str, Any]:
+        return {
+            "configured": True,
+            "user": "demo_partner",
+            "masked_user": "de******",
+            "trackers": {
+                "trakt": {
+                    "authenticated": True,
+                    "healthy": True,
+                    "days_remaining": 88,
+                    "status": "healthy",
+                    "username": "demo_partner",
+                },
+                "simkl": {
+                    "authenticated": True,
+                    "user": "demo_partner",
+                    "account_id": 654321,
+                },
+                "anilist": {
+                    "authenticated": True,
+                    "user": "demo_partner",
+                    "avatar": None,
+                },
+                "mal": {
+                    "authenticated": False,
+                    "user": None,
+                },
+            },
+        }
+
+    def get_demo_background_sync_status(self) -> dict[str, Any]:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return {
+            "last_run_timestamp": (now - datetime.timedelta(hours=2)).isoformat(),
+            "last_run_status": "success",
+            "duration_seconds": 4.12,
+            "items_reconciled": 5,
+            "next_scheduled_run": (now + datetime.timedelta(hours=22)).isoformat(),
+            "trigger": "scheduled",
+            "errors": [],
+            "is_running": False,
+            "tasks": {
+                "letterboxd_export": {
+                    "status": "success",
+                    "file": "letterboxd_diary.csv",
+                    "bytes": 14280,
+                },
+                "server_reconciliation": {
+                    "status": "success",
+                    "server": "plex",
+                    "items_reconciled": 3,
+                },
+                "cross_tracker_sync": {
+                    "status": "success",
+                    "items_reconciled": 2,
+                },
+                "arr_watchlist": {
+                    "status": "success",
+                    "result": {"added": 0, "checked": 12},
+                },
+            },
+        }
+
 
 demo_mgr = DemoManager()
 
