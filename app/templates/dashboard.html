@@ -1330,12 +1330,18 @@
                                 </select>
                             </div>
                         </div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                             <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cbd5e1;cursor:pointer;">
                                 <input type="checkbox" id="settings-recon-ratings-check" checked /> Sync User Ratings (1-10)
                             </label>
                             <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cbd5e1;cursor:pointer;">
                                 <input type="checkbox" id="settings-recon-startup-check" /> Scan &amp; Sync on Startup
+                            </label>
+                        </div>
+                        <div style="padding-top:8px;border-top:1px solid #1e293b;">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cbd5e1;cursor:pointer;">
+                                <input type="checkbox" id="settings-multi-server-mirroring-check" />
+                                <span><strong>Multi-Server Real-Time Mirroring</strong> (Plex ⇄ Jellyfin ⇄ Emby auto-mirror watched state on scrobble)</span>
                             </label>
                         </div>
                     </div>
@@ -3187,6 +3193,8 @@
                 if (reconIntSelect && recon.interval_minutes !== undefined) reconIntSelect.value = String(recon.interval_minutes);
                 if (reconRatingsCheck) reconRatingsCheck.checked = Boolean(recon.sync_ratings);
                 if (reconStartupCheck) reconStartupCheck.checked = Boolean(recon.sync_on_startup);
+                const mirrorCheck = document.getElementById('settings-multi-server-mirroring-check');
+                if (mirrorCheck) mirrorCheck.checked = Boolean(data.multi_server_mirroring);
 
                 const arr = data.arr || {};
                 const sonarrUrlInput = document.getElementById('settings-arr-sonarr-url');
@@ -3348,6 +3356,7 @@
                         sync_ratings: Boolean(document.getElementById('settings-recon-ratings-check')?.checked),
                         sync_on_startup: Boolean(document.getElementById('settings-recon-startup-check')?.checked)
                     },
+                    multi_server_mirroring: Boolean(document.getElementById('settings-multi-server-mirroring-check')?.checked),
                     arr: {
                         sonarr_url: document.getElementById('settings-arr-sonarr-url')?.value.trim() || '',
                         sonarr_api_key: document.getElementById('settings-arr-sonarr-key')?.value.trim() || '',

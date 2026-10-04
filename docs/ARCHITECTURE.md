@@ -62,6 +62,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 - **`app/main.py`**: The core FastAPI application. Handles route registration, application lifespan (startup/shutdown of HTTP clients and background workers), authenticated admin endpoints, SSR dashboard rendering, and webhook ingestion.
 - **Fast-Bypass Architecture**: Webhook endpoints (`/webhook`, `/webhook/jellyfin`, `/webhook/emby`) immediately drop incoming requests if the corresponding media server listener is disabled in `SettingsManager`, saving CPU and memory.
+- **Standalone Player Direct REST Bridge (`POST /api/scrobble`)**: Ingests direct playback and scrobble payloads (`play`, `pause`, `stop`, `scrobble`) from standalone media players (Infuse, Kodi, VLC, Stremio) with full multi-tracker dispatch and loop suppression without requiring a dedicated media server.
 
 ### 2. Normalization & Parsing Layer
 
@@ -72,6 +73,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ### 3. Business Logic & Dispatch Layer
 
 - **`app/services/multi_tracker.py`**: Coordinates simultaneous multi-tracker dispatch across 9 cloud platforms (Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, BetaSeries, Serializd, MDBList). Determines which trackers receive scrobbles, pause signals, or ratings based on media type and runtime enablement states.
+- **Rewatch Detection & Scrobbler Fidelity**: Embeds explicit ISO-8601 `watched_at` timestamps on completed scrobbles across Trakt, Simkl, and Letterboxd (`is_rewatch = True`, `"Rewatch": "Yes"`), ensuring accurate play count increments and preserving separate diary entries for repeated viewings rather than dropping duplicates.
 - **`app/services/settings_manager.py`**: Houses the **Dynamic Rules & Filters Engine**. Evaluates granular episode (default: 80%) and movie (default: 90%) scrobble thresholds, minimum playback duration (with episode exemption toggle), dynamic library ignore lists, and error-tolerant regex file path exclusions (`is_media_allowed()`, `get_effective_threshold()`).
 - **`app/services/cowatch_manager.py`**: Evaluates watch-together eligibility. Checks whether an episode or movie matches configured show whitelists, allowed players, and user profiles. Returns structured `(eligible, reason)` tuples for transparent telemetry.
 - **`app/services/loop_prevention.py`**: Thread-safe in-memory cache tracking recently synced rating keys and GUIDs with automated TTL cleanup to prevent infinite ping-pong loops between media servers and trackers.
@@ -103,10 +105,11 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ### 6. Background Workers & Automation Engines
 
 - **`app/services/cloud_sync_manager.py`**: Orchestrates automated background cloud synchronization, periodic two-way media server diffs, Simkl cross-sync, Letterboxd RFC-4180 CSV watch diary snapshots (`data/exports/letterboxd_diary.csv`), and shared concurrency mutex locking (`asyncio.Lock`) preventing collisions with manual reconciliation.
-- **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation.
+- **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation and real-time mirroring engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation. When `MULTI_SERVER_MIRRORING` is active, instantly mirrors scrobbles and ratings across active media servers (Plex ⇄ Jellyfin / Emby) with cross-server item lookup (`find_item`) and echo suppression (`loop_prevention.ignore(key, ttl=180.0)`).
 - **`app/services/cross_tracker_sync.py`**: Cross-tracker reconciliation engine for Trakt and Simkl.
 - **`app/services/arr_bridge.py`**: Content Bridge background worker. Polls Trakt Watchlists and automatically triggers searches in Radarr and Sonarr for newly bookmarked media.
 - **`app/services/token_health_monitor.py`**: Proactive OAuth lifespan evaluator and self-healing resilience worker. Periodically monitors expiration windows for Trakt, Simkl, MyAnimeList, and partner accounts, proactively attempting automatic renewal within 24 hours of expiration and dispatching rich push notifications with re-authorization links when manual action is needed.
+- **Scrobble Keep-Alive Heartbeat Worker**: Periodic background worker loop in FastAPI lifespan periodically evaluating active playing sessions in `PlaybackManager` (> 10 minutes) and dispatching keep-alive `scrobble_start` to Trakt and Simkl to prevent live "Watching Now" indicator timeout during long movies.
 - **`app/services/notifier.py`**: Multi-channel alert dispatcher (Discord, Telegram, Ntfy, Pushover) with an in-memory 30-minute deduplication cooldown.
 
 ### 7. Observability & UI Layer
@@ -175,7 +178,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (81 endpoints)
+│   ├── API.md                       # Full REST API specification (94 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
@@ -183,7 +186,7 @@ omniscrobble/
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
-├── tests/                           # Comprehensive test suite (213 tests, 0 external calls)
+├── tests/                           # Comprehensive test suite (219 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool

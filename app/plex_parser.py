@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import logging
 from typing import Any, Optional
 from pydantic import BaseModel, Field, model_validator
@@ -271,15 +272,17 @@ class ParsedMedia(BaseModel):
                 "progress": round(self.progress, 1),
             }
 
-    def to_trakt_history_payload(self) -> dict[str, Any]:
-        """Convert to Trakt /sync/history payload format."""
+    def to_trakt_history_payload(self, watched_at: Optional[str] = None) -> dict[str, Any]:
+        """Convert to Trakt /sync/history payload format, including watched_at timestamp for rewatch fidelity."""
+        timestamp = watched_at or datetime.now(timezone.utc).isoformat()
         if self.media_type == "episode":
             # If we have direct episode IDs (e.g. IMDb/TMDb/TVDb for the episode)
             if self.ids:
                 return {
                     "episodes": [
                         {
-                            "ids": self.ids
+                            "ids": self.ids,
+                            "watched_at": timestamp,
                         }
                     ]
                 }
@@ -291,7 +294,8 @@ class ParsedMedia(BaseModel):
                         "number": self.season if self.season is not None else 1,
                         "episodes": [
                             {
-                                "number": self.episode if self.episode is not None else 1
+                                "number": self.episode if self.episode is not None else 1,
+                                "watched_at": timestamp,
                             }
                         ]
                     }
@@ -305,6 +309,7 @@ class ParsedMedia(BaseModel):
         else:
             movie_item: dict[str, Any] = {
                 "title": self.title,
+                "watched_at": timestamp,
             }
             if self.year:
                 movie_item["year"] = self.year

@@ -249,6 +249,10 @@ class Config:
     # Cookie Security Settings
     COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax").strip().lower()
 
+    # Multi-Server Direct Real-Time Mirroring (Plex ⇄ Jellyfin ⇄ Emby)
+    MULTI_SERVER_MIRRORING: bool = os.getenv("MULTI_SERVER_MIRRORING", "false").lower() in ("true", "1", "yes")
+
+
 
 
 

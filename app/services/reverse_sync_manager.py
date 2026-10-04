@@ -795,6 +795,115 @@ class ReverseSyncManager:
         finally:
             self._is_syncing = False
 
+    async def mirror_watched_status(
+        self,
+        media: Any,
+        source_server: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Mirrors a watched item from source_server to all other active/configured media servers in real-time."""
+        if not settings_mgr.is_multi_server_mirroring_enabled():
+            return {"status": "skipped", "reason": "multi_server_mirroring_disabled"}
+
+        src = (source_server or "").strip().lower()
+        results: dict[str, Any] = {"source": src, "mirrored": [], "failed": [], "skipped": []}
+
+        # Determine target servers: configured and enabled, excluding source
+        potential_targets: list[tuple[str, Any]] = []
+        if src != "plex" and self.plex.is_configured() and settings_mgr.is_server_enabled("plex"):
+            potential_targets.append(("plex", self.plex))
+        if src != "jellyfin" and self.jellyfin.is_configured() and settings_mgr.is_server_enabled("jellyfin"):
+            potential_targets.append(("jellyfin", self.jellyfin))
+        if src != "emby" and self.emby.is_configured() and settings_mgr.is_server_enabled("emby"):
+            potential_targets.append(("emby", self.emby))
+
+        if not potential_targets:
+            return {"status": "noop", "reason": "no_other_active_servers", "results": results}
+
+        for srv_name, client in potential_targets:
+            try:
+                item = await client.find_item(media)
+                if not item or not item.get("rating_key"):
+                    logger.debug(f"Mirroring: Item '{getattr(media, 'title', '')}' not found on {srv_name}")
+                    results["skipped"].append({"server": srv_name, "reason": "not_found"})
+                    continue
+
+                rating_key = str(item["rating_key"])
+                # Suppress bounce-back webhook loop for this item on the target server
+                self.loop_prevention.ignore(rating_key, ttl=180.0)
+                media_ids = getattr(media, "ids", {}) or {}
+                for v in media_ids.values():
+                    if v:
+                        self.loop_prevention.ignore(str(v), ttl=180.0)
+
+                success = await client.mark_as_watched(rating_key)
+                if success:
+                    logger.info(
+                        f"Multi-Server Mirroring: Marked '{getattr(media, 'title', '')}' as watched on {srv_name} (key: {rating_key})"
+                    )
+                    results["mirrored"].append({"server": srv_name, "rating_key": rating_key})
+                else:
+                    logger.warning(
+                        f"Multi-Server Mirroring: Failed to mark '{getattr(media, 'title', '')}' as watched on {srv_name}"
+                    )
+                    results["failed"].append({"server": srv_name, "rating_key": rating_key, "error": "api_call_failed"})
+            except Exception as e:
+                logger.error(f"Error mirroring '{getattr(media, 'title', '')}' to {srv_name}: {e}")
+                results["failed"].append({"server": srv_name, "error": str(e)})
+
+        return {"status": "completed", "results": results}
+
+    async def mirror_rating(
+        self,
+        media: Any,
+        rating_10: float,
+        source_server: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Mirrors a user rating from source_server to all other active/configured media servers in real-time."""
+        if not settings_mgr.is_multi_server_mirroring_enabled():
+            return {"status": "skipped", "reason": "multi_server_mirroring_disabled"}
+
+        src = (source_server or "").strip().lower()
+        results: dict[str, Any] = {"source": src, "mirrored": [], "failed": [], "skipped": []}
+
+        potential_targets: list[tuple[str, Any]] = []
+        if src != "plex" and self.plex.is_configured() and settings_mgr.is_server_enabled("plex"):
+            potential_targets.append(("plex", self.plex))
+        if src != "jellyfin" and self.jellyfin.is_configured() and settings_mgr.is_server_enabled("jellyfin"):
+            potential_targets.append(("jellyfin", self.jellyfin))
+        if src != "emby" and self.emby.is_configured() and settings_mgr.is_server_enabled("emby"):
+            potential_targets.append(("emby", self.emby))
+
+        if not potential_targets:
+            return {"status": "noop", "reason": "no_other_active_servers", "results": results}
+
+        for srv_name, client in potential_targets:
+            try:
+                item = await client.find_item(media)
+                if not item or not item.get("rating_key"):
+                    results["skipped"].append({"server": srv_name, "reason": "not_found"})
+                    continue
+
+                rating_key = str(item["rating_key"])
+                self.loop_prevention.ignore(rating_key, ttl=180.0)
+                media_ids = getattr(media, "ids", {}) or {}
+                for v in media_ids.values():
+                    if v:
+                        self.loop_prevention.ignore(str(v), ttl=180.0)
+
+                success = await client.set_user_rating(rating_key, rating_10)
+                if success:
+                    logger.info(
+                        f"Multi-Server Mirroring: Set rating {rating_10}/10 for '{getattr(media, 'title', '')}' on {srv_name} (key: {rating_key})"
+                    )
+                    results["mirrored"].append({"server": srv_name, "rating_key": rating_key})
+                else:
+                    results["failed"].append({"server": srv_name, "rating_key": rating_key, "error": "api_call_failed"})
+            except Exception as e:
+                logger.error(f"Error mirroring rating to {srv_name}: {e}")
+                results["failed"].append({"server": srv_name, "error": str(e)})
+
+        return {"status": "completed", "results": results}
+
     async def run_startup_sync(self) -> None:
         """Run scan and reconciliation on startup in the background if configured."""
         recon = settings_mgr.get_reconciliation_settings(mask_token=False)

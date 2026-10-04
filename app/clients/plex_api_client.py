@@ -250,3 +250,77 @@ class PlexApiClient:
         except httpx.RequestError as exc:
             logger.error("Failed to set rating for rating_key %s: %s", rating_key, exc)
             return False
+
+    async def find_item(self, media: Any) -> Optional[dict[str, Any]]:
+        """Find an item on Plex matching media title, year, season, episode, and/or IDs."""
+        if not self.is_configured():
+            return None
+
+        client = self.get_client()
+        media_type = getattr(media, "media_type", "movie")
+        is_episode = media_type == "episode"
+        search_title = getattr(media, "title", "")
+        if is_episode:
+            search_title = getattr(media, "show_title", None) or getattr(media, "grandparent_title", None) or search_title
+
+        url = f"{self.base_url}/search"
+        params = {"query": search_title}
+        try:
+            resp = await client.get(url, headers=self._get_headers(), params=params)
+            if resp.status_code != 200:
+                return None
+
+            container = resp.json().get("MediaContainer", {})
+            metadata_list = container.get("Metadata", [])
+            target_ids = getattr(media, "ids", {}) or {}
+
+            for item in metadata_list:
+                guid_list = item.get("Guid", [])
+                legacy_guid = item.get("guid", "")
+                item_ids = parse_plex_ids(guid_list, legacy_guid)
+
+                # Match by provider IDs
+                for id_type, id_val in target_ids.items():
+                    if id_val and item_ids.get(id_type) == str(id_val):
+                        return {
+                            "rating_key": str(item.get("ratingKey")),
+                            "title": item.get("title"),
+                            "ids": item_ids,
+                            "type": item.get("type"),
+                        }
+
+                # Match by season/episode or title/year
+                if is_episode:
+                    p_index = item.get("parentIndex")
+                    ep_index = item.get("index")
+                    m_season = getattr(media, "season", None)
+                    m_episode = getattr(media, "episode", None)
+                    if (
+                        m_season is not None
+                        and m_episode is not None
+                        and p_index == m_season
+                        and ep_index == m_episode
+                    ):
+                        return {
+                            "rating_key": str(item.get("ratingKey")),
+                            "title": item.get("title"),
+                            "ids": item_ids,
+                            "type": item.get("type"),
+                        }
+                else:
+                    item_title = item.get("title", "").strip().lower()
+                    m_title = str(getattr(media, "title", "")).strip().lower()
+                    if item_title == m_title:
+                        item_year = item.get("year")
+                        m_year = getattr(media, "year", None)
+                        if not m_year or not item_year or int(item_year) == int(m_year):
+                            return {
+                                "rating_key": str(item.get("ratingKey")),
+                                "title": item.get("title"),
+                                "ids": item_ids,
+                                "type": item.get("type"),
+                            }
+        except httpx.RequestError as exc:
+            logger.error("Failed to search Plex for item %s: %s", search_title, exc)
+        return None
+

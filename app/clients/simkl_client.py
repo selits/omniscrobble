@@ -6,6 +6,7 @@ and real-time scrobble (start, pause, stop) and history/ratings sync.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
@@ -545,11 +546,12 @@ class SimklClient:
         payload = self.build_media_payload(media, progress=progress)
         return await self._post("/scrobble/stop", payload)
 
-    async def sync_history(self, media: ParsedMedia) -> dict[str, Any]:
-        """Sync a completed watched media item directly to Simkl history."""
+    async def sync_history(self, media: ParsedMedia, watched_at: Optional[str] = None) -> dict[str, Any]:
+        """Sync a completed watched media item directly to Simkl history, preserving rewatch fidelity."""
         if not self.is_authenticated():
             return {"status": "skipped", "reason": "not_authenticated"}
 
+        timestamp = watched_at or datetime.now(timezone.utc).isoformat()
         ids: dict[str, str] = {}
         if getattr(media, "ids", None):
             for k, v in media.ids.items():
@@ -563,7 +565,7 @@ class SimklClient:
             ids["tvdb"] = str(media.tvdb_id)
 
         if media.media_type == "movie":
-            item = {"title": media.title, "ids": ids}
+            item = {"title": media.title, "ids": ids, "watched_at": timestamp}
             if media.year:
                 item["year"] = media.year
             payload = {"movies": [item]}
@@ -577,7 +579,7 @@ class SimklClient:
             if season_num is None:
                 season_num = getattr(media, "parent_index", None) or 1
 
-            ep_item = {"number": ep_num}
+            ep_item = {"number": ep_num, "watched_at": timestamp}
             season_item = {"number": season_num, "episodes": [ep_item]}
             show_item = {"title": show_title, "ids": ids, "seasons": [season_item]}
             if show_year:

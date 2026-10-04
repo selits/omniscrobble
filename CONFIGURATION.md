@@ -248,6 +248,31 @@ The `X-Plex-Token` is your personal Plex authentication token required for two-w
    - *User Data*: Rating Changed / User Data Changed.
 5. Click **Save**.
 
+### Multi-Server Real-Time Mirroring & Standalone Player Bridge
+
+#### Multi-Server Mirroring (Plex ⇄ Jellyfin / Emby)
+
+When running multiple media servers concurrently in your homelab (e.g. Plex and Jellyfin), Omniscrobble can automatically mirror watched states and ratings across all active servers in real-time. When a scrobble completes or a rating is applied on Server A:
+
+1. Omniscrobble searches for the matching title and provider ID (`imdb`, `tmdb`, `tvdb`) on Server B and Server C (`find_item`).
+2. Marks the item as watched or applies the rating on target servers.
+3. Automatically suppresses echo bounce-back loops using `LoopPreventionManager` (`ttl=180.0s`).
+
+Enable via `.env`:
+
+```ini
+MULTI_SERVER_MIRRORING=true
+```
+
+Or toggle live in the **Dashboard Settings Hub &rarr; Two-Way Reconciliation** panel.
+
+#### Standalone Player Direct REST Bridge
+
+For lightweight clients (such as Infuse, Kodi, VLC, or Stremio) operating without a media server backend, Omniscrobble exposes a direct REST bridge:
+
+- `GET /api/scrobble`: Descriptor endpoint returning payload JSON schemas and usage examples.
+- `POST /api/scrobble?token=<WEBHOOK_SECRET>`: Ingests playback events (`play`, `pause`, `stop`, `scrobble`) directly with full multi-tracker scrobbling and rewatch detection.
+
 ---
 
 ## 3. Acquisition Stack (*Arr Automation)
@@ -651,6 +676,7 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`REVERSE_SYNC_ON_STARTUP`** | `false` | Boolean | **Yes** | Run library reconciliation scan automatically on service startup. |
 | **`REVERSE_SYNC_RATINGS`** | `true` | Boolean | **Yes** | Reconcile numerical and star ratings between media servers and Trakt. |
 | **`BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS`** | `24` | Integer | **Yes** | Frequency of automated background cloud synchronization and Letterboxd diary export in hours (`0` = disabled). |
+| **`MULTI_SERVER_MIRRORING`** | `false` | Boolean | **Yes** | Real-time multi-server mirroring (Plex ⇄ Jellyfin / Emby) on scrobble completion and ratings. |
 | **`SONARR_URL`** | `""` | String | **Yes** | Base URL to Sonarr instance (e.g., `http://192.168.1.50:8989`). |
 | **`SONARR_API_KEY`** | `""` | String | **Yes** | Sonarr 32-character API key. |
 | **`RADARR_URL`** | `""` | String | **Yes** | Base URL to Radarr instance (e.g., `http://192.168.1.50:7878`). |

@@ -19,7 +19,7 @@ This document provides the complete API reference for **Omniscrobble**, includin
 3. [Media Server Webhook Ingestion](#3-media-server-webhook-ingestion)
 4. [Admin Session & Authorization](#4-admin-session--authorization)
 5. [Activity Feed, Playback & System Logs](#5-activity-feed-playback--system-logs)
-6. [Manual Scrobbling & Trakt Watchlist](#6-manual-scrobbling--trakt-watchlist)
+6. [Manual Scrobbling, Standalone Players & Trakt Watchlist](#6-manual-scrobbling-standalone-players--trakt-watchlist)
 7. [Offline Queue & Disaster Recovery](#7-offline-queue--disaster-recovery)
 8. [Watch Together & Multi-User Accounts](#8-watch-together--multi-user-accounts)
 9. [Two-Way Media Server Reconciliation & Background Cloud Sync](#9-two-way-media-server-reconciliation--background-cloud-sync)
@@ -79,6 +79,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/admin/unlock`** | `POST` | Rate-Limited | **Admin Unlock**: Validates `token` against `WEBHOOK_SECRET`. On success, issues secure HTTP-only `admin_token` and double-submit `csrf_token` cookies with configured `SameSite` policy. Protected by sliding-window brute-force rate limiting (5 failed attempts per 60s &rarr; HTTP 429 with `Retry-After`). Sanitizes security audit logs. |
 | **`/api/admin/lock`** | `POST` | Public | **Admin Lock**: Deletes both `admin_token` and `csrf_token` session cookies, returning the UI to privacy-shielded mode. |
 | **`/auth`** | `GET` | Public | **Trakt Authorization**: Starts Trakt OAuth device flow (supports `?user=username` for partner accounts). |
+| **`/api/auth/start`** | `POST` | Public | **Trakt OAuth Start**: Initiates device flow code generation for primary or partner user. |
+| **`/api/auth/poll`** | `POST` | Public | **Trakt OAuth Poll**: Polls device authorization status for token exchange. |
 | **`/auth/simkl`** | `GET` | Admin | **Simkl Authorization**: Dedicated portal for Simkl OAuth device PIN activation. |
 | **`/auth/anilist`** | `GET` | Admin | **AniList Authorization**: Web portal for AniList token entry. |
 | **`/auth/mal`** | `GET` | Admin | **MyAnimeList Authorization**: Web portal for MyAnimeList token entry. |
@@ -97,12 +99,14 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 ---
 
-## 6. Manual Scrobbling & Trakt Watchlist
+## 6. Manual Scrobbling, Standalone Players & Trakt Watchlist
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
 | **`/api/search`** | `GET` | Admin | **Global Trakt Search**: Search movies and shows (`?query=...&type=movie \| show`). |
 | **`/api/scrobble/manual`** | `POST` | Admin | **Manual History Scrobble**: Force-scrobble any movie or episode directly to Trakt, Simkl, AniList, or MAL with optional partner dual-sync. |
+| **`/api/scrobble`** | `GET` | Public | **Standalone Player Bridge Info**: Service descriptor, supported standalone players (Infuse, Kodi, VLC, Stremio), payload schema, and usage examples. |
+| **`/api/scrobble`** | `POST` | Webhook Secret | **Standalone Player Scrobble**: Ingests direct playback and scrobble payloads (`play`, `pause`, `stop`, `scrobble`) from standalone media players (Infuse, Kodi, VLC, Stremio) with full multi-tracker dispatch and loop suppression. Secures via Webhook Secret (`?token=` or header `x-webhook-secret`). |
 | **`/api/watchlist`** | `POST` | Admin | **Trakt Watchlist**: Add a movie or show to your personal Trakt watchlist. |
 | **`/api/history/remove`** | `POST` | Admin | **Unscrobble Media**: Deletes a watched history entry from Trakt and secondary trackers with optional partner unlinking. |
 
@@ -128,6 +132,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/cowatch/trackers`** | `GET` | Public | **Partner Cloud Trackers**: Returns connection and username status matrix for partner's secondary trackers (Trakt, Simkl, AniList, MAL). Supports `?demo=true`. |
 | **`/api/cowatch/shows`** | `POST` | Admin | **Add Shared Show**: Adds a TV show title to `data/cowatch_shows.json`. |
 | **`/api/cowatch/shows`** | `DELETE` | Admin | **Remove Shared Show**: Removes a show title from `data/cowatch_shows.json`. |
+| **`/api/cowatch/devices`** | `POST` | Admin | **Add Allowed Device**: Adds a client device identifier to the Co-Watch whitelist. |
+| **`/api/cowatch/devices`** | `DELETE` | Admin | **Remove Allowed Device**: Removes a client device identifier from the Co-Watch whitelist. |
 | **`/api/cowatch/settings`** | `POST` | Admin | **Toggle Co-Watch Settings**: Dynamically toggles movie dual-sync (`movies: true/false`). |
 | **`/api/cowatch/sync`** | `POST` | Admin | **1-Click Partner Dual Sync**: Manually pushes a watched event to your partner's Trakt profile. |
 | **`/api/sonarr/shows`** | `GET` | Admin | **Live Show Autocomplete**: Queries Sonarr for series titles, excluding already whitelisted shows. |
@@ -178,7 +184,14 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/mal/status`** | `GET` | Public | **MyAnimeList Status**: Connection status and user profile. Supports `?user=username`. |
 | **`/api/mal/token`** | `POST` | Admin | **Save MAL Token**: Saves access token for MyAnimeList REST v2 API. Accepts `{"token": "...", "user": "username"}` to persist to partner token profile. |
 | **`/api/mal/disconnect`** | `POST` | Admin | **Disconnect MAL**: Deletes local MyAnimeList token. Supports `?user=username`. |
+| **`/api/letterboxd/status`** | `GET` | Public | **Letterboxd Status**: Telemetry, account status, and local diary statistics. |
+| **`/api/letterboxd/diary`** | `GET` | Public | **Letterboxd Diary Feed**: Returns parsed local diary entries. |
 | **`/api/letterboxd/export`** | `GET` | Admin | **Letterboxd Diary CSV Export**: Generates and downloads an RFC-4180 Letterboxd-compliant CSV diary export of watched movies. |
+| **`/api/tmdb/status`** | `GET` | Public | **TMDb Status**: Connection and API key validity state. |
+| **`/api/kitsu/status`** | `GET` | Public | **Kitsu Status**: Connection status and token health. |
+| **`/api/serializd/status`** | `GET` | Public | **Serializd Status**: Connection status and token health. |
+| **`/api/mdblist/status`** | `GET` | Public | **MDBList Status**: Connection health and API key status. |
+| **`/api/mdblist/ratings`** | `GET` | Public | **MDBList Ratings**: Enriched community ratings for a title. |
 | **`/api/relay/status`** | `GET` | Public | **Mobile Relay Status**: Connection health for mobile Trakt relays (SeriesGuide, Showly). |
 | **`/api/anime/resolve`** | `GET` | Public | **Anime Resolver**: Resolves AniList GraphQL / MAL ID mapping for an anime title. |
 

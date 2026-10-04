@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from datetime import timezone
 import html
 import io
 import json
@@ -14,7 +15,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
@@ -226,6 +227,7 @@ def is_admin_request(request: Request) -> bool:
 
 queue_worker_task: Optional[asyncio.Task] = None
 reverse_sync_worker_task: Optional[asyncio.Task] = None
+scrobble_heartbeat_worker_task: Optional[asyncio.Task] = None
 
 
 async def queue_worker_loop():
@@ -387,12 +389,66 @@ async def background_cloud_sync_worker_loop():
             logger.error(f"Error in periodic background cloud sync worker: {e}")
 
 
+async def scrobble_heartbeat_worker_loop():
+    """Background worker periodically sending scrobble keep-alives to Trakt and Simkl for active sessions."""
+    logger.info("Scrobble heartbeat worker started (checking active streaming sessions every 60s)...")
+    while True:
+        try:
+            await asyncio.sleep(60.0)
+            candidates = playback_mgr.get_heartbeat_candidates(interval_seconds=600)
+            if not candidates:
+                continue
+
+            now = time.time()
+            for candidate in candidates:
+                try:
+                    key = candidate.get("key", "")
+                    media = candidate.get("parsed_media")
+                    if not media:
+                        playback_mgr.record_heartbeat(key)
+                        continue
+
+                    dur_ms = candidate.get("duration_ms")
+                    offset_ms = candidate.get("view_offset_ms")
+                    est_prog = candidate.get("progress", 0.0)
+                    if dur_ms and offset_ms is not None and dur_ms > 0:
+                        dur_sec = dur_ms / 1000.0
+                        offset_sec = offset_ms / 1000.0
+                        elapsed = max(0.0, now - candidate.get("updated_at", now))
+                        current_sec = min(dur_sec, offset_sec + elapsed)
+                        est_prog = min(99.0, max(0.0, (current_sec / dur_sec) * 100.0))
+
+                    # 1. Trakt keep-alive scrobble_start
+                    user_client = user_mgr.get_client(media.username)
+                    if not user_client.is_authenticated():
+                        user_client = trakt
+                    if user_client.is_authenticated():
+                        payload = media.to_trakt_scrobble_payload()
+                        payload["progress"] = round(est_prog, 1)
+                        await user_client.scrobble_start(payload)
+
+                    # 2. Simkl keep-alive scrobble_start
+                    if settings_mgr.is_tracker_enabled("simkl") and simkl.is_enabled() and simkl.is_authenticated():
+                        await simkl.scrobble_start(media, progress=est_prog)
+
+                    playback_mgr.record_heartbeat(key, progress=est_prog)
+                    logger.debug(f"Heartbeat keep-alive refreshed for {candidate.get('title')} ({est_prog:.1f}%)")
+                except Exception as exc:
+                    logger.debug(f"Error in heartbeat keep-alive for {candidate.get('title')}: {exc}")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in scrobble heartbeat loop: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global queue_worker_task, reverse_sync_worker_task, arr_watchlist_worker_task
     global partner_refresh_worker_task, background_cloud_sync_task, token_monitor_task
+    global scrobble_heartbeat_worker_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
     reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
+    scrobble_heartbeat_worker_task = asyncio.create_task(scrobble_heartbeat_worker_loop())
     if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
         arr_watchlist_worker_task = asyncio.create_task(arr_watchlist_worker_loop())
     partner_refresh_worker_task = asyncio.create_task(partner_token_refresh_loop())
@@ -499,6 +555,12 @@ async def lifespan(app: FastAPI):
             await token_monitor_task
         except asyncio.CancelledError:
             pass
+    if scrobble_heartbeat_worker_task:
+        scrobble_heartbeat_worker_task.cancel()
+        try:
+            await scrobble_heartbeat_worker_task
+        except asyncio.CancelledError:
+            pass
     await reverse_sync_mgr.plex.close()
     await arr_bridge.sonarr.close()
     await arr_bridge.radarr.close()
@@ -562,6 +624,8 @@ async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: 
             await simkl.scrobble_pause(parsed, progress=parsed.progress)
         elif event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.get_threshold(parsed.media_type)):
             res = await simkl.scrobble_stop(parsed, progress=parsed.progress)
+            watched_at_ts = datetime.datetime.now(timezone.utc).isoformat()
+            await simkl.sync_history(parsed, watched_at=watched_at_ts)
             if isinstance(res, dict) and res.get("status") == "error":
                 asyncio.create_task(notifier.send_failure_alert(parsed, "Simkl", str(res.get("error", "Error")), user=parsed.username))
         elif event == "media.rate":
@@ -693,11 +757,12 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
 
     # 1. Partner Trakt
     cw_trakt = user_mgr.get_client(target_user)
+    watched_at_ts = datetime.datetime.now(timezone.utc).isoformat()
     if cw_trakt and cw_trakt.is_authenticated():
         async def _sync_trakt():
             try:
                 logger.info(f"Co-watching dual-sync triggering for partner @{target_user} (Trakt): {parsed.title}")
-                history_payload = parsed.to_trakt_history_payload()
+                history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
                 res = await cw_trakt.sync_history(history_payload)
                 if is_temporary_error(res):
                     queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
@@ -710,7 +775,7 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
                     metrics_registry.record_cowatch("success")
             except Exception as e:
                 logger.error(f"Error during co-watch Trakt dual-sync for @{target_user}: {e}")
-                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=target_user)
+                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(e), username=target_user)
                 metrics_registry.record_cowatch("failed")
         tasks.append(_sync_trakt())
     else:
@@ -726,6 +791,7 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
                     await cw_simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
                 else:
                     res = await cw_simkl.scrobble_stop(parsed, progress=parsed.progress)
+                    await cw_simkl.sync_history(parsed, watched_at=watched_at_ts)
                     if isinstance(res, dict) and res.get("status") == "error":
                         logger.warning(f"Co-watch Simkl error for @{target_user}: {res.get('error')}")
             except Exception as e:
@@ -903,7 +969,8 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
 
             scrobble_payload["progress"] = 100.0
             scrobble_res = await active_client.scrobble_stop(scrobble_payload)
-            history_res = await active_client.sync_history(parsed.to_trakt_history_payload())
+            watched_at_ts = datetime.datetime.now(timezone.utc).isoformat()
+            history_res = await active_client.sync_history(parsed.to_trakt_history_payload(watched_at=watched_at_ts))
             result = {"scrobble": scrobble_res, "history": history_res}
 
             if is_temporary_error(scrobble_res):
@@ -913,7 +980,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                 metrics_registry.record_scrobble(parsed.media_type, "success")
 
             if is_temporary_error(history_res):
-                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(history_res.get("error", "")), username=parsed.username)
+                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(history_res.get("error", "")), username=parsed.username)
 
             scrobble_stats["total"] += 1
             if parsed.media_type == "movie":
@@ -1010,6 +1077,14 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
             partner_target = Config.CO_WATCH_USER if (cowatch_info and cowatch_info.get("synced")) else None
             asyncio.create_task(notifier.dispatch(parsed, action_taken, cowatch_partner=partner_target))
+
+        # Real-time multi-server watched status and rating mirroring
+        if is_sync_trigger and settings_mgr.is_multi_server_mirroring_enabled():
+            src_server = "plex" if endpoint_name in ("webhook", "plex") else endpoint_name
+            asyncio.create_task(reverse_sync_mgr.mirror_watched_status(parsed, source_server=src_server))
+        elif action_taken == "rate" and settings_mgr.is_multi_server_mirroring_enabled() and parsed.rating:
+            src_server = "plex" if endpoint_name in ("webhook", "plex") else endpoint_name
+            asyncio.create_task(reverse_sync_mgr.mirror_rating(parsed, float(parsed.rating), source_server=src_server))
 
         asyncio.create_task(execute_multi_tracker_dispatch(parsed, action_taken, event, parsed.progress))
 
@@ -1141,6 +1216,106 @@ async def emby_webhook(request: Request):
         return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
     return await process_media_event(parsed, endpoint_name="webhook_emby")
+
+
+class StandaloneScrobblePayload(BaseModel):
+    title: str = Field(..., description="Movie title or episode/show title")
+    year: Optional[int] = Field(None, description="Release year")
+    progress: float = Field(0.0, description="Playback progress percentage (0.0 - 100.0)")
+    action: str = Field("play", description="Playback action: play, start, resume, pause, stop, scrobble, rate")
+    media_type: str = Field("movie", description="Media type: 'movie' or 'episode'")
+    show_title: Optional[str] = Field(None, description="Show title (for episodes)")
+    season: Optional[int] = Field(None, description="Season number (for episodes)")
+    episode: Optional[int] = Field(None, description="Episode number (for episodes)")
+    episode_title: Optional[str] = Field(None, description="Episode title")
+    ids: Optional[dict[str, Any]] = Field(default_factory=dict, description="External provider IDs (imdb, tmdb, tvdb, trakt)")
+    player: Optional[str] = Field("Standalone Player", description="Client player name (e.g. Infuse, Kodi, VLC, Stremio)")
+    device: Optional[str] = Field(None, description="Device name or client platform")
+    user: Optional[str] = Field(None, description="Username or user identifier")
+    rating: Optional[float] = Field(None, description="User rating (1-10) for rating events")
+    duration_ms: Optional[int] = Field(None, description="Duration in milliseconds")
+    view_offset_ms: Optional[int] = Field(None, description="Playback offset in milliseconds")
+
+
+@app.get("/api/scrobble")
+def standalone_scrobble_info():
+    """Information and contract specification for the Standalone Player Scrobble REST bridge."""
+    return {
+        "status": "online",
+        "service": "Omniscrobble Standalone Player REST Bridge",
+        "method": "POST",
+        "description": "Direct scrobbler endpoint for standalone video players (Infuse, Kodi, VLC, Stremio, MPV, etc.) without requiring a media server.",
+        "payload_schema": {
+            "title": "string (required)",
+            "year": "integer (optional)",
+            "progress": "float (0-100, optional, default: 0.0)",
+            "action": "string ('play', 'pause', 'stop', 'scrobble', 'rate', optional, default: 'play')",
+            "media_type": "string ('movie' or 'episode', optional, default: 'movie')",
+            "show_title": "string (optional for episodes)",
+            "season": "integer (optional for episodes)",
+            "episode": "integer (optional for episodes)",
+            "ids": "object (optional e.g. {'imdb': 'tt...', 'tmdb': '...', 'tvdb': '...'})",
+            "player": "string (optional e.g. 'Infuse', 'Kodi', 'VLC', 'Stremio')",
+            "user": "string (optional username)",
+            "rating": "float (optional rating 1-10)",
+        },
+    }
+
+
+@app.post("/api/scrobble")
+async def standalone_scrobble_endpoint(request: Request, payload: StandaloneScrobblePayload):
+    """Direct scrobble bridge endpoint for standalone players (Infuse, Kodi, VLC, Stremio)."""
+    verify_webhook_token(request, "api_scrobble")
+
+    action_lower = payload.action.strip().lower()
+    if action_lower in ("play", "start", "resume"):
+        event = "media.play"
+    elif action_lower in ("pause",):
+        event = "media.pause"
+    elif action_lower in ("stop",):
+        event = "media.stop"
+    elif action_lower in ("scrobble", "finish", "watched", "complete"):
+        event = "media.scrobble"
+    elif action_lower in ("rate", "rating"):
+        event = "media.rate"
+    else:
+        event = f"media.{action_lower}"
+
+    clean_ids: dict[str, str] = {}
+    if payload.ids:
+        for k, v in payload.ids.items():
+            if v:
+                clean_ids[str(k).lower().strip()] = str(v).strip()
+
+    title_val = payload.title
+    show_title_val = payload.show_title
+    if payload.media_type == "episode" and not show_title_val and payload.episode_title:
+        show_title_val = payload.title
+        title_val = payload.episode_title
+
+    default_user = Config.PLEX_ALLOWED_USERS[0] if Config.PLEX_ALLOWED_USERS else "user"
+    user_val = (payload.user or default_user).strip()
+
+    parsed = ParsedMedia(
+        event=event,
+        media_type=payload.media_type,
+        title=title_val,
+        year=payload.year,
+        progress=payload.progress,
+        rating=payload.rating,
+        season=payload.season,
+        episode=payload.episode,
+        show_title=show_title_val,
+        grandparent_title=show_title_val,
+        ids=clean_ids,
+        player=payload.player or "Standalone Player",
+        device=payload.device or payload.player or "Standalone Device",
+        username=user_val,
+        duration_ms=payload.duration_ms,
+        view_offset_ms=payload.view_offset_ms,
+    )
+
+    return await process_media_event(parsed, endpoint_name="api_scrobble")
 
 
 @app.get("/sonarr")
@@ -1829,6 +2004,7 @@ class SettingsUpdateRequest(BaseModel):
     arr: Optional[dict[str, Any]] = None
     rules: Optional[dict[str, Any]] = None
     notifications: Optional[dict[str, Any]] = None
+    multi_server_mirroring: Optional[bool] = None
 
     model_config = {"extra": "ignore"}
 

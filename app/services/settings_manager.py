@@ -47,6 +47,7 @@ class SettingsManager:
             "arr": self._detect_default_arr(),
             "rules": self._detect_default_rules(),
             "notifications": {},
+            "multi_server_mirroring": bool(getattr(self.config, "MULTI_SERVER_MIRRORING", False)),
         }
         self._custom_notifications: dict[str, Any] = {}
         self._load_settings()
@@ -295,6 +296,9 @@ class SettingsManager:
                                 if nv is not None:
                                     self._custom_notifications[nk] = nv
                             self._settings["notifications"] = dict(self._custom_notifications)
+
+                        if "multi_server_mirroring" in data:
+                            self._settings["multi_server_mirroring"] = bool(data["multi_server_mirroring"])
             except Exception as e:
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
@@ -305,6 +309,17 @@ class SettingsManager:
             crypto_mgr.write_secure_json(self.settings_file, self._settings)
         except Exception as e:
             logger.error(f"Error saving settings to {self.settings_file}: {e}")
+
+    def is_multi_server_mirroring_enabled(self) -> bool:
+        """Checks if real-time multi-server watched status mirroring is enabled."""
+        return bool(self._settings.get("multi_server_mirroring", False))
+
+    def set_multi_server_mirroring(self, enabled: bool) -> dict[str, Any]:
+        """Enables or disables real-time multi-server watched status mirroring."""
+        self._settings["multi_server_mirroring"] = bool(enabled)
+        self._save_settings()
+        logger.info(f"Multi-server mirroring setting updated to: {enabled}")
+        return self.get_all_settings()
 
     def is_server_enabled(self, server: str) -> bool:
         """Checks if ingestion for the given media server is currently active."""
@@ -753,6 +768,7 @@ class SettingsManager:
             "arr": self.get_arr_settings(mask=mask_token),
             "rules": self.get_rules_settings(),
             "notifications": self.get_notifications(mask=mask_token),
+            "multi_server_mirroring": self.is_multi_server_mirroring_enabled(),
         }
 
     def update_all_settings(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -784,6 +800,9 @@ class SettingsManager:
 
         if "notifications" in data and isinstance(data["notifications"], dict):
             self.update_notifications(data["notifications"])
+
+        if "multi_server_mirroring" in data:
+            self._settings["multi_server_mirroring"] = bool(data["multi_server_mirroring"])
 
         self._save_settings()
         return self.get_all_settings(mask_token=True)

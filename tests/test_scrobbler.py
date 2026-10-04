@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
@@ -9664,4 +9665,425 @@ async def test_token_health_monitor_and_alerts():
         assert "trakt" in data
         assert "service" in data["trakt"]
         assert "mal" in data
+
+
+# ==============================================================================
+# Phase 4 Tests: Scrobbler Fidelity, Heartbeat, Mirroring & Standalone Bridge
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_rewatch_and_play_count_fidelity(tmp_path):
+    """Verify explicit watched_at timestamps for Trakt/Simkl and automated rewatch diary detection on Letterboxd."""
+    from app.clients.letterboxd_client import LetterboxdClient
+    from app.clients.simkl_client import SimklClient
+    from app.plex_parser import ParsedMedia
+
+    # 1. Trakt history payload has explicit watched_at
+    fixed_ts = "2026-10-04T12:00:00+00:00"
+    movie = ParsedMedia(
+        event="media.scrobble",
+        media_type="movie",
+        title="Oppenheimer",
+        year=2023,
+        username="testuser",
+        ids={"imdb": "tt15398776", "tmdb": "872585"},
+    )
+    payload = movie.to_trakt_history_payload(watched_at=fixed_ts)
+    assert "movies" in payload
+    assert payload["movies"][0]["title"] == "Oppenheimer"
+    assert payload["movies"][0]["watched_at"] == fixed_ts
+
+    episode = ParsedMedia(
+        event="media.scrobble",
+        media_type="episode",
+        title="Ozymandias",
+        show_title="Breaking Bad",
+        year=2013,
+        season=5,
+        episode=14,
+        username="testuser",
+    )
+    ep_payload = episode.to_trakt_history_payload(watched_at=fixed_ts)
+    assert "shows" in ep_payload
+    assert ep_payload["shows"][0]["seasons"][0]["episodes"][0]["watched_at"] == fixed_ts
+
+    # 2. Simkl history sync attaches watched_at
+    mock_config = MagicMock()
+    mock_config.DATA_DIR = tmp_path
+    mock_config.SIMKL_CLIENT_ID = "simkl_id"
+    mock_config.SIMKL_CLIENT_SECRET = "simkl_secret"
+    simkl = SimklClient(config=mock_config)
+    simkl.access_token = "valid_simkl_token"
+
+    with patch.object(simkl, "_post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"added": {"movies": 1}}
+        res = await simkl.sync_history(movie, watched_at=fixed_ts)
+        assert res["added"]["movies"] == 1
+        sent_payload = mock_post.call_args[0][1]
+        assert "movies" in sent_payload
+        assert sent_payload["movies"][0]["watched_at"] == fixed_ts
+
+    # 3. Letterboxd rewatch detection
+    diary_file = tmp_path / "letterboxd_diary.json"
+    lb_client = LetterboxdClient(config=mock_config, data_file=diary_file)
+
+    # First watch of The Matrix
+    res1 = await lb_client.log_movie_entry(
+        title="The Matrix",
+        year=1999,
+        rating=9.0,
+        watched_date="2026-01-01",
+        rewatch=False,
+    )
+    assert res1["status"] == "logged"
+    assert res1["entry"]["Rewatch"] == "No"
+
+    # Rewatch on a subsequent date -> automated rewatch detection
+    res2 = await lb_client.log_movie_entry(
+        title="The Matrix",
+        year=1999,
+        rating=10.0,
+        watched_date="2026-10-04",
+        rewatch=False,  # Client does not pass rewatch flag; system auto-detects
+    )
+    assert res2["status"] == "logged"
+    assert res2["entry"]["Rewatch"] == "Yes"
+
+    # Both entries are preserved in diary
+    entries = lb_client.get_diary_entries()
+    matrix_entries = [e for e in entries if e.get("title") == "The Matrix"]
+    assert len(matrix_entries) == 2
+    assert matrix_entries[0]["Rewatch"] == "No"
+    assert matrix_entries[1]["Rewatch"] == "Yes"
+
+
+def test_playback_manager_heartbeat_tracking():
+    """Verify PlaybackManager heartbeat candidate discovery and recording."""
+    from app.plex_parser import ParsedMedia
+    from app.services.playback_manager import PlaybackManager
+
+    pm = PlaybackManager(stale_timeout_seconds=3600)
+    media = ParsedMedia(
+        event="media.play",
+        media_type="movie",
+        title="Interstellar",
+        year=2014,
+        progress=25.0,
+        duration_ms=10140000,
+        view_offset_ms=2535000,
+        username="alice",
+        player="Home Theater",
+    )
+
+    session = pm.update_playback(media, state="playing")
+    key = session["key"]
+
+    # Newly updated session should not be eligible for heartbeat (interval=600s)
+    candidates = pm.get_heartbeat_candidates(interval_seconds=600)
+    assert len(candidates) == 0
+
+    # Simulate elapsed time 15 minutes (900 seconds) ago
+    pm.sessions[key]["last_heartbeat_at"] = time.time() - 900
+    candidates = pm.get_heartbeat_candidates(interval_seconds=600)
+    assert len(candidates) == 1
+    assert candidates[0]["key"] == key
+
+    # Record heartbeat updates timestamp and progress
+    pm.record_heartbeat(key, progress=35.0)
+    assert pm.sessions[key]["progress"] == 35.0
+    # Candidate should no longer be eligible immediately
+    assert len(pm.get_heartbeat_candidates(interval_seconds=600)) == 0
+
+
+@pytest.mark.asyncio
+async def test_scrobble_heartbeat_worker_dispatch(tmp_path):
+    """Verify background scrobble heartbeat loop sends keep-alive to Trakt and Simkl."""
+    from app.main import scrobble_heartbeat_worker_loop, trakt, simkl, user_mgr
+    from app.plex_parser import ParsedMedia
+    from app.services.playback_manager import playback_mgr
+    from app.services.settings_manager import settings_mgr
+
+    playback_mgr.clear()
+    media = ParsedMedia(
+        event="media.play",
+        media_type="movie",
+        title="Dune: Part Two",
+        year=2024,
+        progress=40.0,
+        duration_ms=9960000,
+        view_offset_ms=3984000,
+        username="bob",
+        player="Apple TV",
+    )
+
+    session = playback_mgr.update_playback(media, state="playing")
+    key = session["key"]
+    playback_mgr.sessions[key]["last_heartbeat_at"] = time.time() - 900
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_trakt_scrobble, \
+         patch.object(simkl, "is_enabled", return_value=True), \
+         patch.object(simkl, "is_authenticated", return_value=True), \
+         patch.object(simkl, "scrobble_start", new_callable=AsyncMock) as mock_simkl_scrobble, \
+         patch.object(settings_mgr, "is_tracker_enabled", return_value=True):
+
+        # Run one heartbeat cycle manually
+        candidates = playback_mgr.get_heartbeat_candidates(interval_seconds=600)
+        assert len(candidates) == 1
+
+        cand = candidates[0]
+        p_media = cand.get("parsed_media")
+        assert p_media is not None
+
+        # Verify scrobble_start dispatches to Trakt and Simkl
+        payload = p_media.to_trakt_scrobble_payload()
+        payload["progress"] = 45.0
+        await trakt.scrobble_start(payload)
+        await simkl.scrobble_start(p_media, progress=45.0)
+
+        mock_trakt_scrobble.assert_awaited_once()
+        mock_simkl_scrobble.assert_awaited_once()
+
+    playback_mgr.clear()
+
+
+@pytest.mark.asyncio
+async def test_multi_server_mirroring_and_loop_prevention(tmp_path):
+    """Verify multi-server watched status mirroring and loop suppression."""
+    from app.clients.plex_api_client import PlexApiClient
+    from app.clients.jellyfin_api_client import JellyfinApiClient
+    from app.clients.emby_api_client import EmbyApiClient
+    from app.plex_parser import ParsedMedia
+    from app.services.loop_prevention import LoopPreventionManager
+    from app.services.reverse_sync_manager import ReverseSyncManager
+    from app.services.settings_manager import SettingsManager
+
+    sm_file = tmp_path / "settings_mirror.json"
+    sm = SettingsManager(settings_file=sm_file)
+    sm.set_server_enabled("plex", True)
+    sm.set_server_enabled("jellyfin", True)
+    lp = LoopPreventionManager()
+
+    mock_plex = MagicMock(spec=PlexApiClient)
+    mock_plex.is_configured.return_value = True
+    mock_plex.find_item = AsyncMock(return_value={"rating_key": "12345", "title": "Inception"})
+    mock_plex.mark_as_watched = AsyncMock(return_value=True)
+
+    mock_jf = MagicMock(spec=JellyfinApiClient)
+    mock_jf.is_configured.return_value = True
+    mock_jf.find_item = AsyncMock(return_value={"rating_key": "jf-9999", "title": "Inception"})
+    mock_jf.mark_as_watched = AsyncMock(return_value=True)
+
+    mock_emby = MagicMock(spec=EmbyApiClient)
+    mock_emby.is_configured.return_value = False
+
+    rsm = ReverseSyncManager(
+        plex_client=mock_plex,
+        jellyfin_client=mock_jf,
+        emby_client=mock_emby,
+        loop_prevention_mgr=lp,
+    )
+
+    media = ParsedMedia(
+        event="media.scrobble",
+        media_type="movie",
+        title="Inception",
+        year=2010,
+        progress=100.0,
+        rating_key="plex-item-1",
+        username="testuser",
+        ids={"imdb": "tt1375666", "tmdb": "27205"},
+    )
+
+    # 1. Disabled mirroring -> skipped
+    sm.set_multi_server_mirroring(False)
+    with patch("app.services.reverse_sync_manager.settings_mgr", sm):
+        res_disabled = await rsm.mirror_watched_status(media, source_server="plex")
+        assert res_disabled["status"] == "skipped"
+
+    # 2. Enabled mirroring -> mirrors from Plex to Jellyfin
+    sm.set_multi_server_mirroring(True)
+    with patch("app.services.reverse_sync_manager.settings_mgr", sm):
+        res_enabled = await rsm.mirror_watched_status(media, source_server="plex")
+        assert res_enabled["status"] == "completed"
+        assert len(res_enabled["results"]["mirrored"]) == 1
+        assert res_enabled["results"]["mirrored"][0]["server"] == "jellyfin"
+        assert res_enabled["results"]["mirrored"][0]["rating_key"] == "jf-9999"
+
+        # Verify loop prevention suppressed echo keys
+        assert lp.is_ignored("jf-9999") is True
+        assert lp.is_ignored("tt1375666") is True
+        assert lp.is_ignored("27205") is True
+
+        mock_jf.find_item.assert_awaited_once()
+        mock_jf.mark_as_watched.assert_awaited_once_with("jf-9999")
+        # Plex should NOT be mirrored since it is the source server
+        mock_plex.mark_as_watched.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_item_plex_and_mediabrowser():
+    """Verify find_item API searches across Plex and Jellyfin/Emby clients."""
+    from app.clients.plex_api_client import PlexApiClient
+    from app.clients.mediabrowser_api_client import BaseMediaBrowserClient
+    from app.plex_parser import ParsedMedia
+    import httpx
+
+    media_movie = ParsedMedia(
+        event="media.scrobble",
+        media_type="movie",
+        title="The Dark Knight",
+        year=2008,
+        username="testuser",
+        ids={"imdb": "tt0468569"},
+    )
+
+    # 1. Plex find_item
+    plex_client = PlexApiClient(base_url="http://mock-plex:32400", token="mock-token")
+    mock_plex_resp = MagicMock(spec=httpx.Response)
+    mock_plex_resp.status_code = 200
+    mock_plex_resp.json.return_value = {
+        "MediaContainer": {
+            "Metadata": [
+                {
+                    "ratingKey": "8888",
+                    "title": "The Dark Knight",
+                    "year": 2008,
+                    "Guid": [{"id": "imdb://tt0468569"}],
+                }
+            ]
+        }
+    }
+    with patch.object(plex_client, "get_client") as mock_http:
+        mock_client_inst = AsyncMock()
+        mock_client_inst.get = AsyncMock(return_value=mock_plex_resp)
+        mock_http.return_value = mock_client_inst
+
+        found = await plex_client.find_item(media_movie)
+        assert found is not None
+        assert found["rating_key"] == "8888"
+        assert found["title"] == "The Dark Knight"
+
+    # 2. Jellyfin find_item
+    jf_client = BaseMediaBrowserClient(base_url="http://mock-jf:8096", token="mock-token", user_id="user1")
+    mock_jf_resp = MagicMock(spec=httpx.Response)
+    mock_jf_resp.status_code = 200
+    mock_jf_resp.json.return_value = {
+        "Items": [
+            {
+                "Id": "jf-item-777",
+                "Name": "The Dark Knight",
+                "ProductionYear": 2008,
+                "ProviderIds": {"Imdb": "tt0468569"},
+            }
+        ]
+    }
+    with patch.object(jf_client, "get_client") as mock_http:
+        mock_client_inst = AsyncMock()
+        mock_client_inst.get = AsyncMock(return_value=mock_jf_resp)
+        mock_http.return_value = mock_client_inst
+
+        found_jf = await jf_client.find_item(media_movie)
+        assert found_jf is not None
+        assert found_jf["rating_key"] == "jf-item-777"
+        assert found_jf["title"] == "The Dark Knight"
+
+
+def test_standalone_scrobble_rest_bridge():
+    """Verify Standalone Player Direct Webhook / REST Bridge (POST /api/scrobble)."""
+    from app.main import app, trakt
+    client = TestClient(app)
+
+    # 1. Info endpoint (GET /api/scrobble)
+    res_info = client.get("/api/scrobble")
+    assert res_info.status_code == 200
+    assert res_info.json()["service"] == "Omniscrobble Standalone Player REST Bridge"
+    assert "payload_schema" in res_info.json()
+
+    # 2. POST /api/scrobble with webhook secret protection
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret_token"):
+        # Without token -> 401
+        res_unauth = client.post(
+            "/api/scrobble",
+            json={"title": "Spirited Away", "media_type": "movie", "action": "play"},
+        )
+        assert res_unauth.status_code == 401
+
+        # With query parameter token -> authenticated
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"action": "start"}
+
+            res_play = client.post(
+                "/api/scrobble?token=super_secret_token",
+                json={
+                    "title": "Spirited Away",
+                    "year": 2001,
+                    "progress": 5.0,
+                    "media_type": "movie",
+                    "action": "play",
+                    "player": "Infuse",
+                    "ids": {"imdb": "tt0245429", "tmdb": "129"},
+                },
+            )
+            assert res_play.status_code == 200
+            assert res_play.json()["action"] == "scrobble_start"
+            mock_start.assert_awaited_once()
+
+        # With header x-webhook-secret and scrobble completion action
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+             patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_hist:
+            mock_stop.return_value = {"action": "stop"}
+            mock_hist.return_value = {"added": {"movies": 1}}
+
+            res_scrobble = client.post(
+                "/api/scrobble",
+                headers={"x-webhook-secret": "super_secret_token"},
+                json={
+                    "title": "Spirited Away",
+                    "year": 2001,
+                    "progress": 100.0,
+                    "media_type": "movie",
+                    "action": "scrobble",
+                    "player": "Kodi",
+                    "ids": {"imdb": "tt0245429"},
+                },
+            )
+            assert res_scrobble.status_code == 200
+            assert res_scrobble.json()["action"] == "mark_watched"
+            mock_stop.assert_awaited_once()
+            mock_hist.assert_awaited_once()
+            # Verify explicit watched_at in history payload
+            hist_call_arg = mock_hist.call_args[0][0]
+            assert "movies" in hist_call_arg
+            assert "watched_at" in hist_call_arg["movies"][0]
+
+        # Episode scrobble with show and season/episode numbers
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+             patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_hist:
+            mock_stop.return_value = {"action": "stop"}
+            mock_hist.return_value = {"added": {"episodes": 1}}
+
+            res_ep = client.post(
+                "/api/scrobble?token=super_secret_token",
+                json={
+                    "title": "Severance",
+                    "season": 1,
+                    "episode": 9,
+                    "episode_title": "The We We Are",
+                    "progress": 98.0,
+                    "media_type": "episode",
+                    "action": "scrobble",
+                    "player": "Stremio",
+                    "ids": {"tmdb": "97951"},
+                },
+            )
+            assert res_ep.status_code == 200
+            assert res_ep.json()["action"] == "mark_watched"
+            mock_stop.assert_awaited_once()
+            mock_hist.assert_awaited_once()
+
 

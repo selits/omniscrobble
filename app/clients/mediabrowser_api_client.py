@@ -326,3 +326,110 @@ class BaseMediaBrowserClient:
         except httpx.RequestError as exc:
             logger.error("Failed to set rating for item %s on %s: %s", rating_key, self.product_name, exc)
             return False
+
+    async def find_item(self, media: Any) -> Optional[dict[str, Any]]:
+        """Find an item on Jellyfin/Emby matching media title, year, season, episode, and/or IDs."""
+        if not self.is_configured():
+            return None
+
+        user_id = await self.get_default_user_id()
+        endpoint = f"/Users/{user_id}/Items" if user_id else "/Items"
+        url = f"{self.base_url}{endpoint}"
+        client = self.get_client()
+
+        media_type = getattr(media, "media_type", "movie")
+        is_episode = media_type == "episode"
+        item_type = "Episode" if is_episode else "Movie"
+        search_title = getattr(media, "title", "")
+        if is_episode:
+            search_title = getattr(media, "show_title", None) or getattr(media, "grandparent_title", None) or search_title
+
+        params = {
+            "SearchTerm": search_title,
+            "IncludeItemTypes": item_type,
+            "Recursive": "true",
+            "Fields": "ProviderIds,UserData,SeriesName,IndexNumber,ParentIndexNumber,ProductionYear",
+        }
+        try:
+            resp = await client.get(url, headers=self._get_headers(), params=params)
+            items = []
+            if resp.status_code == 200:
+                items = resp.json().get("Items", [])
+
+            # Fallback for episode if direct search yielded no items: search Series first
+            if is_episode and not items:
+                series_resp = await client.get(
+                    url,
+                    headers=self._get_headers(),
+                    params={"SearchTerm": search_title, "IncludeItemTypes": "Series", "Recursive": "true"},
+                )
+                if series_resp.status_code == 200:
+                    series_list = series_resp.json().get("Items", [])
+                    if series_list:
+                        s_id = series_list[0].get("Id")
+                        ep_resp = await client.get(
+                            url,
+                            headers=self._get_headers(),
+                            params={
+                                "ParentId": s_id,
+                                "IncludeItemTypes": "Episode",
+                                "Recursive": "true",
+                                "ParentIndexNumber": getattr(media, "season", 1),
+                                "IndexNumber": getattr(media, "episode", 1),
+                                "Fields": "ProviderIds,UserData,SeriesName,IndexNumber,ParentIndexNumber,ProductionYear",
+                            },
+                        )
+                        if ep_resp.status_code == 200:
+                            items = ep_resp.json().get("Items", [])
+
+            target_ids = getattr(media, "ids", {}) or {}
+
+            for item in items:
+                provider_ids = item.get("ProviderIds") or {}
+                item_ids = _extract_provider_ids(provider_ids, item)
+
+                # Match by provider IDs
+                for id_type, id_val in target_ids.items():
+                    if id_val and item_ids.get(id_type) == str(id_val):
+                        return {
+                            "rating_key": str(item.get("Id")),
+                            "title": item.get("Name"),
+                            "ids": item_ids,
+                            "type": item.get("Type"),
+                        }
+
+                # Match by season/episode or title/year
+                if is_episode:
+                    p_index = item.get("ParentIndexNumber")
+                    ep_index = item.get("IndexNumber")
+                    m_season = getattr(media, "season", None)
+                    m_episode = getattr(media, "episode", None)
+                    if (
+                        m_season is not None
+                        and m_episode is not None
+                        and p_index == m_season
+                        and ep_index == m_episode
+                    ):
+                        return {
+                            "rating_key": str(item.get("Id")),
+                            "title": item.get("Name"),
+                            "ids": item_ids,
+                            "type": item.get("Type"),
+                        }
+                else:
+                    item_name = item.get("Name", "").strip().lower()
+                    m_title = str(getattr(media, "title", "")).strip().lower()
+                    if item_name == m_title:
+                        item_year = item.get("ProductionYear")
+                        m_year = getattr(media, "year", None)
+                        if not m_year or not item_year or int(item_year) == int(m_year):
+                            return {
+                                "rating_key": str(item.get("Id")),
+                                "title": item.get("Name"),
+                                "ids": item_ids,
+                                "type": item.get("Type"),
+                            }
+        except httpx.RequestError as exc:
+            logger.error("Failed to search %s for item %s: %s", self.product_name, search_title, exc)
+        return None
+
