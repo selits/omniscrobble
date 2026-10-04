@@ -47,6 +47,7 @@ class SettingsManager:
             "arr": self._detect_default_arr(),
             "rules": self._detect_default_rules(),
             "notifications": {},
+            "multi_server_mirroring": bool(getattr(self.config, "MULTI_SERVER_MIRRORING", False)),
         }
         self._custom_notifications: dict[str, Any] = {}
         self._load_settings()
@@ -61,6 +62,15 @@ class SettingsManager:
             "ntfy_auth_token": getattr(self.config, "NTFY_AUTH_TOKEN", "") or "",
             "pushover_user_key": getattr(self.config, "PUSHOVER_USER_KEY", "") or "",
             "pushover_api_token": getattr(self.config, "PUSHOVER_API_TOKEN", "") or "",
+            "gotify_url": getattr(self.config, "GOTIFY_URL", "") or "",
+            "gotify_token": getattr(self.config, "GOTIFY_TOKEN", "") or "",
+            "gotify_priority": int(getattr(self.config, "GOTIFY_PRIORITY", 5)),
+            "matrix_homeserver_url": getattr(self.config, "MATRIX_HOMESERVER_URL", "") or "",
+            "matrix_access_token": getattr(self.config, "MATRIX_ACCESS_TOKEN", "") or "",
+            "matrix_room_id": getattr(self.config, "MATRIX_ROOM_ID", "") or "",
+            "weekly_digest_enabled": bool(getattr(self.config, "WEEKLY_DIGEST_ENABLED", False)),
+            "weekly_digest_day": getattr(self.config, "WEEKLY_DIGEST_DAY", "sunday") or "sunday",
+            "weekly_digest_hour": int(getattr(self.config, "WEEKLY_DIGEST_HOUR", 20)),
             "notify_on_scrobble": bool(getattr(self.config, "NOTIFY_ON_SCROBBLE", True)),
             "notify_on_rate": bool(getattr(self.config, "NOTIFY_ON_RATE", True)),
             "notify_on_collection": bool(getattr(self.config, "NOTIFY_ON_COLLECTION", True)),
@@ -119,6 +129,9 @@ class SettingsManager:
             "sonarr_root_folder": getattr(self.config, "SONARR_ROOT_FOLDER", None),
             "radarr_quality_profile_id": getattr(self.config, "RADARR_QUALITY_PROFILE_ID", None),
             "radarr_root_folder": getattr(self.config, "RADARR_ROOT_FOLDER", None),
+            "overseerr_url": getattr(self.config, "OVERSEERR_URL", "") or "",
+            "overseerr_api_key": getattr(self.config, "OVERSEERR_API_KEY", "") or "",
+            "overseerr_enabled": bool(getattr(self.config, "OVERSEERR_ENABLED", False)),
         }
 
     def _detect_default_rules(self) -> dict[str, Any]:
@@ -242,9 +255,9 @@ class SettingsManager:
         """Loads settings from disk and merges with default environment configurations."""
         if self.settings_file.exists():
             try:
-                with open(self.settings_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict):
+                from app.services.crypto_manager import crypto_mgr
+                data = crypto_mgr.read_secure_json(self.settings_file)
+                if isinstance(data, dict):
                         servers = data.get("servers", {})
                         if isinstance(servers, dict):
                             for k, v in servers.items():
@@ -295,16 +308,30 @@ class SettingsManager:
                                 if nv is not None:
                                     self._custom_notifications[nk] = nv
                             self._settings["notifications"] = dict(self._custom_notifications)
+
+                        if "multi_server_mirroring" in data:
+                            self._settings["multi_server_mirroring"] = bool(data["multi_server_mirroring"])
             except Exception as e:
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
     def _save_settings(self) -> None:
         """Persists current runtime settings to disk atomically."""
         try:
-            from app.services.atomic_writer import atomic_write_json
-            atomic_write_json(self.settings_file, self._settings)
+            from app.services.crypto_manager import crypto_mgr
+            crypto_mgr.write_secure_json(self.settings_file, self._settings)
         except Exception as e:
             logger.error(f"Error saving settings to {self.settings_file}: {e}")
+
+    def is_multi_server_mirroring_enabled(self) -> bool:
+        """Checks if real-time multi-server watched status mirroring is enabled."""
+        return bool(self._settings.get("multi_server_mirroring", False))
+
+    def set_multi_server_mirroring(self, enabled: bool) -> dict[str, Any]:
+        """Enables or disables real-time multi-server watched status mirroring."""
+        self._settings["multi_server_mirroring"] = bool(enabled)
+        self._save_settings()
+        logger.info(f"Multi-server mirroring setting updated to: {enabled}")
+        return self.get_all_settings()
 
     def is_server_enabled(self, server: str) -> bool:
         """Checks if ingestion for the given media server is currently active."""
@@ -515,17 +542,32 @@ class SettingsManager:
 
         raw_sonarr_key = str(res.get("sonarr_api_key", "") or "")
         raw_radarr_key = str(res.get("radarr_api_key", "") or "")
+        raw_overseerr_key = str(res.get("overseerr_api_key", "") or "")
 
         res["has_sonarr_key"] = bool(raw_sonarr_key)
         res["has_radarr_key"] = bool(raw_radarr_key)
+        res["has_overseerr_key"] = bool(raw_overseerr_key)
         res["masked_sonarr_key"] = self._mask_val(raw_sonarr_key)
         res["masked_radarr_key"] = self._mask_val(raw_radarr_key)
+        res["masked_overseerr_key"] = self._mask_val(raw_overseerr_key)
 
         if mask:
             res["sonarr_api_key"] = res["masked_sonarr_key"]
             res["radarr_api_key"] = res["masked_radarr_key"]
+            res["overseerr_api_key"] = res["masked_overseerr_key"]
 
         return res
+
+    def is_overseerr_enabled(self) -> bool:
+        """Return True if Overseerr / Jellyseerr request bridge is enabled."""
+        arr = self._settings.get("arr", {})
+        return bool(arr.get("overseerr_enabled", getattr(self.config, "OVERSEERR_ENABLED", False)))
+
+    def set_overseerr_enabled(self, enabled: bool) -> None:
+        """Enable or disable Overseerr / Jellyseerr request routing."""
+        arr = self._settings.setdefault("arr", self._detect_default_arr())
+        arr["overseerr_enabled"] = bool(enabled)
+        self._save_settings()
 
     def update_arr_settings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Updates *Arr automation settings and persists to disk."""
@@ -533,6 +575,8 @@ class SettingsManager:
         for k in (
             "sonarr_url",
             "radarr_url",
+            "overseerr_url",
+            "overseerr_enabled",
             "auto_add_from_watchlist",
             "search_on_add",
             "sonarr_quality_profile_id",
@@ -541,7 +585,7 @@ class SettingsManager:
             "radarr_root_folder",
         ):
             if k in data and data[k] is not None:
-                if k in ("auto_add_from_watchlist", "search_on_add"):
+                if k in ("auto_add_from_watchlist", "search_on_add", "overseerr_enabled"):
                     arr[k] = bool(data[k])
                 elif k in ("sonarr_quality_profile_id", "radarr_quality_profile_id"):
                     try:
@@ -550,7 +594,7 @@ class SettingsManager:
                         pass
                 else:
                     val = str(data[k]).strip()
-                    if k in ("sonarr_url", "radarr_url"):
+                    if k in ("sonarr_url", "radarr_url", "overseerr_url"):
                         val = val.rstrip("/")
                     arr[k] = val
 
@@ -567,6 +611,13 @@ class SettingsManager:
             new_key = str(data["radarr_api_key"]).strip()
             if not self._is_masked(new_key):
                 arr["radarr_api_key"] = new_key
+
+        if data.get("clear_overseerr_api_key"):
+            arr["overseerr_api_key"] = ""
+        elif "overseerr_api_key" in data and data["overseerr_api_key"] is not None:
+            new_key = str(data["overseerr_api_key"]).strip()
+            if not self._is_masked(new_key):
+                arr["overseerr_api_key"] = new_key
 
         self._save_settings()
         logger.info("*Arr settings saved to disk.")
@@ -586,6 +637,8 @@ class SettingsManager:
             res["ntfy_auth_token"] = self._mask_val(res.get("ntfy_auth_token", ""))
             res["pushover_user_key"] = self._mask_val(res.get("pushover_user_key", ""))
             res["pushover_api_token"] = self._mask_val(res.get("pushover_api_token", ""))
+            res["gotify_token"] = self._mask_val(res.get("gotify_token", ""))
+            res["matrix_access_token"] = self._mask_val(res.get("matrix_access_token", ""))
         return res
 
     def update_notifications(self, updates: dict[str, Any]) -> dict[str, Any]:
@@ -598,6 +651,15 @@ class SettingsManager:
             "ntfy_auth_token",
             "pushover_user_key",
             "pushover_api_token",
+            "gotify_url",
+            "gotify_token",
+            "gotify_priority",
+            "matrix_homeserver_url",
+            "matrix_access_token",
+            "matrix_room_id",
+            "weekly_digest_enabled",
+            "weekly_digest_day",
+            "weekly_digest_hour",
             "notify_on_scrobble",
             "notify_on_rate",
             "notify_on_collection",
@@ -608,6 +670,7 @@ class SettingsManager:
             "notify_on_rate",
             "notify_on_collection",
             "notify_on_failure",
+            "weekly_digest_enabled",
         }
         masked_keys = {
             "discord_webhook_url",
@@ -615,6 +678,8 @@ class SettingsManager:
             "ntfy_auth_token",
             "pushover_user_key",
             "pushover_api_token",
+            "gotify_token",
+            "matrix_access_token",
         }
         for k, v in updates.items():
             if k in allowed_keys:
@@ -624,6 +689,11 @@ class SettingsManager:
                     # Ignore if incoming is masked and not empty
                     if v is not None and not self._is_masked(v):
                         self._custom_notifications[k] = str(v).strip()
+                elif k in ("weekly_digest_hour", "gotify_priority"):
+                    try:
+                        self._custom_notifications[k] = int(v)
+                    except (ValueError, TypeError):
+                        pass
                 else:
                     if v is not None:
                         self._custom_notifications[k] = str(v).strip()
@@ -631,6 +701,18 @@ class SettingsManager:
         self._save_settings()
         logger.info("Notification settings saved to disk.")
         return self.get_notifications(mask=True)
+
+    def is_weekly_digest_enabled(self) -> bool:
+        """Return True if Weekly Activity Digest background scheduling is enabled."""
+        notif = self._settings.get("notifications", {})
+        return bool(notif.get("weekly_digest_enabled", getattr(self.config, "WEEKLY_DIGEST_ENABLED", False)))
+
+    def set_weekly_digest_enabled(self, enabled: bool) -> None:
+        """Enable or disable Weekly Activity Digest background dispatch."""
+        notif = self._settings.setdefault("notifications", self._detect_default_notifications())
+        notif["weekly_digest_enabled"] = bool(enabled)
+        self._custom_notifications["weekly_digest_enabled"] = bool(enabled)
+        self._save_settings()
 
     def get_rules_settings(self) -> dict[str, Any]:
         """Returns the current dynamic scrobble rules and filters configuration."""
@@ -753,6 +835,7 @@ class SettingsManager:
             "arr": self.get_arr_settings(mask=mask_token),
             "rules": self.get_rules_settings(),
             "notifications": self.get_notifications(mask=mask_token),
+            "multi_server_mirroring": self.is_multi_server_mirroring_enabled(),
         }
 
     def update_all_settings(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -784,6 +867,9 @@ class SettingsManager:
 
         if "notifications" in data and isinstance(data["notifications"], dict):
             self.update_notifications(data["notifications"])
+
+        if "multi_server_mirroring" in data:
+            self._settings["multi_server_mirroring"] = bool(data["multi_server_mirroring"])
 
         self._save_settings()
         return self.get_all_settings(mask_token=True)

@@ -47,8 +47,9 @@ class AniListClient:
         if not self.tokens_file.exists():
             return
         try:
-            with open(self.tokens_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            from app.services.crypto_manager import crypto_mgr
+            data = crypto_mgr.read_secure_json(self.tokens_file)
+            if data and isinstance(data, dict):
                 if not self.access_token:
                     self.access_token = data.get("access_token")
                 self.user_name = data.get("user_name") or data.get("user")
@@ -75,7 +76,8 @@ class AniListClient:
                 "user_avatar": self.user_avatar,
                 "user_id": self.user_id,
             }
-            atomic_write_json(self.tokens_file, payload)
+            from app.services.crypto_manager import crypto_mgr
+            crypto_mgr.write_secure_json(self.tokens_file, payload)
             logger.info("Saved AniList token for user: %s", self.user_name or "unknown")
         except Exception as e:
             logger.error("Failed to save AniList tokens: %s", e)

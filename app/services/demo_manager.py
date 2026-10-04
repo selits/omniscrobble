@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import datetime
-from typing import Any
+from typing import Any, Optional
 
 
 class DemoManager:
@@ -47,6 +49,8 @@ class DemoManager:
             "device": "tvOS 18.2",
             "progress": 68.4,
             "trakt_url": "https://trakt.tv/search?q=Severance",
+            "poster_url": "https://images.metahub.space/poster/medium/tt11280740/img",
+            "backdrop_url": "https://images.metahub.space/background/medium/tt11280740/img",
         }
 
     def get_demo_stats(self) -> dict[str, int]:
@@ -80,6 +84,55 @@ class DemoManager:
         self.DEMO_DEVICES = [d for d in self.DEMO_DEVICES if d.strip().lower() != clean]
         return list(self.DEMO_DEVICES)
 
+    DEMO_HOUSEHOLD_RULES = [
+        {
+            "id": "rule_living_room",
+            "name": "Family Living Room",
+            "targets": ["demo_partner", "demo_kids"],
+            "devices": ["Living Room Apple TV"],
+            "shows": ["*"],
+            "media_types": ["movie", "episode"],
+            "enabled": True,
+        },
+        {
+            "id": "rule_kids_room",
+            "name": "Kids Playroom",
+            "targets": ["demo_kids"],
+            "devices": ["Playroom Shield"],
+            "shows": ["*"],
+            "media_types": ["episode"],
+            "enabled": True,
+        },
+    ]
+
+    def get_demo_household_rules(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.DEMO_HOUSEHOLD_RULES]
+
+    def add_demo_household_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
+        new_rule = {
+            "id": rule.get("id") or f"rule_{len(self.DEMO_HOUSEHOLD_RULES) + 1}",
+            "name": str(rule.get("name", "New Rule")).strip(),
+            "targets": [str(t).strip() for t in (rule.get("targets") or []) if str(t).strip()],
+            "devices": [str(d).strip() for d in (rule.get("devices") or []) if str(d).strip()],
+            "shows": [str(s).strip() for s in (rule.get("shows") or []) if str(s).strip()],
+            "media_types": [str(m).strip().lower() for m in (rule.get("media_types") or []) if str(m).strip()],
+            "enabled": bool(rule.get("enabled", True)),
+        }
+        self.DEMO_HOUSEHOLD_RULES.append(new_rule)
+        return dict(new_rule)
+
+    def delete_demo_household_rule(self, rule_id: str) -> bool:
+        init_len = len(self.DEMO_HOUSEHOLD_RULES)
+        self.DEMO_HOUSEHOLD_RULES = [r for r in self.DEMO_HOUSEHOLD_RULES if r["id"] != rule_id]
+        return len(self.DEMO_HOUSEHOLD_RULES) < init_len
+
+    def toggle_demo_household_rule(self, rule_id: str) -> Optional[bool]:
+        for r in self.DEMO_HOUSEHOLD_RULES:
+            if r["id"] == rule_id:
+                r["enabled"] = not r["enabled"]
+                return r["enabled"]
+        return None
+
     def get_demo_users(self) -> list[dict[str, Any]]:
         return [
             {
@@ -92,6 +145,12 @@ class DemoManager:
                 "username": "demo_partner",
                 "is_default": False,
                 "is_cowatch_target": True,
+                "authenticated": True,
+            },
+            {
+                "username": "demo_kids",
+                "is_default": False,
+                "is_cowatch_target": False,
                 "authenticated": True,
             },
         ]
@@ -883,6 +942,85 @@ class DemoManager:
                 },
             },
         }
+
+    def get_demo_webhook_debug_history(self) -> list[dict[str, Any]]:
+        now = datetime.datetime.now()
+        return [
+            {
+                "id": "wh_demo001",
+                "timestamp": (now - datetime.timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M:%S"),
+                "iso_timestamp": (now - datetime.timedelta(minutes=3)).isoformat(),
+                "source": "plex",
+                "endpoint": "/webhook",
+                "headers": {"host": "omniscrobble.local:8080", "user-agent": "PlexMediaServer/1.40.2"},
+                "payload": {
+                    "event": "media.scrobble",
+                    "Account": {"title": "demo_viewer"},
+                    "Server": {"title": "HomeLab-Plex"},
+                    "Player": {"title": "Living Room Apple TV"},
+                    "Metadata": {
+                        "type": "episode",
+                        "grandparentTitle": "Severance",
+                        "title": "Good News About Hell",
+                        "year": 2022,
+                        "duration": 3600000,
+                        "viewOffset": 3600000,
+                    },
+                },
+                "status": "processed",
+                "reason": "Scrobbled to Trakt + Co-Watch dual-sync (@demo_partner)",
+                "event": "media.scrobble",
+                "media_title": "Severance - Good News About Hell",
+            },
+            {
+                "id": "wh_demo002",
+                "timestamp": (now - datetime.timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S"),
+                "iso_timestamp": (now - datetime.timedelta(minutes=45)).isoformat(),
+                "source": "jellyfin",
+                "endpoint": "/webhook/jellyfin",
+                "headers": {"host": "omniscrobble.local:8080", "user-agent": "Jellyfin-Webhook/10.9"},
+                "payload": {
+                    "NotificationType": "PlaybackStop",
+                    "ItemType": "Movie",
+                    "Name": "Dune: Part Two",
+                    "Year": 2024,
+                    "PlayedToCompletion": True,
+                    "PlaybackPositionTicks": 99600000000,
+                },
+                "status": "processed",
+                "reason": "Scrobbled to Trakt & Simkl (100%)",
+                "event": "PlaybackStop",
+                "media_title": "Dune: Part Two (2024)",
+            },
+            {
+                "id": "wh_demo003",
+                "timestamp": (now - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S"),
+                "iso_timestamp": (now - datetime.timedelta(hours=2)).isoformat(),
+                "source": "standalone",
+                "endpoint": "/api/scrobble",
+                "headers": {"host": "omniscrobble.local:8080", "user-agent": "Infuse/7.7"},
+                "payload": {
+                    "action": "scrobble",
+                    "media_type": "movie",
+                    "title": "Gladiator II",
+                    "year": 2024,
+                    "progress": 92.5,
+                    "player": "Infuse Apple TV",
+                },
+                "status": "processed",
+                "reason": "Scrobbled to Trakt (92.5%)",
+                "event": "scrobble",
+                "media_title": "Gladiator II (2024)",
+            },
+        ]
+
+    def get_demo_analytics_summary(self, period: str = "all") -> dict[str, Any]:
+        from app.services.analytics_manager import analytics_mgr
+        return analytics_mgr.get_summary(period=period, demo=True)
+
+    def get_demo_omniwrapped(self, year: int = 2026) -> dict[str, Any]:
+        from app.services.analytics_manager import analytics_mgr
+        return analytics_mgr.get_omniwrapped(year=year, demo=True)
 
 
 demo_mgr = DemoManager()

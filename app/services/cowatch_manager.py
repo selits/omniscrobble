@@ -208,6 +208,15 @@ class CowatchManager:
         eligible, _ = self.check_cowatch_eligibility(media)
         return eligible
 
+    def resolve_targets(self, media: ParsedMedia) -> list[str]:
+        """Resolve list of secondary usernames to dual-scrobble to."""
+        eligible, _ = self.check_cowatch_eligibility(media)
+        if eligible and self.config.CO_WATCH_USER:
+            partner = self.config.CO_WATCH_USER.strip()
+            if partner and partner.lower() != (media.username or "").strip().lower():
+                return [partner]
+        return []
+
     def get_status(self) -> dict[str, Any]:
         """Return the current co-watching status summary."""
         return {
@@ -219,4 +228,12 @@ class CowatchManager:
         }
 
 
-cowatch_mgr = CowatchManager()
+try:
+    from app.services.household_manager import household_mgr, HouseholdManager
+    cowatch_mgr = household_mgr
+except ImportError:
+    try:
+        from household_manager import household_mgr, HouseholdManager
+        cowatch_mgr = household_mgr
+    except ImportError:
+        cowatch_mgr = CowatchManager()

@@ -105,6 +105,12 @@ class LetterboxdClient:
         if rating is not None and float(rating) > 0:
             lb_rating = round(float(rating) / 2.0, 1)
 
+        is_rewatch = bool(rewatch or any(
+            existing.get("Title", "").lower() == title.lower()
+            and str(existing.get("Year", "")) == str(year or "")
+            for existing in self._entries
+        ))
+
         entry = {
             "title": title,
             "year": year or "",
@@ -118,7 +124,7 @@ class LetterboxdClient:
             "Rating": lb_rating if lb_rating is not None else "",
             "Rating10": rating if rating is not None else "",
             "WatchedDate": date_str,
-            "Rewatch": "Yes" if rewatch else "No",
+            "Rewatch": "Yes" if is_rewatch else "No",
             "Tags": tags if tags is not None else [],
             "Review": review or "",
             "imdb_id": str(imdb_id) if imdb_id else "",
@@ -126,38 +132,39 @@ class LetterboxdClient:
             "logged_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        # Prevent duplicate entries on the same watched date
-        for idx, existing in enumerate(self._entries):
-            if (
-                existing.get("Title", "").lower() == title.lower()
-                and str(existing.get("Year", "")) == str(year or "")
-                and existing.get("WatchedDate") == date_str
-            ):
-                if lb_rating:
-                    existing["Rating"] = lb_rating
-                    existing["Rating10"] = rating
-                    existing["rating"] = rating
-                    existing["stars"] = lb_rating
-                if tags is not None:
-                    existing["Tags"] = tags
-                    existing["tags"] = tags
-                if review:
-                    existing["Review"] = review
-                    existing["review"] = review
-                if rewatch:
-                    existing["Rewatch"] = "Yes"
-                self._save_entries()
-                return {
-                    "status": "updated",
-                    "success": True,
-                    "title": title,
-                    "year": year,
-                    "rating": rating,
-                    "stars": lb_rating,
-                    "rating10": rating,
-                    "tags": tags,
-                    "entry": existing,
-                }
+        # Prevent duplicate entries on the same watched date unless explicitly logging a distinct rewatch
+        if not rewatch:
+            for idx, existing in enumerate(self._entries):
+                if (
+                    existing.get("Title", "").lower() == title.lower()
+                    and str(existing.get("Year", "")) == str(year or "")
+                    and existing.get("WatchedDate") == date_str
+                ):
+                    if lb_rating:
+                        existing["Rating"] = lb_rating
+                        existing["Rating10"] = rating
+                        existing["rating"] = rating
+                        existing["stars"] = lb_rating
+                    if tags is not None:
+                        existing["Tags"] = tags
+                        existing["tags"] = tags
+                    if review:
+                        existing["Review"] = review
+                        existing["review"] = review
+                    if is_rewatch:
+                        existing["Rewatch"] = "Yes"
+                    self._save_entries()
+                    return {
+                        "status": "updated",
+                        "success": True,
+                        "title": title,
+                        "year": year,
+                        "rating": rating,
+                        "stars": lb_rating,
+                        "rating10": rating,
+                        "tags": tags,
+                        "entry": existing,
+                    }
 
         self._entries.append(entry)
         self._save_entries()

@@ -111,6 +111,44 @@ services:
 > [!NOTE]
 > All persistent state—including OAuth tokens, user settings (`settings.json`), lifetime scrobble statistics (`stats.json`), and the offline SQLite retry queue (`queue.db`)—is safely mounted to `./data:/app/data` and survives container rebuilds.
 
+### Pre-Built Multi-Arch Images (GHCR)
+
+Omniscrobble automatically publishes signed, multi-architecture container images for both `linux/amd64` (Intel/AMD servers) and `linux/arm64` (Apple Silicon, Raspberry Pi 4/5) via GitHub Container Registry on every release:
+
+```bash
+docker pull ghcr.io/selits/omniscrobble:latest
+```
+
+To run directly via pre-built image without local building:
+
+```bash
+docker run -d \
+  --name omniscrobble \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v $(pwd)/data:/app/data \
+  --env-file .env \
+  ghcr.io/selits/omniscrobble:latest
+```
+
+### Unraid Community Applications Setup
+
+An official Unraid Community Applications template is available in [`templates/unraid-omniscrobble.xml`](./templates/unraid-omniscrobble.xml):
+
+1. On your Unraid server, place `unraid-omniscrobble.xml` in `/boot/config/plugins/dockerMan/templates-user/`.
+2. In the Unraid WebGUI, navigate to **Docker** &rarr; **Add Container** &rarr; select **Omniscrobble**.
+3. Confirm the default container port (`8080`), host path for `/app/data` (`/mnt/user/appdata/omniscrobble`), and input your `WEBHOOK_SECRET` and optional `CO_WATCH_USER`.
+4. Click **Apply**. Omniscrobble will download and launch automatically with non-root permissions.
+
+### Portainer & TrueNAS SCALE Stacks
+
+For Portainer or TrueNAS SCALE, use the official stack template in [`templates/docker-compose.portainer.yml`](./templates/docker-compose.portainer.yml):
+
+1. In **Portainer**, navigate to **Stacks** &rarr; **Add stack**.
+2. Select **Web editor**, paste the contents of `templates/docker-compose.portainer.yml`.
+3. Under **Environment variables**, define your `WEBHOOK_SECRET`, `SERVER_PORT`, and optional media server secrets.
+4. Click **Deploy the stack**.
+
 ---
 
 ## 3. Method 2: systemd User Service (Recommended for Linux & VPS)

@@ -85,6 +85,15 @@ flowchart TD
 - **Precedence**: Values in `data/settings.json` **supersede** `.env` defaults on subsequent startups.
 - **State Isolation**: `data/settings.json` is stored in the persistent `data/` volume and is never tracked by git.
 
+### Security, At-Rest Encryption & Session Hardening
+
+Omniscrobble incorporates defense-in-depth security mechanisms to safeguard OAuth tokens, administrative sessions, and sensitive server configurations:
+
+- **At-Rest AES-256-GCM Encryption (`CONFIG_ENCRYPTION_KEY`)**: When configured, Omniscrobble transparently encrypts all token files (`trakt_tokens.json`, `simkl_tokens.json`, `mal_tokens.json`, `anilist_token.json`, and partner accounts) and runtime settings (`data/settings.json`) at rest using authenticated symmetric AES-256-GCM. Keys are derived via PBKDF2-HMAC-SHA256 (100,000 iterations) with cryptographic 16-byte random salts. When unconfigured, state files remain readable plain JSON. Passphrase protection is also supported on `/api/backup` and `/api/restore`.
+- **Double-Submit Cookie CSRF Protection**: State-mutating administrative endpoints (`POST`, `DELETE`, `PUT`, `PATCH`) authenticated via ambient browser cookies (`admin_token`) require a cryptographically matching `X-CSRF-Token` header. Omniscrobble automatically issues and rotates the `csrf_token` cookie upon admin unlock and dashboard access.
+- **Cookie SameSite Enforcement (`COOKIE_SAMESITE`)**: Configurable policy (default: `lax`) applied to session and CSRF cookies, blocking cross-origin browser credential leakage.
+- **Sliding-Window Unlock Rate Limiting**: The `/api/admin/unlock` endpoint limits failed login attempts to a maximum of 5 attempts within a rolling 60-second window. Exceeding this threshold triggers an immediate `HTTP 429 Too Many Requests` response with a `Retry-After` header and sanitized security event logging.
+
 ---
 
 ## 2. Media Server Credentials & Webhook Setup
@@ -239,6 +248,31 @@ The `X-Plex-Token` is your personal Plex authentication token required for two-w
    - *User Data*: Rating Changed / User Data Changed.
 5. Click **Save**.
 
+### Multi-Server Real-Time Mirroring & Standalone Player Bridge
+
+#### Multi-Server Mirroring (Plex ⇄ Jellyfin / Emby)
+
+When running multiple media servers concurrently in your homelab (e.g. Plex and Jellyfin), Omniscrobble can automatically mirror watched states and ratings across all active servers in real-time. When a scrobble completes or a rating is applied on Server A:
+
+1. Omniscrobble searches for the matching title and provider ID (`imdb`, `tmdb`, `tvdb`) on Server B and Server C (`find_item`).
+2. Marks the item as watched or applies the rating on target servers.
+3. Automatically suppresses echo bounce-back loops using `LoopPreventionManager` (`ttl=180.0s`).
+
+Enable via `.env`:
+
+```ini
+MULTI_SERVER_MIRRORING=true
+```
+
+Or toggle live in the **Dashboard Settings Hub &rarr; Two-Way Reconciliation** panel.
+
+#### Standalone Player Direct REST Bridge
+
+For lightweight clients (such as Infuse, Kodi, VLC, or Stremio) operating without a media server backend, Omniscrobble exposes a direct REST bridge:
+
+- `GET /api/scrobble`: Descriptor endpoint returning payload JSON schemas and usage examples.
+- `POST /api/scrobble?token=<WEBHOOK_SECRET>`: Ingests playback events (`play`, `pause`, `stop`, `scrobble`) directly with full multi-tracker scrobbling and rewatch detection.
+
 ---
 
 ## 3. Acquisition Stack (*Arr Automation)
@@ -285,6 +319,28 @@ SONARR_ROOT_FOLDER=
 RADARR_QUALITY_PROFILE_ID=
 RADARR_ROOT_FOLDER=
 ```
+
+### Overseerr / Jellyseerr Request Bridge
+
+Route newly bookmarked Trakt Watchlist items to **Overseerr** or **Jellyseerr** as formal media requests rather than sending directly to Sonarr/Radarr. This honors user quotas, quality profiles, and approval workflows:
+
+1. Sign in to your Overseerr or Jellyseerr web interface.
+2. Navigate to **Settings** &rarr; **General** &rarr; **API Key**.
+3. Configure the following variables in `.env` or the **Settings Hub (*Arr)**:
+
+```ini
+# Base URL to Overseerr / Jellyseerr
+OVERSEERR_URL=http://<your-server-ip-or-domain>:5055
+
+# API Key found in Settings -> General
+OVERSEERR_API_KEY=your_overseerr_api_key_here
+
+# Enable routing Trakt Watchlist acquisitions to Overseerr
+OVERSEERR_ENABLED=true
+```
+
+> [!TIP]
+> When `OVERSEERR_ENABLED=true`, watchlist items are routed to Overseerr/Jellyseerr. If a show or movie already exists or Overseerr is disabled, Omniscrobble automatically falls back to direct Sonarr/Radarr dispatch.
 
 ---
 
@@ -539,6 +595,16 @@ Co-watch partners can also link and synchronize their own secondary cloud tracke
 
 All partner credentials are fully isolated in `data/tokens/`. During co-watched events, Omniscrobble dispatches to all partner-authenticated platforms concurrently with isolated error catching, ensuring partner network issues or token expirations never interfere with your primary scrobbles. Proactive token refresh runs automatically in the background every 12 hours.
 
+### Household Multi-Tenant Routing Rules (3+ Users)
+
+For homes with 3 or more viewers (e.g. family members, kids profiles, or roommates), Omniscrobble provides a granular **Household Routing Engine**. Instead of syncing solely to a single partner account, you can create rule sets matching player hardware devices, media types, and show titles to dynamically target multiple authenticated user profiles.
+
+- **Granular Filter Matching**: Rules match specific player devices (e.g. `Living Room Apple TV`), media types (`movie`, `episode`), and show titles (`*` for all shows or specific titles like `Severance`).
+- **Multi-Target Dispatch**: Each rule can target one or more authenticated profiles simultaneously (e.g. Living Room TV scrobbles to `partner`, `kids`, and `roommate`).
+- **Dynamic Dashboard Management**: Add, enable, disable, and delete rules directly from the **Co-Watch & Household Routing** card using the interactive modal.
+- **Persistent Storage**: Rules are stored in `data/household_rules.json` (configurable via `HOUSEHOLD_RULES_DATA_FILE`).
+- **Backward Compatibility**: Existing 2-user `CO_WATCH_*` environment variables remain fully supported alongside household rules.
+
 > [!TIP]
 > You can add shows dynamically to your shared co-watch whitelist on your mobile phone or desktop without restarting the service by clicking the **`+ Co-Watch`** button in the Recent Activity table. Connect and disconnect partner trackers anytime from the **Co-Watch & Multi-User** card on the dashboard.
 
@@ -594,9 +660,48 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
    PUSHOVER_PRIORITY=0
    ```
 
+### Gotify Push Alerts
+
+1. Log in to your self-hosted [Gotify](https://gotify.net) web UI.
+2. Navigate to **Apps** &rarr; **Create Application**, name it `Omniscrobble`, and copy the generated **App Token**.
+3. In `.env`:
+
+   ```ini
+   GOTIFY_URL=http://<your-server-ip-or-domain>:8080
+   GOTIFY_TOKEN=your_gotify_app_token_here
+   GOTIFY_PRIORITY=5
+   ```
+
+### Matrix Room Alerts
+
+1. Create or select a dedicated alerts room in your Matrix client (Element, Cinny, etc.).
+2. Obtain a Bot Access Token and the Internal Room ID (e.g., `!roomid:matrix.org`).
+3. In `.env`:
+
+   ```ini
+   MATRIX_HOMESERVER_URL=https://matrix.org
+   MATRIX_ACCESS_TOKEN=your_matrix_bot_access_token_here
+   MATRIX_ROOM_ID=!roomid:matrix.org
+   ```
+
+### Scheduled Weekly Activity Digest
+
+Omniscrobble can compile and dispatch an automated summary report across all enabled notification channels highlighting weekly watch hours, completed movies and episodes, ratings, co-watched sessions, active media servers, and playback clients:
+
+```ini
+# Enable scheduled weekly activity digest engine
+WEEKLY_DIGEST_ENABLED=true
+
+# Day of week to dispatch digest (sunday, monday, etc.)
+WEEKLY_DIGEST_DAY=sunday
+
+# Hour of day (0-23 in local server time, default: 20 for 8:00 PM)
+WEEKLY_DIGEST_HOUR=20
+```
+
 > [!TIP]
 > **Dashboard Configuration & Channel Testing**:
-> All notification channels and event toggles can also be configured dynamically in the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab on your desktop or mobile browser without modifying `.env` or restarting the server. Each channel includes a 1-click **Test** button to verify webhook and bot token delivery immediately.
+> All notification channels, event toggles, and digest settings can also be configured dynamically in the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab on your desktop or mobile browser without modifying `.env` or restarting the server. Each channel includes a 1-click **Test** button to verify delivery immediately, and the **⚡ Send Digest Now** button tests the digest generator instantly.
 
 ---
 
@@ -612,6 +717,8 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`EXTERNAL_URL`** | `""` | String | No | Public-facing base URL (e.g. `https://omniscrobble.example.com`) for reverse proxy links. |
 | **`DEBUG`** | `false` | Boolean | No | Enables verbose debug logging and traceback outputs. |
 | **`WEBHOOK_SECRET`** | `""` | String | No | Secret token protecting endpoints (`?token=...`) and locking the admin dashboard. |
+| **`CONFIG_ENCRYPTION_KEY`** | `""` | String | No | Passphrase for AES-256-GCM authenticated encryption of tokens, credentials, and settings at rest. |
+| **`COOKIE_SAMESITE`** | `lax` | String | No | Cookie SameSite policy (`lax`, `strict`, or `none`) for admin and CSRF session cookies. |
 | **`PLEX_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Plex webhooks (`/webhook`). |
 | **`JELLYFIN_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Jellyfin webhooks (`/webhook/jellyfin`). |
 | **`EMBY_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Emby webhooks (`/webhook/emby`). |
@@ -640,10 +747,14 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`REVERSE_SYNC_ON_STARTUP`** | `false` | Boolean | **Yes** | Run library reconciliation scan automatically on service startup. |
 | **`REVERSE_SYNC_RATINGS`** | `true` | Boolean | **Yes** | Reconcile numerical and star ratings between media servers and Trakt. |
 | **`BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS`** | `24` | Integer | **Yes** | Frequency of automated background cloud synchronization and Letterboxd diary export in hours (`0` = disabled). |
+| **`MULTI_SERVER_MIRRORING`** | `false` | Boolean | **Yes** | Real-time multi-server mirroring (Plex ⇄ Jellyfin / Emby) on scrobble completion and ratings. |
 | **`SONARR_URL`** | `""` | String | **Yes** | Base URL to Sonarr instance (e.g., `http://192.168.1.50:8989`). |
 | **`SONARR_API_KEY`** | `""` | String | **Yes** | Sonarr 32-character API key. |
 | **`RADARR_URL`** | `""` | String | **Yes** | Base URL to Radarr instance (e.g., `http://192.168.1.50:7878`). |
 | **`RADARR_API_KEY`** | `""` | String | **Yes** | Radarr 32-character API key. |
+| **`OVERSEERR_URL`** | `""` | String | **Yes** | Base URL to Overseerr or Jellyseerr instance (e.g., `http://192.168.1.50:5055`). |
+| **`OVERSEERR_API_KEY`** | `""` | String | **Yes** | Overseerr / Jellyseerr API key found in Settings &rarr; General. |
+| **`OVERSEERR_ENABLED`** | `false` | Boolean | **Yes** | Routes Trakt Watchlist bookmarks to Overseerr/Jellyseerr media requests. |
 | **`AUTO_ADD_FROM_WATCHLIST`** | `false` | Boolean | **Yes** | Automatically grab movies/shows added to your Trakt watchlist. |
 | **`SEARCH_ON_ADD`** | `true` | Boolean | **Yes** | Trigger immediate download searches in Sonarr/Radarr when importing. |
 | **`ARR_WATCHLIST_INTERVAL`** | `0` | Integer | **Yes** | Watchlist sync polling frequency in seconds (`0` = manual, `1800` = 30m). |
@@ -675,6 +786,7 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`CO_WATCH_SHOWS`** | `""` | String (CSV) | **Yes** | Whitelist of TV show titles eligible for dual-sync. |
 | **`CO_WATCH_PLAYERS`** | `""` | String (CSV) | **Yes** | Whitelist of player/device names eligible for dual-sync. |
 | **`CO_WATCH_MOVIES`** | `false` | Boolean | **Yes** | Enables dual-sync for feature movies. |
+| **`HOUSEHOLD_RULES_DATA_FILE`** | `data/household_rules.json` | Path | No | Persistent JSON store for multi-tenant household routing rules. |
 | **`QUEUE_DB_FILE`** | `data/queue.db` | String | No | SQLite database path for offline retry queue. |
 | **`QUEUE_RETRY_INTERVAL`** | `300` | Integer | No | Offline queue retry worker cadence in seconds. |
 | **`PROMETHEUS_METRICS_ENABLED`** | `true` | Boolean | No | Exposes Prometheus telemetry at `/metrics`. |
@@ -684,6 +796,15 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`NTFY_URL`** | `""` | String | **Yes** | Ntfy server URL and topic name. |
 | **`PUSHOVER_USER_KEY`** | `""` | String | **Yes** | Pushover User Key. |
 | **`PUSHOVER_API_TOKEN`** | `""` | String | **Yes** | Pushover Application API Token. |
+| **`GOTIFY_URL`** | `""` | String | **Yes** | Gotify push server base URL (e.g., `http://192.168.1.50:8080`). |
+| **`GOTIFY_TOKEN`** | `""` | String | **Yes** | Gotify application token for push notifications. |
+| **`GOTIFY_PRIORITY`** | `5` | Integer | **Yes** | Gotify notification delivery priority (0–10). |
+| **`MATRIX_HOMESERVER_URL`** | `""` | String | **Yes** | Matrix homeserver base URL (e.g., `https://matrix.org`). |
+| **`MATRIX_ACCESS_TOKEN`** | `""` | String | **Yes** | Matrix bot account access token (Bearer). |
+| **`MATRIX_ROOM_ID`** | `""` | String | **Yes** | Matrix target internal Room ID (e.g., `!roomid:matrix.org`). |
+| **`WEEKLY_DIGEST_ENABLED`** | `false` | Boolean | **Yes** | Enables scheduled background weekly activity digest dispatches. |
+| **`WEEKLY_DIGEST_DAY`** | `sunday` | String | **Yes** | Day of week to dispatch the activity digest (`sunday`, `monday`, etc.). |
+| **`WEEKLY_DIGEST_HOUR`** | `20` | Integer | **Yes** | Hour of day (0–23 in local server time) to dispatch the activity digest. |
 | **`NOTIFY_ON_SCROBBLE`** | `true` | Boolean | **Yes** | Dispatches alerts on completed scrobbles. |
 | **`NOTIFY_ON_RATE`** | `true` | Boolean | **Yes** | Dispatches alerts when items are rated. |
 | **`NOTIFY_ON_COLLECTION`** | `true` | Boolean | **Yes** | Dispatches alerts on library collection adds. |

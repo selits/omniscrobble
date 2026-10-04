@@ -38,6 +38,10 @@ class PlaybackManager:
         title_str = format_media_title(media)
         trakt_url = get_trakt_url(media)
 
+        now = time.time()
+        existing_session = self.sessions.get(key)
+        last_hb = existing_session.get("last_heartbeat_at", now) if existing_session else now
+
         session = {
             "key": key,
             "username": media.username,
@@ -53,9 +57,13 @@ class PlaybackManager:
             "progress": round(media.progress, 1),
             "duration_ms": media.duration_ms,
             "view_offset_ms": media.view_offset_ms,
-            "updated_at": time.time(),
+            "updated_at": now,
+            "last_heartbeat_at": last_hb,
             "trakt_url": trakt_url,
+            "poster_url": media.poster_url,
+            "backdrop_url": media.backdrop_url,
             "ids": media.ids,
+            "parsed_media": media,
         }
         self.sessions[key] = session
         return session
@@ -83,6 +91,8 @@ class PlaybackManager:
             "progress": round(media.progress, 1),
             "finished_at": time.time(),
             "trakt_url": trakt_url,
+            "poster_url": media.poster_url or (existing.get("poster_url") if existing else None),
+            "backdrop_url": media.backdrop_url or (existing.get("backdrop_url") if existing else None),
             "remaining_str": "Finished",
         }
         self.recently_finished = finished_entry
@@ -97,6 +107,7 @@ class PlaybackManager:
                 self.sessions.pop(key, None)
                 continue
             item = dict(s)
+            item.pop("parsed_media", None)
 
             # Estimate real-time playback progress when streaming
             dur_ms = s.get("duration_ms")
@@ -126,6 +137,27 @@ class PlaybackManager:
 
         active.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
         return active
+
+    def get_heartbeat_candidates(self, interval_seconds: int = 600) -> list[dict[str, Any]]:
+        """Return active streaming sessions in playing state that need keep-alive heartbeats."""
+        now = time.time()
+        candidates = []
+        for key, s in list(self.sessions.items()):
+            if s.get("state") != "playing":
+                continue
+            if now - s.get("updated_at", 0) > self.stale_timeout_seconds:
+                continue
+            last_hb = s.get("last_heartbeat_at", s.get("updated_at", now))
+            if now - last_hb >= interval_seconds:
+                candidates.append(s)
+        return candidates
+
+    def record_heartbeat(self, key: str, progress: Optional[float] = None) -> None:
+        """Update heartbeat timestamp and optional estimated progress for an active session."""
+        if key in self.sessions:
+            self.sessions[key]["last_heartbeat_at"] = time.time()
+            if progress is not None:
+                self.sessions[key]["progress"] = round(progress, 1)
 
     def get_active_count(self) -> int:
         """Return the number of currently active playback sessions."""

@@ -25,6 +25,7 @@ from app.main import (
     render_status_badge,
 )
 from app.services.demo_manager import demo_mgr
+from app.services.dashboard_renderer import dashboard_renderer
 
 
 def generate_static_demo(output_dir: Path = None) -> Path:
@@ -337,6 +338,11 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         </div>
     </div>
     """
+
+    analytics_card_html = dashboard_renderer.render_analytics_card(
+        demo_mgr.get_demo_analytics_summary(),
+        is_admin=True,
+    )
 
     backup_card_html = f"""
     <div class="card">
@@ -791,6 +797,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{ANIME_CARD}}': anime_card_html,
         '{{ARR_BRIDGE_CARD}}': arr_bridge_card_html,
         '{{COWATCH_CARD}}': cowatch_card_html,
+        '{{ANALYTICS_CARD}}': analytics_card_html,
         '{{RECONCILIATION_CARD}}': reconcile_card_html,
         '{{BACKUP_CARD}}': backup_card_html,
         '{{MANUAL_SCROBBLE_BTN}}': '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔍 Manual Scrobble</button>',
@@ -898,6 +905,9 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         const initialCrossDiff = {json.dumps(demo_mgr.get_demo_cross_tracker_diff())};
         const sonarrCatalog = {json.dumps(sonarr_catalog)};
         const demoLogs = {json.dumps(demo_logs)};
+        const demoDebugWebhooks = {json.dumps(demo_mgr.get_demo_webhook_debug_history())};
+        const demoAnalyticsSummary = {json.dumps(demo_mgr.get_demo_analytics_summary())};
+        const demoOmniWrapped = {json.dumps(demo_mgr.get_demo_omniwrapped())};
 
         const clientState = {{
             shows: [...initialShows],
@@ -905,6 +915,9 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             events: [...initialEvents],
             reconciliation: [...initialReconciliation],
             crossDiff: [...initialCrossDiff],
+            debugWebhooks: [...demoDebugWebhooks],
+            analyticsSummary: {{...demoAnalyticsSummary}},
+            omniwrapped: {{...demoOmniWrapped}},
             movies_enabled: false,
             playback: {json.dumps(demo_playback)},
             reconcile_settings: {{
@@ -1706,6 +1719,39 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     status: "completed",
                     message: "Sync complete!"
                 }});
+            }}
+
+            // 15. Webhook Debugger & Inspector
+            if (path.endsWith('/api/debug/webhooks')) {{
+                if (method === 'DELETE') {{
+                    clientState.debugWebhooks = [];
+                    return jsonResp({{ status: 'ok', message: 'Webhook debugger buffer cleared' }});
+                }}
+                return jsonResp({{ webhooks: clientState.debugWebhooks || [] }});
+            }}
+
+            if (path.endsWith('/api/debug/replay')) {{
+                const body = init.body ? JSON.parse(init.body) : {{}};
+                return jsonResp({{
+                    status: body.dispatch ? 'dispatched' : 'simulated',
+                    message: body.dispatch ? 'Demo payload dispatched successfully' : 'Demo payload dry-run simulation verified',
+                    parsed: {{
+                        event: 'media.scrobble',
+                        media_type: 'movie',
+                        title: 'Demo Movie Replay',
+                        year: 2026,
+                        user: 'demo_viewer'
+                    }}
+                }});
+            }}
+
+            // 16. Personal Analytics & OmniWrapped
+            if (path.endsWith('/api/analytics/summary')) {{
+                return jsonResp(clientState.analyticsSummary || {{}});
+            }}
+
+            if (path.endsWith('/api/analytics/wrapped')) {{
+                return jsonResp(clientState.omniwrapped || {{}});
             }}
 
             return jsonResp({{ status: 'ok', mode: 'simulated' }});

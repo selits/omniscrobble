@@ -239,6 +239,8 @@ class DashboardRenderer:
         is_admin: bool,
     ) -> str:
         """Render active playback stream banner card with progress bar."""
+        poster_url = None
+        backdrop_url = None
         if active_sessions:
             s = active_sessions[0]
             card_display = "block"
@@ -252,6 +254,8 @@ class DashboardRenderer:
             if s.get("remaining_str"):
                 stream_prog_text += f" • {s['remaining_str']}"
             stream_prog_width = f"{s['progress']}%"
+            poster_url = s.get("poster_url")
+            backdrop_url = s.get("backdrop_url") or poster_url
         elif recently_finished:
             f = recently_finished
             card_display = "block"
@@ -263,6 +267,8 @@ class DashboardRenderer:
             stream_url = f['trakt_url']
             stream_prog_text = "100.0% • Finished"
             stream_prog_width = "100%"
+            poster_url = f.get("poster_url")
+            backdrop_url = f.get("backdrop_url") or poster_url
         else:
             card_display = "none"
             card_border = "#10b981"
@@ -280,28 +286,53 @@ class DashboardRenderer:
         clean_stream_url = stream_url if str(stream_url).startswith(("https://", "http://")) else "https://trakt.tv"
         clean_stream_url_esc = html.escape(clean_stream_url)
 
+        poster_display = "block" if poster_url else "none"
+        fallback_display = "none" if poster_url else "flex"
+        poster_img_src = html.escape(str(poster_url)) if poster_url else ""
+        if backdrop_url:
+            backdrop_style = f"background-image: url('{html.escape(str(backdrop_url))}');"
+        else:
+            backdrop_style = "background: radial-gradient(circle at top right, var(--accent-glow, rgba(56, 189, 248, 0.3)), transparent 60%);"
+
         return f"""
-        <div id="active-playback-card" class="card" style="border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
-                <div>
-                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-                        <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
-                        <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
-                        <span style="font-size:12px; color:#94a3b8;" id="stream-user-device">{user_dev_esc}</span>
+        <div id="active-playback-card" class="card" style="position: relative; overflow: hidden; border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
+            <!-- Frosted Ambient Backdrop -->
+            <div id="stream-ambient-backdrop" style="position: absolute; inset: 0; {backdrop_style} background-size: cover; background-position: center; filter: blur(35px); opacity: 0.22; pointer-events: none; z-index: 0; transition: all 0.5s ease;"></div>
+
+            <!-- Content Area -->
+            <div style="position: relative; z-index: 1; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+                <!-- Leading Poster Thumbnail -->
+                <div id="stream-poster-container" style="flex-shrink: 0; width: 68px; height: 96px; border-radius: 8px; overflow: hidden; background: var(--bg-subtle); border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.35);">
+                    <img id="stream-poster-img" src="{poster_img_src}" alt="Poster" style="width: 100%; height: 100%; object-fit: cover; display: {poster_display};" onerror="this.style.display='none'; document.getElementById('stream-poster-fallback').style.display='flex';" />
+                    <div id="stream-poster-fallback" style="display: {fallback_display}; width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 26px; color: var(--text-muted); background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(0,0,0,0.2));">
+                        🎬
                     </div>
-                    <h2 style="margin:4px 0 8px 0; font-size:18px; color:#f8fafc;" id="stream-title">{stream_title_esc}</h2>
                 </div>
-                <div id="stream-actions">
-                    <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm" style="background:#334155; color:#38bdf8; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
-                </div>
-            </div>
-            <div style="margin-top:12px;">
-                <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:6px;">
-                    <span>Playback Progress</span>
-                    <span id="stream-progress-text" style="font-weight:600; color:#f8fafc;">{stream_prog_text_esc}</span>
-                </div>
-                <div style="background:#0f172a; border-radius:9999px; height:8px; overflow:hidden; border:1px solid #334155;">
-                    <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
+
+                <!-- Playback Details & Progress -->
+                <div style="flex: 1; min-width: 240px;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                        <div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                                <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
+                                <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
+                                <span style="font-size:12px; color:var(--text-muted);" id="stream-user-device">{user_dev_esc}</span>
+                            </div>
+                            <h2 style="margin:4px 0 8px 0; font-size:18px; color:var(--text-main);" id="stream-title">{stream_title_esc}</h2>
+                        </div>
+                        <div id="stream-actions">
+                            <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm" style="background:var(--bg-subtle); border:1px solid var(--border-color); color:var(--accent-color); text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
+                        </div>
+                    </div>
+                    <div style="margin-top:8px;">
+                        <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); margin-bottom:6px;">
+                            <span>Playback Progress</span>
+                            <span id="stream-progress-text" style="font-weight:600; color:var(--text-main);">{stream_prog_text_esc}</span>
+                        </div>
+                        <div style="background:var(--bg-subtle); border-radius:9999px; height:8px; overflow:hidden; border:1px solid var(--border-color);">
+                            <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -321,6 +352,7 @@ class DashboardRenderer:
         is_demo: bool,
         raw_username: Optional[str],
         mask_username_fn: Callable[[Optional[str]], str],
+        household_rules: Optional[list[dict[str, Any]]] = None,
     ) -> str:
         """Render Watch Together & Multi-User Accounts management card."""
         # Shared show chips
@@ -466,18 +498,101 @@ class DashboardRenderer:
             </div>
             """
 
+        # Section 3: Household Multi-Tenant Routing Rules (3+ Profiles)
+        rules = household_rules or []
+        rules_badge = str(len(rules))
+        if not rules:
+            rules_html = '<div style="color:#64748b;font-size:12px;font-style:italic;padding:8px 4px;">No custom household routing rules configured. Secondary scrobbles follow the default partner settings above.</div>'
+        else:
+            rule_items = []
+            for r in rules:
+                rid = r.get("id", "")
+                rname = r.get("name", "Rule")
+                renabled = r.get("enabled", True)
+                rtargets = r.get("targets", [])
+                rdevices = r.get("devices", [])
+                rshows = r.get("shows", [])
+                rmedia = r.get("media_types", [])
+
+                if not is_admin:
+                    targets_str = ", ".join(f"@{mask_username_fn(t)}" for t in rtargets)
+                else:
+                    targets_str = ", ".join(f"@{t}" for t in rtargets)
+                if not targets_str:
+                    targets_str = "None"
+
+                devices_str = ", ".join(rdevices) if rdevices else "All Devices"
+                shows_str = ", ".join(rshows) if rshows else "All Shows"
+                media_str = ", ".join(m.capitalize() for m in rmedia) if rmedia else "All Media"
+
+                status_bg = "#065f46" if renabled else "#334155"
+                status_col = "#34d399" if renabled else "#94a3b8"
+                status_txt = "Active" if renabled else "Paused"
+
+                actions_html = ""
+                if is_admin:
+                    rid_esc = urllib.parse.quote(rid)
+                    actions_html = f'''
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#e2e8f0;cursor:pointer;">
+                            {"Pause" if renabled else "Activate"}
+                        </button>
+                        <button onclick="deleteHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#7f1d1d;color:#fecaca;border:none;cursor:pointer;">
+                            &times; Delete
+                        </button>
+                    </div>
+                    '''
+
+                rule_items.append(f'''
+                <div class="household-rule-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <strong style="color:#f8fafc;font-size:13px;">{html.escape(rname)}</strong>
+                            <span style="background:{status_bg};color:{status_col};font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;">{status_txt}</span>
+                        </div>
+                        {actions_html}
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:6px;font-size:11px;color:#94a3b8;">
+                        <div><span style="color:#64748b;">Targets:</span> <strong style="color:#cbd5e1;">{html.escape(targets_str)}</strong></div>
+                        <div><span style="color:#64748b;">Players:</span> <strong style="color:#cbd5e1;">📺 {html.escape(devices_str)}</strong></div>
+                        <div><span style="color:#64748b;">Media:</span> <strong style="color:#cbd5e1;">🎬 {html.escape(media_str)}</strong></div>
+                        <div><span style="color:#64748b;">Shows:</span> <strong style="color:#cbd5e1;">📺 {html.escape(shows_str)}</strong></div>
+                    </div>
+                </div>
+                ''')
+            rules_html = "".join(rule_items)
+
+        household_section_html = f'''
+        <!-- Household Multi-Tenant Routing Rules (3+ Profiles) -->
+        <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+                <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                    <span>🏡 Household Multi-Tenant Routing Rules</span>
+                    <span id="household-rules-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{rules_badge}</span>
+                </div>
+                {f'<button onclick="openHouseholdRuleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:4px 10px;font-size:11px;">+ New Routing Rule</button>' if is_admin else ''}
+            </div>
+            <p style="color:#94a3b8;font-size:12px;margin:0 0 10px 0;line-height:1.4;">
+                Route scrobbles to specific family members or kids profiles based on player devices (e.g. Living Room TV vs Bedroom TV) and media types.
+            </p>
+            <div id="household-rules-container">
+                {rules_html}
+            </div>
+        </div>
+        '''
+
         return f"""
-        <div class="card">
+        <div class="card" id="card-cowatch">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                    <span>👥</span> Watch Together & Multi-User Accounts
+                    <span>👥</span> Watch Together & Household Multi-Tenancy
                 </h3>
                 <span style="background:#0f172a;border:1px solid #334155;color:#38bdf8;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">
-                    {f"Partner: @{cw_user_display}" if cw_user else "Single-User Mode"}
+                    {f"Partner: @{cw_user_display}" if cw_user else "Multi-Profile Routing"}
                 </span>
             </div>
             <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-                Dual-scrobble watched shows to your partner's Trakt account automatically, without syncing your solo shows.
+                Dual-scrobble watched shows to your partner's Trakt account and route household playback across arbitrary user profiles.
             </p>
             <!-- Top Section: Targeting & Destinations (Accounts & Devices side-by-side) -->
             <div class="cowatch-grid">
@@ -541,6 +656,7 @@ class DashboardRenderer:
                     {f'<button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies ({ "Disable" if cowatch_movies else "Enable" })</button>' if is_admin else ''}
                 </div>
             </div>
+            {household_section_html}
         </div>
         """
 
@@ -622,7 +738,7 @@ class DashboardRenderer:
         any_server_configured = plex_cfg or jf_cfg or emby_cfg
         if any_server_configured:
             return f"""
-            <div class="card">
+            <div class="card" id="card-reconciliation">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
@@ -656,7 +772,7 @@ class DashboardRenderer:
             """
         else:
             return f"""
-            <div class="card">
+            <div class="card" id="card-reconciliation">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🔄</span> Two-Way Library Reconciliation
@@ -681,7 +797,7 @@ class DashboardRenderer:
     def render_backup_card(is_admin: bool) -> str:
         """Render system operations, backup download/restore, and observability card."""
         return f"""
-        <div class="card">
+        <div class="card" id="card-backup">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>💾</span> System Operations & Observability
@@ -804,7 +920,7 @@ class DashboardRenderer:
             """
 
         return f"""
-        <div class="card">
+        <div class="card" id="card-ecosystem">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>🌐</span> Multi-Server Ecosystem
@@ -915,7 +1031,7 @@ class DashboardRenderer:
             """
 
         return f"""
-        <div class="card">
+        <div class="card" id="card-multi-tracker">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>🌐</span> Multi-Tracker Hub &bull; Cloud Synchronization
@@ -972,6 +1088,9 @@ class DashboardRenderer:
         sonarr_conn = arr_status.get("sonarr_connected", False)
         radarr_cfg = arr_status.get("radarr_configured", False)
         radarr_conn = arr_status.get("radarr_connected", False)
+        overseerr_cfg = arr_status.get("overseerr_configured", False)
+        overseerr_conn = arr_status.get("overseerr_connected", False)
+        overseerr_app = arr_status.get("overseerr_app_name", "Overseerr")
 
         if arr_cfg:
             auto_int = arr_status.get("interval_minutes", 0)
@@ -979,6 +1098,13 @@ class DashboardRenderer:
 
             sonarr_desc = "Online" if sonarr_conn else "Unreachable"
             radarr_desc = "Online" if radarr_conn else "Unreachable"
+            overseerr_desc = "Online" if overseerr_conn else "Unreachable"
+
+            overseerr_pill = (
+                f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#a855f7;">✨ {overseerr_app}</span><span style="color:#10b981;font-weight:600;">{overseerr_desc}</span></span>'
+                if overseerr_cfg
+                else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">✨ Overseerr: Off</span>'
+            )
 
             sonarr_pill = (
                 f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#38bdf8;">📺 Sonarr</span><span style="color:#10b981;font-weight:600;">{sonarr_desc}</span></span>'
@@ -999,7 +1125,7 @@ class DashboardRenderer:
             )
 
             return f"""
-            <div class="card">
+            <div class="card" id="card-arr-bridge">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🎬</span> Content Bridge & *Arr Watchlist Automation
@@ -1009,10 +1135,11 @@ class DashboardRenderer:
                     </div>
                 </div>
                 <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-                    Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Radarr and Sonarr with automatic search and notification dispatch.
+                    Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Overseerr, Radarr, and Sonarr with automatic search and notification dispatch.
                 </p>
                 <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
                     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        {overseerr_pill}
                         {sonarr_pill}
                         {radarr_pill}
                         <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>{'Enabled' if arr_status.get('search_on_add') else 'Disabled'}</strong> &bull; Alerts: <strong>{'On' if Config.ARR_NOTIFY_ON_ADD else 'Off'}</strong></span>
@@ -1027,7 +1154,7 @@ class DashboardRenderer:
             """
         else:
             return f"""
-            <div class="card">
+            <div class="card" id="card-arr-bridge">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🎬</span> Content Bridge & *Arr Automation
@@ -1046,6 +1173,109 @@ class DashboardRenderer:
                 </div>
             </div>
             """
+
+    @staticmethod
+    def render_analytics_card(analytics: dict[str, Any], is_admin: bool) -> str:
+        """Render the Personal Analytics, Viewing Habits & OmniWrapped card."""
+        watch_time = analytics.get("total_watch_formatted", "0h 0m")
+        total_scrobbles = analytics.get("total_scrobbles", 0)
+        movies = analytics.get("movies_watched", 0)
+        episodes = analytics.get("episodes_watched", 0)
+        ratings = analytics.get("ratings_submitted", 0)
+
+        solo_hours = analytics.get("solo_hours", 0.0)
+        cowatch_hours = analytics.get("cowatch_hours", 0.0)
+        cw_pct = analytics.get("cowatch_ratio_percent", 0)
+        solo_pct = 100 - cw_pct if (solo_hours + cowatch_hours > 0) else 100
+
+        server_dist = analytics.get("server_distribution", {"Plex": 100})
+        server_badges = "".join(
+            f'<span style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-right:6px;">{s}: <strong style="color:#38bdf8;">{pct}%</strong></span>'
+            for s, pct in server_dist.items()
+        )
+
+        top_shows = analytics.get("top_shows", [])
+        top_show_label = f"📺 {top_shows[0]['show']} ({top_shows[0]['episodes']} eps)" if top_shows else "📺 No series logged yet"
+
+        top_genres = analytics.get("top_genres", [])
+        genre_tags = "".join(
+            f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 7px;border-radius:4px;font-size:10px;margin-right:4px;">{g["genre"]}</span>'
+            for g in top_genres[:4]
+        )
+
+        admin_debugger_btn = ""
+        if is_admin:
+            admin_debugger_btn = """
+            <button onclick="openWebhookDebuggerModal()" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">
+                <span>🔍</span><span>Webhook Inspector</span>
+            </button>
+            """
+
+        return f"""
+        <div class="card" style="margin-bottom:20px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <h3 style="margin:0;font-size:15px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                        <span>📊</span> Personal Analytics & Viewing Habits
+                    </h3>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                    {admin_debugger_btn}
+                    <button onclick="openOmniWrappedModal()" class="btn-sm" style="background:linear-gradient(135deg, #8b5cf6, #3b82f6);color:#fff;border:none;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;box-shadow:0 2px 4px rgba(139,92,246,0.3);">
+                        <span>✨</span><span>OmniWrapped</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Metrics Grid -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-bottom:14px;">
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Watch Time</div>
+                    <div style="font-size:18px;font-weight:700;color:#38bdf8;">{watch_time}</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Across all devices</div>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Completed Titles</div>
+                    <div style="font-size:18px;font-weight:700;color:#f8fafc;">{total_scrobbles}</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{movies} movies &bull; {episodes} eps</div>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Co-Watch Ratio</div>
+                    <div style="font-size:18px;font-weight:700;color:#c084fc;">{cw_pct}%</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{cowatch_hours}h shared / {solo_hours}h solo</div>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Star Ratings</div>
+                    <div style="font-size:18px;font-weight:700;color:#fbbf24;">{ratings}</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Synced across trackers</div>
+                </div>
+            </div>
+
+            <!-- Co-Watch Ratio Progress Bar -->
+            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-bottom:6px;">
+                    <span style="color:#94a3b8;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;margin-right:4px;"></span>Solo Viewing ({solo_pct}%)</span>
+                    <span style="color:#94a3b8;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#c084fc;margin-right:4px;"></span>Shared Co-Watching ({cw_pct}%)</span>
+                </div>
+                <div style="width:100%;height:6px;background:#1e293b;border-radius:9999px;overflow:hidden;display:flex;">
+                    <div style="height:100%;width:{solo_pct}%;background:#38bdf8;"></div>
+                    <div style="height:100%;width:{cw_pct}%;background:#c084fc;"></div>
+                </div>
+            </div>
+
+            <!-- Distribution & Highlights Footer -->
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;font-size:12px;color:#94a3b8;">
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
+                    <span style="color:#64748b;margin-right:4px;">Servers:</span>
+                    {server_badges}
+                </div>
+                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                    <strong style="color:#cbd5e1;font-size:11px;">{top_show_label}</strong>
+                    {genre_tags}
+                </div>
+            </div>
+        </div>
+        """
 
     @staticmethod
     def render_template(template: str, replacements: dict[str, str]) -> str:

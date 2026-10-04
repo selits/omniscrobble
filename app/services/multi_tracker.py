@@ -13,6 +13,7 @@ With decoupled resilience, dynamic enablement toggles, domain isolation, and fai
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import logging
 from typing import Any, Optional
 
@@ -467,6 +468,8 @@ class MultiTrackerManager:
             "errors": {},
         }
 
+        watched_at_ts = datetime.now(timezone.utc).isoformat()
+
         # 1. Trakt Sync History
         if (
             "trakt" in targets
@@ -481,7 +484,10 @@ class MultiTrackerManager:
                             {
                                 "number": media.season if media.season is not None else 1,
                                 "episodes": [
-                                    {"number": media.episode if media.episode is not None else 1}
+                                    {
+                                        "number": media.episode if media.episode is not None else 1,
+                                        "watched_at": watched_at_ts,
+                                    }
                                 ],
                             }
                         ],
@@ -492,7 +498,7 @@ class MultiTrackerManager:
                         show_dict["ids"] = media.ids
                     history_payload = {"shows": [show_dict]}
                 else:
-                    movie_dict: dict[str, Any] = {"title": media.title}
+                    movie_dict: dict[str, Any] = {"title": media.title, "watched_at": watched_at_ts}
                     if media.year:
                         movie_dict["year"] = media.year
                     if media.ids:
@@ -516,7 +522,7 @@ class MultiTrackerManager:
             and self.simkl_client.is_authenticated()
         ):
             try:
-                simkl_res = await self.simkl_client.sync_history(media)
+                simkl_res = await self.simkl_client.sync_history(media, watched_at=watched_at_ts)
                 if isinstance(simkl_res, dict) and simkl_res.get("status") == "error":
                     results["errors"]["simkl"] = simkl_res.get("error", "Simkl sync error")
                 else:

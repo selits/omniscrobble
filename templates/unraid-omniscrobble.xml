@@ -1,0 +1,86 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Omniscrobble</Name>
+  <Repository>ghcr.io/selits/omniscrobble:latest</Repository>
+  <Registry>https://github.com/selits/omniscrobble/pkgs/container/omniscrobble</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/selits/omniscrobble/issues</Support>
+  <Project>https://github.com/selits/omniscrobble</Project>
+  <Overview>Omniscrobble is an ultra-resilient, lightweight multi-server scrobbler bridging Plex, Jellyfin, and Emby with Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, and 9 cloud trackers. Features multi-user household routing, watch together dual-scrobbling, offline retry queue, two-way library reconciliation, and content request automation.</Overview>
+  <Category>MediaApp:Video MediaServer:Video Status:Stable</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/selits/omniscrobble/main/templates/unraid-omniscrobble.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/selits/omniscrobble/main/docs/logo.png</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Omniscrobble is an ultra-resilient, lightweight multi-server scrobbler bridging Plex, Jellyfin, and Emby with Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, and 9 cloud trackers.</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8080</HostPort>
+        <ContainerPort>8080</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/omniscrobble/data</HostDir>
+      <ContainerDir>/app/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>0.0.0.0</Value>
+      <Name>SERVER_HOST</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>8080</Value>
+      <Name>SERVER_PORT</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>WEBHOOK_SECRET</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>TRAKT_CLIENT_ID</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>TRAKT_CLIENT_SECRET</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>PLEX_ALLOWED_USERS</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>CO_WATCH_USER</Name>
+      <Mode/>
+    </Variable>
+  </Environment>
+  <Labels/>
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="Port for Omniscrobble Web UI and incoming webhooks." Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data Directory" Target="/app/data" Default="/mnt/user/appdata/omniscrobble/data" Mode="rw" Description="Persistent directory for OAuth tokens, SQLite queue, settings, and activity logs." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/omniscrobble/data</Config>
+  <Config Name="Webhook Secret" Target="WEBHOOK_SECRET" Default="" Mode="" Description="Optional token to protect webhooks (?token=...) and lock the dashboard." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Trakt Client ID" Target="TRAKT_CLIENT_ID" Default="" Mode="" Description="Trakt OAuth API Client ID (leave blank to use built-in defaults)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Trakt Client Secret" Target="TRAKT_CLIENT_SECRET" Default="" Mode="" Description="Trakt OAuth API Client Secret (leave blank to use built-in defaults)." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="Allowed Media Server Users" Target="PLEX_ALLOWED_USERS" Default="" Mode="" Description="Comma-separated media server usernames allowed to scrobble (blank = all users)." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Co-Watch Partner User" Target="CO_WATCH_USER" Default="" Mode="" Description="Partner Trakt username for Watch Together dual-sync." Type="Variable" Display="always" Required="false" Mask="false"/>
+</Container>

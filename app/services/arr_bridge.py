@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from app.clients.anilist_client import AniListClient
 from app.clients.mal_client import MyAnimeListClient
+from app.clients.overseerr_client import OverseerrClient
 from app.clients.plex_api_client import PlexApiClient
 from app.clients.radarr_client import RadarrClient
 from app.clients.simkl_client import SimklClient
@@ -27,12 +28,13 @@ logger = logging.getLogger("omniscrobble.arr_bridge")
 
 
 class ArrBridgeManager:
-    """Manages Trakt Watchlist -> Sonarr & Radarr automation and multi-server status."""
+    """Manages Trakt Watchlist -> Sonarr, Radarr & Overseerr automation and multi-server status."""
 
     def __init__(
         self,
         sonarr_client: Optional[SonarrClient] = None,
         radarr_client: Optional[RadarrClient] = None,
+        overseerr_client: Optional[OverseerrClient] = None,
         trakt_client: Optional[TraktClient] = None,
         notifier_service: Optional[Notifier] = None,
     ):
@@ -42,14 +44,19 @@ class ArrBridgeManager:
             s_key = arr_cfg.get("sonarr_api_key") or Config.SONARR_API_KEY
             r_url = arr_cfg.get("radarr_url") or Config.RADARR_URL
             r_key = arr_cfg.get("radarr_api_key") or Config.RADARR_API_KEY
+            o_url = arr_cfg.get("overseerr_url") or Config.OVERSEERR_URL
+            o_key = arr_cfg.get("overseerr_api_key") or Config.OVERSEERR_API_KEY
         except Exception:
             s_url = Config.SONARR_URL
             s_key = Config.SONARR_API_KEY
             r_url = Config.RADARR_URL
             r_key = Config.RADARR_API_KEY
+            o_url = Config.OVERSEERR_URL
+            o_key = Config.OVERSEERR_API_KEY
 
         self.sonarr = sonarr_client or SonarrClient(base_url=s_url, api_key=s_key)
         self.radarr = radarr_client or RadarrClient(base_url=r_url, api_key=r_key)
+        self.overseerr = overseerr_client or OverseerrClient(base_url=o_url, api_key=o_key)
         self.trakt = trakt_client
         self.notifier = notifier_service or notifier
 
@@ -64,8 +71,10 @@ class ArrBridgeManager:
         sonarr_api_key: Optional[str] = None,
         radarr_url: Optional[str] = None,
         radarr_api_key: Optional[str] = None,
+        overseerr_url: Optional[str] = None,
+        overseerr_api_key: Optional[str] = None,
     ) -> None:
-        """Update Sonarr and Radarr connection parameters dynamically in-memory."""
+        """Update Sonarr, Radarr, and Overseerr connection parameters dynamically in-memory."""
         if sonarr_url is not None:
             self.sonarr.base_url = sonarr_url.rstrip("/")
         if sonarr_api_key is not None:
@@ -74,6 +83,10 @@ class ArrBridgeManager:
             self.radarr.base_url = radarr_url.rstrip("/")
         if radarr_api_key is not None:
             self.radarr.api_key = radarr_api_key
+        if overseerr_url is not None:
+            self.overseerr.base_url = overseerr_url.rstrip("/")
+        if overseerr_api_key is not None:
+            self.overseerr.api_key = overseerr_api_key
 
     def set_trakt_client(self, client: TraktClient) -> None:
         self.trakt = client
@@ -85,7 +98,7 @@ class ArrBridgeManager:
         return self.trakt
 
     async def get_status(self, demo: bool = False) -> dict[str, Any]:
-        """Return status for Sonarr, Radarr, and watchlist automation."""
+        """Return status for Sonarr, Radarr, Overseerr, and watchlist automation."""
         if demo:
             return {
                 "configured": True,
@@ -97,6 +110,12 @@ class ArrBridgeManager:
                 "radarr_connected": True,
                 "radarr_version": "5.9.1",
                 "radarr_movies_count": 215,
+                "overseerr_configured": True,
+                "overseerr_connected": True,
+                "overseerr_version": "1.33.2",
+                "overseerr_app_name": "Overseerr",
+                "overseerr_requests_count": 34,
+                "overseerr_enabled": True,
                 "auto_add_enabled": Config.AUTO_ADD_FROM_WATCHLIST or True,
                 "search_on_add": Config.SEARCH_ON_ADD,
                 "interval_seconds": Config.ARR_WATCHLIST_INTERVAL or 1800,
@@ -136,8 +155,22 @@ class ArrBridgeManager:
                 r_list = await self.radarr.get_movies()
                 radarr_count = len(r_list)
 
+        overseerr_cfg = self.overseerr.is_configured
+        overseerr_conn = False
+        overseerr_ver = "unknown"
+        overseerr_app = "Overseerr"
+        overseerr_requests = 0
+        if overseerr_cfg:
+            o_stat = await self.overseerr.check_connection()
+            overseerr_conn = o_stat.get("status") == "connected"
+            overseerr_ver = o_stat.get("version", "unknown")
+            overseerr_app = o_stat.get("app_name", "Overseerr")
+            if overseerr_conn:
+                counts = await self.overseerr.get_request_counts()
+                overseerr_requests = counts.get("total", 0)
+
         return {
-            "configured": sonarr_cfg or radarr_cfg,
+            "configured": sonarr_cfg or radarr_cfg or overseerr_cfg,
             "sonarr_configured": sonarr_cfg,
             "sonarr_connected": sonarr_conn,
             "sonarr_version": sonarr_ver,
@@ -146,6 +179,12 @@ class ArrBridgeManager:
             "radarr_connected": radarr_conn,
             "radarr_version": radarr_ver,
             "radarr_movies_count": radarr_count,
+            "overseerr_configured": overseerr_cfg,
+            "overseerr_connected": overseerr_conn,
+            "overseerr_version": overseerr_ver,
+            "overseerr_app_name": overseerr_app,
+            "overseerr_requests_count": overseerr_requests,
+            "overseerr_enabled": settings_mgr.is_overseerr_enabled(),
             "auto_add_enabled": Config.AUTO_ADD_FROM_WATCHLIST,
             "search_on_add": Config.SEARCH_ON_ADD,
             "interval_seconds": Config.ARR_WATCHLIST_INTERVAL,
@@ -198,6 +237,16 @@ class ArrBridgeManager:
                     "icon": "emby",
                 },
                 {
+                    "id": "overseerr",
+                    "name": "Overseerr",
+                    "category": "Requests",
+                    "status": "connected",
+                    "badge": "Online",
+                    "version": "1.33.2",
+                    "details": "34 Requests Monitored",
+                    "icon": "overseerr",
+                },
+                {
                     "id": "sonarr",
                     "name": "Sonarr",
                     "category": "Acquisition",
@@ -221,7 +270,7 @@ class ArrBridgeManager:
             for s in servers:
                 s["enabled"] = True
 
-            service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+            service_order = ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
             servers.sort(
                 key=lambda s: (
                     1 if not s.get("enabled", True) or s.get("status") == "disabled" or s.get("badge") in ("Disabled", "Paused") else 0,
@@ -427,6 +476,45 @@ class ArrBridgeManager:
                 "icon": "radarr",
             })
 
+        # 6. Overseerr
+        if self.overseerr.is_configured:
+            o_conn = await self.overseerr.check_connection()
+            if o_conn.get("status") == "connected":
+                counts = await self.overseerr.get_request_counts()
+                app_name = o_conn.get("app_name", "Overseerr")
+                servers.append({
+                    "id": "overseerr",
+                    "name": app_name,
+                    "category": "Requests",
+                    "status": "connected",
+                    "badge": "Online",
+                    "version": o_conn.get("version", "Active"),
+                    "details": f"{counts.get('total', 0)} Requests Monitored",
+                    "icon": "overseerr",
+                })
+            else:
+                servers.append({
+                    "id": "overseerr",
+                    "name": "Overseerr",
+                    "category": "Requests",
+                    "status": "error",
+                    "badge": "Offline",
+                    "version": "Configured",
+                    "details": o_conn.get("message", "Connection failed"),
+                    "icon": "overseerr",
+                })
+        else:
+            servers.append({
+                "id": "overseerr",
+                "name": "Overseerr",
+                "category": "Requests",
+                "status": "unconfigured",
+                "badge": "Disabled",
+                "version": "N/A",
+                "details": "Set OVERSEERR_URL and OVERSEERR_API_KEY in .env",
+                "icon": "overseerr",
+            })
+
         for s in servers:
             sid = s.get("id", "")
             if sid in ("plex", "jellyfin", "emby"):
@@ -441,10 +529,21 @@ class ArrBridgeManager:
                 if not is_cfg:
                     s["status"] = "unconfigured"
                     s["badge"] = "Disabled"
+            elif sid == "overseerr":
+                is_cfg = self.overseerr.is_configured
+                is_en = is_cfg and settings_mgr.is_overseerr_enabled()
+                s["enabled"] = is_en
+                if not is_cfg:
+                    s["status"] = "unconfigured"
+                    s["badge"] = "Disabled"
+                elif not settings_mgr.is_overseerr_enabled():
+                    s["status"] = "disabled"
+                    s["badge"] = "Disabled"
+                    s["details"] = "Request routing paused"
             else:
                 s["enabled"] = True
 
-        service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+        service_order = ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
 
         def _is_ecosystem_disabled(srv: dict[str, Any]) -> bool:
             return (
@@ -531,8 +630,10 @@ class ArrBridgeManager:
             items_summary: list[dict[str, Any]] = []
 
             try:
-                # ------------------- 1. Movies -> Radarr -------------------
-                if self.radarr.is_configured:
+                overseerr_active = settings_mgr.is_overseerr_enabled() and self.overseerr.is_configured
+
+                if overseerr_active:
+                    # ------------------- 1. Movies -> Overseerr -------------------
                     try:
                         watchlist_movies = await trakt.get_watchlist("movies")
                         for item in watchlist_movies:
@@ -541,101 +642,93 @@ class ArrBridgeManager:
                             year = movie_data.get("year")
                             ids = movie_data.get("ids", {})
                             tmdb_id = ids.get("tmdb")
-                            imdb_id = ids.get("imdb")
 
                             if not title:
                                 continue
 
-                            # Check if already exists in Radarr
-                            exists = await self.radarr.has_movie(
-                                tmdb_id=tmdb_id, imdb_id=imdb_id, title=title
-                            )
-                            if exists:
+                            if not tmdb_id:
+                                search_results = await self.overseerr.search(title)
+                                for res in search_results:
+                                    if res.get("mediaType") == "movie":
+                                        tmdb_id = res.get("id")
+                                        break
+
+                            if not tmdb_id:
+                                errors.append(f"Could not resolve TMDB ID for movie: {title}")
+                                items_summary.append({
+                                    "title": title,
+                                    "year": year,
+                                    "type": "movie",
+                                    "status": "error",
+                                    "reason": "Missing TMDB ID for Overseerr",
+                                    "app": "Overseerr",
+                                })
+                                continue
+
+                            has_m = await self.overseerr.has_media("movie", int(tmdb_id))
+                            if has_m:
                                 skipped_movies.append({"title": title, "year": year})
                                 items_summary.append({
                                     "title": title,
                                     "year": year,
                                     "type": "movie",
                                     "status": "skipped",
-                                    "reason": "Already in Radarr",
-                                    "app": "Radarr",
+                                    "reason": "Already in Overseerr",
+                                    "app": "Overseerr",
                                 })
                                 continue
 
-                            # Lookup in Radarr to get full metadata structure
-                            lookup_term = f"tmdb:{tmdb_id}" if tmdb_id else (f"imdb:{imdb_id}" if imdb_id else title)
-                            candidates = await self.radarr.lookup_movie(lookup_term)
-                            if not candidates and title:
-                                candidates = await self.radarr.lookup_movie(title)
-
-                            if not candidates:
-                                errors.append(f"Radarr lookup found no results for movie: {title}")
-                                items_summary.append({
-                                    "title": title,
-                                    "year": year,
-                                    "type": "movie",
-                                    "status": "error",
-                                    "reason": "Lookup failed in Radarr",
-                                    "app": "Radarr",
-                                })
-                                continue
-
-                            # Pick best candidate matching tmdbId or title
-                            selected = candidates[0]
-                            if tmdb_id:
-                                for c in candidates:
-                                    if c.get("tmdbId") and int(c["tmdbId"]) == int(tmdb_id):
-                                        selected = c
-                                        break
-
-                            # Add to Radarr
-                            add_res = await self.radarr.add_movie(
-                                selected,
-                                search_for_movie=Config.SEARCH_ON_ADD,
-                            )
-                            if add_res.get("success"):
-                                added_movies.append({"title": title, "year": year})
-                                items_summary.append({
-                                    "title": title,
-                                    "year": year,
-                                    "type": "movie",
-                                    "status": "added",
-                                    "app": "Radarr",
-                                    "search_triggered": Config.SEARCH_ON_ADD,
-                                })
-                                logger.info(f"Added movie '{title}' ({year}) to Radarr from Trakt Watchlist")
-
-                                # Send push alert if enabled
-                                if Config.ARR_NOTIFY_ON_ADD:
-                                    try:
-                                        p_media = ParsedMedia(
-                                            event="radarr.add",
-                                            username="Radarr",
-                                            media_type="movie",
-                                            title=title,
-                                            year=year,
-                                            ids=ids,
-                                        )
-                                        await self.notifier.dispatch(p_media, "arr_add")
-                                    except Exception as notify_err:
-                                        logger.warning(f"Error sending add notification: {notify_err}")
+                            req_res = await self.overseerr.request_media("movie", int(tmdb_id))
+                            if req_res.get("success"):
+                                if req_res.get("skipped"):
+                                    skipped_movies.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "movie",
+                                        "status": "skipped",
+                                        "reason": req_res.get("reason", "Already requested"),
+                                        "app": "Overseerr",
+                                    })
+                                else:
+                                    added_movies.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "movie",
+                                        "status": "added",
+                                        "app": "Overseerr",
+                                    })
+                                    logger.info(f"Requested movie '{title}' ({year}) via Overseerr from Trakt Watchlist")
+                                    if Config.ARR_NOTIFY_ON_ADD:
+                                        try:
+                                            p_media = ParsedMedia(
+                                                event="overseerr.add",
+                                                username="Overseerr",
+                                                media_type="movie",
+                                                title=title,
+                                                year=year,
+                                                ids=ids,
+                                            )
+                                            await self.notifier.dispatch(p_media, "arr_add")
+                                        except Exception as notify_err:
+                                            logger.warning(f"Error sending add notification: {notify_err}")
                             else:
-                                err_msg = add_res.get("error", "Unknown add error")
-                                errors.append(f"Failed to add '{title}' to Radarr: {err_msg}")
+                                err_msg = req_res.get("error", "Unknown error")
+                                errors.append(f"Overseerr request failed for '{title}': {err_msg}")
                                 items_summary.append({
                                     "title": title,
                                     "year": year,
                                     "type": "movie",
                                     "status": "error",
                                     "reason": err_msg,
-                                    "app": "Radarr",
+                                    "app": "Overseerr",
                                 })
                     except Exception as e:
-                        logger.error(f"Error processing movies watchlist in Radarr: {e}")
-                        errors.append(f"Movies Watchlist sync error: {e}")
+                        logger.error(f"Error processing movies watchlist in Overseerr: {e}")
+                        errors.append(f"Overseerr movies watchlist sync error: {e}")
 
-                # ------------------- 2. TV Shows -> Sonarr -------------------
-                if self.sonarr.is_configured:
+                    # ------------------- 2. TV Shows -> Overseerr -------------------
                     try:
                         watchlist_shows = await trakt.get_watchlist("shows")
                         for item in watchlist_shows:
@@ -643,99 +736,300 @@ class ArrBridgeManager:
                             title = show_data.get("title", "")
                             year = show_data.get("year")
                             ids = show_data.get("ids", {})
-                            tvdb_id = ids.get("tvdb")
-                            imdb_id = ids.get("imdb")
+                            tmdb_id = ids.get("tmdb")
 
                             if not title:
                                 continue
 
-                            # Check if already exists in Sonarr
-                            exists = await self.sonarr.has_series(
-                                tvdb_id=tvdb_id, imdb_id=imdb_id, title=title
-                            )
-                            if exists:
+                            if not tmdb_id:
+                                search_results = await self.overseerr.search(title)
+                                for res in search_results:
+                                    if res.get("mediaType") == "tv":
+                                        tmdb_id = res.get("id")
+                                        break
+
+                            if not tmdb_id:
+                                errors.append(f"Could not resolve TMDB ID for show: {title}")
+                                items_summary.append({
+                                    "title": title,
+                                    "year": year,
+                                    "type": "show",
+                                    "status": "error",
+                                    "reason": "Missing TMDB ID for Overseerr",
+                                    "app": "Overseerr",
+                                })
+                                continue
+
+                            has_s = await self.overseerr.has_media("tv", int(tmdb_id))
+                            if has_s:
                                 skipped_shows.append({"title": title, "year": year})
                                 items_summary.append({
                                     "title": title,
                                     "year": year,
                                     "type": "show",
                                     "status": "skipped",
-                                    "reason": "Already in Sonarr",
-                                    "app": "Sonarr",
+                                    "reason": "Already in Overseerr",
+                                    "app": "Overseerr",
                                 })
                                 continue
 
-                            # Lookup in Sonarr to get full series metadata structure
-                            lookup_term = f"tvdb:{tvdb_id}" if tvdb_id else (f"imdb:{imdb_id}" if imdb_id else title)
-                            candidates = await self.sonarr.lookup_series(lookup_term)
-                            if not candidates and title:
-                                candidates = await self.sonarr.lookup_series(title)
-
-                            if not candidates:
-                                errors.append(f"Sonarr lookup found no results for show: {title}")
-                                items_summary.append({
-                                    "title": title,
-                                    "year": year,
-                                    "type": "show",
-                                    "status": "error",
-                                    "reason": "Lookup failed in Sonarr",
-                                    "app": "Sonarr",
-                                })
-                                continue
-
-                            selected = candidates[0]
-                            if tvdb_id:
-                                for c in candidates:
-                                    if c.get("tvdbId") and int(c["tvdbId"]) == int(tvdb_id):
-                                        selected = c
-                                        break
-
-                            # Add to Sonarr
-                            add_res = await self.sonarr.add_series(
-                                selected,
-                                search_for_missing_episodes=Config.SEARCH_ON_ADD,
-                            )
-                            if add_res.get("success"):
-                                added_shows.append({"title": title, "year": year})
-                                items_summary.append({
-                                    "title": title,
-                                    "year": year,
-                                    "type": "show",
-                                    "status": "added",
-                                    "app": "Sonarr",
-                                    "search_triggered": Config.SEARCH_ON_ADD,
-                                })
-                                logger.info(f"Added TV show '{title}' ({year}) to Sonarr from Trakt Watchlist")
-
-                                # Send push alert if enabled
-                                if Config.ARR_NOTIFY_ON_ADD:
-                                    try:
-                                        p_media = ParsedMedia(
-                                            event="sonarr.add",
-                                            username="Sonarr",
-                                            media_type="show",
-                                            title=title,
-                                            show_title=title,
-                                            show_year=year,
-                                            ids=ids,
-                                        )
-                                        await self.notifier.dispatch(p_media, "arr_add")
-                                    except Exception as notify_err:
-                                        logger.warning(f"Error sending add notification: {notify_err}")
+                            req_res = await self.overseerr.request_media("tv", int(tmdb_id), seasons="all")
+                            if req_res.get("success"):
+                                if req_res.get("skipped"):
+                                    skipped_shows.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "show",
+                                        "status": "skipped",
+                                        "reason": req_res.get("reason", "Already requested"),
+                                        "app": "Overseerr",
+                                    })
+                                else:
+                                    added_shows.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "show",
+                                        "status": "added",
+                                        "app": "Overseerr",
+                                    })
+                                    logger.info(f"Requested show '{title}' ({year}) via Overseerr from Trakt Watchlist")
+                                    if Config.ARR_NOTIFY_ON_ADD:
+                                        try:
+                                            p_media = ParsedMedia(
+                                                event="overseerr.add",
+                                                username="Overseerr",
+                                                media_type="show",
+                                                title=title,
+                                                show_title=title,
+                                                show_year=year,
+                                                ids=ids,
+                                            )
+                                            await self.notifier.dispatch(p_media, "arr_add")
+                                        except Exception as notify_err:
+                                            logger.warning(f"Error sending add notification: {notify_err}")
                             else:
-                                err_msg = add_res.get("error", "Unknown add error")
-                                errors.append(f"Failed to add '{title}' to Sonarr: {err_msg}")
+                                err_msg = req_res.get("error", "Unknown error")
+                                errors.append(f"Overseerr request failed for '{title}': {err_msg}")
                                 items_summary.append({
                                     "title": title,
                                     "year": year,
                                     "type": "show",
                                     "status": "error",
                                     "reason": err_msg,
-                                    "app": "Sonarr",
+                                    "app": "Overseerr",
                                 })
                     except Exception as e:
-                        logger.error(f"Error processing shows watchlist in Sonarr: {e}")
-                        errors.append(f"Shows Watchlist sync error: {e}")
+                        logger.error(f"Error processing shows watchlist in Overseerr: {e}")
+                        errors.append(f"Overseerr shows watchlist sync error: {e}")
+
+                else:
+                    # ------------------- 1. Movies -> Radarr -------------------
+                    if self.radarr.is_configured:
+                        try:
+                            watchlist_movies = await trakt.get_watchlist("movies")
+                            for item in watchlist_movies:
+                                movie_data = item.get("movie", {})
+                                title = movie_data.get("title", "")
+                                year = movie_data.get("year")
+                                ids = movie_data.get("ids", {})
+                                tmdb_id = ids.get("tmdb")
+                                imdb_id = ids.get("imdb")
+
+                                if not title:
+                                    continue
+
+                                # Check if already exists in Radarr
+                                exists = await self.radarr.has_movie(
+                                    tmdb_id=tmdb_id, imdb_id=imdb_id, title=title
+                                )
+                                if exists:
+                                    skipped_movies.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "movie",
+                                        "status": "skipped",
+                                        "reason": "Already in Radarr",
+                                        "app": "Radarr",
+                                    })
+                                    continue
+
+                                # Lookup in Radarr to get full metadata structure
+                                lookup_term = f"tmdb:{tmdb_id}" if tmdb_id else (f"imdb:{imdb_id}" if imdb_id else title)
+                                candidates = await self.radarr.lookup_movie(lookup_term)
+                                if not candidates and title:
+                                    candidates = await self.radarr.lookup_movie(title)
+
+                                if not candidates:
+                                    errors.append(f"Radarr lookup found no results for movie: {title}")
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "movie",
+                                        "status": "error",
+                                        "reason": "Lookup failed in Radarr",
+                                        "app": "Radarr",
+                                    })
+                                    continue
+
+                                # Pick best candidate matching tmdbId or title
+                                selected = candidates[0]
+                                if tmdb_id:
+                                    for c in candidates:
+                                        if c.get("tmdbId") and int(c["tmdbId"]) == int(tmdb_id):
+                                            selected = c
+                                            break
+
+                                # Add to Radarr
+                                add_res = await self.radarr.add_movie(
+                                    selected,
+                                    search_for_movie=Config.SEARCH_ON_ADD,
+                                )
+                                if add_res.get("success"):
+                                    added_movies.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "movie",
+                                        "status": "added",
+                                        "app": "Radarr",
+                                        "search_triggered": Config.SEARCH_ON_ADD,
+                                    })
+                                    logger.info(f"Added movie '{title}' ({year}) to Radarr from Trakt Watchlist")
+
+                                    # Send push alert if enabled
+                                    if Config.ARR_NOTIFY_ON_ADD:
+                                        try:
+                                            p_media = ParsedMedia(
+                                                event="radarr.add",
+                                                username="Radarr",
+                                                media_type="movie",
+                                                title=title,
+                                                year=year,
+                                                ids=ids,
+                                            )
+                                            await self.notifier.dispatch(p_media, "arr_add")
+                                        except Exception as notify_err:
+                                            logger.warning(f"Error sending add notification: {notify_err}")
+                                else:
+                                    err_msg = add_res.get("error", "Unknown add error")
+                                    errors.append(f"Failed to add '{title}' to Radarr: {err_msg}")
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "movie",
+                                        "status": "error",
+                                        "reason": err_msg,
+                                        "app": "Radarr",
+                                    })
+                        except Exception as e:
+                            logger.error(f"Error processing movies watchlist in Radarr: {e}")
+                            errors.append(f"Movies Watchlist sync error: {e}")
+
+                    # ------------------- 2. TV Shows -> Sonarr -------------------
+                    if self.sonarr.is_configured:
+                        try:
+                            watchlist_shows = await trakt.get_watchlist("shows")
+                            for item in watchlist_shows:
+                                show_data = item.get("show", {})
+                                title = show_data.get("title", "")
+                                year = show_data.get("year")
+                                ids = show_data.get("ids", {})
+                                tvdb_id = ids.get("tvdb")
+                                imdb_id = ids.get("imdb")
+
+                                if not title:
+                                    continue
+
+                                # Check if already exists in Sonarr
+                                exists = await self.sonarr.has_series(
+                                    tvdb_id=tvdb_id, imdb_id=imdb_id, title=title
+                                )
+                                if exists:
+                                    skipped_shows.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "show",
+                                        "status": "skipped",
+                                        "reason": "Already in Sonarr",
+                                        "app": "Sonarr",
+                                    })
+                                    continue
+
+                                # Lookup in Sonarr to get full series metadata structure
+                                lookup_term = f"tvdb:{tvdb_id}" if tvdb_id else (f"imdb:{imdb_id}" if imdb_id else title)
+                                candidates = await self.sonarr.lookup_series(lookup_term)
+                                if not candidates and title:
+                                    candidates = await self.sonarr.lookup_series(title)
+
+                                if not candidates:
+                                    errors.append(f"Sonarr lookup found no results for show: {title}")
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "show",
+                                        "status": "error",
+                                        "reason": "Lookup failed in Sonarr",
+                                        "app": "Sonarr",
+                                    })
+                                    continue
+
+                                selected = candidates[0]
+                                if tvdb_id:
+                                    for c in candidates:
+                                        if c.get("tvdbId") and int(c["tvdbId"]) == int(tvdb_id):
+                                            selected = c
+                                            break
+
+                                # Add to Sonarr
+                                add_res = await self.sonarr.add_series(
+                                    selected,
+                                    search_for_missing_episodes=Config.SEARCH_ON_ADD,
+                                )
+                                if add_res.get("success"):
+                                    added_shows.append({"title": title, "year": year})
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "show",
+                                        "status": "added",
+                                        "app": "Sonarr",
+                                        "search_triggered": Config.SEARCH_ON_ADD,
+                                    })
+                                    logger.info(f"Added TV show '{title}' ({year}) to Sonarr from Trakt Watchlist")
+
+                                    # Send push alert if enabled
+                                    if Config.ARR_NOTIFY_ON_ADD:
+                                        try:
+                                            p_media = ParsedMedia(
+                                                event="sonarr.add",
+                                                username="Sonarr",
+                                                media_type="show",
+                                                title=title,
+                                                show_title=title,
+                                                show_year=year,
+                                                ids=ids,
+                                            )
+                                            await self.notifier.dispatch(p_media, "arr_add")
+                                        except Exception as notify_err:
+                                            logger.warning(f"Error sending add notification: {notify_err}")
+                                else:
+                                    err_msg = add_res.get("error", "Unknown add error")
+                                    errors.append(f"Failed to add '{title}' to Sonarr: {err_msg}")
+                                    items_summary.append({
+                                        "title": title,
+                                        "year": year,
+                                        "type": "show",
+                                        "status": "error",
+                                        "reason": err_msg,
+                                        "app": "Sonarr",
+                                    })
+                        except Exception as e:
+                            logger.error(f"Error processing shows watchlist in Sonarr: {e}")
+                            errors.append(f"Shows Watchlist sync error: {e}")
 
                 self._last_sync_time = time.time()
                 self._last_sync_result = {

@@ -118,16 +118,17 @@ class TraktClient:
             return self._tokens
         if self.tokens_file.exists():
             try:
-                with open(self.tokens_file, "r", encoding="utf-8") as f:
-                    self._tokens = json.load(f)
-                    return self._tokens
+                from app.services.crypto_manager import crypto_mgr
+                self._tokens = crypto_mgr.read_secure_json(self.tokens_file)
+                return self._tokens
             except Exception as e:
                 logger.error(f"Error loading Trakt tokens from {self.tokens_file}: {e}")
         return None
 
     def save_tokens(self, tokens: dict[str, Any]) -> None:
         self._tokens = tokens
-        atomic_write_json(self.tokens_file, tokens)
+        from app.services.crypto_manager import crypto_mgr
+        crypto_mgr.write_secure_json(self.tokens_file, tokens)
         logger.info(f"Successfully saved Trakt tokens to {self.tokens_file}")
 
     def is_authenticated(self) -> bool:

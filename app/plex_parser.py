@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import logging
 from typing import Any, Optional
 from pydantic import BaseModel, Field, model_validator
@@ -87,6 +88,8 @@ class ParsedMedia(BaseModel):
     server_type: str = "plex"
     rating_key: Optional[str] = None
     file_path: Optional[str] = None
+    poster_url: Optional[str] = None
+    backdrop_url: Optional[str] = None
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -269,15 +272,17 @@ class ParsedMedia(BaseModel):
                 "progress": round(self.progress, 1),
             }
 
-    def to_trakt_history_payload(self) -> dict[str, Any]:
-        """Convert to Trakt /sync/history payload format."""
+    def to_trakt_history_payload(self, watched_at: Optional[str] = None) -> dict[str, Any]:
+        """Convert to Trakt /sync/history payload format, including watched_at timestamp for rewatch fidelity."""
+        timestamp = watched_at or datetime.now(timezone.utc).isoformat()
         if self.media_type == "episode":
             # If we have direct episode IDs (e.g. IMDb/TMDb/TVDb for the episode)
             if self.ids:
                 return {
                     "episodes": [
                         {
-                            "ids": self.ids
+                            "ids": self.ids,
+                            "watched_at": timestamp,
                         }
                     ]
                 }
@@ -289,7 +294,8 @@ class ParsedMedia(BaseModel):
                         "number": self.season if self.season is not None else 1,
                         "episodes": [
                             {
-                                "number": self.episode if self.episode is not None else 1
+                                "number": self.episode if self.episode is not None else 1,
+                                "watched_at": timestamp,
                             }
                         ]
                     }
@@ -303,6 +309,7 @@ class ParsedMedia(BaseModel):
         else:
             movie_item: dict[str, Any] = {
                 "title": self.title,
+                "watched_at": timestamp,
             }
             if self.year:
                 movie_item["year"] = self.year
@@ -534,6 +541,22 @@ def parse_plex_webhook(
 
     rating_key = str(metadata.get("ratingKey", "")) if metadata.get("ratingKey") is not None else None
 
+    # Ambient Artwork & Poster URL resolution
+    imdb_id = ids.get("imdb")
+    poster_url = None
+    backdrop_url = None
+    thumb = metadata.get("thumb") or metadata.get("grandparentThumb")
+    art = metadata.get("art") or metadata.get("grandparentArt")
+    if thumb and str(thumb).startswith(("http://", "https://")):
+        poster_url = str(thumb)
+    elif imdb_id:
+        poster_url = f"https://images.metahub.space/poster/medium/{imdb_id}/img"
+
+    if art and str(art).startswith(("http://", "https://")):
+        backdrop_url = str(art)
+    elif imdb_id:
+        backdrop_url = f"https://images.metahub.space/background/medium/{imdb_id}/img"
+
     if media_type == "episode":
         grandparent_year = metadata.get("grandparentYear")
         show_year = int(grandparent_year) if grandparent_year else None
@@ -559,6 +582,8 @@ def parse_plex_webhook(
             library_section_title=library_section_title,
             rating_key=rating_key,
             file_path=file_path,
+            poster_url=poster_url,
+            backdrop_url=backdrop_url,
             ids=ids,
             raw_payload=payload,
         )
@@ -581,6 +606,8 @@ def parse_plex_webhook(
             library_section_title=library_section_title,
             rating_key=rating_key,
             file_path=file_path,
+            poster_url=poster_url,
+            backdrop_url=backdrop_url,
             ids=ids,
             raw_payload=payload,
         )
@@ -603,6 +630,8 @@ def parse_plex_webhook(
             library_section_title=library_section_title,
             rating_key=rating_key,
             file_path=file_path,
+            poster_url=poster_url,
+            backdrop_url=backdrop_url,
             ids=ids,
             raw_payload=payload,
         )

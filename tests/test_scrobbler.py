@@ -1,6 +1,7 @@
 import json
+import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -2315,7 +2316,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v2.6.0" in html
+    assert "v3.0.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -5058,11 +5059,11 @@ async def test_arr_bridge_ecosystem_and_status():
 
     # Demo ecosystem
     demo_eco = await arr_bridge.get_ecosystem_status(demo=True)
-    assert demo_eco["healthy_count"] == 5
-    assert demo_eco["total_count"] == 5
+    assert demo_eco["healthy_count"] == 6
+    assert demo_eco["total_count"] == 6
     server_ids = [s["id"] for s in demo_eco["servers"]]
-    # Reordered: Media Servers (Plex, Jellyfin, Emby) -> Acquisition Engines (Sonarr, Radarr)
-    assert server_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+    # Reordered: Media Servers (Plex, Jellyfin, Emby) -> Requests (Overseerr) -> Acquisition Engines (Sonarr, Radarr)
+    assert server_ids == ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
 
     # Live ecosystem
     live_eco = await arr_bridge.get_ecosystem_status(demo=False)
@@ -5088,7 +5089,7 @@ async def test_ecosystem_reordering_and_disabled_sorting():
     # 1. Verify demo mode canonical order
     demo_res = await arr_bridge.get_ecosystem_status(demo=True)
     demo_ids = [s["id"] for s in demo_res["servers"]]
-    assert demo_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+    assert demo_ids == ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
 
     # 2. Verify live mode ordering with toggled settings
     orig_jellyfin = settings_mgr.is_server_enabled("jellyfin")
@@ -5118,8 +5119,8 @@ async def test_ecosystem_reordering_and_disabled_sorting():
         full_ids = [s["id"] for s in servers]
         assert full_ids == active_ids + disabled_ids
 
-        # Within disabled items, ordering should remain Servers -> Arr
-        service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+        # Within disabled items, ordering should remain Servers -> Requests -> Arr
+        service_order = ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
         disabled_indices = [service_order.index(sid) for sid in disabled_ids if sid in service_order]
         assert disabled_indices == sorted(disabled_indices)
     finally:
@@ -5146,9 +5147,9 @@ def test_arr_api_endpoints_and_auth():
 
     res_eco_demo = client.get("/api/ecosystem?demo=true")
     assert res_eco_demo.status_code == 200
-    assert res_eco_demo.json()["healthy_count"] == 5
+    assert res_eco_demo.json()["healthy_count"] == 6
     demo_api_ids = [s["id"] for s in res_eco_demo.json()["servers"]]
-    assert demo_api_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+    assert demo_api_ids == ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
 
     # 3. /api/arr/sync
     # Demo execution allowed without auth
@@ -9153,3 +9154,2328 @@ def test_background_sync_endpoints():
     res_real = client.get("/api/sync/background/status")
     assert res_real.status_code == 200
     assert "is_running" in res_real.json()
+
+
+def test_multi_theme_palette_engine_and_accents():
+    """Verify that all 8 theme palettes, 9 accent highlights, modals, and keyboard shortcuts render on the dashboard."""
+    from app.main import app
+
+    client = TestClient(app)
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.text
+
+    # 1. Zero-FOUC inline head script
+    assert "omniscrobble_theme" in html
+    assert "omniscrobble_accent" in html
+    assert "document.documentElement.classList.add('theme-' + theme)" in html
+    assert "document.documentElement.classList.add('accent-' + accent)" in html
+
+    # 2. Curated Theme Palettes (8 themes)
+    for theme in [
+        "theme-slate",
+        "theme-oled",
+        "theme-nord",
+        "theme-catppuccin",
+        "theme-tokyonight",
+        "theme-dracula",
+        "theme-emerald",
+        "theme-rosepine",
+    ]:
+        assert f"html.{theme}" in html
+
+    # 3. Accent Highlight Classes (9 accents)
+    for accent in [
+        "accent-sky",
+        "accent-amber",
+        "accent-trakt",
+        "accent-plex",
+        "accent-jellyfin",
+        "accent-emerald",
+        "accent-cyan",
+        "accent-rose",
+        "accent-mauve",
+    ]:
+        assert f"html.{accent}" in html
+
+    # 4. Header theme trigger button
+    assert 'id="theme-toggle-btn"' in html
+    assert "openThemeModal()" in html
+    assert "theme-toggle" in html
+    assert 'id="theme-btn-label"' in html
+
+    # 5. Dedicated Modals: #theme-modal and #shortcuts-modal
+    assert 'id="theme-modal"' in html
+    assert 'id="theme-modal-palette-grid"' in html
+    assert 'id="theme-modal-accent-grid"' in html
+    assert 'id="shortcuts-modal"' in html
+    assert "Cycle Theme Palette" in html
+    assert "Refresh Activity &amp; Queue" in html
+
+    # 6. Settings Hub Appearance Tab
+    assert 'id="settings-tab-btn-appearance"' in html
+    assert "switchSettingsTab('appearance')" in html
+    assert 'id="settings-panel-appearance"' in html
+    assert 'id="settings-theme-grid"' in html
+    assert 'id="settings-accent-grid"' in html
+
+    # 7. JavaScript theme engine functions
+    assert "function setTheme(themeId)" in html
+    assert "function setAccent(accentId)" in html
+    assert "function cycleTheme()" in html
+    assert "function toggleTheme()" in html
+    assert "function updateThemeUI()" in html
+    assert "function renderThemePickers()" in html
+    assert "openThemeModal()" in html
+    assert "closeThemeModal()" in html
+    assert "openShortcutsModal()" in html
+    assert "closeShortcutsModal()" in html
+
+
+def test_ambient_visuals_compact_mode_and_card_visibility():
+    """Verify ambient stream poster & backdrop blur, compact density mode, and card visibility controls."""
+    from app.plex_parser import parse_plex_webhook
+    from app.jellyfin_parser import parse_jellyfin_webhook
+    from app.emby_parser import parse_emby_webhook
+    from app.services.dashboard_renderer import DashboardRenderer
+
+    # 1. Artwork extraction in Media Server Parsers
+    # Plex with direct thumb/art
+    plex_payload = {
+        "event": "media.play",
+        "Account": {"title": "selits"},
+        "Server": {"title": "PlexServer"},
+        "Player": {"title": "Living Room TV"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Inception",
+            "year": 2010,
+            "duration": 8880000,
+            "viewOffset": 4440000,
+            "Guid": [{"id": "imdb://tt1375666"}],
+            "thumb": "https://custom-art.com/poster.jpg",
+            "art": "https://custom-art.com/fanart.jpg",
+        },
+    }
+    parsed_plex = parse_plex_webhook(plex_payload)
+    assert parsed_plex is not None
+    assert parsed_plex.poster_url == "https://custom-art.com/poster.jpg"
+    assert parsed_plex.backdrop_url == "https://custom-art.com/fanart.jpg"
+
+    # Plex fallback to Metahub CDN using IMDb ID
+    plex_meta = {
+        "event": "media.play",
+        "Account": {"title": "selits"},
+        "Server": {"title": "PlexServer"},
+        "Player": {"title": "Living Room TV"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Inception",
+            "year": 2010,
+            "duration": 8880000,
+            "viewOffset": 4440000,
+            "Guid": [{"id": "imdb://tt1375666"}],
+        },
+    }
+    parsed_meta = parse_plex_webhook(plex_meta)
+    assert parsed_meta is not None
+    assert parsed_meta.poster_url == "https://images.metahub.space/poster/medium/tt1375666/img"
+    assert parsed_meta.backdrop_url == "https://images.metahub.space/background/medium/tt1375666/img"
+
+    # Jellyfin artwork extraction & Metahub fallback
+    jf_payload = {
+        "NotificationType": "PlaybackStart",
+        "NotificationUsername": "selits",
+        "ItemType": "Movie",
+        "Name": "Dune",
+        "Year": 2021,
+        "RunTimeTicks": 1000000000,
+        "PlaybackPositionTicks": 500000000,
+        "ProviderIds": {"Imdb": "tt1160419"},
+    }
+    parsed_jf = parse_jellyfin_webhook(jf_payload)
+    assert parsed_jf is not None
+    assert parsed_jf.poster_url == "https://images.metahub.space/poster/medium/tt1160419/img"
+    assert parsed_jf.backdrop_url == "https://images.metahub.space/background/medium/tt1160419/img"
+
+    # Emby artwork extraction & Metahub fallback
+    emby_payload = {
+        "Event": "playback.start",
+        "User": {"Name": "selits"},
+        "Item": {
+            "Type": "Movie",
+            "Name": "Interstellar",
+            "ProductionYear": 2014,
+            "RunTimeTicks": 1000000000,
+            "ProviderIds": {"Imdb": "tt0816692"},
+        },
+        "PlaybackInfo": {"PositionTicks": 500000000},
+    }
+    parsed_emby = parse_emby_webhook(emby_payload)
+    assert parsed_emby is not None
+    assert parsed_emby.poster_url == "https://images.metahub.space/poster/medium/tt0816692/img"
+    assert parsed_emby.backdrop_url == "https://images.metahub.space/background/medium/tt0816692/img"
+
+    # 2. Active Playback Banner with Ambient Backdrop & Poster Thumbnail
+    active_session = {
+        "title": "Severance - S01E01 - Good News About Hell",
+        "username": "selits",
+        "player": "Shield TV",
+        "device": "Android TV",
+        "progress": 42.5,
+        "state": "playing",
+        "trakt_url": "https://trakt.tv/shows/severance",
+        "remaining_str": "32m left",
+        "poster_url": "https://images.metahub.space/poster/medium/tt11280740/img",
+        "backdrop_url": "https://images.metahub.space/background/medium/tt11280740/img",
+    }
+    card_html = DashboardRenderer.render_active_playback_card([active_session], None, is_admin=True)
+    assert 'id="active-playback-card"' in card_html
+    assert 'id="stream-ambient-backdrop"' in card_html
+    assert "https://images.metahub.space/background/medium/tt11280740/img" in card_html
+    assert 'id="stream-poster-container"' in card_html
+    assert 'id="stream-poster-img"' in card_html
+    assert "https://images.metahub.space/poster/medium/tt11280740/img" in card_html
+    assert 'id="stream-poster-fallback"' in card_html
+
+    # Fallback when poster/backdrop is empty
+    empty_session = {
+        "title": "Unknown Home Video",
+        "username": "selits",
+        "player": "Web",
+        "device": "Chrome",
+        "progress": 10.0,
+        "state": "playing",
+        "trakt_url": "https://trakt.tv",
+    }
+    fallback_html = DashboardRenderer.render_active_playback_card([empty_session], None, is_admin=True)
+    assert 'id="active-playback-card"' in fallback_html
+    assert 'id="stream-poster-fallback"' in fallback_html
+    assert "radial-gradient" in fallback_html
+
+    # 3. Client Dashboard HTML & UI Components
+    client = TestClient(app)
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.text
+
+    # Ambient Backdrop elements in template
+    assert 'id="stream-ambient-backdrop"' in html
+    assert 'id="stream-poster-img"' in html
+    assert 'id="stream-poster-fallback"' in html
+
+    # Compact Density Mode CSS and controls
+    assert "html.density-compact" in html
+    assert 'id="density-btn-comfortable"' in html
+    assert 'id="density-btn-compact"' in html
+    assert "setDensity('comfortable')" in html
+    assert "setDensity('compact')" in html
+
+    # Unique Dashboard Card IDs
+    for card_id in [
+        "active-playback-card",
+        "card-server-config",
+        "card-ecosystem",
+        "card-multi-tracker",
+        "card-cowatch",
+        "card-reconciliation",
+        "card-arr-bridge",
+        "card-backup",
+        "card-activity",
+    ]:
+        assert f'id="{card_id}"' in html
+
+    # Dashboard Card Visibility controls in Settings Hub
+    assert 'id="settings-card-visibility-grid"' in html
+    assert "resetCardVisibility()" in html
+
+    # JavaScript Density & Card Visibility Functions
+    assert "function getDensity()" in html
+    assert "function setDensity(mode)" in html
+    assert "function updateDensityUI()" in html
+    assert "const DASHBOARD_CARDS =" in html
+    assert "function getHiddenCards()" in html
+    assert "function setCardVisibility(cardId, isVisible)" in html
+    assert "function resetCardVisibility()" in html
+    assert "function applyCardVisibility()" in html
+    assert "function renderCardVisibilityPickers()" in html
+    assert "function initAppearance()" in html
+
+
+def test_admin_unlock_rate_limiting_and_sanitized_logs():
+    """Verify admin unlock rate limiter logs sanitized warnings and blocks repeated attacks."""
+    from app.main import _failed_unlock_attempts
+    _failed_unlock_attempts.clear()
+
+    try:
+        client = TestClient(app)
+        with patch.object(Config, "WEBHOOK_SECRET", "super_secret_webhook_pass"):
+            with patch("app.main.logger.warning") as mock_warn:
+                for i in range(5):
+                    res = client.post("/api/admin/unlock", json={"token": f"bad_token_{i}"})
+                    assert res.status_code == 401
+                assert mock_warn.call_count >= 5
+
+                res_429 = client.post("/api/admin/unlock", json={"token": "bad_token_6"})
+                assert res_429.status_code == 429
+                assert "Retry-After" in res_429.headers
+                assert any("Admin unlock rate limit exceeded" in str(c) for c in mock_warn.call_args_list)
+
+            # Successful unlock clears rate limiter for IP
+            _failed_unlock_attempts["testclient"] = []
+            res_ok = client.post("/api/admin/unlock", json={"token": "super_secret_webhook_pass"})
+            assert res_ok.status_code == 200
+            assert "csrf_token" in res_ok.cookies
+            assert "admin_token" in res_ok.cookies
+    finally:
+        _failed_unlock_attempts.clear()
+
+
+def test_csrf_double_submit_protection():
+    """Verify double-submit CSRF cookie protection for state-mutating admin requests."""
+    from app.main import _failed_unlock_attempts
+    _failed_unlock_attempts.clear()
+    client = TestClient(app)
+    try:
+        with patch.object(Config, "WEBHOOK_SECRET", "my_secure_secret"):
+            # 1. Unlock admin to obtain cookies
+            unlock_res = client.post("/api/admin/unlock", json={"token": "my_secure_secret"})
+            assert unlock_res.status_code == 200
+            admin_cookie = unlock_res.cookies.get("admin_token")
+            csrf_cookie = unlock_res.cookies.get("csrf_token")
+            assert admin_cookie is not None
+            assert csrf_cookie is not None
+
+            # 2. Mutating request (POST /api/settings) with admin & csrf cookies but NO x-csrf-token header -> 401
+            client.cookies.clear()
+            client.cookies.set("admin_token", admin_cookie)
+            client.cookies.set("csrf_token", csrf_cookie)
+            bad_req = client.post("/api/settings", json={"plex_enabled": True})
+            assert bad_req.status_code == 401
+
+            # 3. Mutating request with admin cookie and mismatched x-csrf-token header -> 401
+            client.cookies.set("csrf_token", csrf_cookie)
+            bad_csrf = client.post(
+                "/api/settings",
+                json={"plex_enabled": True},
+                headers={"x-csrf-token": "wrong_csrf_token"},
+            )
+            assert bad_csrf.status_code == 401
+
+            # 4. Mutating request with admin cookie and valid matching x-csrf-token header -> 200
+            good_req = client.post(
+                "/api/settings",
+                json={"plex_enabled": True},
+                headers={"x-csrf-token": csrf_cookie},
+            )
+            assert good_req.status_code == 200
+
+            # 5. Non-mutating request (GET /api/logs) with admin cookie does NOT require CSRF header
+            get_logs = client.get("/api/logs")
+            assert get_logs.status_code == 200
+
+            # 6. Webhook / direct API key auth via header or query param does NOT require CSRF header
+            client.cookies.clear()
+            token_req = client.post("/api/settings?token=my_secure_secret", json={"plex_enabled": True})
+            assert token_req.status_code == 200
+
+            # 7. Visiting GET / with admin_token but missing csrf_token issues csrf_token cookie
+            client.cookies.set("admin_token", admin_cookie)
+            visit_res = client.get("/")
+            assert visit_res.status_code == 200
+            assert "csrf_token" in visit_res.cookies
+
+            # 8. Admin lock deletes both cookies
+            client.cookies.set("csrf_token", csrf_cookie)
+            lock_res = client.post(
+                "/api/admin/lock",
+                headers={"x-csrf-token": csrf_cookie},
+            )
+            assert lock_res.status_code == 200
+            set_cookie_header = lock_res.headers.get("set-cookie", "")
+            assert "admin_token" in set_cookie_header
+            assert "csrf_token" in set_cookie_header
+    finally:
+        _failed_unlock_attempts.clear()
+
+
+def test_crypto_manager_at_rest_encryption(tmp_path):
+    """Verify AES-256-GCM symmetric encryption, PBKDF2 derivation, and secure JSON roundtripping."""
+    from app.services.crypto_manager import CryptoManager, derive_key, encrypt_payload, decrypt_payload, is_encrypted_payload
+
+    passphrase = "test_super_encryption_passphrase_123"
+    payload = {"client_id": "trakt_id_abc", "tokens": {"access": "xyz", "expires": 86400}}
+
+    # 1. Direct payload encryption / decryption
+    envelope = encrypt_payload(payload, passphrase)
+    assert is_encrypted_payload(envelope) is True
+    assert envelope["encrypted"] is True
+    assert envelope["algo"] == "aes-256-gcm"
+    assert "salt" in envelope
+    assert "nonce" in envelope
+    assert "ciphertext" in envelope
+
+    decrypted = decrypt_payload(envelope, passphrase)
+    assert decrypted == payload
+
+    # Decrypt with wrong passphrase raises ValueError
+    with pytest.raises(ValueError):
+        decrypt_payload(envelope, "wrong_passphrase")
+
+    # 2. CryptoManager file I/O with CONFIG_ENCRYPTION_KEY
+    cm = CryptoManager(default_key=passphrase)
+    test_file = tmp_path / "secure_tokens.json"
+
+    cm.write_secure_json(test_file, payload)
+    raw_disk_data = json.loads(test_file.read_text(encoding="utf-8"))
+    assert is_encrypted_payload(raw_disk_data) is True
+
+    loaded = cm.read_secure_json(test_file)
+    assert loaded == payload
+
+    # 3. Backward compatibility: reading unencrypted plain JSON file when encryption key is enabled
+    plain_file = tmp_path / "plain_tokens.json"
+    plain_data = {"plain_key": "plain_value"}
+    plain_file.write_text(json.dumps(plain_data), encoding="utf-8")
+
+    loaded_plain = cm.read_secure_json(plain_file)
+    assert loaded_plain == plain_data
+
+    # 4. Reading encrypted file without key raises ValueError
+    cm_no_key = CryptoManager(default_key="")
+    with patch.object(Config, "CONFIG_ENCRYPTION_KEY", ""):
+        with pytest.raises(ValueError) as exc:
+            cm_no_key.read_secure_json(test_file)
+        assert "encrypted at rest" in str(exc.value)
+
+
+def test_encrypted_backup_and_restore_workflow(tmp_path):
+    """Verify passphrase-protected encrypted backup archive generation and restore."""
+    client = TestClient(app)
+    passphrase = "archive_super_secret_123"
+
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # 1. Create encrypted backup via passphrase query param
+        res = client.get(f"/api/backup?token=admin_secret&passphrase={passphrase}")
+        assert res.status_code == 200
+        assert res.headers.get("content-type") == "application/json"
+        assert "omniscrobble-backup-encrypted-" in res.headers.get("content-disposition", "")
+
+        backup_envelope = res.json()
+        from app.services.crypto_manager import is_encrypted_payload
+        assert is_encrypted_payload(backup_envelope) is True
+
+        # 2. Restore with correct passphrase
+        import io
+        import zipfile
+        mock_zip = io.BytesIO()
+        with zipfile.ZipFile(mock_zip, "w") as zf:
+            zf.writestr("data/cowatch_devices.json", json.dumps(["Test Encrypted Device"]))
+        mock_zip.seek(0)
+
+        from app.services.crypto_manager import encrypt_bytes
+        enc_dict = encrypt_bytes(mock_zip.getvalue(), passphrase)
+        enc_payload_bytes = json.dumps(enc_dict).encode("utf-8")
+
+        files = {"backup_file": ("backup.enc.json", enc_payload_bytes, "application/json")}
+        data = {"passphrase": passphrase}
+        restore_res = client.post("/api/restore?token=admin_secret", files=files, data=data)
+        assert restore_res.status_code == 200
+        assert restore_res.json().get("status") == "success"
+        assert "data/cowatch_devices.json" in restore_res.json().get("restored", [])
+
+        # 3. Restore with incorrect passphrase returns 400
+        files_bad = {"backup_file": ("backup.enc.json", enc_payload_bytes, "application/json")}
+        data_bad = {"passphrase": "wrong_archive_passphrase"}
+        restore_bad = client.post("/api/restore?token=admin_secret", files=files_bad, data=data_bad)
+        assert restore_bad.status_code == 400
+        assert "Decryption failed" in restore_bad.json().get("detail", "")
+
+        # 4. Standard unencrypted backup when no passphrase is given
+        with patch.object(Config, "CONFIG_ENCRYPTION_KEY", ""):
+            res_plain = client.get("/api/backup?token=admin_secret")
+            assert res_plain.status_code == 200
+            assert res_plain.headers.get("content-type") == "application/zip"
+            assert res_plain.content.startswith(b"PK")
+
+    # Cleanup restored test devices
+    if Config.CO_WATCH_DEVICES_DATA_FILE.exists():
+        Config.CO_WATCH_DEVICES_DATA_FILE.unlink()
+    cowatch_mgr._devices.clear()
+
+
+@pytest.mark.asyncio
+async def test_token_health_monitor_and_alerts():
+    """Verify TokenHealthMonitor proactive refresh, alert dispatching, and /api/health/tokens endpoint."""
+    from app.services.token_health_monitor import TokenHealthMonitor, token_health_mgr
+    import time
+
+    monitor = TokenHealthMonitor()
+
+    # 1. Healthy Trakt token (>24 hours)
+    mock_trakt = MagicMock()
+    mock_trakt.client_id = "test_id"
+    mock_trakt.is_authenticated.return_value = True
+    now = time.time()
+    mock_trakt.load_tokens.return_value = {
+        "access_token": "valid_token",
+        "created_at": now - 3600,
+        "expires_in": 86400 * 30,
+    }
+    trakt_health = await monitor.evaluate_trakt(mock_trakt)
+    assert trakt_health["status"] == "healthy"
+    assert trakt_health["needs_reauth"] is False
+
+    # 2. Trakt token near expiry (<= 24 hours), proactive refresh succeeds
+    mock_trakt.load_tokens.return_value = {
+        "access_token": "valid_token",
+        "created_at": now - 3600,
+        "expires_in": 7200,
+    }
+    mock_trakt.refresh_token = AsyncMock(return_value={"access_token": "refreshed_access_token"})
+    trakt_refreshed = await monitor.evaluate_trakt(mock_trakt)
+    assert trakt_refreshed["status"] == "healthy"
+    assert trakt_refreshed["needs_reauth"] is False
+    mock_trakt.refresh_token.assert_awaited_once()
+
+    # 3. Trakt token near expiry, proactive refresh fails -> near_expiry & needs_reauth
+    mock_trakt.refresh_token = AsyncMock(side_effect=Exception("Trakt API down"))
+    trakt_failing = await monitor.evaluate_trakt(mock_trakt)
+    assert trakt_failing["status"] == "near_expiry"
+    assert trakt_failing["needs_reauth"] is True
+
+    # 4. Full check cycle dispatches notification via notifier
+    with patch("app.services.notifier.notifier.send_token_expiry_alert", new_callable=AsyncMock) as mock_alert:
+        results = await monitor.run_check_cycle(trakt_client=mock_trakt)
+        assert "trakt" in results
+        assert results["trakt"]["needs_reauth"] is True
+        mock_alert.assert_awaited_once()
+
+    # 5. GET /api/health/tokens endpoint
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # Unauthenticated returns 401
+        res_unauth = client.get("/api/health/tokens")
+        assert res_unauth.status_code == 401
+
+        # Authenticated returns structured health dictionary
+        res_auth = client.get("/api/health/tokens?token=admin_secret")
+        assert res_auth.status_code == 200
+        data = res_auth.json()
+        assert "trakt" in data
+        assert "service" in data["trakt"]
+        assert "mal" in data
+
+
+# ==============================================================================
+# Phase 4 Tests: Scrobbler Fidelity, Heartbeat, Mirroring & Standalone Bridge
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_rewatch_and_play_count_fidelity(tmp_path):
+    """Verify explicit watched_at timestamps for Trakt/Simkl and automated rewatch diary detection on Letterboxd."""
+    from app.clients.letterboxd_client import LetterboxdClient
+    from app.clients.simkl_client import SimklClient
+    from app.plex_parser import ParsedMedia
+
+    # 1. Trakt history payload has explicit watched_at
+    fixed_ts = "2026-10-04T12:00:00+00:00"
+    movie = ParsedMedia(
+        event="media.scrobble",
+        media_type="movie",
+        title="Oppenheimer",
+        year=2023,
+        username="testuser",
+        ids={"imdb": "tt15398776", "tmdb": "872585"},
+    )
+    payload = movie.to_trakt_history_payload(watched_at=fixed_ts)
+    assert "movies" in payload
+    assert payload["movies"][0]["title"] == "Oppenheimer"
+    assert payload["movies"][0]["watched_at"] == fixed_ts
+
+    episode = ParsedMedia(
+        event="media.scrobble",
+        media_type="episode",
+        title="Ozymandias",
+        show_title="Breaking Bad",
+        year=2013,
+        season=5,
+        episode=14,
+        username="testuser",
+    )
+    ep_payload = episode.to_trakt_history_payload(watched_at=fixed_ts)
+    assert "shows" in ep_payload
+    assert ep_payload["shows"][0]["seasons"][0]["episodes"][0]["watched_at"] == fixed_ts
+
+    # 2. Simkl history sync attaches watched_at
+    mock_config = MagicMock()
+    mock_config.DATA_DIR = tmp_path
+    mock_config.SIMKL_CLIENT_ID = "simkl_id"
+    mock_config.SIMKL_CLIENT_SECRET = "simkl_secret"
+    simkl = SimklClient(config=mock_config)
+    simkl.access_token = "valid_simkl_token"
+
+    with patch.object(simkl, "_post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"added": {"movies": 1}}
+        res = await simkl.sync_history(movie, watched_at=fixed_ts)
+        assert res["added"]["movies"] == 1
+        sent_payload = mock_post.call_args[0][1]
+        assert "movies" in sent_payload
+        assert sent_payload["movies"][0]["watched_at"] == fixed_ts
+
+    # 3. Letterboxd rewatch detection
+    diary_file = tmp_path / "letterboxd_diary.json"
+    lb_client = LetterboxdClient(config=mock_config, data_file=diary_file)
+
+    # First watch of The Matrix
+    res1 = await lb_client.log_movie_entry(
+        title="The Matrix",
+        year=1999,
+        rating=9.0,
+        watched_date="2026-01-01",
+        rewatch=False,
+    )
+    assert res1["status"] == "logged"
+    assert res1["entry"]["Rewatch"] == "No"
+
+    # Rewatch on a subsequent date -> automated rewatch detection
+    res2 = await lb_client.log_movie_entry(
+        title="The Matrix",
+        year=1999,
+        rating=10.0,
+        watched_date="2026-10-04",
+        rewatch=False,  # Client does not pass rewatch flag; system auto-detects
+    )
+    assert res2["status"] == "logged"
+    assert res2["entry"]["Rewatch"] == "Yes"
+
+    # Both entries are preserved in diary
+    entries = lb_client.get_diary_entries()
+    matrix_entries = [e for e in entries if e.get("title") == "The Matrix"]
+    assert len(matrix_entries) == 2
+    assert matrix_entries[0]["Rewatch"] == "No"
+    assert matrix_entries[1]["Rewatch"] == "Yes"
+
+
+def test_playback_manager_heartbeat_tracking():
+    """Verify PlaybackManager heartbeat candidate discovery and recording."""
+    from app.plex_parser import ParsedMedia
+    from app.services.playback_manager import PlaybackManager
+
+    pm = PlaybackManager(stale_timeout_seconds=3600)
+    media = ParsedMedia(
+        event="media.play",
+        media_type="movie",
+        title="Interstellar",
+        year=2014,
+        progress=25.0,
+        duration_ms=10140000,
+        view_offset_ms=2535000,
+        username="alice",
+        player="Home Theater",
+    )
+
+    session = pm.update_playback(media, state="playing")
+    key = session["key"]
+
+    # Newly updated session should not be eligible for heartbeat (interval=600s)
+    candidates = pm.get_heartbeat_candidates(interval_seconds=600)
+    assert len(candidates) == 0
+
+    # Simulate elapsed time 15 minutes (900 seconds) ago
+    pm.sessions[key]["last_heartbeat_at"] = time.time() - 900
+    candidates = pm.get_heartbeat_candidates(interval_seconds=600)
+    assert len(candidates) == 1
+    assert candidates[0]["key"] == key
+
+    # Record heartbeat updates timestamp and progress
+    pm.record_heartbeat(key, progress=35.0)
+    assert pm.sessions[key]["progress"] == 35.0
+    # Candidate should no longer be eligible immediately
+    assert len(pm.get_heartbeat_candidates(interval_seconds=600)) == 0
+
+
+@pytest.mark.asyncio
+async def test_scrobble_heartbeat_worker_dispatch(tmp_path):
+    """Verify background scrobble heartbeat loop sends keep-alive to Trakt and Simkl."""
+    from app.main import scrobble_heartbeat_worker_loop, trakt, simkl, user_mgr
+    from app.plex_parser import ParsedMedia
+    from app.services.playback_manager import playback_mgr
+    from app.services.settings_manager import settings_mgr
+
+    playback_mgr.clear()
+    media = ParsedMedia(
+        event="media.play",
+        media_type="movie",
+        title="Dune: Part Two",
+        year=2024,
+        progress=40.0,
+        duration_ms=9960000,
+        view_offset_ms=3984000,
+        username="bob",
+        player="Apple TV",
+    )
+
+    session = playback_mgr.update_playback(media, state="playing")
+    key = session["key"]
+    playback_mgr.sessions[key]["last_heartbeat_at"] = time.time() - 900
+
+    with patch.object(trakt, "is_authenticated", return_value=True), \
+         patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_trakt_scrobble, \
+         patch.object(simkl, "is_enabled", return_value=True), \
+         patch.object(simkl, "is_authenticated", return_value=True), \
+         patch.object(simkl, "scrobble_start", new_callable=AsyncMock) as mock_simkl_scrobble, \
+         patch.object(settings_mgr, "is_tracker_enabled", return_value=True):
+
+        # Run one heartbeat cycle manually
+        candidates = playback_mgr.get_heartbeat_candidates(interval_seconds=600)
+        assert len(candidates) == 1
+
+        cand = candidates[0]
+        p_media = cand.get("parsed_media")
+        assert p_media is not None
+
+        # Verify scrobble_start dispatches to Trakt and Simkl
+        payload = p_media.to_trakt_scrobble_payload()
+        payload["progress"] = 45.0
+        await trakt.scrobble_start(payload)
+        await simkl.scrobble_start(p_media, progress=45.0)
+
+        mock_trakt_scrobble.assert_awaited_once()
+        mock_simkl_scrobble.assert_awaited_once()
+
+    playback_mgr.clear()
+
+
+@pytest.mark.asyncio
+async def test_multi_server_mirroring_and_loop_prevention(tmp_path):
+    """Verify multi-server watched status mirroring and loop suppression."""
+    from app.clients.plex_api_client import PlexApiClient
+    from app.clients.jellyfin_api_client import JellyfinApiClient
+    from app.clients.emby_api_client import EmbyApiClient
+    from app.plex_parser import ParsedMedia
+    from app.services.loop_prevention import LoopPreventionManager
+    from app.services.reverse_sync_manager import ReverseSyncManager
+    from app.services.settings_manager import SettingsManager
+
+    sm_file = tmp_path / "settings_mirror.json"
+    sm = SettingsManager(settings_file=sm_file)
+    sm.set_server_enabled("plex", True)
+    sm.set_server_enabled("jellyfin", True)
+    lp = LoopPreventionManager()
+
+    mock_plex = MagicMock(spec=PlexApiClient)
+    mock_plex.is_configured.return_value = True
+    mock_plex.find_item = AsyncMock(return_value={"rating_key": "12345", "title": "Inception"})
+    mock_plex.mark_as_watched = AsyncMock(return_value=True)
+
+    mock_jf = MagicMock(spec=JellyfinApiClient)
+    mock_jf.is_configured.return_value = True
+    mock_jf.find_item = AsyncMock(return_value={"rating_key": "jf-9999", "title": "Inception"})
+    mock_jf.mark_as_watched = AsyncMock(return_value=True)
+
+    mock_emby = MagicMock(spec=EmbyApiClient)
+    mock_emby.is_configured.return_value = False
+
+    rsm = ReverseSyncManager(
+        plex_client=mock_plex,
+        jellyfin_client=mock_jf,
+        emby_client=mock_emby,
+        loop_prevention_mgr=lp,
+    )
+
+    media = ParsedMedia(
+        event="media.scrobble",
+        media_type="movie",
+        title="Inception",
+        year=2010,
+        progress=100.0,
+        rating_key="plex-item-1",
+        username="testuser",
+        ids={"imdb": "tt1375666", "tmdb": "27205"},
+    )
+
+    # 1. Disabled mirroring -> skipped
+    sm.set_multi_server_mirroring(False)
+    with patch("app.services.reverse_sync_manager.settings_mgr", sm):
+        res_disabled = await rsm.mirror_watched_status(media, source_server="plex")
+        assert res_disabled["status"] == "skipped"
+
+    # 2. Enabled mirroring -> mirrors from Plex to Jellyfin
+    sm.set_multi_server_mirroring(True)
+    with patch("app.services.reverse_sync_manager.settings_mgr", sm):
+        res_enabled = await rsm.mirror_watched_status(media, source_server="plex")
+        assert res_enabled["status"] == "completed"
+        assert len(res_enabled["results"]["mirrored"]) == 1
+        assert res_enabled["results"]["mirrored"][0]["server"] == "jellyfin"
+        assert res_enabled["results"]["mirrored"][0]["rating_key"] == "jf-9999"
+
+        # Verify loop prevention suppressed echo keys
+        assert lp.is_ignored("jf-9999") is True
+        assert lp.is_ignored("tt1375666") is True
+        assert lp.is_ignored("27205") is True
+
+        mock_jf.find_item.assert_awaited_once()
+        mock_jf.mark_as_watched.assert_awaited_once_with("jf-9999")
+        # Plex should NOT be mirrored since it is the source server
+        mock_plex.mark_as_watched.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_item_plex_and_mediabrowser():
+    """Verify find_item API searches across Plex and Jellyfin/Emby clients."""
+    from app.clients.plex_api_client import PlexApiClient
+    from app.clients.mediabrowser_api_client import BaseMediaBrowserClient
+    from app.plex_parser import ParsedMedia
+    import httpx
+
+    media_movie = ParsedMedia(
+        event="media.scrobble",
+        media_type="movie",
+        title="The Dark Knight",
+        year=2008,
+        username="testuser",
+        ids={"imdb": "tt0468569"},
+    )
+
+    # 1. Plex find_item
+    plex_client = PlexApiClient(base_url="http://mock-plex:32400", token="mock-token")
+    mock_plex_resp = MagicMock(spec=httpx.Response)
+    mock_plex_resp.status_code = 200
+    mock_plex_resp.json.return_value = {
+        "MediaContainer": {
+            "Metadata": [
+                {
+                    "ratingKey": "8888",
+                    "title": "The Dark Knight",
+                    "year": 2008,
+                    "Guid": [{"id": "imdb://tt0468569"}],
+                }
+            ]
+        }
+    }
+    with patch.object(plex_client, "get_client") as mock_http:
+        mock_client_inst = AsyncMock()
+        mock_client_inst.get = AsyncMock(return_value=mock_plex_resp)
+        mock_http.return_value = mock_client_inst
+
+        found = await plex_client.find_item(media_movie)
+        assert found is not None
+        assert found["rating_key"] == "8888"
+        assert found["title"] == "The Dark Knight"
+
+    # 2. Jellyfin find_item
+    jf_client = BaseMediaBrowserClient(base_url="http://mock-jf:8096", token="mock-token", user_id="user1")
+    mock_jf_resp = MagicMock(spec=httpx.Response)
+    mock_jf_resp.status_code = 200
+    mock_jf_resp.json.return_value = {
+        "Items": [
+            {
+                "Id": "jf-item-777",
+                "Name": "The Dark Knight",
+                "ProductionYear": 2008,
+                "ProviderIds": {"Imdb": "tt0468569"},
+            }
+        ]
+    }
+    with patch.object(jf_client, "get_client") as mock_http:
+        mock_client_inst = AsyncMock()
+        mock_client_inst.get = AsyncMock(return_value=mock_jf_resp)
+        mock_http.return_value = mock_client_inst
+
+        found_jf = await jf_client.find_item(media_movie)
+        assert found_jf is not None
+        assert found_jf["rating_key"] == "jf-item-777"
+        assert found_jf["title"] == "The Dark Knight"
+
+
+def test_standalone_scrobble_rest_bridge():
+    """Verify Standalone Player Direct Webhook / REST Bridge (POST /api/scrobble)."""
+    from app.main import app, trakt
+    client = TestClient(app)
+
+    # 1. Info endpoint (GET /api/scrobble)
+    res_info = client.get("/api/scrobble")
+    assert res_info.status_code == 200
+    assert res_info.json()["service"] == "Omniscrobble Standalone Player REST Bridge"
+    assert "payload_schema" in res_info.json()
+
+    # 2. POST /api/scrobble with webhook secret protection
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret_token"):
+        # Without token -> 401
+        res_unauth = client.post(
+            "/api/scrobble",
+            json={"title": "Spirited Away", "media_type": "movie", "action": "play"},
+        )
+        assert res_unauth.status_code == 401
+
+        # With query parameter token -> authenticated
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
+            mock_start.return_value = {"action": "start"}
+
+            res_play = client.post(
+                "/api/scrobble?token=super_secret_token",
+                json={
+                    "title": "Spirited Away",
+                    "year": 2001,
+                    "progress": 5.0,
+                    "media_type": "movie",
+                    "action": "play",
+                    "player": "Infuse",
+                    "ids": {"imdb": "tt0245429", "tmdb": "129"},
+                },
+            )
+            assert res_play.status_code == 200
+            assert res_play.json()["action"] == "scrobble_start"
+            mock_start.assert_awaited_once()
+
+        # With header x-webhook-secret and scrobble completion action
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+             patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_hist:
+            mock_stop.return_value = {"action": "stop"}
+            mock_hist.return_value = {"added": {"movies": 1}}
+
+            res_scrobble = client.post(
+                "/api/scrobble",
+                headers={"x-webhook-secret": "super_secret_token"},
+                json={
+                    "title": "Spirited Away",
+                    "year": 2001,
+                    "progress": 100.0,
+                    "media_type": "movie",
+                    "action": "scrobble",
+                    "player": "Kodi",
+                    "ids": {"imdb": "tt0245429"},
+                },
+            )
+            assert res_scrobble.status_code == 200
+            assert res_scrobble.json()["action"] == "mark_watched"
+            mock_stop.assert_awaited_once()
+            mock_hist.assert_awaited_once()
+            # Verify explicit watched_at in history payload
+            hist_call_arg = mock_hist.call_args[0][0]
+            assert "movies" in hist_call_arg
+            assert "watched_at" in hist_call_arg["movies"][0]
+
+        # Episode scrobble with show and season/episode numbers
+        with patch.object(trakt, "is_authenticated", return_value=True), \
+             patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+             patch.object(trakt, "sync_history", new_callable=AsyncMock) as mock_hist:
+            mock_stop.return_value = {"action": "stop"}
+            mock_hist.return_value = {"added": {"episodes": 1}}
+
+            res_ep = client.post(
+                "/api/scrobble?token=super_secret_token",
+                json={
+                    "title": "Severance",
+                    "season": 1,
+                    "episode": 9,
+                    "episode_title": "The We We Are",
+                    "progress": 98.0,
+                    "media_type": "episode",
+                    "action": "scrobble",
+                    "player": "Stremio",
+                    "ids": {"tmdb": "97951"},
+                },
+            )
+            assert res_ep.status_code == 200
+            assert res_ep.json()["action"] == "mark_watched"
+            mock_stop.assert_awaited_once()
+            mock_hist.assert_awaited_once()
+
+
+# =====================================================================
+# Phase 5: Homelab Automation & Ecosystem Bridges Tests
+# =====================================================================
+
+@pytest.mark.asyncio
+async def test_overseerr_client_full():
+    """Verify OverseerrClient methods: check_connection, get_request_counts, search, has_media, request_media."""
+    from app.clients.overseerr_client import OverseerrClient
+
+    client = OverseerrClient(base_url="http://mock-overseerr:5055", api_key="valid_api_key")
+    assert client.is_configured is True
+
+    # 1. check_connection success
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(200, json={"version": "1.33.2"})
+        res = await client.check_connection()
+        assert res["status"] == "connected"
+        assert res["version"] == "1.33.2"
+
+        # check_connection 401
+        mock_get.return_value = httpx.Response(401, json={"message": "Unauthorized"})
+        res_unauth = await client.check_connection()
+        assert res_unauth["status"] == "error"
+
+        # check_connection exception
+        mock_get.side_effect = httpx.ConnectError("Connection refused")
+        res_err = await client.check_connection()
+        assert res_err["status"] == "error"
+        assert "Connection refused" in res_err["message"]
+
+    # 2. get_request_counts
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(200, json={
+            "total": 15, "movie": 7, "tv": 8, "pending": 3, "approved": 10, "available": 2
+        })
+        counts = await client.get_request_counts()
+        assert counts["total"] == 15
+        assert counts["pending"] == 3
+        assert counts["available"] == 2
+
+    # 3. search
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(200, json={
+            "page": 1, "totalPages": 1, "totalResults": 1,
+            "results": [{"id": 693134, "mediaType": "movie", "title": "Dune: Part Two"}]
+        })
+        results = await client.search("Dune")
+        assert len(results) == 1
+        assert results[0]["id"] == 693134
+
+    # 4. has_media
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        # Status 5: available
+        mock_get.return_value = httpx.Response(200, json={"id": 693134, "mediaInfo": {"status": 5}})
+        exists = await client.has_media("movie", 693134)
+        assert exists is True
+
+        # Status 3: processing
+        mock_get.return_value = httpx.Response(200, json={"id": 693134, "mediaInfo": {"status": 3}})
+        exists = await client.has_media("movie", 693134)
+        assert exists is True
+
+        # Not requested
+        mock_get.return_value = httpx.Response(200, json={"id": 693134, "mediaInfo": None})
+        exists = await client.has_media("movie", 693134)
+        assert exists is False
+
+        # 404 not found
+        mock_get.return_value = httpx.Response(404, json={"message": "Not found"})
+        exists = await client.has_media("movie", 999999)
+        assert exists is False
+
+    # 5. request_media
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = httpx.Response(201, json={"id": 42, "status": 1})
+        # Movie request
+        req_res = await client.request_media("movie", 693134)
+        assert req_res.get("success") is True
+        assert req_res.get("request", {})["id"] == 42
+        mock_post.assert_awaited_with(
+            "http://mock-overseerr:5055/api/v1/request",
+            json={"mediaType": "movie", "mediaId": 693134, "is4k": False},
+            headers={"X-Api-Key": "valid_api_key", "Accept": "application/json", "Content-Type": "application/json"}
+        )
+
+        # TV request with specific seasons
+        req_res_tv = await client.request_media("tv", 97951, seasons=[1, 2])
+        assert req_res_tv.get("success") is True
+        mock_post.assert_awaited_with(
+            "http://mock-overseerr:5055/api/v1/request",
+            json={"mediaType": "tv", "mediaId": 97951, "is4k": False, "seasons": [1, 2]},
+            headers={"X-Api-Key": "valid_api_key", "Accept": "application/json", "Content-Type": "application/json"}
+        )
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_arr_bridge_watchlist_sync_with_overseerr():
+    """Verify that when Overseerr is enabled in ArrBridgeManager, Watchlist items route to Overseerr."""
+    from app.services.arr_bridge import ArrBridgeManager
+    from app.clients.sonarr_client import SonarrClient
+    from app.clients.radarr_client import RadarrClient
+    from app.clients.overseerr_client import OverseerrClient
+    from app.services.settings_manager import settings_mgr
+
+    sonarr_c = SonarrClient(base_url="http://mock-sonarr:8989", api_key="sonarr_key")
+    radarr_c = RadarrClient(base_url="http://mock-radarr:7878", api_key="radarr_key")
+    overseerr_c = OverseerrClient(base_url="http://mock-overseerr:5055", api_key="overseerr_key")
+
+    class MockTraktClient:
+        def is_authenticated(self):
+            return True
+
+        async def get_watchlist(self, media_type: str = "movies"):
+            if media_type == "movies":
+                return [
+                    {
+                        "type": "movie",
+                        "movie": {
+                            "title": "Dune: Part Two",
+                            "year": 2024,
+                            "ids": {"tmdb": 693134, "imdb": "tt15239678"},
+                        },
+                    }
+                ]
+            else:
+                return [
+                    {
+                        "type": "show",
+                        "show": {
+                            "title": "Severance",
+                            "year": 2022,
+                            "ids": {"tmdb": 97951, "tvdb": 371980},
+                        },
+                    }
+                ]
+
+    bridge = ArrBridgeManager(
+        sonarr_client=sonarr_c,
+        radarr_client=radarr_c,
+        overseerr_client=overseerr_c,
+        trakt_client=MockTraktClient(),
+    )
+
+    # Enable Overseerr via settings_mgr
+    with patch.object(settings_mgr, "is_overseerr_enabled", return_value=True), \
+         patch.object(bridge.overseerr, "has_media", new_callable=AsyncMock) as mock_has, \
+         patch.object(bridge.overseerr, "request_media", new_callable=AsyncMock) as mock_req, \
+         patch.object(bridge.radarr, "has_movie", new_callable=AsyncMock) as mock_radarr_has, \
+         patch.object(bridge.sonarr, "has_series", new_callable=AsyncMock) as mock_sonarr_has:
+
+        mock_has.return_value = False
+        mock_req.return_value = {"success": True, "request": {"id": 101}}
+
+        stats = await bridge.sync_watchlist(demo=False)
+
+        assert stats["added"]["movies"] == 1
+        assert stats["added"]["shows"] == 1
+        assert len(stats["items"]) == 2
+        assert stats["items"][0]["app"] == "Overseerr"
+        assert stats["items"][1]["app"] == "Overseerr"
+
+        # Overseerr was invoked
+        assert mock_req.await_count == 2
+        # Direct Radarr and Sonarr were NOT invoked because Overseerr handled both
+        mock_radarr_has.assert_not_awaited()
+        mock_sonarr_has.assert_not_awaited()
+    await sonarr_c.close()
+    await radarr_c.close()
+    await overseerr_c.close()
+
+
+def test_arr_test_connection_endpoint_overseerr():
+    """Verify POST /api/arr/test-connection supports 'overseerr'."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "test_admin_secret"):
+        client.cookies.set("admin_token", "test_admin_secret")
+
+        # Demo mode
+        res_demo = client.post(
+            "/api/arr/test-connection?demo=true",
+            json={"app": "overseerr", "url": "http://mock-overseerr:5055", "api_key": "any_key"}
+        )
+        assert res_demo.status_code == 200
+        assert res_demo.json()["status"] == "connected"
+        assert res_demo.json()["app"] == "overseerr"
+        assert res_demo.json()["version"] == "1.33.2"
+
+        # Live mode with mock
+        with patch("app.clients.overseerr_client.OverseerrClient.check_connection", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = {"status": "connected", "version": "1.33.2", "app_name": "Overseerr"}
+            res_live = client.post(
+                "/api/arr/test-connection",
+                json={"app": "overseerr", "url": "http://127.0.0.1:5055", "api_key": "valid_key"}
+            )
+            assert res_live.status_code == 200
+            assert res_live.json()["status"] == "connected"
+            assert res_live.json()["version"] == "1.33.2"
+
+
+@pytest.mark.asyncio
+async def test_media_server_webhook_auto_registration():
+    """Verify 1-click webhook registration for Plex, Jellyfin, and Emby."""
+    from app.clients.plex_api_client import PlexApiClient
+    from app.clients.jellyfin_api_client import JellyfinApiClient
+    from app.clients.emby_api_client import EmbyApiClient
+    from app.services.reverse_sync_manager import ReverseSyncManager
+
+    # 1. Plex webhook registration
+    plex = PlexApiClient(base_url="http://mock-plex:32400", token="valid_plex_token")
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_plex_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_plex_post:
+        mock_plex_get.return_value = httpx.Response(200, json=[])
+        mock_plex_post.return_value = httpx.Response(201, json={"status": "created"})
+        res_plex = await plex.register_webhook("http://omniscrobble:8000/webhook/plex")
+        assert res_plex["success"] is True
+        assert "Successfully registered" in res_plex["message"]
+        mock_plex_post.assert_awaited_once()
+        call_args, call_kwargs = mock_plex_post.await_args
+        assert call_args[0] == "https://plex.tv/api/v2/user/webhooks"
+        assert call_kwargs["json"] == {"url": "http://omniscrobble:8000/webhook/plex"}
+        assert call_kwargs["headers"]["X-Plex-Token"] == "valid_plex_token"
+    await plex.close()
+
+    # 2. Jellyfin webhook registration (Plugin config update)
+    jf = JellyfinApiClient(base_url="http://mock-jellyfin:8096", token="jf_token", user_id="jf_user")
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_jf_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_jf_post:
+        # Mock Plugins list
+        mock_jf_get.side_effect = [
+            httpx.Response(200, json=[{"Name": "Webhook", "Id": "plugin-webhook-guid-123"}]),
+            httpx.Response(200, json={"Webhooks": []}),
+        ]
+        mock_jf_post.return_value = httpx.Response(204)
+
+        res_jf = await jf.register_webhook("http://omniscrobble:8000/webhook/jellyfin")
+        assert res_jf["success"] is True
+        assert "Successfully registered" in res_jf["message"]
+        assert mock_jf_post.await_count == 1
+    await jf.close()
+
+    # 3. Emby webhook registration (/Webhooks endpoint)
+    emby = EmbyApiClient(base_url="http://mock-emby:8096", token="emby_token", user_id="emby_user")
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_emby_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_emby_post:
+        mock_emby_get.return_value = httpx.Response(200, json=[])
+        mock_emby_post.return_value = httpx.Response(200, json={"Id": "dest-123"})
+        res_emby = await emby.register_webhook("http://omniscrobble:8000/webhook/emby")
+        assert res_emby["success"] is True
+        assert "Successfully registered" in res_emby["message"]
+        mock_emby_post.assert_awaited_once()
+    await emby.close()
+
+    # 4. ReverseSyncManager delegation
+    mgr = ReverseSyncManager()
+    with patch.object(mgr.plex, "is_configured", return_value=True), \
+         patch.object(mgr.plex, "register_webhook", new_callable=AsyncMock) as mock_reg:
+        mock_reg.return_value = {"success": True, "message": "Plex success"}
+        res = await mgr.register_webhook("plex", "http://test-webhook")
+        assert res.get("success") is True
+        assert res.get("message") == "Plex success"
+
+
+def test_api_sync_register_webhook_endpoint():
+    """Verify POST /api/sync/register-webhook endpoint security, demo, and execution."""
+    client = TestClient(app)
+
+    # 1. Unauthenticated -> 401
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
+        res_unauth = client.post("/api/sync/register-webhook", json={"server": "plex"})
+        assert res_unauth.status_code == 401
+
+        # 2. Demo mode -> 200 simulation
+        res_demo = client.post("/api/sync/register-webhook?demo=true", json={"server": "jellyfin"})
+        assert res_demo.status_code == 200
+        assert res_demo.json()["status"] == "success"
+        assert "Demo Mode" in res_demo.json()["message"]
+
+        # 3. Admin authorized live call
+        client.cookies.set("admin_token", "super_secret")
+        with patch("app.services.reverse_sync_manager.reverse_sync_mgr.register_webhook", new_callable=AsyncMock) as mock_reg:
+            mock_reg.return_value = {"success": True, "message": "Webhook configured in Emby"}
+            res_live = client.post("/api/sync/register-webhook", json={"server": "emby"})
+            assert res_live.status_code == 200
+            assert res_live.json()["success"] is True
+            assert res_live.json()["message"] == "Webhook configured in Emby"
+
+
+@pytest.mark.asyncio
+async def test_notification_channels_gotify_and_matrix():
+    """Verify Discord action buttons, Gotify dispatch, and Matrix dispatch."""
+    from app.services.notifier import notifier
+    from app.plex_parser import ParsedMedia
+
+    media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Spirited Away",
+        year=2001,
+        ids={"imdb": "tt0245429", "tmdb": 129},
+        playback_progress=100.0,
+    )
+
+    # 1. Discord payload includes action buttons
+    discord_payload = notifier.build_discord_payload(media, action="scrobble")
+    assert "components" in discord_payload
+    components = discord_payload["components"]
+    assert len(components) == 1
+    assert components[0]["type"] == 1  # Action Row
+    buttons = components[0]["components"]
+    assert len(buttons) == 3
+    labels = [b["label"] for b in buttons]
+    assert any("Trakt" in l for l in labels)
+    assert any("Letterboxd" in l for l in labels)
+    assert any("IMDb" in l for l in labels)
+
+    # 2. Gotify payload and send_gotify
+    gotify_payload = notifier.build_gotify_payload(media, action="scrobble")
+    assert "Spirited Away (2001)" in gotify_payload["title"]
+    assert "Scrobbled" in gotify_payload["message"]
+    assert gotify_payload["priority"] == 5
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = httpx.Response(200, json={"id": 1})
+        ok = await notifier.send_gotify(gotify_payload, "http://mock-gotify:8080", "app_token", priority=6)
+        assert ok is True
+        mock_post.assert_awaited_with(
+            "http://mock-gotify:8080/message",
+            json={**gotify_payload, "priority": 6},
+            headers={"X-Gotify-Key": "app_token"}
+        )
+
+    # 3. Matrix payload and send_matrix
+    matrix_payload = notifier.build_matrix_payload(media, action="scrobble")
+    assert matrix_payload["msgtype"] == "m.text"
+    assert matrix_payload["format"] == "org.matrix.custom.html"
+    assert "Spirited Away" in matrix_payload["formatted_body"]
+
+    with patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_put.return_value = httpx.Response(200, json={"event_id": "$mock_event_123"})
+        ok = await notifier.send_matrix(matrix_payload, "https://matrix.org", "access_tok", "!room:matrix.org")
+        assert ok is True
+        assert mock_put.await_count == 1
+        put_url = mock_put.call_args[0][0]
+        assert "https://matrix.org/_matrix/client/v3/rooms/" in put_url
+        assert "/send/m.room.message/" in put_url
+
+    # 4. Status includes Gotify and Matrix
+    status = notifier.get_status()
+    assert "gotify" in status
+    assert "matrix" in status
+    assert "weekly_digest_enabled" in status
+
+
+def test_api_notification_test_endpoint_gotify_and_matrix():
+    """Verify POST /api/notifications/test with Gotify and Matrix channels."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
+        client.cookies.set("admin_token", "super_secret")
+
+        # Demo Gotify
+        res_demo_gotify = client.post("/api/notifications/test?demo=true", json={"channel": "gotify"})
+        assert res_demo_gotify.status_code == 200
+        assert res_demo_gotify.json()["success"] is True
+
+        # Demo Matrix
+        res_demo_matrix = client.post("/api/notifications/test?demo=true", json={"channel": "matrix"})
+        assert res_demo_matrix.status_code == 200
+        assert res_demo_matrix.json()["success"] is True
+
+        # Live Gotify mock
+        with patch("app.services.notifier.notifier.send_test_notification", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = (True, "Test alert sent to Gotify")
+            res_live = client.post(
+                "/api/notifications/test",
+                json={"channel": "gotify", "gotify_url": "http://127.0.0.1:8080", "gotify_token": "tok"}
+            )
+            assert res_live.status_code == 200
+            assert res_live.json()["success"] is True
+            assert res_live.json()["message"] == "Test alert sent to Gotify"
+
+
+@pytest.mark.asyncio
+async def test_weekly_activity_digest_full(tmp_path):
+    """Verify DigestManager statistics, formatting, and dispatch."""
+    import datetime
+    from app.services.digest_manager import DigestManager
+
+    # 1. Demo statistics
+    mock_events_file = tmp_path / "events.json"
+    digest = DigestManager(events_file=mock_events_file)
+    demo_stats = digest.generate_digest_stats(days=7, demo=True)
+    assert demo_stats["window_days"] == 7
+    assert demo_stats["total_scrobbles"] == 18
+    assert demo_stats["watch_time_formatted"] == "16h 20m"
+    assert "Severance" in demo_stats["cowatch_shows"]
+
+    # 2. Live statistics from mock events.json
+    now = datetime.datetime.now()
+    two_days_ago = (now - datetime.timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    ten_days_ago = (now - datetime.timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S")
+
+    sample_events = [
+        # In-window movie
+        {
+            "timestamp": two_days_ago,
+            "action": "scrobble",
+            "type": "movie",
+            "title": "Dune: Part Two (2024)",
+            "server": "Plex",
+            "device": "Apple TV 4K",
+            "duration_minutes": 166,
+            "cowatch_status": "Co-watched with @alice",
+        },
+        # In-window episode
+        {
+            "timestamp": two_days_ago,
+            "action": "scrobble",
+            "type": "episode",
+            "title": "Severance S02E01",
+            "show_title": "Severance",
+            "server": "Jellyfin",
+            "device": "Shield TV",
+            "duration_minutes": 55,
+            "cowatch_status": "Co-watched with @alice",
+        },
+        # In-window rating
+        {
+            "timestamp": two_days_ago,
+            "action": "rate",
+            "type": "movie",
+            "title": "Dune: Part Two (2024)",
+            "server": "Plex",
+        },
+        # Out-of-window event (should not be counted in 7-day stats)
+        {
+            "timestamp": ten_days_ago,
+            "action": "scrobble",
+            "type": "movie",
+            "title": "Old Movie",
+            "duration_minutes": 120,
+        },
+    ]
+    with open(mock_events_file, "w", encoding="utf-8") as f:
+        json.dump(sample_events, f)
+
+    live_stats = digest.generate_digest_stats(days=7, demo=False)
+    assert live_stats["total_scrobbles"] == 2
+    assert live_stats["movies_watched"] == 1
+    assert live_stats["episodes_watched"] == 1
+    assert live_stats["total_ratings"] == 1
+    assert live_stats["watch_time_minutes"] == 160
+    assert live_stats["watch_time_formatted"] == "2h 40m"
+    assert live_stats["cowatch_sessions"] == 2
+    assert live_stats["top_servers"] == {"Plex": 2, "Jellyfin": 1}
+    assert live_stats["top_devices"] == {"Apple TV 4K": 1, "Shield TV": 1}
+
+    # 3. Formatting
+    discord_payload = digest.format_discord_digest(live_stats)
+    assert "embeds" in discord_payload
+    discord_embed = discord_payload["embeds"][0]
+    assert "Weekly Activity Digest" in discord_embed["title"]
+    assert any("Watch Time" in f["name"] for f in discord_embed["fields"])
+
+    html_text = digest.format_html_digest(live_stats)
+    assert "Omniscrobble Weekly Activity Digest" in html_text
+    assert "2h 40m" in html_text
+
+    md_text = digest.format_markdown_digest(live_stats)
+    assert "Omniscrobble Weekly Digest" in md_text
+    assert "Watch Time:" in md_text
+
+    # 4. send_digest demo
+    res_demo = await digest.send_digest(demo=True)
+    assert res_demo["status"] == "success"
+    assert res_demo["success"] is True
+    assert "Weekly activity digest dispatched successfully" in res_demo["message"]
+
+
+def test_api_weekly_digest_endpoint():
+    """Verify POST /api/notifications/digest endpoint security and demo handling."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
+        # 1. Unauthenticated -> 401
+        res_unauth = client.post("/api/notifications/digest")
+        assert res_unauth.status_code == 401
+
+        # 2. Demo mode -> 200
+        res_demo = client.post("/api/notifications/digest?demo=true")
+        assert res_demo.status_code == 200
+        assert res_demo.json()["status"] == "success"
+
+        # 3. Admin authorized live trigger
+        client.cookies.set("admin_token", "super_secret")
+        with patch("app.services.digest_manager.digest_mgr.send_digest", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = {"status": "success", "success": True, "message": "Digest sent"}
+            res_live = client.post("/api/notifications/digest")
+            assert res_live.status_code == 200
+            assert res_live.json()["success"] is True
+            assert res_live.json()["message"] == "Digest sent"
+
+
+def test_household_manager_crud_and_persistence(tmp_path):
+    """Verify HouseholdManager rule CRUD operations, toggle, and atomic JSON persistence."""
+    from app.services.household_manager import HouseholdManager
+    from app.config import Config
+
+    rules_file = tmp_path / "household_rules.json"
+
+    class CustomConfig(Config):
+        HOUSEHOLD_RULES_DATA_FILE = rules_file
+        CO_WATCH_DATA_FILE = tmp_path / "cowatch_shows.json"
+        CO_WATCH_DEVICES_DATA_FILE = tmp_path / "cowatch_devices.json"
+
+    mgr = HouseholdManager(config=CustomConfig)
+    assert mgr.get_rules() == []
+
+    # 1. Add rule
+    r1 = mgr.add_rule(
+        name="Living Room Family",
+        targets=["alice", "kids"],
+        devices=["Living Room Apple TV", "Shield Pro"],
+        shows=["*"],
+        media_types=["movie", "episode"],
+        enabled=True,
+    )
+    assert r1["name"] == "Living Room Family"
+    assert r1["targets"] == ["alice", "kids"]
+    assert len(mgr.get_rules()) == 1
+
+    # 2. Add second rule
+    r2 = mgr.add_rule(
+        name="Kids Playroom",
+        targets=["kids"],
+        devices=["Playroom TV"],
+        shows=["Bluey"],
+        media_types=["episode"],
+        enabled=True,
+    )
+    assert len(mgr.get_rules()) == 2
+
+    # 3. Update rule
+    up = mgr.update_rule(r1["id"], {"name": "Living Room All", "targets": ["alice", "kids", "bob"]})
+    assert up is not None
+    assert up["name"] == "Living Room All"
+    assert "bob" in up["targets"]
+
+    # 4. Toggle rule
+    new_state = mgr.toggle_rule(r2["id"])
+    assert new_state is False
+    assert next(r for r in mgr.get_rules() if r["id"] == r2["id"])["enabled"] is False
+
+    # 5. Persistence across reloads
+    mgr_reloaded = HouseholdManager(config=CustomConfig)
+    rules_reloaded = mgr_reloaded.get_rules()
+    assert len(rules_reloaded) == 2
+    r1_reloaded = next(r for r in rules_reloaded if r["id"] == r1["id"])
+    assert r1_reloaded["name"] == "Living Room All"
+    assert r1_reloaded["targets"] == ["alice", "kids", "bob"]
+
+    # 6. Delete rule
+    deleted = mgr.delete_rule(r2["id"])
+    assert deleted is True
+    assert len(mgr.get_rules()) == 1
+    assert mgr.delete_rule("non_existent_id") is False
+
+
+def test_household_manager_resolve_targets(tmp_path):
+    """Verify HouseholdManager resolves multi-tenant targets based on device, type, and show filters."""
+    from app.services.household_manager import HouseholdManager
+    from app.config import Config
+    from app.plex_parser import ParsedMedia
+
+    class CustomConfig(Config):
+        CO_WATCH_USER = "partner_jane"
+        CO_WATCH_SHOWS = ["Severance"]
+        CO_WATCH_PLAYERS = []
+        CO_WATCH_MOVIES = True
+        HOUSEHOLD_RULES_DATA_FILE = tmp_path / "household_rules.json"
+        CO_WATCH_DATA_FILE = tmp_path / "cowatch_shows.json"
+        CO_WATCH_DEVICES_DATA_FILE = tmp_path / "cowatch_devices.json"
+
+    mgr = HouseholdManager(config=CustomConfig)
+
+    # Add household rule for Living Room TV
+    mgr.add_rule(
+        name="Living Room Family",
+        targets=["kids", "partner_jane"],
+        devices=["Living Room Apple TV"],
+        shows=["*"],
+        media_types=["movie", "episode"],
+        enabled=True,
+    )
+    # Add household rule for Bedroom TV
+    mgr.add_rule(
+        name="Bedroom TV Solo",
+        targets=["alice"],
+        devices=["Bedroom Chromecast"],
+        shows=["*"],
+        media_types=["episode"],
+        enabled=True,
+    )
+
+    # 1. Severance playing on Living Room Apple TV by "selits"
+    # Matches CO_WATCH_USER (Severance is in CO_WATCH_SHOWS) + rule targets ("kids", "partner_jane")
+    # Result should include partner_jane and kids (deduplicated)
+    m1 = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        show_title="Severance",
+        title="Severance S02E01",
+        player="Living Room Apple TV",
+    )
+    targets1 = mgr.resolve_targets(m1)
+    assert "partner_jane" in targets1
+    assert "kids" in targets1
+    assert "selits" not in targets1  # Playing user must never self-scrobble
+
+    # 2. Movie playing on Bedroom Chromecast
+    # Rule for Bedroom TV only allows "episode", so bedroom rule does NOT match.
+    # But CO_WATCH_MOVIES is True, so partner_jane is eligible.
+    m2 = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        player="Bedroom Chromecast",
+    )
+    targets2 = mgr.resolve_targets(m2)
+    assert targets2 == ["partner_jane"]
+
+    # 3. Episode playing on Bedroom Chromecast by "partner_jane"
+    # Traditional co-watch partner is playing, so traditional co-watch is NOT eligible (self playback by partner).
+    # But Bedroom TV rule targets "alice" and media is episode!
+    m3 = ParsedMedia(
+        event="media.scrobble",
+        username="partner_jane",
+        media_type="episode",
+        show_title="Ted Lasso",
+        title="Ted Lasso S01E01",
+        player="Bedroom Chromecast",
+    )
+    targets3 = mgr.resolve_targets(m3)
+    assert targets3 == ["alice"]
+    assert "partner_jane" not in targets3
+
+
+def test_household_rules_api_endpoints():
+    """Verify REST API endpoints for household multi-tenant rules management."""
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_pass"):
+        # 1. GET /api/household/rules unauthenticated -> masks targets
+        res_unauth = client.get("/api/household/rules")
+        assert res_unauth.status_code == 200
+        data_unauth = res_unauth.json()
+        assert data_unauth["status"] == "ok"
+        assert isinstance(data_unauth["rules"], list)
+
+        # 2. POST /api/household/rules without auth -> 401
+        res_fail = client.post("/api/household/rules", json={"name": "Test", "targets": ["alice"]})
+        assert res_fail.status_code == 401
+
+        # 3. POST /api/household/rules with auth but empty targets -> 400
+        client.cookies.set("admin_token", "admin_pass")
+        res_empty = client.post("/api/household/rules", json={"name": "Test", "targets": []})
+        assert res_empty.status_code == 400
+
+        # 4. POST /api/household/rules with auth -> creates rule
+        rule_payload = {
+            "name": "Basement Shield",
+            "targets": ["alice", "bob"],
+            "devices": ["Basement Shield"],
+            "shows": ["*"],
+            "media_types": ["movie", "episode"],
+            "enabled": True,
+        }
+        res_create = client.post("/api/household/rules", json=rule_payload)
+        assert res_create.status_code == 200
+        created_rule = res_create.json()["rule"]
+        assert created_rule["name"] == "Basement Shield"
+        assert created_rule["targets"] == ["alice", "bob"]
+        rule_id = created_rule["id"]
+
+        # 5. POST /api/household/rules with existing id -> updates rule
+        update_payload = dict(rule_payload)
+        update_payload["id"] = rule_id
+        update_payload["name"] = "Basement Shield Pro"
+        res_update = client.post("/api/household/rules", json=update_payload)
+        assert res_update.status_code == 200
+        assert res_update.json()["rule"]["name"] == "Basement Shield Pro"
+
+        # 6. POST /api/household/rules/{id}/toggle -> toggles enabled
+        res_toggle = client.post(f"/api/household/rules/{rule_id}/toggle")
+        assert res_toggle.status_code == 200
+        assert res_toggle.json()["enabled"] is False
+
+        # 7. DELETE /api/household/rules/{id} -> deletes rule
+        res_del = client.delete(f"/api/household/rules/{rule_id}")
+        assert res_del.status_code == 200
+        assert res_del.json()["deleted"] is True
+
+        # 8. DELETE non-existent rule -> 404
+        res_del_404 = client.delete("/api/household/rules/non_existent_123")
+        assert res_del_404.status_code == 404
+
+        # 9. Demo mode for all endpoints
+        res_demo_get = client.get("/api/household/rules?demo=true")
+        assert res_demo_get.status_code == 200
+        assert len(res_demo_get.json()["rules"]) >= 1
+
+        res_demo_post = client.post("/api/household/rules?demo=true", json={"name": "Demo Rule", "targets": ["demo_partner"]})
+        assert res_demo_post.status_code == 200
+
+        res_demo_toggle = client.post("/api/household/rules/rule_living_room/toggle?demo=true")
+        assert res_demo_toggle.status_code == 200
+
+        res_demo_del = client.delete("/api/household/rules/rule_living_room?demo=true")
+        assert res_demo_del.status_code == 200
+        assert res_demo_del.json()["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_household_multi_tenant_webhook_dual_sync():
+    """Verify live webhook dispatches dual-sync across multiple resolved household target profiles."""
+    import asyncio
+    from app.services.household_manager import household_mgr
+    from app.services.user_manager import user_mgr
+    from app.main import recent_events
+    from app.config import Config
+
+    client = TestClient(app)
+
+    # Add a household rule targeting 'kids_user' and 'partner_user' on Living Room TV
+    rule = household_mgr.add_rule(
+        name="Living Room Family Sync",
+        targets=["kids_user", "partner_user"],
+        devices=["Living Room Apple TV"],
+        shows=["*"],
+        media_types=["episode"],
+        enabled=True,
+    )
+
+    try:
+        mock_partner = MagicMock()
+        mock_partner.is_authenticated.return_value = True
+        mock_partner.sync_history = AsyncMock(return_value={"action": "scrobble"})
+
+        mock_kids = MagicMock()
+        mock_kids.is_authenticated.return_value = True
+        mock_kids.sync_history = AsyncMock(return_value={"action": "scrobble"})
+
+        mock_selits = MagicMock()
+        mock_selits.is_authenticated.return_value = True
+        mock_selits.scrobble_stop = AsyncMock(return_value={"action": "scrobble"})
+        mock_selits.sync_history = AsyncMock(return_value={"added": {"episodes": 1}})
+
+        def mock_get_client(user):
+            if user == "partner_user":
+                return mock_partner
+            elif user == "kids_user":
+                return mock_kids
+            elif user == "selits":
+                return mock_selits
+            return MagicMock()
+
+        webhook_payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "selits"},
+            "Player": {"title": "Living Room Apple TV"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Severance",
+                "title": "Good News About Hell",
+                "year": 2022,
+                "parentIndex": 1,
+                "index": 1,
+                "viewOffset": 3600000,
+                "duration": 3600000,
+            }
+        }
+
+        with patch.object(Config, "CO_WATCH_USER", "partner_user"), \
+             patch.object(user_mgr, "get_client", side_effect=mock_get_client), \
+             patch("app.main.trakt.is_authenticated", return_value=True), \
+             patch("app.main.trakt.scrobble_stop", new_callable=AsyncMock) as mock_trakt_stop, \
+             patch("app.main.trakt.sync_history", new_callable=AsyncMock) as mock_trakt_hist, \
+             patch("app.main.notifier.dispatch", new_callable=AsyncMock):
+            mock_trakt_stop.return_value = {"action": "scrobble"}
+            mock_trakt_hist.return_value = {"added": {"episodes": 1}}
+
+            res = client.post("/webhook", json=webhook_payload)
+            assert res.status_code == 200
+
+            # Yield control to event loop to allow asyncio.create_task(execute_cowatch_sync(...)) to complete
+            await asyncio.sleep(0.05)
+
+            # Both partner_user and kids_user should have had sync_history called!
+            mock_partner.sync_history.assert_called_once()
+            mock_kids.sync_history.assert_called_once()
+
+            # Verify cowatch_status recorded in recent_events contains targets
+            ev = recent_events[0]
+            assert ev.get("cowatch_status") is not None
+            assert ev["cowatch_status"]["synced"] is True
+            assert "partner_user" in ev["cowatch_status"]["targets"]
+            assert "kids_user" in ev["cowatch_status"]["targets"]
+
+    finally:
+        household_mgr.delete_rule(rule["id"])
+
+
+def test_queue_prune_and_completed_status(tmp_path):
+    """Verify QueueManager transitions items to status 'completed' and prunes records older than retention threshold."""
+    from app.services.queue_manager import QueueManager
+    import time
+
+    db_file = tmp_path / "test_prune_queue.db"
+    qm = QueueManager(db_file)
+
+    now = int(time.time())
+    day_sec = 86400
+
+    # 1. Enqueue 4 items
+    id_old_completed = qm.enqueue("sync_history", {"title": "Old Completed"}, error="", username="alice")
+    id_recent_completed = qm.enqueue("sync_history", {"title": "Recent Completed"}, error="", username="alice")
+    id_old_failed = qm.enqueue("sync_history", {"title": "Old Failed"}, error="Timeout", username="alice")
+    id_pending = qm.enqueue("sync_history", {"title": "Still Pending"}, error="", username="alice")
+
+    # Mark success for completed items
+    qm.mark_success(id_old_completed)
+    qm.mark_success(id_recent_completed)
+
+    # Mark failure for old failed item
+    qm.mark_failure(id_old_failed, error="Server error", max_retries=1)
+
+    # Manually backdate old_completed (100 days ago) and old_failed (100 days ago)
+    with qm._get_connection() as conn:
+        old_time = now - (100 * day_sec)
+        conn.execute("UPDATE queued_events SET created_at = ?, completed_at = ? WHERE id = ?", (old_time, old_time, id_old_completed))
+        conn.execute("UPDATE queued_events SET created_at = ? WHERE id = ?", (old_time, id_old_failed))
+        conn.commit()
+
+    # Verify counts before pruning
+    counts = qm.get_all_count()
+    assert counts["completed"] == 2
+    assert counts["failed"] == 1
+    assert counts["pending"] == 1
+
+    # Prune records older than 90 days
+    pruned_count = qm.prune_queue(days=90)
+    assert pruned_count == 2  # old_completed and old_failed
+
+    # Verify state after pruning
+    with qm._get_connection() as conn:
+        cursor = conn.execute("SELECT id, status FROM queued_events ORDER BY id ASC")
+        remaining = cursor.fetchall()
+        remaining_ids = [r["id"] for r in remaining]
+        assert id_old_completed not in remaining_ids
+        assert id_old_failed not in remaining_ids
+        assert id_recent_completed in remaining_ids
+        assert id_pending in remaining_ids
+
+    # Test POST /api/queue/prune endpoint
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # Unauthenticated -> 401
+        res_unauth = client.post("/api/queue/prune")
+        assert res_unauth.status_code == 401
+
+        # Demo mode -> 200
+        res_demo = client.post("/api/queue/prune?demo=true")
+        assert res_demo.status_code == 200
+        assert res_demo.json()["pruned"] == 0
+
+        # Admin authorized
+        client.cookies.set("admin_token", "admin_secret")
+        res_admin = client.post("/api/queue/prune", json={"days": 90})
+        assert res_admin.status_code == 200
+        assert "pruned" in res_admin.json()
+        assert res_admin.json()["retention_days"] == 90
+
+
+def test_chunked_discrepancy_streamer():
+    """Verify cursor-based discrepancy pagination on reverse_sync_mgr and /api/sync/diff endpoint."""
+    from app.services.reverse_sync_manager import reverse_sync_mgr
+
+    client = TestClient(app)
+
+    # 1. ReverseSyncManager.get_chunked_diff
+    mock_diff = [
+        {"id": f"plex:movie:{i}", "title": f"Movie {i}", "action_recommended": "sync_to_trakt"}
+        for i in range(10)
+    ]
+    with patch.object(reverse_sync_mgr, "_last_diff", mock_diff):
+        chunk1 = reverse_sync_mgr.get_chunked_diff(cursor=0, limit=4)
+        assert chunk1["count"] == 4
+        assert chunk1["total"] == 10
+        assert chunk1["cursor"] == 4
+        assert chunk1["has_more"] is True
+        assert chunk1["diff"][0]["id"] == "plex:movie:0"
+        assert chunk1["diff"][3]["id"] == "plex:movie:3"
+
+        chunk2 = reverse_sync_mgr.get_chunked_diff(cursor=4, limit=4)
+        assert chunk2["count"] == 4
+        assert chunk2["cursor"] == 8
+        assert chunk2["has_more"] is True
+        assert chunk2["diff"][0]["id"] == "plex:movie:4"
+
+        chunk3 = reverse_sync_mgr.get_chunked_diff(cursor=8, limit=4)
+        assert chunk3["count"] == 2
+        assert chunk3["cursor"] is None
+        assert chunk3["has_more"] is False
+
+    # 2. GET /api/sync/diff with cursor and limit (Demo mode)
+    res_demo = client.get("/api/sync/diff?demo=true&cursor=0&limit=2")
+    assert res_demo.status_code == 200
+    d_data = res_demo.json()
+    assert d_data["status"] == "ok"
+    assert d_data["count"] == 2
+    assert d_data["cursor"] == 2
+    assert d_data["has_more"] is True
+
+    # 3. GET /api/sync/diff with cursor and limit (Admin authenticated live)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"), \
+         patch.object(reverse_sync_mgr, "scan_discrepancies", new_callable=AsyncMock) as mock_scan:
+        mock_scan.return_value = mock_diff
+        client.cookies.set("admin_token", "admin_secret")
+
+        # Full diff when cursor/limit omitted
+        res_full = client.get("/api/sync/diff")
+        assert res_full.status_code == 200
+        assert res_full.json()["count"] == 10
+        assert "cursor" not in res_full.json()
+
+        # Chunked diff when cursor/limit provided
+        res_chunked = client.get("/api/sync/diff?cursor=2&limit=3")
+        assert res_chunked.status_code == 200
+        c_data = res_chunked.json()
+        assert c_data["count"] == 3
+        assert c_data["total"] == 10
+        assert c_data["cursor"] == 5
+        assert c_data["has_more"] is True
+        assert c_data["diff"][0]["id"] == "plex:movie:2"
+
+
+def test_webhook_debugger_unit():
+    """Verify in-memory ring buffer recording, sanitization, and history management."""
+    from app.services.webhook_debugger import WebhookDebugger, sanitize_headers, sanitize_payload
+
+    # 1. Header and payload sanitization
+    headers = {
+        "User-Agent": "PlexMediaServer/1.32",
+        "Authorization": "Bearer secret_oauth_token",
+        "X-Plex-Token": "secret_plex_token",
+        "X-Webhook-Secret": "my_webhook_secret",
+        "Content-Type": "application/json",
+    }
+    clean_h = sanitize_headers(headers)
+    assert clean_h["User-Agent"] == "PlexMediaServer/1.32"
+    assert clean_h["Authorization"] == "[REDACTED]"
+    assert clean_h["X-Plex-Token"] == "[REDACTED]"
+    assert clean_h["X-Webhook-Secret"] == "[REDACTED]"
+
+    payload = {
+        "event": "media.scrobble",
+        "token": "sensitive_plex_token_xyz",
+        "nested": {
+            "password": "secret_password",
+            "api_key": "sensitive_key",
+            "title": "Severance",
+        },
+        "list": [{"secret": "item_secret", "name": "val"}],
+    }
+    clean_p = sanitize_payload(payload)
+    assert clean_p["event"] == "media.scrobble"
+    assert clean_p["token"] == "[REDACTED]"
+    assert clean_p["nested"]["password"] == "[REDACTED]"
+    assert clean_p["nested"]["api_key"] == "[REDACTED]"
+    assert clean_p["nested"]["title"] == "Severance"
+    assert clean_p["list"][0]["secret"] == "[REDACTED]"
+    assert clean_p["list"][0]["name"] == "val"
+
+    # 2. Ring buffer operations
+    debugger = WebhookDebugger(maxlen=3)
+    e1 = debugger.record(source="plex", endpoint="/webhook", payload={"title": "Movie 1", "token": "p1"}, status="received")
+    e2 = debugger.record(source="jellyfin", endpoint="/webhook/jellyfin", payload={"Item": {"title": "Show 1"}}, status="received")
+    e3 = debugger.record(source="emby", endpoint="/webhook/emby", payload={"Item": {"title": "Show 2"}}, status="received")
+
+    history = debugger.get_history()
+    assert len(history) == 3
+    assert history[0]["id"] == e3["id"]  # Most recent first
+    assert history[0]["payload"]["Item"]["title"] == "Show 2"
+
+    # Update status
+    updated = debugger.update_status(e2["id"], status="processed", reason="Scrobbled successfully")
+    assert updated is True
+    found = debugger.get_payload(e2["id"])
+    assert found is not None
+    assert found["status"] == "processed"
+    assert found["reason"] == "Scrobbled successfully"
+
+    # Maxlen eviction
+    e4 = debugger.record(source="radarr", endpoint="/radarr", payload={"title": "Movie 2"}, status="received")
+    history_after = debugger.get_history()
+    assert len(history_after) == 3
+    assert debugger.get_payload(e1["id"]) is None  # e1 evicted
+
+    # Clear
+    debugger.clear()
+    assert len(debugger.get_history()) == 0
+
+
+def test_analytics_manager_unit(tmp_path):
+    """Verify watch statistics aggregation, period filtering, and OmniWrapped retrospectives."""
+    from app.services.analytics_manager import AnalyticsManager
+
+    events_file = tmp_path / "test_events.json"
+    stats_file = tmp_path / "test_stats.json"
+
+    # Demo summary
+    mgr = AnalyticsManager(events_file=events_file, stats_file=stats_file)
+    demo_sum = mgr.get_summary(demo=True)
+    assert demo_sum["total_scrobbles"] == 182
+    assert demo_sum["movies_watched"] == 42
+    assert demo_sum["cowatch_ratio_percent"] == 37
+    assert "Plex" in demo_sum["server_distribution"]
+
+    # Demo OmniWrapped
+    demo_wrapped = mgr.get_omniwrapped(year=2026, demo=True)
+    assert demo_wrapped["year"] == 2026
+    assert "OmniWrapped" in demo_wrapped["headline"]
+    assert demo_wrapped["archetype"] in [
+        "The Living Room Co-Watcher",
+        "The Silver Screen Cinephile",
+        "The Grand Homelab Binger",
+        "The Curated Media Connoisseur",
+    ]
+    assert demo_wrapped["total_scrobbles"] == 182
+
+    # Real data calculation
+    import datetime
+    now = datetime.datetime.now()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    events_data = [
+        {
+            "timestamp": now_str,
+            "action": "scrobble (100.0%)",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "details": "Plex Scrobbler",
+            "player": "Apple TV",
+            "cowatch_status": {"synced": False},
+        },
+        {
+            "timestamp": now_str,
+            "action": "scrobble (100.0%)",
+            "type": "episode",
+            "title": "Severance S01E01",
+            "details": "Jellyfin Scrobbler",
+            "player": "Shield TV",
+            "cowatch_status": {"synced": True, "reason": "Whitelisted"},
+        },
+        {
+            "timestamp": now_str,
+            "action": "rating",
+            "type": "movie",
+            "title": "Dune: Part Two",
+            "rating": 9,
+        },
+    ]
+    with open(events_file, "w", encoding="utf-8") as f:
+        json.dump(events_data, f)
+
+    summary = mgr.get_summary(period="all")
+    assert summary["total_scrobbles"] == 2
+    assert summary["movies_watched"] == 1
+    assert summary["episodes_watched"] == 1
+    assert summary["ratings_submitted"] == 1
+    assert summary["cowatch_ratio_percent"] > 0
+    assert "Plex" in summary["server_distribution"]
+    assert "Jellyfin" in summary["server_distribution"]
+
+    wrapped = mgr.get_omniwrapped(year=2026)
+    assert wrapped["movies_watched"] == 1
+    assert wrapped["episodes_watched"] == 1
+    assert wrapped["cowatch_breakdown"]["shared_hours"] > 0
+
+
+def test_webhook_debugger_and_replay_endpoints():
+    """Verify REST API endpoints for /api/debug/webhooks and /api/debug/replay."""
+    client = TestClient(app)
+
+    # 1. Access control when WEBHOOK_SECRET is active
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # Unauthorized without admin token
+        res_unauth = client.get("/api/debug/webhooks")
+        assert res_unauth.status_code == 403
+
+        res_del_unauth = client.delete("/api/debug/webhooks")
+        assert res_del_unauth.status_code == 403
+
+        res_rep_unauth = client.post("/api/debug/replay", json={"source": "plex", "payload": {}})
+        assert res_rep_unauth.status_code == 403
+
+        # Demo mode bypasses authorization
+        res_demo = client.get("/api/debug/webhooks?demo=true")
+        assert res_demo.status_code == 200
+        assert "webhooks" in res_demo.json()
+        assert len(res_demo.json()["webhooks"]) > 0
+
+        # Authorized with admin cookie
+        client.cookies.set("admin_token", "admin_secret")
+        res_auth = client.get("/api/debug/webhooks")
+        assert res_auth.status_code == 200
+
+        # Delete / clear buffer
+        res_del = client.delete("/api/debug/webhooks")
+        assert res_del.status_code == 200
+        assert res_del.json()["status"] == "ok"
+
+        # Replay dry-run simulation
+        replay_plex = {
+            "source": "plex",
+            "dispatch": False,
+            "payload": {
+                "event": "media.scrobble",
+                "Account": {"title": "selits"},
+                "Metadata": {
+                    "type": "movie",
+                    "title": "Replay Sci-Fi Movie",
+                    "year": 2026,
+                    "librarySectionTitle": "Movies",
+                },
+                "Player": {"title": "Living Room TV"},
+            },
+        }
+        res_rep_sim = client.post("/api/debug/replay", json=replay_plex)
+        assert res_rep_sim.status_code == 200
+        data_sim = res_rep_sim.json()
+        assert data_sim["status"] == "simulated"
+        assert data_sim["parsed"]["title"] == "Replay Sci-Fi Movie"
+
+        # Replay with unsupported source
+        res_rep_bad = client.post("/api/debug/replay", json={"source": "unknown_app", "payload": {}})
+        assert res_rep_bad.status_code == 200
+        assert res_rep_bad.json()["status"] == "error"
+
+        # Replay standalone player payload
+        replay_standalone = {
+            "source": "standalone",
+            "dispatch": False,
+            "payload": {
+                "title": "Standalone Stream",
+                "media_type": "movie",
+                "year": 2025,
+                "player": "Infuse",
+            },
+        }
+        res_rep_st = client.post("/api/debug/replay", json=replay_standalone)
+        assert res_rep_st.status_code == 200
+        assert res_rep_st.json()["status"] == "simulated"
+        assert res_rep_st.json()["parsed"]["title"] == "Standalone Stream"
+
+
+def test_analytics_endpoints_and_dashboard_integration():
+    """Verify /api/analytics/summary, /api/analytics/wrapped, and dashboard rendering."""
+    client = TestClient(app)
+
+    # 1. GET /api/analytics/summary
+    res_sum = client.get("/api/analytics/summary?period=all&demo=true")
+    assert res_sum.status_code == 200
+    sum_data = res_sum.json()
+    assert "total_watch_hours" in sum_data
+    assert "server_distribution" in sum_data
+    assert "top_shows" in sum_data
+
+    # 2. GET /api/analytics/wrapped
+    res_wrp = client.get("/api/analytics/wrapped?year=2026&demo=true")
+    assert res_wrp.status_code == 200
+    wrp_data = res_wrp.json()
+    assert wrp_data["year"] == 2026
+    assert "archetype" in wrp_data
+    assert "cowatch_breakdown" in wrp_data
+
+    # 3. Dashboard rendering includes Analytics Card and Inspector Modal
+    res_dash = client.get("/")
+    assert res_dash.status_code == 200
+    html = res_dash.text
+    assert "Personal Analytics & Viewing Habits" in html
+    assert "OmniWrapped" in html
+    assert "webhook-debugger-modal" in html
+    assert "omniwrapped-modal" in html
+
+
+def test_webhook_debugger_redaction_comprehensive():
+    """Verify that all variants of secrets/credentials in headers and payloads are redacted."""
+    from app.services.webhook_debugger import sanitize_headers, sanitize_payload
+
+    headers = {
+        "ApiKey": "abc-key",
+        "accessToken": "bearer-token",
+        "Proxy-Authorization": "Basic 123",
+        "X-Api-Key": "xyz-key",
+        "X-Emby-Token": "emby-token",
+        "Set-Cookie": "session=123",
+        "Normal-Header": "Normal-Value",
+    }
+    cleaned_h = sanitize_headers(headers)
+    assert cleaned_h["ApiKey"] == "[REDACTED]"
+    assert cleaned_h["accessToken"] == "[REDACTED]"
+    assert cleaned_h["Proxy-Authorization"] == "[REDACTED]"
+    assert cleaned_h["X-Api-Key"] == "[REDACTED]"
+    assert cleaned_h["X-Emby-Token"] == "[REDACTED]"
+    assert cleaned_h["Set-Cookie"] == "[REDACTED]"
+    assert cleaned_h["Normal-Header"] == "Normal-Value"
+
+    payload = {
+        "apiKey": "123",
+        "api_key": "456",
+        "oauth_token": "789",
+        "admin_password": "pass",
+        "user_passwd": "pw",
+        "client_secret": "sec",
+        "credentials": {"cert": "data"},
+        "title": "Inception",
+    }
+    cleaned_p = sanitize_payload(payload)
+    assert cleaned_p["apiKey"] == "[REDACTED]"
+    assert cleaned_p["api_key"] == "[REDACTED]"
+    assert cleaned_p["oauth_token"] == "[REDACTED]"
+    assert cleaned_p["admin_password"] == "[REDACTED]"
+    assert cleaned_p["user_passwd"] == "[REDACTED]"
+    assert cleaned_p["client_secret"] == "[REDACTED]"
+    assert cleaned_p["credentials"] == "[REDACTED]"
+    assert cleaned_p["title"] == "Inception"
+
+
+def test_replay_dispatch_security_gate():
+    """Verify that dispatching replayed webhooks requires strict admin authorization."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        body = {
+            "source": "standalone",
+            "dispatch": True,
+            "payload": {
+                "title": "Replay Movie",
+                "media_type": "movie",
+                "action": "scrobble",
+            },
+        }
+
+        # 1. Non-admin with ?demo=true attempting dispatch should get 403 Forbidden
+        res_demo_dispatch = client.post("/api/debug/replay?demo=true", json=body)
+        assert res_demo_dispatch.status_code == 403
+        assert "Admin authorization required" in res_demo_dispatch.json()["detail"]
+
+        # 2. Non-admin with ?demo=true with dispatch=False (dry-run simulation) is allowed
+        body_sim = dict(body, dispatch=False)
+        res_demo_sim = client.post("/api/debug/replay?demo=true", json=body_sim)
+        assert res_demo_sim.status_code == 200
+        assert res_demo_sim.json()["status"] == "simulated"
+
+        # 3. Admin with cookie can dispatch
+        client.cookies.set("admin_token", "admin_secret")
+        with patch("app.main.process_media_event", new_callable=AsyncMock) as mock_pme:
+            mock_pme.return_value = {"status": "scrobbled"}
+            res_admin_dispatch = client.post("/api/debug/replay", json=body)
+            assert res_admin_dispatch.status_code == 200
+            assert res_admin_dispatch.json()["status"] == "dispatched"
+            assert mock_pme.await_count == 1
+
+
+def test_analytics_privacy_masking_and_calendar_filtering():
+    """Verify non-admin privacy masking for devices/partner and dynamic year calendar filtering."""
+    from app.services.analytics_manager import AnalyticsManager
+
+    events_data = [
+        {
+            "action": "scrobble",
+            "media_type": "episode",
+            "title": "Better Call Saul S01E01",
+            "player": "Living Room Shield TV",
+            "server": "plex",
+            "cowatch_reason": "eligible: matched user and device",
+            "timestamp": "2025-06-15T12:00:00Z",
+            "duration": 50,
+            "genres": ["Crime", "Drama"],
+        },
+        {
+            "action": "scrobble",
+            "media_type": "episode",
+            "title": "The Simpsons S35E01",
+            "player": "Bedroom Apple TV",
+            "server": "jellyfin",
+            "cowatch_reason": "Ineligible: device not whitelisted",
+            "timestamp": "2026-03-10T12:00:00Z",
+            "duration": 22,
+            "genres": ["Animation", "Comedy"],
+        },
+    ]
+
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=json.dumps(events_data))), \
+         patch.object(Config, "CO_WATCH_USER", "jane_doe"):
+
+        am = AnalyticsManager()
+
+        # Calendar year 2025: should only include Better Call Saul
+        sum_2025 = am.get_summary(period="all", year=2025, is_admin=True)
+        assert sum_2025["episodes_watched"] == 1
+        assert sum_2025["top_shows"][0]["show"] == "Better Call Saul"
+        assert sum_2025["top_genres"][0]["genre"] == "Crime"
+        assert sum_2025["cowatch_hours"] > 0
+
+        # Calendar year 2026: should only include The Simpsons
+        sum_2026 = am.get_summary(period="all", year=2026, is_admin=True)
+        assert sum_2026["episodes_watched"] == 1
+        assert sum_2026["top_shows"][0]["show"] == "The Simpsons"
+        assert sum_2026["cowatch_hours"] == 0  # Ineligible was correctly not counted as cowatch
+
+        # Non-admin privacy masking
+        sum_masked = am.get_summary(period="all", year=2025, is_admin=False)
+        assert sum_masked["top_devices"][0]["device"] == "Player 1"
+
+        wrapped_masked = am.get_omniwrapped(year=2025, is_admin=False)
+        assert wrapped_masked["cowatch_breakdown"]["partner_user"] == "ja****"
+
+        # Admin unmasked
+        wrapped_admin = am.get_omniwrapped(year=2025, is_admin=True)
+        assert wrapped_admin["cowatch_breakdown"]["partner_user"] == "jane_doe"
+
+
+def test_webhook_error_marks_debugger_entry():
+    """Verify that an exception in process_media_event updates webhook_debugger status to 'error'."""
+    from app.services.webhook_debugger import webhook_debugger
+    client = TestClient(app, raise_server_exceptions=False)
+
+    webhook_debugger.clear()
+
+    payload = {
+        "event": "media.scrobble",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Crash Movie",
+            "year": 2026,
+            "librarySectionTitle": "Movies",
+        },
+        "Player": {"title": "Living Room TV"},
+    }
+
+    with patch.object(Config, "PLEX_ALLOWED_USERS", ["selits"]), \
+         patch("app.main.settings_mgr.is_server_enabled", return_value=True), \
+         patch("app.main.process_media_event", side_effect=RuntimeError("Simulated pipeline crash")):
+        res = client.post("/webhook", data={"payload": json.dumps(payload)})
+        assert res.status_code == 500
+
+    history = webhook_debugger.get_history()
+    assert len(history) > 0
+    latest = history[0]
+    assert latest["status"] == "error"
+    assert "Simulated pipeline crash" in latest["reason"]
+
+
+def test_csrf_cross_site_protection():
+    """Verify Sec-Fetch-Site: cross-site is rejected for cookie-authenticated admin mutating requests."""
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        client.cookies.set("admin_token", "admin_secret")
+
+        # GET request with cross-site is allowed
+        res_get = client.get("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
+        assert res_get.status_code == 200
+
+        # Mutating DELETE request with cross-site is blocked
+        res_del = client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
+        assert res_del.status_code == 403
+
+        # Mutating DELETE request with same-origin is allowed
+        res_del_ok = client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "same-origin"})
+        assert res_del_ok.status_code == 200
+
+
+
+
+
+

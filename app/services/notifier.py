@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import datetime
 import html
 import logging
 import time
 import urllib.parse
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import httpx
 
 try:
@@ -116,6 +118,27 @@ class Notifier:
     def _get_pushover_api_token(self) -> str:
         return self._get_setting("pushover_api_token", "PUSHOVER_API_TOKEN", "")
 
+    def _get_gotify_url(self) -> str:
+        return self._get_setting("gotify_url", "GOTIFY_URL", "").rstrip("/")
+
+    def _get_gotify_token(self) -> str:
+        return self._get_setting("gotify_token", "GOTIFY_TOKEN", "")
+
+    def _get_gotify_priority(self) -> int:
+        try:
+            return int(self._get_setting("gotify_priority", "GOTIFY_PRIORITY", 5))
+        except (ValueError, TypeError):
+            return 5
+
+    def _get_matrix_homeserver_url(self) -> str:
+        return self._get_setting("matrix_homeserver_url", "MATRIX_HOMESERVER_URL", "").rstrip("/")
+
+    def _get_matrix_access_token(self) -> str:
+        return self._get_setting("matrix_access_token", "MATRIX_ACCESS_TOKEN", "")
+
+    def _get_matrix_room_id(self) -> str:
+        return self._get_setting("matrix_room_id", "MATRIX_ROOM_ID", "")
+
     def _is_event_enabled(self, key: str, fallback_config_attr: str, default: bool = True) -> bool:
         """Checks if a notification event type is enabled in runtime settings or Config."""
         if settings_mgr is not None:
@@ -131,10 +154,17 @@ class Notifier:
             "telegram": bool(self._get_telegram_token() and self._get_telegram_chat_id()),
             "ntfy": bool(self._get_ntfy_url()),
             "pushover": bool(self._get_pushover_user_key() and self._get_pushover_api_token()),
+            "gotify": bool(self._get_gotify_url() and self._get_gotify_token()),
+            "matrix": bool(
+                self._get_matrix_homeserver_url()
+                and self._get_matrix_access_token()
+                and self._get_matrix_room_id()
+            ),
             "notify_on_scrobble": self._is_event_enabled("notify_on_scrobble", "NOTIFY_ON_SCROBBLE", True),
             "notify_on_rate": self._is_event_enabled("notify_on_rate", "NOTIFY_ON_RATE", True),
             "notify_on_collection": self._is_event_enabled("notify_on_collection", "NOTIFY_ON_COLLECTION", True),
             "notify_on_failure": self._is_event_enabled("notify_on_failure", "NOTIFY_ON_FAILURE", True),
+            "weekly_digest_enabled": self._is_event_enabled("weekly_digest_enabled", "WEEKLY_DIGEST_ENABLED", False),
         }
 
     def build_discord_payload(
@@ -212,11 +242,56 @@ class Notifier:
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
 
-        return {
+        buttons = []
+        if trakt_url:
+            buttons.append({
+                "type": 2,
+                "style": 5,
+                "label": "View on Trakt",
+                "url": trakt_url,
+            })
+
+        clean_title = media.title or media.show_title or ""
+        if clean_title:
+            letterboxd_url = f"https://letterboxd.com/search/{urllib.parse.quote_plus(clean_title)}/"
+            buttons.append({
+                "type": 2,
+                "style": 5,
+                "label": "Letterboxd",
+                "url": letterboxd_url,
+            })
+
+        imdb_id = (media.ids or {}).get("imdb") if hasattr(media, "ids") and media.ids else None
+        if imdb_id:
+            imdb_url = f"https://www.imdb.com/title/{imdb_id}/"
+        elif clean_title:
+            imdb_url = f"https://www.imdb.com/find?q={urllib.parse.quote_plus(clean_title)}"
+        else:
+            imdb_url = ""
+
+        if imdb_url:
+            buttons.append({
+                "type": 2,
+                "style": 5,
+                "label": "IMDb",
+                "url": imdb_url,
+            })
+
+        components = []
+        if buttons:
+            components.append({
+                "type": 1,
+                "components": buttons,
+            })
+
+        payload = {
             "username": "Omniscrobble",
             "avatar_url": "https://walter-2.trakt.tv/assets/logos/logomark.square.gradient-c38a2e5d93e1a7428800244cf5308630dbda3a03bf5bf7c858b9fdf5bacc3710.png",
             "embeds": [embed],
         }
+        if components:
+            payload["components"] = components
+        return payload
 
     def build_failure_discord_payload(
         self,
@@ -488,6 +563,168 @@ class Notifier:
             logger.warning(f"Failed to deliver Pushover notification: {e}")
             return False
 
+    def build_gotify_payload(
+        self,
+        media: ParsedMedia,
+        action: str,
+        cowatch_partner: Optional[str] = None,
+        trackers: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """Constructs a Gotify push notification payload."""
+        title_str = format_media_title(media)
+        trakt_url = get_trakt_url(media)
+
+        cw_tag = f"\n👥 **Co-Watched With:** @{cowatch_partner}" if cowatch_partner else ""
+        trk_tag = f"\n📡 **Trackers:** {', '.join(t.capitalize() for t in trackers)}" if trackers else ""
+
+        if action == "rate":
+            msg = f"⭐ Rated **{media.rating or 10}/10** by **{media.username}**{cw_tag}{trk_tag}\n🔗 [View on Trakt]({trakt_url})"
+        elif action == "collection":
+            specs = f" ({media.video_resolution.upper()})" if media.video_resolution else ""
+            msg = f"📥 Collected{specs} by **{media.username or 'Media Server'}**{trk_tag}\n🔗 [View on Trakt]({trakt_url})"
+        elif action == "arr_add":
+            msg = f"📥 Added to **{media.username or 'Media Downloader'}** from Trakt Watchlist\n🔗 [View on Trakt]({trakt_url})"
+        else:
+            progress_val = f"{media.progress:.1f}%" if media.progress is not None else "100.0%"
+            scrobble_label = "Co-Watch Dual Scrobble" if cowatch_partner else "Scrobbled"
+            msg = f"🍿 {scrobble_label} ({progress_val} watched) by **{media.username}**{cw_tag}{trk_tag}\n🔗 [View on Trakt]({trakt_url})"
+
+        return {
+            "title": f"Omniscrobble: {title_str}",
+            "message": msg,
+            "priority": self._get_gotify_priority(),
+            "extras": {
+                "client::display": {
+                    "contentType": "text/markdown",
+                },
+            },
+        }
+
+    async def send_gotify(
+        self,
+        media: Union[ParsedMedia, dict[str, Any]],
+        action: Optional[str] = None,
+        token_override: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+        cowatch_partner: Optional[str] = None,
+        trackers: Optional[list[str]] = None,
+        priority: Optional[int] = None,
+    ) -> bool:
+        """Dispatches a Gotify push alert for media scrobbling events."""
+        if isinstance(media, dict):
+            payload = dict(media)
+            base_url = (action if action and action.startswith("http") else None) or self._get_gotify_url()
+            token = token_override or self._get_gotify_token()
+            if priority is not None:
+                payload["priority"] = priority
+        else:
+            base_url = (action if action and action.startswith("http") else None) or self._get_gotify_url()
+            token = token_override or self._get_gotify_token()
+            act = action if action and not action.startswith("http") else "scrobble"
+            payload = self.build_gotify_payload(
+                media=media, action=act, cowatch_partner=cowatch_partner, trackers=trackers
+            )
+            if priority is not None:
+                payload["priority"] = priority
+
+        if not base_url or not token:
+            return False
+
+        base_url = base_url.rstrip("/")
+        http = client or self.get_client()
+        try:
+            url = f"{base_url}/message"
+            headers = {"X-Gotify-Key": token}
+            res = await http.post(url, json=payload, headers=headers)
+            return 200 <= res.status_code < 300
+        except Exception as e:
+            logger.warning(f"Failed to deliver Gotify notification: {e}")
+            return False
+
+    def build_matrix_payload(
+        self,
+        media: ParsedMedia,
+        action: str,
+        cowatch_partner: Optional[str] = None,
+        trackers: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """Constructs a Matrix formatted room message payload."""
+        title_str = format_media_title(media)
+        trakt_url = get_trakt_url(media)
+        clean_user = html.escape(media.username or "Server")
+        clean_title = html.escape(title_str)
+
+        cw_tag = f" &amp; @{html.escape(cowatch_partner)}" if cowatch_partner else ""
+        trk_tag = f"<br>📡 <b>Trackers:</b> <code>{html.escape(', '.join(t.capitalize() for t in trackers))}</code>" if trackers else ""
+
+        if action == "rate":
+            rating_val = media.rating or 10
+            plain = f"Omniscrobble: Rated {title_str} ({rating_val}/10) by {media.username}"
+            formatted = f"⭐ <b>Rated Media</b><br>🎬 <b>{clean_title}</b><br>⭐ <b>Rating:</b> {rating_val}/10<br>👤 <b>User:</b> <code>{clean_user}</code>{cw_tag}{trk_tag}<br>🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
+        elif action == "collection":
+            specs = f" • {html.escape((media.video_resolution or '').upper())}" if media.video_resolution else ""
+            plain = f"Omniscrobble: Added {title_str} to Media Collection"
+            formatted = f"📥 <b>Added to Media Collection</b><br>🎬 <b>{clean_title}</b>{specs}<br>👤 <b>User:</b> <code>{clean_user}</code>{trk_tag}<br>🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
+        elif action == "arr_add":
+            plain = f"Omniscrobble: Added {title_str} to {media.username or 'Downloader'}"
+            formatted = f"📥 <b>Acquisition Added</b><br>🎬 <b>{clean_title}</b><br>🤖 <b>App:</b> {html.escape(media.username or 'Arr')}<br>🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
+        else:
+            progress_val = f"{media.progress:.1f}%" if media.progress is not None else "100.0%"
+            scrobble_label = "Co-Watch Dual Scrobble" if cowatch_partner else "Scrobbled"
+            plain = f"Omniscrobble: {scrobble_label} {title_str} ({progress_val}) by {media.username}"
+            formatted = f"🍿 <b>{scrobble_label}</b><br>🎬 <b>{clean_title}</b><br>📊 <b>Progress:</b> {progress_val}<br>👤 <b>User:</b> <code>{clean_user}</code>{cw_tag}{trk_tag}<br>🔗 <a href=\"{trakt_url}\">View on Trakt</a>"
+
+        return {
+            "msgtype": "m.text",
+            "body": plain,
+            "format": "org.matrix.custom.html",
+            "formatted_body": formatted,
+        }
+
+    async def send_matrix(
+        self,
+        media: Union[ParsedMedia, dict[str, Any]],
+        action: Optional[str] = None,
+        token_override: Optional[str] = None,
+        room_id_override: Optional[str] = None,
+        client: Optional[httpx.AsyncClient] = None,
+        cowatch_partner: Optional[str] = None,
+        trackers: Optional[list[str]] = None,
+    ) -> bool:
+        """Dispatches an encrypted/unencrypted room message to a self-hosted Matrix homeserver."""
+        if isinstance(media, dict):
+            payload = dict(media)
+            homeserver = (action if action and action.startswith("http") else None) or self._get_matrix_homeserver_url()
+            token = token_override or self._get_matrix_access_token()
+            room_id = room_id_override or self._get_matrix_room_id()
+        else:
+            homeserver = (action if action and action.startswith("http") else None) or self._get_matrix_homeserver_url()
+            token = token_override or self._get_matrix_access_token()
+            room_id = room_id_override or self._get_matrix_room_id()
+            act = action if action and not action.startswith("http") else "scrobble"
+            payload = self.build_matrix_payload(
+                media=media, action=act, cowatch_partner=cowatch_partner, trackers=trackers
+            )
+
+        if not homeserver or not token or not room_id:
+            return False
+
+        homeserver = homeserver.rstrip("/")
+        http = client or self.get_client()
+        txn_id = f"omni_{int(time.time() * 1000)}"
+        encoded_room = urllib.parse.quote(room_id, safe="")
+        url = f"{homeserver}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            res = await http.put(url, json=payload, headers=headers)
+            return 200 <= res.status_code < 300
+        except Exception as e:
+            logger.warning(f"Failed to deliver Matrix notification: {e}")
+            return False
+
     def _prune_failure_cache(self, now: float) -> None:
         """Prune entries from failure deduplication cache older than TTL (1800s)."""
         expired = [k for k, ts in self._failure_cache.items() if now - ts >= 1800.0]
@@ -586,6 +823,18 @@ class Notifier:
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
                 )
             )
+        if self._get_gotify_url() and self._get_gotify_token():
+            tasks.append(
+                self.send_gotify(
+                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
+                )
+            )
+        if self._get_matrix_homeserver_url() and self._get_matrix_access_token() and self._get_matrix_room_id():
+            tasks.append(
+                self.send_matrix(
+                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
+                )
+            )
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -600,6 +849,12 @@ class Notifier:
         ntfy_auth_token: Optional[str] = None,
         pushover_user_key: Optional[str] = None,
         pushover_api_token: Optional[str] = None,
+        gotify_url: Optional[str] = None,
+        gotify_token: Optional[str] = None,
+        gotify_priority: Optional[int] = None,
+        matrix_homeserver_url: Optional[str] = None,
+        matrix_access_token: Optional[str] = None,
+        matrix_room_id: Optional[str] = None,
         client: Optional[httpx.AsyncClient] = None,
     ) -> tuple[bool, str]:
         """Sends an immediate test alert to verify channel connectivity."""
@@ -700,7 +955,156 @@ class Notifier:
             except Exception as e:
                 return False, f"Failed to connect to Pushover: {e}"
 
+        elif ch == "gotify":
+            url = (gotify_url if (gotify_url and not self._is_masked(gotify_url)) else self._get_gotify_url()).rstrip("/")
+            token = gotify_token if (gotify_token and not self._is_masked(gotify_token)) else self._get_gotify_token()
+            if not url or not token:
+                return False, "Gotify Server URL or Application Token is not configured."
+            priority_val = gotify_priority if gotify_priority is not None else self._get_gotify_priority()
+            headers = {"X-Gotify-Key": token, "Content-Type": "application/json"}
+            payload = {
+                "title": "🔔 Omniscrobble Test Notification",
+                "message": "**Omniscrobble**\nYour Gotify push notification channel is connected and working successfully!",
+                "priority": priority_val,
+                "extras": {"client::display": {"contentType": "text/markdown"}},
+            }
+            try:
+                res = await http.post(f"{url}/message", json=payload, headers=headers)
+                if 200 <= res.status_code < 300:
+                    return True, "Gotify test notification delivered successfully!"
+                return False, f"Gotify returned HTTP {res.status_code}: {res.text[:150]}"
+            except Exception as e:
+                return False, f"Failed to connect to Gotify: {e}"
+
+        elif ch == "matrix":
+            homeserver = (matrix_homeserver_url if (matrix_homeserver_url and not self._is_masked(matrix_homeserver_url)) else self._get_matrix_homeserver_url()).rstrip("/")
+            token = matrix_access_token if (matrix_access_token and not self._is_masked(matrix_access_token)) else self._get_matrix_access_token()
+            room_id = matrix_room_id if (matrix_room_id and not self._is_masked(matrix_room_id)) else self._get_matrix_room_id()
+            if not homeserver or not token or not room_id:
+                return False, "Matrix Homeserver URL, Access Token, or Room ID is not configured."
+            txn_id = f"test_{int(time.time() * 1000)}"
+            encoded_room = urllib.parse.quote(room_id, safe="")
+            url = f"{homeserver}/_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            payload = {
+                "msgtype": "m.text",
+                "body": "Omniscrobble: Your Matrix notification channel is connected successfully!",
+                "format": "org.matrix.custom.html",
+                "formatted_body": "🔔 <b>Omniscrobble Test Notification</b><br>Your Matrix room notification channel is connected and working successfully!",
+            }
+            try:
+                res = await http.put(url, json=payload, headers=headers)
+                if 200 <= res.status_code < 300:
+                    return True, "Matrix test message delivered successfully!"
+                return False, f"Matrix returned HTTP {res.status_code}: {res.text[:150]}"
+            except Exception as e:
+                return False, f"Failed to connect to Matrix: {e}"
+
         return False, f"Unknown notification channel '{channel}'."
+
+    async def send_token_expiry_alert(
+        self,
+        service_name: str,
+        message: str,
+        reauth_url: str,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> bool:
+        """Dispatches proactive token expiration warning across configured channels with 24h throttling."""
+        cache_key = f"token_expiry_{service_name.lower().replace(' ', '_')}"
+        now = time.time()
+        last_sent = self._failure_cache.get(cache_key, 0)
+        if now - last_sent < 86400:
+            logger.debug("Token expiry alert for %s throttled (sent %ds ago)", service_name, int(now - last_sent))
+            return False
+
+        http = client or self.get_client()
+        delivered = False
+
+        # 1. Discord
+        discord_url = self._get_discord_url()
+        if discord_url:
+            payload = {
+                "embeds": [
+                    {
+                        "title": f"⚠️ Token Expiration Alert: {service_name}",
+                        "description": message,
+                        "color": 0xF59E0B,  # Amber/Orange warning
+                        "fields": [
+                            {"name": "Service", "value": service_name, "inline": True},
+                            {"name": "Action Required", "value": f"[Click here to re-authorize]({reauth_url})" if reauth_url.startswith("http") else f"`{reauth_url}`", "inline": False},
+                        ],
+                        "footer": {"text": "Omniscrobble • Security & Token Health"},
+                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    }
+                ]
+            }
+            try:
+                r = await http.post(discord_url, json=payload)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Discord token alert: %s", e)
+
+        # 2. Telegram
+        t_token = self._get_telegram_token()
+        t_chat = self._get_telegram_chat_id()
+        if t_token and t_chat:
+            tg_url = f"https://api.telegram.org/bot{t_token}/sendMessage"
+            payload = {
+                "chat_id": t_chat,
+                "text": f"⚠️ <b>Omniscrobble Token Expiration Warning</b>\n\n<b>Service:</b> {service_name}\n<b>Details:</b> {message}\n\n👉 <b>Re-authorize:</b> {reauth_url}",
+                "parse_mode": "HTML",
+            }
+            try:
+                r = await http.post(tg_url, json=payload)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Telegram token alert: %s", e)
+
+        # 3. Ntfy
+        ntfy_url = self._get_ntfy_url()
+        if ntfy_url:
+            headers = {
+                "Title": f"Token Expiry Alert: {service_name}",
+                "Priority": "high",
+                "Tags": "warning,key,omniscrobble",
+                "Click": reauth_url if reauth_url.startswith("http") else "",
+            }
+            auth_token = self._get_ntfy_auth_token()
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+            try:
+                r = await http.post(ntfy_url, content=f"{message}\nAction: {reauth_url}".encode("utf-8"), headers=headers)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Ntfy token alert: %s", e)
+
+        # 4. Pushover
+        p_user = self._get_pushover_user_key()
+        p_token = self._get_pushover_api_token()
+        if p_user and p_token:
+            data = {
+                "token": p_token,
+                "user": p_user,
+                "title": f"Omniscrobble Token Alert: {service_name}",
+                "message": message,
+                "url": reauth_url if reauth_url.startswith("http") else "",
+                "url_title": f"Re-authorize {service_name}",
+                "priority": 1,
+            }
+            try:
+                r = await http.post("https://api.pushover.net/1/messages.json", data=data)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Pushover token alert: %s", e)
+
+        if delivered:
+            self._failure_cache[cache_key] = now
+            logger.info("Dispatched token expiration alert for %s", service_name)
+        return delivered
 
 
 notifier = Notifier()

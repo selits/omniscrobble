@@ -1,0 +1,30 @@
+# Omniscrobble Stack Template for Portainer / TrueNAS SCALE / Docker Compose
+# Documentation: https://github.com/selits/omniscrobble/blob/main/DEPLOYMENT.md
+services:
+  omniscrobble:
+    image: ghcr.io/selits/omniscrobble:latest
+    container_name: omniscrobble
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - PLEX_ALLOWED_USERS=${PLEX_ALLOWED_USERS:-}
+      - CO_WATCH_USER=${CO_WATCH_USER:-}
+      - CO_WATCH_SHOWS=${CO_WATCH_SHOWS:-}
+      - CO_WATCH_PLAYERS=${CO_WATCH_PLAYERS:-}
+      - CO_WATCH_MOVIES=${CO_WATCH_MOVIES:-false}
+    volumes:
+      - omniscrobble_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  omniscrobble_data:
+    driver: local

@@ -19,15 +19,17 @@ This document provides the complete API reference for **Omniscrobble**, includin
 3. [Media Server Webhook Ingestion](#3-media-server-webhook-ingestion)
 4. [Admin Session & Authorization](#4-admin-session--authorization)
 5. [Activity Feed, Playback & System Logs](#5-activity-feed-playback--system-logs)
-6. [Manual Scrobbling & Trakt Watchlist](#6-manual-scrobbling--trakt-watchlist)
+6. [Manual Scrobbling, Standalone Players & Trakt Watchlist](#6-manual-scrobbling-standalone-players--trakt-watchlist)
 7. [Offline Queue & Disaster Recovery](#7-offline-queue--disaster-recovery)
-8. [Watch Together & Multi-User Accounts](#8-watch-together--multi-user-accounts)
+8. [Watch Together & Household Multi-Tenancy](#8-watch-together--household-multi-tenancy)
 9. [Two-Way Media Server Reconciliation & Background Cloud Sync](#9-two-way-media-server-reconciliation--background-cloud-sync)
 10. [Content Bridge (*Arr Automation)](#10-content-bridge-arr-automation)
 11. [Multi-Tracker Hub (9 Trackers & Relays)](#11-multi-tracker-hub-9-trackers--relays)
 12. [Cross-Tracker Reconciliation (Trakt ⇄ Simkl)](#12-cross-tracker-reconciliation-trakt--simkl)
 13. [Runtime Settings Hub](#13-runtime-settings-hub)
 14. [Synthetic Webhook Testing](#14-synthetic-webhook-testing)
+15. [Diagnostics & Webhook Debugger](#15-diagnostics--webhook-debugger)
+16. [Personal Analytics & OmniWrapped](#16-personal-analytics--omniwrapped)
 
 ---
 
@@ -39,10 +41,10 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | --- | --- | --- |
 | **Public** | Open read-only telemetry, PWA assets, and status feeds. | No credentials required. |
 | **Webhook Secret** | Secures incoming media server webhooks from unauthorized external callers. | Query parameter `?token=<SECRET>` or HTTP Header `x-webhook-secret: <SECRET>`. |
-| **Admin Authorization** | Required for state-mutating endpoints, configuration changes, backups, and live logs. | Cookie `admin_token=<SECRET>` (obtained via `/api/admin/unlock`), query param `?token=<SECRET>`, or header `x-webhook-secret: <SECRET>`. |
+| **Admin Authorization** | Required for state-mutating endpoints, configuration changes, backups, and live logs. | Cookie `admin_token=<SECRET>` (obtained via `/api/admin/unlock`), query param `?token=<SECRET>`, or header `x-webhook-secret: <SECRET>`. For cookie-authenticated mutating requests (`POST`, `DELETE`, `PUT`, `PATCH`), Double-Submit Cookie CSRF protection requires matching `X-CSRF-Token` header. |
 
 > [!NOTE]
-> If `WEBHOOK_SECRET` is not set in `.env`, the dashboard runs in local unrestricted mode and all endpoints grant administrative access automatically.
+> If `WEBHOOK_SECRET` is not set in `.env`, the dashboard runs in local unrestricted mode and all endpoints grant administrative access automatically. Sessions utilize configurable `COOKIE_SAMESITE` policies (default: `lax`).
 
 ---
 
@@ -53,6 +55,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/`** | `GET` | Public | **Main Web Dashboard**: Renders the responsive real-time dashboard UI. |
 | **`/demo`** | `GET` | Public | **Air-Gapped Demo**: Renders the dashboard in isolated demo mode with mock data. |
 | **`/health`** | `GET` | Public | **Healthcheck**: Returns JSON status, authentication state, and token health metrics. |
+| **`/api/health/tokens`** | `GET` | Admin | **Proactive Token Health**: Evaluates expiration windows, renewal lifespans, and push alert triggers across Trakt, Simkl, MyAnimeList, and partner accounts. |
 | **`/metrics`** | `GET` | Public | **Prometheus Metrics**: Exposes thread-safe telemetry in Prometheus text exposition format. |
 | **`/manifest.json`** | `GET` | Public | **PWA Web App Manifest**: Metadata for mobile and desktop PWA installation. |
 | **`/sw.js`** | `GET` | Public | **PWA Service Worker**: Version-locked background asset cache. |
@@ -75,9 +78,11 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/admin/unlock`** | `POST` | Rate-Limited | **Admin Unlock**: Validates `token` against `WEBHOOK_SECRET`. On success, sets an HTTP-only secure cookie (`admin_token`). Protected by brute-force rate limiting (5 failed attempts per 60s &rarr; HTTP 429). |
-| **`/api/admin/lock`** | `POST` | Public | **Admin Lock**: Deletes the `admin_token` cookie, returning the UI to privacy-shielded mode. |
+| **`/api/admin/unlock`** | `POST` | Rate-Limited | **Admin Unlock**: Validates `token` against `WEBHOOK_SECRET`. On success, issues secure HTTP-only `admin_token` and double-submit `csrf_token` cookies with configured `SameSite` policy. Protected by sliding-window brute-force rate limiting (5 failed attempts per 60s &rarr; HTTP 429 with `Retry-After`). Sanitizes security audit logs. |
+| **`/api/admin/lock`** | `POST` | Public | **Admin Lock**: Deletes both `admin_token` and `csrf_token` session cookies, returning the UI to privacy-shielded mode. |
 | **`/auth`** | `GET` | Public | **Trakt Authorization**: Starts Trakt OAuth device flow (supports `?user=username` for partner accounts). |
+| **`/api/auth/start`** | `POST` | Public | **Trakt OAuth Start**: Initiates device flow code generation for primary or partner user. |
+| **`/api/auth/poll`** | `POST` | Public | **Trakt OAuth Poll**: Polls device authorization status for token exchange. |
 | **`/auth/simkl`** | `GET` | Admin | **Simkl Authorization**: Dedicated portal for Simkl OAuth device PIN activation. |
 | **`/auth/anilist`** | `GET` | Admin | **AniList Authorization**: Web portal for AniList token entry. |
 | **`/auth/mal`** | `GET` | Admin | **MyAnimeList Authorization**: Web portal for MyAnimeList token entry. |
@@ -96,12 +101,14 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 ---
 
-## 6. Manual Scrobbling & Trakt Watchlist
+## 6. Manual Scrobbling, Standalone Players & Trakt Watchlist
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
 | **`/api/search`** | `GET` | Admin | **Global Trakt Search**: Search movies and shows (`?query=...&type=movie \| show`). |
 | **`/api/scrobble/manual`** | `POST` | Admin | **Manual History Scrobble**: Force-scrobble any movie or episode directly to Trakt, Simkl, AniList, or MAL with optional partner dual-sync. |
+| **`/api/scrobble`** | `GET` | Public | **Standalone Player Bridge Info**: Service descriptor, supported standalone players (Infuse, Kodi, VLC, Stremio), payload schema, and usage examples. |
+| **`/api/scrobble`** | `POST` | Webhook Secret | **Standalone Player Scrobble**: Ingests direct playback and scrobble payloads (`play`, `pause`, `stop`, `scrobble`) from standalone media players (Infuse, Kodi, VLC, Stremio) with full multi-tracker dispatch and loop suppression. Secures via Webhook Secret (`?token=` or header `x-webhook-secret`). |
 | **`/api/watchlist`** | `POST` | Admin | **Trakt Watchlist**: Add a movie or show to your personal Trakt watchlist. |
 | **`/api/history/remove`** | `POST` | Admin | **Unscrobble Media**: Deletes a watched history entry from Trakt and secondary trackers with optional partner unlinking. |
 
@@ -114,12 +121,13 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/queue`** | `GET` | Public | **Offline Queue Status**: Returns pending queue item count and database path. |
 | **`/api/queue/retry`** | `POST` | Admin | **Flush Queue**: Immediately drains and retries all pending offline items against Trakt. |
 | **`/api/queue/clear`** | `POST` | Admin | **Purge Queue**: Clears all pending and failed offline items from the SQLite database. |
-| **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped `.zip` containing all OAuth tokens, settings, and SQLite queue. |
-| **`/api/restore`** | `POST` | Admin | **Restore Backup**: Accepts a multipart `.zip` upload with path-traversal (Zip Slip) security verification. |
+| **`/api/queue/prune`** | `POST` | Admin | **Prune Queue Retention**: Prunes completed and expired offline queue records older than configured retention period (default 90 days). Accepts optional JSON body `{"days": <int>}`. |
+| **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped archive containing all OAuth tokens, settings, and SQLite queue. Supports AES-256-GCM encryption via `?passphrase=`, `x-backup-passphrase` header, or `CONFIG_ENCRYPTION_KEY`. |
+| **`/api/restore`** | `POST` | Admin | **Restore Backup**: Accepts a multipart archive upload with Zip Slip path-traversal protection and transparent AES-256-GCM decryption via form field `passphrase` or header. |
 
 ---
 
-## 8. Watch Together & Multi-User Accounts
+## 8. Watch Together & Household Multi-Tenancy
 
 | Endpoint | Method | Auth | Description |
 | --- | :--- | :--- | --- |
@@ -127,8 +135,14 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/cowatch/trackers`** | `GET` | Public | **Partner Cloud Trackers**: Returns connection and username status matrix for partner's secondary trackers (Trakt, Simkl, AniList, MAL). Supports `?demo=true`. |
 | **`/api/cowatch/shows`** | `POST` | Admin | **Add Shared Show**: Adds a TV show title to `data/cowatch_shows.json`. |
 | **`/api/cowatch/shows`** | `DELETE` | Admin | **Remove Shared Show**: Removes a show title from `data/cowatch_shows.json`. |
+| **`/api/cowatch/devices`** | `POST` | Admin | **Add Allowed Device**: Adds a client device identifier to the Co-Watch whitelist. |
+| **`/api/cowatch/devices`** | `DELETE` | Admin | **Remove Allowed Device**: Removes a client device identifier from the Co-Watch whitelist. |
 | **`/api/cowatch/settings`** | `POST` | Admin | **Toggle Co-Watch Settings**: Dynamically toggles movie dual-sync (`movies: true/false`). |
 | **`/api/cowatch/sync`** | `POST` | Admin | **1-Click Partner Dual Sync**: Manually pushes a watched event to your partner's Trakt profile. |
+| **`/api/household/rules`** | `GET` | Public | **List Household Rules**: Returns active and configured multi-tenant routing rules (`data/household_rules.json`). Supports `?demo=true`. |
+| **`/api/household/rules`** | `POST` | Admin | **Create or Update Household Rule**: Adds or updates a household routing rule based on device, media type, and show title targeting specific user profiles. Supports `?demo=true`. |
+| **`/api/household/rules/{rule_id}`** | `DELETE` | Admin | **Delete Household Rule**: Removes a household routing rule by ID. Supports `?demo=true`. |
+| **`/api/household/rules/{rule_id}/toggle`** | `POST` | Admin | **Toggle Household Rule**: Toggles active/disabled status of a household routing rule. Supports `?demo=true`. |
 | **`/api/sonarr/shows`** | `GET` | Admin | **Live Show Autocomplete**: Queries Sonarr for series titles, excluding already whitelisted shows. |
 
 ---
@@ -140,12 +154,13 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/sync/status`** | `GET` | Public | **Reconciliation Telemetry**: Connection state, active media server, and last sync timestamp. |
 | **`/api/sync/settings`** | `GET` | Public | **Reconciliation Settings**: Retrieves current reconciliation server configuration, masked tokens, sync interval, and ratings sync toggles. |
 | **`/api/sync/settings`** | `POST` | Admin | **Update Reconciliation Settings**: Updates media server URLs, tokens, user IDs, sync interval, and trigger startup flags with immediate background engine reload. |
-| **`/api/sync/diff`** | `GET` | Admin | **Scan Discrepancies**: Compares Trakt watched history against media server library sections. |
+| **`/api/sync/diff`** | `GET` | Admin | **Scan Discrepancies**: Compares Trakt watched history against media server library sections. Supports chunked streaming pagination via query parameters `?cursor=<int>` and `?limit=<int>` (default: 50) for memory-efficient client reconciliation. |
 | **`/api/sync/reconcile`** | `POST` | Admin | **Execute Reconciliation**: Triggers background batch reconciliation for selected or all items. Mutex-protected (returns `HTTP 409 Conflict` if a sync is running). |
 | **`/api/sync/progress`** | `GET` | Public | **Sync Progress**: Returns live percentage and progress counts for active sync batches. |
 | **`/api/sync/test-connection`** | `POST` | Admin | **Test Media Server**: Validates connectivity and credentials for Plex, Jellyfin, or Emby. |
 | **`/api/sync/background/status`** | `GET` | Public | **Background Cloud Sync Telemetry**: Returns automated background cloud sync status from `data/sync_state.json` (last run status, items reconciled, next scheduled run, task breakdowns). Supports `?demo=true`. |
 | **`/api/sync/background/run`** | `POST` | Admin | **Trigger Cloud Sync Now**: Manually executes a full background synchronization and Letterboxd CSV export cycle. Mutex-protected (returns `HTTP 409 Conflict` if a sync is running). Supports `?demo=true`. |
+| **`/api/sync/register-webhook`** | `POST` | Admin | **Auto-Register Media Server Webhook**: Automatically registers Omniscrobble's webhook endpoint in Plex (`plex.tv`), Jellyfin (Webhook plugin), or Emby (`/Webhooks`). Supports `?demo=true`. |
 
 ---
 
@@ -153,10 +168,10 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/arr/status`** | `GET` | Public | **Content Bridge Status**: Connection health, latency, and library totals for Sonarr and Radarr. |
-| **`/api/arr/sync`** | `POST` | Admin | **Sync Watchlist Now**: Scans Trakt watchlist and sends missing media to Sonarr/Radarr. |
-| **`/api/arr/test-connection`** | `POST` | Admin | **Test *Arr Connection**: Tests connectivity to Sonarr or Radarr URL and API key. |
-| **`/api/ecosystem`** | `GET` | Public | **Ecosystem Status**: Aggregated health status (9/9 services) across servers, trackers, and downloaders. |
+| **`/api/arr/status`** | `GET` | Public | **Content Bridge Status**: Connection health, latency, and library totals for Sonarr, Radarr, and Overseerr/Jellyseerr. |
+| **`/api/arr/sync`** | `POST` | Admin | **Sync Watchlist Now**: Scans Trakt watchlist and sends missing media to Overseerr/Sonarr/Radarr. |
+| **`/api/arr/test-connection`** | `POST` | Admin | **Test *Arr / Overseerr Connection**: Tests connectivity to Sonarr, Radarr, or Overseerr/Jellyseerr URL and API key. |
+| **`/api/ecosystem`** | `GET` | Public | **Ecosystem Status**: Aggregated health status (10/10 services) across servers, trackers, and downloaders/request managers. |
 
 ---
 
@@ -177,7 +192,14 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/mal/status`** | `GET` | Public | **MyAnimeList Status**: Connection status and user profile. Supports `?user=username`. |
 | **`/api/mal/token`** | `POST` | Admin | **Save MAL Token**: Saves access token for MyAnimeList REST v2 API. Accepts `{"token": "...", "user": "username"}` to persist to partner token profile. |
 | **`/api/mal/disconnect`** | `POST` | Admin | **Disconnect MAL**: Deletes local MyAnimeList token. Supports `?user=username`. |
+| **`/api/letterboxd/status`** | `GET` | Public | **Letterboxd Status**: Telemetry, account status, and local diary statistics. |
+| **`/api/letterboxd/diary`** | `GET` | Public | **Letterboxd Diary Feed**: Returns parsed local diary entries. |
 | **`/api/letterboxd/export`** | `GET` | Admin | **Letterboxd Diary CSV Export**: Generates and downloads an RFC-4180 Letterboxd-compliant CSV diary export of watched movies. |
+| **`/api/tmdb/status`** | `GET` | Public | **TMDb Status**: Connection and API key validity state. |
+| **`/api/kitsu/status`** | `GET` | Public | **Kitsu Status**: Connection status and token health. |
+| **`/api/serializd/status`** | `GET` | Public | **Serializd Status**: Connection status and token health. |
+| **`/api/mdblist/status`** | `GET` | Public | **MDBList Status**: Connection health and API key status. |
+| **`/api/mdblist/ratings`** | `GET` | Public | **MDBList Ratings**: Enriched community ratings for a title. |
 | **`/api/relay/status`** | `GET` | Public | **Mobile Relay Status**: Connection health for mobile Trakt relays (SeriesGuide, Showly). |
 | **`/api/anime/resolve`** | `GET` | Public | **Anime Resolver**: Resolves AniList GraphQL / MAL ID mapping for an anime title. |
 
@@ -205,7 +227,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/settings/rules`** | `POST` | Admin | **Update Scrobble Rules**: Updates scrobble thresholds, minimum playback duration, ignored libraries, and regex patterns with automatic clamping and validation. |
 | **`/api/settings/toggle`** | `POST` | Admin | **Toggle Service**: Enables/disables media server listeners or pauses/resumes trackers. |
 | **`/api/settings/save-all`** | `POST` | Admin | **Save Settings Hub**: Atomically saves all Settings Hub tabs (servers, trackers, rules, notifications) to `data/settings.json` without server restarts. |
-| **`/api/notifications/test`** | `POST` | Admin | **Test Notification Channel**: Dispatches a test message to a specified channel (`discord`, `telegram`, `ntfy`, `pushover`). Body: `{"channel": "discord"}`. Returns `{"ok": true}` on success. |
+| **`/api/notifications/test`** | `POST` | Admin | **Test Notification Channel**: Dispatches a test message to a specified channel (`discord`, `telegram`, `ntfy`, `pushover`, `gotify`, `matrix`). Body: `{"channel": "discord"}`. Returns `{"ok": true}` on success. |
+| **`/api/notifications/digest`** | `POST` | Admin | **Dispatch Weekly Activity Digest**: Manually triggers immediate dispatch of the weekly activity digest across all active channels. Supports `?demo=true` simulation. |
 
 ---
 
@@ -214,3 +237,22 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
 | **`/api/test/webhook`** | `POST` | Admin | **Webhook Simulator**: Simulates playback events (`media.play`, `media.pause`, `media.scrobble`), tests filter rules, inspects Co-Watch eligibility reasons, and optionally dispatches live to Trakt and partner. |
+
+---
+
+## 15. Diagnostics & Webhook Debugger
+
+| Endpoint | Method | Auth | Description |
+| --- | :---: | :---: | --- |
+| **`/api/debug/webhooks`** | `GET` | Admin | **Webhook Inspector History**: Returns recently captured raw webhook payloads (up to 25 items) with sanitized tokens, endpoint provenance, and processing status. Supports `?limit=15` and `?demo=true`. |
+| **`/api/debug/webhooks`** | `DELETE` | Admin | **Clear Debugger Buffer**: Purges the in-memory ring buffer of captured raw webhook events. |
+| **`/api/debug/replay`** | `POST` | Admin | **Replay & Test Payload**: Replays or tests a captured webhook payload through parser logic. Supports dry-run simulation (`dispatch: false`) or live pipeline execution (`dispatch: true`, strictly requiring admin authorization). |
+
+---
+
+## 16. Personal Analytics & OmniWrapped
+
+| Endpoint | Method | Auth | Description |
+| --- | :---: | :---: | --- |
+| **`/api/analytics/summary`** | `GET` | Public | **Viewing Analytics Summary**: Returns aggregated watch metrics (cumulative watch time, completed movies/episodes, star ratings, solo vs shared co-watching ratios, and media server platform distribution). Supports `?period=all\|year\|month\|week`, `?demo=true`, and applies privacy shielding for non-admin callers. |
+| **`/api/analytics/wrapped`** | `GET` | Public | **OmniWrapped Retrospective**: Computes an annual viewing celebration card including personality archetype heuristics, top binge show, co-watch breakdown, and genre telemetry. Supports `?year=YYYY` (defaults to current year), `?demo=true`, and applies partner/device privacy masking for non-admin callers. |
