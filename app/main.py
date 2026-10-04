@@ -192,6 +192,8 @@ def is_admin_request(request: Request) -> bool:
     If WEBHOOK_SECRET is not configured, admin mode is granted by default.
     Otherwise, verifies against query param ?token=, x-webhook-secret header,
     or the admin_token HTTP-only cookie using timing-safe comparison.
+    When authenticated via cookie on state-mutating requests (POST, DELETE, PUT, PATCH),
+    validates CSRF protection (X-CSRF-Token header matching csrf_token cookie).
     """
     if not Config.WEBHOOK_SECRET:
         return True
@@ -209,6 +211,14 @@ def is_admin_request(request: Request) -> bool:
     # 3. Secure cookie (admin_token=...)
     cookie_token = request.cookies.get("admin_token")
     if cookie_token and secrets.compare_digest(cookie_token, Config.WEBHOOK_SECRET):
+        # Enforce CSRF protection for cookie-authenticated mutating requests
+        if request.method in ("POST", "DELETE", "PUT", "PATCH"):
+            header_csrf = request.headers.get("x-csrf-token")
+            cookie_csrf = request.cookies.get("csrf_token")
+            if cookie_csrf:
+                if not header_csrf or not secrets.compare_digest(header_csrf, cookie_csrf):
+                    logger.warning("CSRF check failed (missing or mismatched token) on cookie-authenticated admin request from %s", request.client.host if request.client else "unknown")
+                    return False
         return True
 
     return False
@@ -277,6 +287,29 @@ async def reverse_sync_worker_loop():
 arr_watchlist_worker_task: Optional[asyncio.Task] = None
 partner_refresh_worker_task: Optional[asyncio.Task] = None
 background_cloud_sync_task: Optional[asyncio.Task] = None
+token_monitor_task: Optional[asyncio.Task] = None
+
+
+async def token_monitor_worker_loop():
+    """Background worker periodically evaluating token validity and dispatching proactive health alerts."""
+    from app.services.token_health_monitor import token_health_mgr
+    # Initial pause after boot before first proactive cycle
+    await asyncio.sleep(10.0)
+    while True:
+        try:
+            await token_health_mgr.run_check_cycle(
+                trakt_client=trakt,
+                simkl_client=simkl,
+                mal_client=mal,
+                user_mgr=user_mgr,
+            )
+            # Evaluate every 6 hours
+            await asyncio.sleep(21600.0)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in token monitor worker: {e}")
+            await asyncio.sleep(60.0)
 
 
 async def arr_watchlist_worker_loop():
@@ -357,16 +390,19 @@ async def background_cloud_sync_worker_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global queue_worker_task, reverse_sync_worker_task, arr_watchlist_worker_task
-    global partner_refresh_worker_task, background_cloud_sync_task
+    global partner_refresh_worker_task, background_cloud_sync_task, token_monitor_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
     reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
     if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
         arr_watchlist_worker_task = asyncio.create_task(arr_watchlist_worker_loop())
     partner_refresh_worker_task = asyncio.create_task(partner_token_refresh_loop())
+    token_monitor_task = asyncio.create_task(token_monitor_worker_loop())
     if getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24) > 0:
         background_cloud_sync_task = asyncio.create_task(background_cloud_sync_worker_loop())
 
     # Startup self-diagnostics check
+    if Config.CONFIG_ENCRYPTION_KEY:
+        logger.info("Startup Diagnostics: Configuration encryption key active (AES-256-GCM tokens at rest).")
     token_info = trakt.get_token_info()
     if not trakt.is_authenticated():
         logger.warning("Startup Diagnostics: Trakt is not authenticated. Visit /auth to link your account.")
@@ -455,6 +491,12 @@ async def lifespan(app: FastAPI):
         background_cloud_sync_task.cancel()
         try:
             await background_cloud_sync_task
+        except asyncio.CancelledError:
+            pass
+    if token_monitor_task:
+        token_monitor_task.cancel()
+        try:
+            await token_monitor_task
         except asyncio.CancelledError:
             pass
     await reverse_sync_mgr.plex.close()
@@ -1294,6 +1336,20 @@ async def health_check():
     }
 
 
+@app.get("/api/health/tokens")
+async def get_token_health(request: Request):
+    """Retrieve detailed expiration and health status across all configured tracker and partner tokens."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    from app.services.token_health_monitor import token_health_mgr
+    return await token_health_mgr.run_check_cycle(
+        trakt_client=trakt,
+        simkl_client=simkl,
+        mal_client=mal,
+        user_mgr=user_mgr,
+    )
+
+
 OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
   <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -1476,8 +1532,12 @@ def get_metrics():
 
 
 @app.get("/api/backup")
-async def export_backup(request: Request):
-    """Download a zip archive containing server configuration, tokens, and databases."""
+async def export_backup(request: Request, passphrase: Optional[str] = None):
+    """Download a zip archive containing server configuration, tokens, and databases.
+    
+    If passphrase, x-backup-passphrase header, or CONFIG_ENCRYPTION_KEY is provided,
+    encrypts the archive with AES-256-GCM.
+    """
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
 
@@ -1515,9 +1575,23 @@ async def export_backup(request: Request):
             zf.write(diary_file, arcname="data/letterboxd_diary.json")
 
     buffer.seek(0)
-    filename = f"plex-trakt-backup-{datetime.date.today().isoformat()}.zip"
+    zip_bytes = buffer.getvalue()
+    key = passphrase or request.headers.get("x-backup-passphrase") or getattr(Config, "CONFIG_ENCRYPTION_KEY", "")
+
+    if key:
+        from app.services.crypto_manager import encrypt_bytes
+        encrypted_dict = encrypt_bytes(zip_bytes, key)
+        encrypted_json = json.dumps(encrypted_dict, indent=2).encode("utf-8")
+        filename = f"omniscrobble-backup-encrypted-{datetime.date.today().isoformat()}.json"
+        return Response(
+            content=encrypted_json,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    filename = f"omniscrobble-backup-{datetime.date.today().isoformat()}.zip"
     return Response(
-        content=buffer.getvalue(),
+        content=zip_bytes,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -1525,18 +1599,35 @@ async def export_backup(request: Request):
 
 @app.post("/api/restore")
 async def import_backup(request: Request):
-    """Restore server configuration and tokens from an uploaded zip backup."""
+    """Restore server configuration and tokens from an uploaded zip or encrypted backup."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
 
     form = await request.form()
     file = form.get("backup_file")
+    passphrase = form.get("passphrase") or request.headers.get("x-backup-passphrase") or getattr(Config, "CONFIG_ENCRYPTION_KEY", "")
     if not file or not hasattr(file, "read"):
         raise HTTPException(status_code=400, detail="Missing backup_file in form")
 
     contents = await file.read()
     if isinstance(contents, str):
         contents = contents.encode("utf-8")
+
+    # Transparently decrypt if backup is an encrypted JSON envelope
+    try:
+        cand = json.loads(contents.decode("utf-8"))
+        from app.services.crypto_manager import is_encrypted_payload, decrypt_bytes
+        if is_encrypted_payload(cand):
+            if not passphrase:
+                raise HTTPException(status_code=400, detail="Encrypted backup requires a passphrase to restore.")
+            try:
+                contents = decrypt_bytes(cand, str(passphrase))
+            except Exception as e:
+                raise HTTPException(status_code=400, detail="Decryption failed - incorrect passphrase or corrupted backup") from e
+    except HTTPException:
+        raise
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        pass  # Standard zip archive
 
     restored_files = []
     try:
@@ -1570,6 +1661,8 @@ async def import_backup(request: Request):
         scrobble_stats.update(load_scrobble_stats())
         reload_recent_events_in_place()
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error restoring backup: {e}")
         raise HTTPException(status_code=400, detail=f"Failed to restore backup: {e}")
@@ -2876,6 +2969,12 @@ def check_unlock_rate_limit(client_ip: str) -> None:
     recent_attempts = _failed_unlock_attempts.get(client_ip, [])
     if len(recent_attempts) >= MAX_FAILED_UNLOCK_ATTEMPTS:
         retry_after = int(UNLOCK_LOCKOUT_SECONDS - (now - recent_attempts[0]))
+        logger.warning(
+            "Admin unlock rate limit exceeded for client %s (%d attempts). Locked out for %ds.",
+            log_mgr.sanitize_line(client_ip),
+            len(recent_attempts),
+            max(1, retry_after),
+        )
         raise HTTPException(
             status_code=429,
             detail=f"Too many failed unlock attempts. Please wait {max(1, retry_after)} seconds before trying again.",
@@ -2888,6 +2987,7 @@ def record_failed_unlock(client_ip: str) -> None:
     if client_ip not in _failed_unlock_attempts:
         _failed_unlock_attempts[client_ip] = []
     _failed_unlock_attempts[client_ip].append(now)
+    logger.warning("Failed admin unlock attempt from %s", log_mgr.sanitize_line(client_ip))
 
 
 def record_successful_unlock(client_ip: str) -> None:
@@ -2911,21 +3011,33 @@ def admin_unlock(payload: AdminUnlockRequest, request: Request, response: Respon
         raise HTTPException(status_code=401, detail="Invalid admin secret")
 
     record_successful_unlock(client_ip)
+    samesite_policy = getattr(Config, "COOKIE_SAMESITE", "lax") or "lax"
+    csrf_token = secrets.token_hex(16)
     response.set_cookie(
         key="admin_token",
         value=Config.WEBHOOK_SECRET,
         httponly=True,
         secure=is_https_request(request),
-        samesite="lax",
+        samesite=samesite_policy,
         path="/",
         max_age=86400 * 30,
     )
-    return {"status": "ok", "message": "Admin mode unlocked"}
+    response.set_cookie(
+        key="csrf_token",
+        value=csrf_token,
+        httponly=False,
+        secure=is_https_request(request),
+        samesite=samesite_policy,
+        path="/",
+        max_age=86400 * 30,
+    )
+    return {"status": "ok", "message": "Admin mode unlocked", "csrf_token": csrf_token}
 
 
 @app.post("/api/admin/lock")
 def admin_lock(response: Response):
     response.delete_cookie(key="admin_token")
+    response.delete_cookie(key="csrf_token")
     return {"status": "ok", "message": "Admin mode locked"}
 
 
@@ -3901,7 +4013,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{SCROBBLE_BADGE_COWATCH}}': (f' <span style="font-size:10px;color:#d8b4fe;">(@{cowatch_disp})</span>' if has_cowatch_partner else ' <span style="font-size:10px;color:#64748b;">(No partner linked)</span>'),
     }
     rendered = dashboard_renderer.render_template(DASHBOARD_HTML, replacements)
-    return HTMLResponse(
+    response = HTMLResponse(
         content=rendered,
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
@@ -3909,6 +4021,19 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             "Expires": "0",
         },
     )
+    if is_admin and not request.cookies.get("csrf_token") and Config.WEBHOOK_SECRET:
+        new_csrf = secrets.token_hex(16)
+        samesite_policy = getattr(Config, "COOKIE_SAMESITE", "lax") or "lax"
+        response.set_cookie(
+            key="csrf_token",
+            value=new_csrf,
+            httponly=False,
+            secure=is_https_request(request),
+            samesite=samesite_policy,
+            path="/",
+            max_age=86400 * 30,
+        )
+    return response
 
 
 if __name__ == '__main__':

@@ -39,10 +39,10 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | --- | --- | --- |
 | **Public** | Open read-only telemetry, PWA assets, and status feeds. | No credentials required. |
 | **Webhook Secret** | Secures incoming media server webhooks from unauthorized external callers. | Query parameter `?token=<SECRET>` or HTTP Header `x-webhook-secret: <SECRET>`. |
-| **Admin Authorization** | Required for state-mutating endpoints, configuration changes, backups, and live logs. | Cookie `admin_token=<SECRET>` (obtained via `/api/admin/unlock`), query param `?token=<SECRET>`, or header `x-webhook-secret: <SECRET>`. |
+| **Admin Authorization** | Required for state-mutating endpoints, configuration changes, backups, and live logs. | Cookie `admin_token=<SECRET>` (obtained via `/api/admin/unlock`), query param `?token=<SECRET>`, or header `x-webhook-secret: <SECRET>`. For cookie-authenticated mutating requests (`POST`, `DELETE`, `PUT`, `PATCH`), Double-Submit Cookie CSRF protection requires matching `X-CSRF-Token` header. |
 
 > [!NOTE]
-> If `WEBHOOK_SECRET` is not set in `.env`, the dashboard runs in local unrestricted mode and all endpoints grant administrative access automatically.
+> If `WEBHOOK_SECRET` is not set in `.env`, the dashboard runs in local unrestricted mode and all endpoints grant administrative access automatically. Sessions utilize configurable `COOKIE_SAMESITE` policies (default: `lax`).
 
 ---
 
@@ -53,6 +53,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/`** | `GET` | Public | **Main Web Dashboard**: Renders the responsive real-time dashboard UI. |
 | **`/demo`** | `GET` | Public | **Air-Gapped Demo**: Renders the dashboard in isolated demo mode with mock data. |
 | **`/health`** | `GET` | Public | **Healthcheck**: Returns JSON status, authentication state, and token health metrics. |
+| **`/api/health/tokens`** | `GET` | Admin | **Proactive Token Health**: Evaluates expiration windows, renewal lifespans, and push alert triggers across Trakt, Simkl, MyAnimeList, and partner accounts. |
 | **`/metrics`** | `GET` | Public | **Prometheus Metrics**: Exposes thread-safe telemetry in Prometheus text exposition format. |
 | **`/manifest.json`** | `GET` | Public | **PWA Web App Manifest**: Metadata for mobile and desktop PWA installation. |
 | **`/sw.js`** | `GET` | Public | **PWA Service Worker**: Version-locked background asset cache. |
@@ -75,8 +76,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/admin/unlock`** | `POST` | Rate-Limited | **Admin Unlock**: Validates `token` against `WEBHOOK_SECRET`. On success, sets an HTTP-only secure cookie (`admin_token`). Protected by brute-force rate limiting (5 failed attempts per 60s &rarr; HTTP 429). |
-| **`/api/admin/lock`** | `POST` | Public | **Admin Lock**: Deletes the `admin_token` cookie, returning the UI to privacy-shielded mode. |
+| **`/api/admin/unlock`** | `POST` | Rate-Limited | **Admin Unlock**: Validates `token` against `WEBHOOK_SECRET`. On success, issues secure HTTP-only `admin_token` and double-submit `csrf_token` cookies with configured `SameSite` policy. Protected by sliding-window brute-force rate limiting (5 failed attempts per 60s &rarr; HTTP 429 with `Retry-After`). Sanitizes security audit logs. |
+| **`/api/admin/lock`** | `POST` | Public | **Admin Lock**: Deletes both `admin_token` and `csrf_token` session cookies, returning the UI to privacy-shielded mode. |
 | **`/auth`** | `GET` | Public | **Trakt Authorization**: Starts Trakt OAuth device flow (supports `?user=username` for partner accounts). |
 | **`/auth/simkl`** | `GET` | Admin | **Simkl Authorization**: Dedicated portal for Simkl OAuth device PIN activation. |
 | **`/auth/anilist`** | `GET` | Admin | **AniList Authorization**: Web portal for AniList token entry. |
@@ -114,8 +115,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/queue`** | `GET` | Public | **Offline Queue Status**: Returns pending queue item count and database path. |
 | **`/api/queue/retry`** | `POST` | Admin | **Flush Queue**: Immediately drains and retries all pending offline items against Trakt. |
 | **`/api/queue/clear`** | `POST` | Admin | **Purge Queue**: Clears all pending and failed offline items from the SQLite database. |
-| **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped `.zip` containing all OAuth tokens, settings, and SQLite queue. |
-| **`/api/restore`** | `POST` | Admin | **Restore Backup**: Accepts a multipart `.zip` upload with path-traversal (Zip Slip) security verification. |
+| **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped archive containing all OAuth tokens, settings, and SQLite queue. Supports AES-256-GCM encryption via `?passphrase=`, `x-backup-passphrase` header, or `CONFIG_ENCRYPTION_KEY`. |
+| **`/api/restore`** | `POST` | Admin | **Restore Backup**: Accepts a multipart archive upload with Zip Slip path-traversal protection and transparent AES-256-GCM decryption via form field `passphrase` or header. |
 
 ---
 

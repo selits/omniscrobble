@@ -243,5 +243,12 @@ class Config:
     SSL_KEYFILE: str = os.getenv("SSL_KEYFILE", "").strip()
     EXTERNAL_URL: str = os.getenv("EXTERNAL_URL", "").strip()
 
+    # Master Passphrase for At-Rest Token & Configuration Encryption
+    CONFIG_ENCRYPTION_KEY: str = os.getenv("CONFIG_ENCRYPTION_KEY", "").strip()
+
+    # Cookie Security Settings
+    COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax").strip().lower()
+
+
 
 

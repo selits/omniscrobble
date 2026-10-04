@@ -242,9 +242,9 @@ class SettingsManager:
         """Loads settings from disk and merges with default environment configurations."""
         if self.settings_file.exists():
             try:
-                with open(self.settings_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, dict):
+                from app.services.crypto_manager import crypto_mgr
+                data = crypto_mgr.read_secure_json(self.settings_file)
+                if isinstance(data, dict):
                         servers = data.get("servers", {})
                         if isinstance(servers, dict):
                             for k, v in servers.items():
@@ -301,8 +301,8 @@ class SettingsManager:
     def _save_settings(self) -> None:
         """Persists current runtime settings to disk atomically."""
         try:
-            from app.services.atomic_writer import atomic_write_json
-            atomic_write_json(self.settings_file, self._settings)
+            from app.services.crypto_manager import crypto_mgr
+            crypto_mgr.write_secure_json(self.settings_file, self._settings)
         except Exception as e:
             logger.error(f"Error saving settings to {self.settings_file}: {e}")
 

@@ -95,6 +95,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ### 5. Offline Queue & Persistence Layer
 
 - **`app/services/atomic_writer.py`**: Thread-safe, crash-resilient atomic file persistence (`atomic_write_json`, `atomic_write_text`). Writes data to a temporary file in the destination directory and performs `os.fsync` before executing an atomic filesystem rename (`os.replace`), preventing corrupted JSON state or empty OAuth token files during sudden power losses or process interruptions.
+- **`app/services/crypto_manager.py`**: At-rest authenticated encryption service implementing AES-256-GCM symmetric encryption with PBKDF2-HMAC-SHA256 key derivation (100,000 iterations). Transparently secures tokens (`trakt_tokens.json`, `simkl_tokens.json`, `mal_tokens.json`, `anilist_token.json`, and partner accounts) and `data/settings.json` when `CONFIG_ENCRYPTION_KEY` is provided, while guaranteeing seamless fallback for unencrypted JSON stores and passphrase-protected `/api/backup` exports.
 - **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Operates with Write-Ahead Logging (`PRAGMA journal_mode=WAL;`, `PRAGMA synchronous=NORMAL;`, `PRAGMA busy_timeout=5000;`) for high concurrency and non-blocking reads. Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. A background worker drains the queue with exponential backoff.
 - **`app/services/settings_manager.py`**: Thread-safe runtime settings manager (`data/settings.json`). Preserves media server listener states, tracker pause states, dynamic rules & filters, and active servers across reboots without modifying `.env`.
 - **`app/services/user_manager.py`**: Manages isolated multi-user profiles and token storage in `data/tokens/{username}_tokens.json` (including partner secondary cloud trackers: `_simkl_tokens.json`, `_anilist_tokens.json`, `_mal_tokens.json`), client caching, and live tracker status matrices.
@@ -105,6 +106,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 - **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation.
 - **`app/services/cross_tracker_sync.py`**: Cross-tracker reconciliation engine for Trakt and Simkl.
 - **`app/services/arr_bridge.py`**: Content Bridge background worker. Polls Trakt Watchlists and automatically triggers searches in Radarr and Sonarr for newly bookmarked media.
+- **`app/services/token_health_monitor.py`**: Proactive OAuth lifespan evaluator and self-healing resilience worker. Periodically monitors expiration windows for Trakt, Simkl, MyAnimeList, and partner accounts, proactively attempting automatic renewal within 24 hours of expiration and dispatching rich push notifications with re-authorization links when manual action is needed.
 - **`app/services/notifier.py`**: Multi-channel alert dispatcher (Discord, Telegram, Ntfy, Pushover) with an in-memory 30-minute deduplication cooldown.
 
 ### 7. Observability & UI Layer
@@ -145,6 +147,7 @@ omniscrobble/
 │   │   ├── cloud_sync_manager.py    # Automated background cloud reconciliation, Letterboxd CSV snapshots & mutex locks
 │   │   ├── cowatch_manager.py       # Watch Together whitelist & dual-scrobble rules engine
 │   │   ├── cross_tracker_sync.py    # Trakt <-> Simkl reconciliation & bi-directional sync engine
+│   │   ├── crypto_manager.py        # At-rest AES-256-GCM symmetric encryption & PBKDF2 key derivation
 │   │   ├── dashboard_renderer.py    # Decoupled SSR dashboard HTML component & card renderer
 │   │   ├── demo_manager.py          # Air-gapped mock playback, stats, and activity generator
 │   │   ├── log_manager.py           # Systemd journalctl reader, in-memory ring buffer & secret redaction
@@ -155,6 +158,7 @@ omniscrobble/
 │   │   ├── queue_manager.py         # Persistent SQLite offline retry queue with WAL mode & background worker
 │   │   ├── reverse_sync_manager.py  # Bi-directional library reconciliation & reverse sync engine
 │   │   ├── settings_manager.py      # Persistent runtime media server listeners, tracker pause toggles & rules engine
+│   │   ├── token_health_monitor.py  # Proactive token expiration evaluation, automated renewal & push alerts
 │   │   └── user_manager.py          # Multi-user account client cache & token persistence
 │   ├── templates/                   # Externalized dashboard and authorization views
 │   │   ├── dashboard.html           # Main real-time status dashboard view
@@ -171,7 +175,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (80 endpoints)
+│   ├── API.md                       # Full REST API specification (81 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
@@ -179,7 +183,7 @@ omniscrobble/
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
-├── tests/                           # Comprehensive test suite (208 tests, 0 external calls)
+├── tests/                           # Comprehensive test suite (213 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool

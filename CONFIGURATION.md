@@ -85,6 +85,15 @@ flowchart TD
 - **Precedence**: Values in `data/settings.json` **supersede** `.env` defaults on subsequent startups.
 - **State Isolation**: `data/settings.json` is stored in the persistent `data/` volume and is never tracked by git.
 
+### Security, At-Rest Encryption & Session Hardening
+
+Omniscrobble incorporates defense-in-depth security mechanisms to safeguard OAuth tokens, administrative sessions, and sensitive server configurations:
+
+- **At-Rest AES-256-GCM Encryption (`CONFIG_ENCRYPTION_KEY`)**: When configured, Omniscrobble transparently encrypts all token files (`trakt_tokens.json`, `simkl_tokens.json`, `mal_tokens.json`, `anilist_token.json`, and partner accounts) and runtime settings (`data/settings.json`) at rest using authenticated symmetric AES-256-GCM. Keys are derived via PBKDF2-HMAC-SHA256 (100,000 iterations) with cryptographic 16-byte random salts. When unconfigured, state files remain readable plain JSON. Passphrase protection is also supported on `/api/backup` and `/api/restore`.
+- **Double-Submit Cookie CSRF Protection**: State-mutating administrative endpoints (`POST`, `DELETE`, `PUT`, `PATCH`) authenticated via ambient browser cookies (`admin_token`) require a cryptographically matching `X-CSRF-Token` header. Omniscrobble automatically issues and rotates the `csrf_token` cookie upon admin unlock and dashboard access.
+- **Cookie SameSite Enforcement (`COOKIE_SAMESITE`)**: Configurable policy (default: `lax`) applied to session and CSRF cookies, blocking cross-origin browser credential leakage.
+- **Sliding-Window Unlock Rate Limiting**: The `/api/admin/unlock` endpoint limits failed login attempts to a maximum of 5 attempts within a rolling 60-second window. Exceeding this threshold triggers an immediate `HTTP 429 Too Many Requests` response with a `Retry-After` header and sanitized security event logging.
+
 ---
 
 ## 2. Media Server Credentials & Webhook Setup
@@ -612,6 +621,8 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`EXTERNAL_URL`** | `""` | String | No | Public-facing base URL (e.g. `https://omniscrobble.example.com`) for reverse proxy links. |
 | **`DEBUG`** | `false` | Boolean | No | Enables verbose debug logging and traceback outputs. |
 | **`WEBHOOK_SECRET`** | `""` | String | No | Secret token protecting endpoints (`?token=...`) and locking the admin dashboard. |
+| **`CONFIG_ENCRYPTION_KEY`** | `""` | String | No | Passphrase for AES-256-GCM authenticated encryption of tokens, credentials, and settings at rest. |
+| **`COOKIE_SAMESITE`** | `lax` | String | No | Cookie SameSite policy (`lax`, `strict`, or `none`) for admin and CSRF session cookies. |
 | **`PLEX_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Plex webhooks (`/webhook`). |
 | **`JELLYFIN_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Jellyfin webhooks (`/webhook/jellyfin`). |
 | **`EMBY_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Emby webhooks (`/webhook/emby`). |

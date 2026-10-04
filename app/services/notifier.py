@@ -702,5 +702,109 @@ class Notifier:
 
         return False, f"Unknown notification channel '{channel}'."
 
+    async def send_token_expiry_alert(
+        self,
+        service_name: str,
+        message: str,
+        reauth_url: str,
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> bool:
+        """Dispatches proactive token expiration warning across configured channels with 24h throttling."""
+        cache_key = f"token_expiry_{service_name.lower().replace(' ', '_')}"
+        now = time.time()
+        last_sent = self._failure_cache.get(cache_key, 0)
+        if now - last_sent < 86400:
+            logger.debug("Token expiry alert for %s throttled (sent %ds ago)", service_name, int(now - last_sent))
+            return False
+
+        http = client or self.get_client()
+        delivered = False
+
+        # 1. Discord
+        discord_url = self._get_discord_url()
+        if discord_url:
+            payload = {
+                "embeds": [
+                    {
+                        "title": f"⚠️ Token Expiration Alert: {service_name}",
+                        "description": message,
+                        "color": 0xF59E0B,  # Amber/Orange warning
+                        "fields": [
+                            {"name": "Service", "value": service_name, "inline": True},
+                            {"name": "Action Required", "value": f"[Click here to re-authorize]({reauth_url})" if reauth_url.startswith("http") else f"`{reauth_url}`", "inline": False},
+                        ],
+                        "footer": {"text": "Omniscrobble • Security & Token Health"},
+                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    }
+                ]
+            }
+            try:
+                r = await http.post(discord_url, json=payload)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Discord token alert: %s", e)
+
+        # 2. Telegram
+        t_token = self._get_telegram_token()
+        t_chat = self._get_telegram_chat_id()
+        if t_token and t_chat:
+            tg_url = f"https://api.telegram.org/bot{t_token}/sendMessage"
+            payload = {
+                "chat_id": t_chat,
+                "text": f"⚠️ <b>Omniscrobble Token Expiration Warning</b>\n\n<b>Service:</b> {service_name}\n<b>Details:</b> {message}\n\n👉 <b>Re-authorize:</b> {reauth_url}",
+                "parse_mode": "HTML",
+            }
+            try:
+                r = await http.post(tg_url, json=payload)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Telegram token alert: %s", e)
+
+        # 3. Ntfy
+        ntfy_url = self._get_ntfy_url()
+        if ntfy_url:
+            headers = {
+                "Title": f"Token Expiry Alert: {service_name}",
+                "Priority": "high",
+                "Tags": "warning,key,omniscrobble",
+                "Click": reauth_url if reauth_url.startswith("http") else "",
+            }
+            auth_token = self._get_ntfy_auth_token()
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+            try:
+                r = await http.post(ntfy_url, content=f"{message}\nAction: {reauth_url}".encode("utf-8"), headers=headers)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Ntfy token alert: %s", e)
+
+        # 4. Pushover
+        p_user = self._get_pushover_user_key()
+        p_token = self._get_pushover_api_token()
+        if p_user and p_token:
+            data = {
+                "token": p_token,
+                "user": p_user,
+                "title": f"Omniscrobble Token Alert: {service_name}",
+                "message": message,
+                "url": reauth_url if reauth_url.startswith("http") else "",
+                "url_title": f"Re-authorize {service_name}",
+                "priority": 1,
+            }
+            try:
+                r = await http.post("https://api.pushover.net/1/messages.json", data=data)
+                if 200 <= r.status_code < 300:
+                    delivered = True
+            except Exception as e:
+                logger.error("Failed to deliver Pushover token alert: %s", e)
+
+        if delivered:
+            self._failure_cache[cache_key] = now
+            logger.info("Dispatched token expiration alert for %s", service_name)
+        return delivered
+
 
 notifier = Notifier()

@@ -9400,3 +9400,268 @@ def test_ambient_visuals_compact_mode_and_card_visibility():
     assert "function renderCardVisibilityPickers()" in html
     assert "function initAppearance()" in html
 
+
+def test_admin_unlock_rate_limiting_and_sanitized_logs():
+    """Verify admin unlock rate limiter logs sanitized warnings and blocks repeated attacks."""
+    from app.main import _failed_unlock_attempts
+    _failed_unlock_attempts.clear()
+
+    try:
+        client = TestClient(app)
+        with patch.object(Config, "WEBHOOK_SECRET", "super_secret_webhook_pass"):
+            with patch("app.main.logger.warning") as mock_warn:
+                for i in range(5):
+                    res = client.post("/api/admin/unlock", json={"token": f"bad_token_{i}"})
+                    assert res.status_code == 401
+                assert mock_warn.call_count >= 5
+
+                res_429 = client.post("/api/admin/unlock", json={"token": "bad_token_6"})
+                assert res_429.status_code == 429
+                assert "Retry-After" in res_429.headers
+                assert any("Admin unlock rate limit exceeded" in str(c) for c in mock_warn.call_args_list)
+
+            # Successful unlock clears rate limiter for IP
+            _failed_unlock_attempts["testclient"] = []
+            res_ok = client.post("/api/admin/unlock", json={"token": "super_secret_webhook_pass"})
+            assert res_ok.status_code == 200
+            assert "csrf_token" in res_ok.cookies
+            assert "admin_token" in res_ok.cookies
+    finally:
+        _failed_unlock_attempts.clear()
+
+
+def test_csrf_double_submit_protection():
+    """Verify double-submit CSRF cookie protection for state-mutating admin requests."""
+    from app.main import _failed_unlock_attempts
+    _failed_unlock_attempts.clear()
+    client = TestClient(app)
+    try:
+        with patch.object(Config, "WEBHOOK_SECRET", "my_secure_secret"):
+            # 1. Unlock admin to obtain cookies
+            unlock_res = client.post("/api/admin/unlock", json={"token": "my_secure_secret"})
+            assert unlock_res.status_code == 200
+            admin_cookie = unlock_res.cookies.get("admin_token")
+            csrf_cookie = unlock_res.cookies.get("csrf_token")
+            assert admin_cookie is not None
+            assert csrf_cookie is not None
+
+            # 2. Mutating request (POST /api/settings) with admin & csrf cookies but NO x-csrf-token header -> 401
+            client.cookies.clear()
+            client.cookies.set("admin_token", admin_cookie)
+            client.cookies.set("csrf_token", csrf_cookie)
+            bad_req = client.post("/api/settings", json={"plex_enabled": True})
+            assert bad_req.status_code == 401
+
+            # 3. Mutating request with admin cookie and mismatched x-csrf-token header -> 401
+            client.cookies.set("csrf_token", csrf_cookie)
+            bad_csrf = client.post(
+                "/api/settings",
+                json={"plex_enabled": True},
+                headers={"x-csrf-token": "wrong_csrf_token"},
+            )
+            assert bad_csrf.status_code == 401
+
+            # 4. Mutating request with admin cookie and valid matching x-csrf-token header -> 200
+            good_req = client.post(
+                "/api/settings",
+                json={"plex_enabled": True},
+                headers={"x-csrf-token": csrf_cookie},
+            )
+            assert good_req.status_code == 200
+
+            # 5. Non-mutating request (GET /api/logs) with admin cookie does NOT require CSRF header
+            get_logs = client.get("/api/logs")
+            assert get_logs.status_code == 200
+
+            # 6. Webhook / direct API key auth via header or query param does NOT require CSRF header
+            client.cookies.clear()
+            token_req = client.post("/api/settings?token=my_secure_secret", json={"plex_enabled": True})
+            assert token_req.status_code == 200
+
+            # 7. Visiting GET / with admin_token but missing csrf_token issues csrf_token cookie
+            client.cookies.set("admin_token", admin_cookie)
+            visit_res = client.get("/")
+            assert visit_res.status_code == 200
+            assert "csrf_token" in visit_res.cookies
+
+            # 8. Admin lock deletes both cookies
+            client.cookies.set("csrf_token", csrf_cookie)
+            lock_res = client.post(
+                "/api/admin/lock",
+                headers={"x-csrf-token": csrf_cookie},
+            )
+            assert lock_res.status_code == 200
+            set_cookie_header = lock_res.headers.get("set-cookie", "")
+            assert "admin_token" in set_cookie_header
+            assert "csrf_token" in set_cookie_header
+    finally:
+        _failed_unlock_attempts.clear()
+
+
+def test_crypto_manager_at_rest_encryption(tmp_path):
+    """Verify AES-256-GCM symmetric encryption, PBKDF2 derivation, and secure JSON roundtripping."""
+    from app.services.crypto_manager import CryptoManager, derive_key, encrypt_payload, decrypt_payload, is_encrypted_payload
+
+    passphrase = "test_super_encryption_passphrase_123"
+    payload = {"client_id": "trakt_id_abc", "tokens": {"access": "xyz", "expires": 86400}}
+
+    # 1. Direct payload encryption / decryption
+    envelope = encrypt_payload(payload, passphrase)
+    assert is_encrypted_payload(envelope) is True
+    assert envelope["encrypted"] is True
+    assert envelope["algo"] == "aes-256-gcm"
+    assert "salt" in envelope
+    assert "nonce" in envelope
+    assert "ciphertext" in envelope
+
+    decrypted = decrypt_payload(envelope, passphrase)
+    assert decrypted == payload
+
+    # Decrypt with wrong passphrase raises ValueError
+    with pytest.raises(ValueError):
+        decrypt_payload(envelope, "wrong_passphrase")
+
+    # 2. CryptoManager file I/O with CONFIG_ENCRYPTION_KEY
+    cm = CryptoManager(default_key=passphrase)
+    test_file = tmp_path / "secure_tokens.json"
+
+    cm.write_secure_json(test_file, payload)
+    raw_disk_data = json.loads(test_file.read_text(encoding="utf-8"))
+    assert is_encrypted_payload(raw_disk_data) is True
+
+    loaded = cm.read_secure_json(test_file)
+    assert loaded == payload
+
+    # 3. Backward compatibility: reading unencrypted plain JSON file when encryption key is enabled
+    plain_file = tmp_path / "plain_tokens.json"
+    plain_data = {"plain_key": "plain_value"}
+    plain_file.write_text(json.dumps(plain_data), encoding="utf-8")
+
+    loaded_plain = cm.read_secure_json(plain_file)
+    assert loaded_plain == plain_data
+
+    # 4. Reading encrypted file without key raises ValueError
+    cm_no_key = CryptoManager(default_key="")
+    with patch.object(Config, "CONFIG_ENCRYPTION_KEY", ""):
+        with pytest.raises(ValueError) as exc:
+            cm_no_key.read_secure_json(test_file)
+        assert "encrypted at rest" in str(exc.value)
+
+
+def test_encrypted_backup_and_restore_workflow(tmp_path):
+    """Verify passphrase-protected encrypted backup archive generation and restore."""
+    client = TestClient(app)
+    passphrase = "archive_super_secret_123"
+
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # 1. Create encrypted backup via passphrase query param
+        res = client.get(f"/api/backup?token=admin_secret&passphrase={passphrase}")
+        assert res.status_code == 200
+        assert res.headers.get("content-type") == "application/json"
+        assert "omniscrobble-backup-encrypted-" in res.headers.get("content-disposition", "")
+
+        backup_envelope = res.json()
+        from app.services.crypto_manager import is_encrypted_payload
+        assert is_encrypted_payload(backup_envelope) is True
+
+        # 2. Restore with correct passphrase
+        import io
+        import zipfile
+        mock_zip = io.BytesIO()
+        with zipfile.ZipFile(mock_zip, "w") as zf:
+            zf.writestr("data/cowatch_devices.json", json.dumps(["Test Encrypted Device"]))
+        mock_zip.seek(0)
+
+        from app.services.crypto_manager import encrypt_bytes
+        enc_dict = encrypt_bytes(mock_zip.getvalue(), passphrase)
+        enc_payload_bytes = json.dumps(enc_dict).encode("utf-8")
+
+        files = {"backup_file": ("backup.enc.json", enc_payload_bytes, "application/json")}
+        data = {"passphrase": passphrase}
+        restore_res = client.post("/api/restore?token=admin_secret", files=files, data=data)
+        assert restore_res.status_code == 200
+        assert restore_res.json().get("status") == "success"
+        assert "data/cowatch_devices.json" in restore_res.json().get("restored", [])
+
+        # 3. Restore with incorrect passphrase returns 400
+        files_bad = {"backup_file": ("backup.enc.json", enc_payload_bytes, "application/json")}
+        data_bad = {"passphrase": "wrong_archive_passphrase"}
+        restore_bad = client.post("/api/restore?token=admin_secret", files=files_bad, data=data_bad)
+        assert restore_bad.status_code == 400
+        assert "Decryption failed" in restore_bad.json().get("detail", "")
+
+        # 4. Standard unencrypted backup when no passphrase is given
+        with patch.object(Config, "CONFIG_ENCRYPTION_KEY", ""):
+            res_plain = client.get("/api/backup?token=admin_secret")
+            assert res_plain.status_code == 200
+            assert res_plain.headers.get("content-type") == "application/zip"
+            assert res_plain.content.startswith(b"PK")
+
+    # Cleanup restored test devices
+    if Config.CO_WATCH_DEVICES_DATA_FILE.exists():
+        Config.CO_WATCH_DEVICES_DATA_FILE.unlink()
+    cowatch_mgr._devices.clear()
+
+
+@pytest.mark.asyncio
+async def test_token_health_monitor_and_alerts():
+    """Verify TokenHealthMonitor proactive refresh, alert dispatching, and /api/health/tokens endpoint."""
+    from app.services.token_health_monitor import TokenHealthMonitor, token_health_mgr
+    import time
+
+    monitor = TokenHealthMonitor()
+
+    # 1. Healthy Trakt token (>24 hours)
+    mock_trakt = MagicMock()
+    mock_trakt.client_id = "test_id"
+    mock_trakt.is_authenticated.return_value = True
+    now = time.time()
+    mock_trakt.load_tokens.return_value = {
+        "access_token": "valid_token",
+        "created_at": now - 3600,
+        "expires_in": 86400 * 30,
+    }
+    trakt_health = await monitor.evaluate_trakt(mock_trakt)
+    assert trakt_health["status"] == "healthy"
+    assert trakt_health["needs_reauth"] is False
+
+    # 2. Trakt token near expiry (<= 24 hours), proactive refresh succeeds
+    mock_trakt.load_tokens.return_value = {
+        "access_token": "valid_token",
+        "created_at": now - 3600,
+        "expires_in": 7200,
+    }
+    mock_trakt.refresh_token = AsyncMock(return_value={"access_token": "refreshed_access_token"})
+    trakt_refreshed = await monitor.evaluate_trakt(mock_trakt)
+    assert trakt_refreshed["status"] == "healthy"
+    assert trakt_refreshed["needs_reauth"] is False
+    mock_trakt.refresh_token.assert_awaited_once()
+
+    # 3. Trakt token near expiry, proactive refresh fails -> near_expiry & needs_reauth
+    mock_trakt.refresh_token = AsyncMock(side_effect=Exception("Trakt API down"))
+    trakt_failing = await monitor.evaluate_trakt(mock_trakt)
+    assert trakt_failing["status"] == "near_expiry"
+    assert trakt_failing["needs_reauth"] is True
+
+    # 4. Full check cycle dispatches notification via notifier
+    with patch("app.services.notifier.notifier.send_token_expiry_alert", new_callable=AsyncMock) as mock_alert:
+        results = await monitor.run_check_cycle(trakt_client=mock_trakt)
+        assert "trakt" in results
+        assert results["trakt"]["needs_reauth"] is True
+        mock_alert.assert_awaited_once()
+
+    # 5. GET /api/health/tokens endpoint
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # Unauthenticated returns 401
+        res_unauth = client.get("/api/health/tokens")
+        assert res_unauth.status_code == 401
+
+        # Authenticated returns structured health dictionary
+        res_auth = client.get("/api/health/tokens?token=admin_secret")
+        assert res_auth.status_code == 200
+        data = res_auth.json()
+        assert "trakt" in data
+        assert "service" in data["trakt"]
+        assert "mal" in data
+

@@ -14,6 +14,8 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 6. [Multi-Channel Notifications & Throttling](#6-multi-channel-notifications--throttling)
 7. [Homelab Observability & Prometheus Scrape](#7-homelab-observability--prometheus-scrape)
 8. [Multi-Theme Palette Engine & Accents](#8-multi-theme-palette-engine--accents)
+9. [Ambient Visuals, Display Density & Card Customization](#9-ambient-visuals-display-density--card-customization)
+10. [Production Security & Self-Healing Resilience](#10-production-security--self-healing-resilience)
 
 ---
 
@@ -334,3 +336,58 @@ Customize the dashboard to display only the features you actively use:
 - **Instant Toggles**: Manage card visibility in the Settings Hub Appearance tab with live preview.
 - **1-Click Reset**: Restore default card layout instantly with the **Reset to Default** button.
 - **Pre-Render Style Injection**: Disabled cards are suppressed before first paint via an inline `<style id="fouc-card-style">` element, preventing layout shift on page load.
+
+---
+
+## 10. Production Security & Self-Healing Resilience
+
+Omniscrobble implements an enterprise-grade defense-in-depth security model and proactive token health lifecycle engine designed to prevent unauthorized credential tampering, mitigate cross-site attacks, and eliminate authentication dropouts before they disrupt background scrobbling.
+
+```mermaid
+flowchart TD
+    subgraph Defense ["🛡️ Security Hardening"]
+        RL["Sliding-Window Rate Limiter<br/>(5 attempts / 60s &rarr; HTTP 429)"]
+        CSRF["Double-Submit Cookie CSRF<br/>(X-CSRF-Token Matching)"]
+        Crypto["AES-256-GCM At-Rest Encryption<br/>(PBKDF2-HMAC-SHA256, 100k iter)"]
+    end
+
+    subgraph Healing ["🔄 Self-Healing Token Lifecycle"]
+        Worker["Token Health Background Worker<br/>(Periodic 6-Hour Cycle)"]
+        Evaluate{"Window <= 24h Expiry?"}
+        Proactive["Proactive Token Refresh<br/>(Trakt / Simkl / MAL API)"]
+        Alert["Push Re-Auth Alert<br/>(Discord / Telegram / Ntfy / Pushover)"]
+    end
+
+    Defense --> OmniscrobbleCore["Omniscrobble Core Engine"]
+    Worker --> Evaluate
+    Evaluate -- Yes --> Proactive
+    Proactive -- "Failure or Manual Action Needed" --> Alert
+```
+
+### 1. At-Rest Token & Configuration Encryption
+
+When `CONFIG_ENCRYPTION_KEY` is provided in `.env` or system environment:
+
+- **AES-256-GCM Symmetric Encryption**: All sensitive token files (`trakt_tokens.json`, `simkl_tokens.json`, `mal_tokens.json`, `anilist_token.json`, and all partner accounts in `data/tokens/*.json`) as well as dynamic settings (`data/settings.json`) are encrypted at rest with authenticated AES-256-GCM.
+- **Key Derivation (PBKDF2-HMAC-SHA256)**: Encryption keys are derived using 100,000 iterations with 16-byte cryptographically secure random salts.
+- **Passphrase-Protected Backups**: The `/api/backup` export endpoint accepts a custom passphrase to encrypt zip archives into authenticated JSON envelopes (`OPBK`), preventing credential leaks in cloud backups.
+- **Backward-Compatible Fallback**: If `CONFIG_ENCRYPTION_KEY` is unset, Omniscrobble seamlessly reads and writes standard unencrypted JSON files without migration headaches.
+
+### 2. Double-Submit Cookie CSRF Protection
+
+- **Cookie-Authenticated Mutating Gates**: When administrative access is granted via browser cookies (`admin_token`), all state-changing HTTP requests (`POST`, `DELETE`, `PUT`, `PATCH`) require a cryptographically matching `X-CSRF-Token` header.
+- **Transparent `window.fetch` Interceptor**: The web dashboard automatically injects `X-CSRF-Token` from the `csrf_token` cookie into all outbound requests, ensuring zero friction for authorized users.
+- **External Webhook Isolation**: Media server webhooks and automated scripts authenticating via `?token=` query parameters or `x-webhook-secret` headers bypass CSRF checks, ensuring automated scripts and local media servers continue to operate unimpeded.
+- **Cookie SameSite Policies**: Configurable `COOKIE_SAMESITE` (default `lax`) enforces strict origin isolation on session cookies.
+
+### 3. Sliding-Window Unlock Rate Limiting
+
+- **Brute-Force Lockout**: The `/api/admin/unlock` endpoint tracks failed password attempts per client IP. After 5 consecutive failures within a rolling 60-second window, subsequent attempts are rejected with `HTTP 429 Too Many Requests` and a standard `Retry-After: 60` response header.
+- **Sanitized Audit Telemetry**: All lockout events and invalid unlock attempts emit sanitized warning logs (`log_mgr.sanitize_line(client_ip)`), preventing terminal injection or log tampering.
+
+### 4. Proactive Token Expiration & Push Health Alerts
+
+- **Proactive Renewal Engine (`TokenHealthMonitor`)**: Rather than waiting for a media scrobble to fail with HTTP 401, a dedicated background worker continuously tracks token lifetimes (`created_at + expires_in`).
+- **24-Hour Renewal Window**: Any OAuth token within 24 hours of expiration is automatically refreshed in the background.
+- **Actionable Re-Authorization Alerts**: If an upstream service revokes access or automatic refresh fails, Omniscrobble sends a high-priority alert across your configured notification channels (Discord, Telegram, Ntfy, Pushover) with an instant 1-click re-authorization link. Alerts are throttled to 1 per 24 hours per service to eliminate spam.
+- **REST Telemetry**: Detailed token expiration statuses and remaining lifespans are queryable via `GET /api/health/tokens`.

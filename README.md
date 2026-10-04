@@ -67,7 +67,7 @@ Omniscrobble is developed in an active daily homelab environment. The matrix bel
 > **Live Production vs. Unit/Mock Testing Disclosure**:
 >
 > - **Live Tested (Verified)**: Plex, Trakt.tv, Simkl, Sonarr, and Radarr are actively run and validated against real production accounts and physical hardware playback in the maintainer's daily homelab.
-> - **Unit & Simulated Tested (Community Beta)**: The newly added cloud trackers (Kitsu, Letterboxd, Serializd, TMDb, MDBList), secondary media servers (Jellyfin, Emby), and anime engines (AniList, MyAnimeList) are fully implemented and verified via automated unit test suites (208 tests) and synthetic webhook simulations. They have **not yet been live-tested with real upstream user accounts**.
+> - **Unit & Simulated Tested (Community Beta)**: The newly added cloud trackers (Kitsu, Letterboxd, Serializd, TMDb, MDBList), secondary media servers (Jellyfin, Emby), and anime engines (AniList, MyAnimeList) are fully implemented and verified via automated unit test suites (213 tests) and synthetic webhook simulations. They have **not yet been live-tested with real upstream user accounts**.
 > - **Community Testers Welcome**: If you use any Community Beta integrations, please report your experience or open an issue on GitHub! Your real-world feedback validates and refines each platform integration.
 
 ---
@@ -171,7 +171,7 @@ omniscrobble/
 │   └── metrics.py           # Thread-safe Prometheus metrics registry
 ├── docs/                    # Static demo (GitHub Pages), Architecture, API, Features & FAQ
 ├── scripts/                 # Demo compilation & branding asset generators
-└── tests/                   # Pytest test suite (208 unit & integration tests)
+└── tests/                   # Pytest test suite (213 unit & integration tests)
 ```
 
 > 🏛️ For the complete architectural diagram, component layers, and detailed directory manifest, see [**`docs/ARCHITECTURE.md`**](./docs/ARCHITECTURE.md).
