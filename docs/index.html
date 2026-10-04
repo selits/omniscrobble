@@ -20,69 +20,281 @@
     <meta property="twitter:card" content="summary_large_image">
     <script>
         (function() {
-            var t = localStorage.getItem('omniscrobble_theme');
-            if (t === 'oled') {
-                document.documentElement.classList.add('theme-oled');
-            }
+            try {
+                var theme = localStorage.getItem('omniscrobble_theme') || 'slate';
+                if (theme && theme !== 'slate') {
+                    document.documentElement.classList.add('theme-' + theme);
+                }
+                if (theme === 'oled') {
+                    document.documentElement.classList.add('theme-oled');
+                }
+                var accent = localStorage.getItem('omniscrobble_accent') || 'amber';
+                if (accent) {
+                    document.documentElement.classList.add('accent-' + accent);
+                }
+            } catch (e) {}
         })();
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            /* Base Slate Theme Variables */
+            --bg-page: #0f172a;
+            --bg-surface: #1e293b;
+            --bg-subtle: #0f172a;
+            --border-color: #334155;
+            --border-subtle: #1e293b;
+            --border-table: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-heading: #e2e8f0;
+            --modal-bg: #1e293b;
+
+            /* Accent Highlights */
+            --accent-color: #f59e0b;
+            --accent-hover: #d97706;
+            --accent-glow: rgba(245, 158, 11, 0.35);
+            --accent-text: #ffffff;
+            --btn-copy-bg: #0284c7;
+            --btn-copy-hover: #0369a1;
+        }
+
+        /* 1. Slate Theme (Default) */
+        html.theme-slate {
+            --bg-page: #0f172a;
+            --bg-surface: #1e293b;
+            --bg-subtle: #0f172a;
+            --border-color: #334155;
+            --border-subtle: #1e293b;
+            --border-table: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-heading: #e2e8f0;
+            --modal-bg: #1e293b;
+        }
+
+        /* 2. OLED True-Black Theme */
+        html.theme-oled {
+            --bg-page: #000000;
+            --bg-surface: #09090b;
+            --bg-subtle: #000000;
+            --border-color: #27272a;
+            --border-subtle: #27272a;
+            --border-table: #18181b;
+            --text-main: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --text-heading: #fafafa;
+            --modal-bg: #09090b;
+        }
+        html.theme-oled body { background-color: #000000 !important; color: #f4f4f5 !important; }
+        html.theme-oled .card, html.theme-oled .modal-dialog { background: #09090b !important; border-color: #27272a !important; }
+        html.theme-oled .info-item, html.theme-oled .scrobble-item, html.theme-oled .cowatch-account-row, html.theme-oled th { background: #000000 !important; border-color: #27272a !important; }
+        html.theme-oled .header, html.theme-oled .activity-header { border-color: #27272a !important; }
+        html.theme-oled td, html.theme-oled tr { border-bottom-color: #18181b !important; }
+        html.theme-oled .cowatch-grid > div + div { border-color: #27272a !important; }
+        html.theme-oled div[style*="background:#0f172a"], html.theme-oled div[style*="background: #0f172a"] { background-color: #000000 !important; border-color: #27272a !important; }
+        html.theme-oled div[style*="background:#1e293b"], html.theme-oled div[style*="background: #1e293b"] { background-color: #09090b !important; border-color: #27272a !important; }
+
+        /* 3. Nord (Arctic Polar Night) */
+        html.theme-nord {
+            --bg-page: #242933;
+            --bg-surface: #2e3440;
+            --bg-subtle: #242933;
+            --border-color: #4c566a;
+            --border-subtle: #3b4252;
+            --border-table: #434c5e;
+            --text-main: #eceff4;
+            --text-muted: #d8dee9;
+            --text-heading: #e5e9f0;
+            --modal-bg: #2e3440;
+        }
+        html.theme-nord body { background-color: #242933 !important; color: #eceff4 !important; }
+        html.theme-nord .card, html.theme-nord .modal-dialog { background: #2e3440 !important; border-color: #4c566a !important; }
+        html.theme-nord .info-item, html.theme-nord .scrobble-item, html.theme-nord .cowatch-account-row, html.theme-nord th { background: #242933 !important; border-color: #434c5e !important; }
+        html.theme-nord .header, html.theme-nord .activity-header { border-color: #4c566a !important; }
+        html.theme-nord td, html.theme-nord tr { border-bottom-color: #3b4252 !important; }
+        html.theme-nord .cowatch-grid > div + div { border-color: #434c5e !important; }
+        html.theme-nord div[style*="background:#0f172a"], html.theme-nord div[style*="background: #0f172a"] { background-color: #242933 !important; border-color: #434c5e !important; }
+        html.theme-nord div[style*="background:#1e293b"], html.theme-nord div[style*="background: #1e293b"] { background-color: #2e3440 !important; border-color: #4c566a !important; }
+
+        /* 4. Catppuccin Mocha */
+        html.theme-catppuccin {
+            --bg-page: #181825;
+            --bg-surface: #1e1e2e;
+            --bg-subtle: #181825;
+            --border-color: #313244;
+            --border-subtle: #313244;
+            --border-table: #45475a;
+            --text-main: #cdd6f4;
+            --text-muted: #a6adc8;
+            --text-heading: #f5e0dc;
+            --modal-bg: #1e1e2e;
+        }
+        html.theme-catppuccin body { background-color: #181825 !important; color: #cdd6f4 !important; }
+        html.theme-catppuccin .card, html.theme-catppuccin .modal-dialog { background: #1e1e2e !important; border-color: #313244 !important; }
+        html.theme-catppuccin .info-item, html.theme-catppuccin .scrobble-item, html.theme-catppuccin .cowatch-account-row, html.theme-catppuccin th { background: #181825 !important; border-color: #313244 !important; }
+        html.theme-catppuccin .header, html.theme-catppuccin .activity-header { border-color: #313244 !important; }
+        html.theme-catppuccin td, html.theme-catppuccin tr { border-bottom-color: #262637 !important; }
+        html.theme-catppuccin .cowatch-grid > div + div { border-color: #313244 !important; }
+        html.theme-catppuccin div[style*="background:#0f172a"], html.theme-catppuccin div[style*="background: #0f172a"] { background-color: #181825 !important; border-color: #313244 !important; }
+        html.theme-catppuccin div[style*="background:#1e293b"], html.theme-catppuccin div[style*="background: #1e293b"] { background-color: #1e1e2e !important; border-color: #313244 !important; }
+
+        /* 5. Tokyo Night */
+        html.theme-tokyonight {
+            --bg-page: #1a1b26;
+            --bg-surface: #24283b;
+            --bg-subtle: #1a1b26;
+            --border-color: #3b4261;
+            --border-subtle: #292e42;
+            --border-table: #3b4261;
+            --text-main: #c0caf5;
+            --text-muted: #9aa5ce;
+            --text-heading: #7aa2f7;
+            --modal-bg: #24283b;
+        }
+        html.theme-tokyonight body { background-color: #1a1b26 !important; color: #c0caf5 !important; }
+        html.theme-tokyonight .card, html.theme-tokyonight .modal-dialog { background: #24283b !important; border-color: #3b4261 !important; }
+        html.theme-tokyonight .info-item, html.theme-tokyonight .scrobble-item, html.theme-tokyonight .cowatch-account-row, html.theme-tokyonight th { background: #1a1b26 !important; border-color: #3b4261 !important; }
+        html.theme-tokyonight .header, html.theme-tokyonight .activity-header { border-color: #3b4261 !important; }
+        html.theme-tokyonight td, html.theme-tokyonight tr { border-bottom-color: #292e42 !important; }
+        html.theme-tokyonight .cowatch-grid > div + div { border-color: #3b4261 !important; }
+        html.theme-tokyonight div[style*="background:#0f172a"], html.theme-tokyonight div[style*="background: #0f172a"] { background-color: #1a1b26 !important; border-color: #3b4261 !important; }
+        html.theme-tokyonight div[style*="background:#1e293b"], html.theme-tokyonight div[style*="background: #1e293b"] { background-color: #24283b !important; border-color: #3b4261 !important; }
+
+        /* 6. Dracula */
+        html.theme-dracula {
+            --bg-page: #21222c;
+            --bg-surface: #282a36;
+            --bg-subtle: #21222c;
+            --border-color: #44475a;
+            --border-subtle: #343746;
+            --border-table: #44475a;
+            --text-main: #f8f8f2;
+            --text-muted: #6272a4;
+            --text-heading: #bd93f9;
+            --modal-bg: #282a36;
+        }
+        html.theme-dracula body { background-color: #21222c !important; color: #f8f8f2 !important; }
+        html.theme-dracula .card, html.theme-dracula .modal-dialog { background: #282a36 !important; border-color: #44475a !important; }
+        html.theme-dracula .info-item, html.theme-dracula .scrobble-item, html.theme-dracula .cowatch-account-row, html.theme-dracula th { background: #21222c !important; border-color: #44475a !important; }
+        html.theme-dracula .header, html.theme-dracula .activity-header { border-color: #44475a !important; }
+        html.theme-dracula td, html.theme-dracula tr { border-bottom-color: #343746 !important; }
+        html.theme-dracula .cowatch-grid > div + div { border-color: #44475a !important; }
+        html.theme-dracula div[style*="background:#0f172a"], html.theme-dracula div[style*="background: #0f172a"] { background-color: #21222c !important; border-color: #44475a !important; }
+        html.theme-dracula div[style*="background:#1e293b"], html.theme-dracula div[style*="background: #1e293b"] { background-color: #282a36 !important; border-color: #44475a !important; }
+
+        /* 7. Emerald Forest */
+        html.theme-emerald {
+            --bg-page: #061a14;
+            --bg-surface: #0d2820;
+            --bg-subtle: #061a14;
+            --border-color: #1b4337;
+            --border-subtle: #13352c;
+            --border-table: #1b4337;
+            --text-main: #ecfdf5;
+            --text-muted: #6ee7b7;
+            --text-heading: #a7f3d0;
+            --modal-bg: #0d2820;
+        }
+        html.theme-emerald body { background-color: #061a14 !important; color: #ecfdf5 !important; }
+        html.theme-emerald .card, html.theme-emerald .modal-dialog { background: #0d2820 !important; border-color: #1b4337 !important; }
+        html.theme-emerald .info-item, html.theme-emerald .scrobble-item, html.theme-emerald .cowatch-account-row, html.theme-emerald th { background: #061a14 !important; border-color: #1b4337 !important; }
+        html.theme-emerald .header, html.theme-emerald .activity-header { border-color: #1b4337 !important; }
+        html.theme-emerald td, html.theme-emerald tr { border-bottom-color: #13352c !important; }
+        html.theme-emerald .cowatch-grid > div + div { border-color: #1b4337 !important; }
+        html.theme-emerald div[style*="background:#0f172a"], html.theme-emerald div[style*="background: #0f172a"] { background-color: #061a14 !important; border-color: #1b4337 !important; }
+        html.theme-emerald div[style*="background:#1e293b"], html.theme-emerald div[style*="background: #1e293b"] { background-color: #0d2820 !important; border-color: #1b4337 !important; }
+
+        /* 8. Rose Pine */
+        html.theme-rosepine {
+            --bg-page: #191724;
+            --bg-surface: #21202e;
+            --bg-subtle: #191724;
+            --border-color: #393552;
+            --border-subtle: #26233a;
+            --border-table: #393552;
+            --text-main: #e0def4;
+            --text-muted: #908caa;
+            --text-heading: #eb6f92;
+            --modal-bg: #21202e;
+        }
+        html.theme-rosepine body { background-color: #191724 !important; color: #e0def4 !important; }
+        html.theme-rosepine .card, html.theme-rosepine .modal-dialog { background: #21202e !important; border-color: #393552 !important; }
+        html.theme-rosepine .info-item, html.theme-rosepine .scrobble-item, html.theme-rosepine .cowatch-account-row, html.theme-rosepine th { background: #191724 !important; border-color: #393552 !important; }
+        html.theme-rosepine .header, html.theme-rosepine .activity-header { border-color: #393552 !important; }
+        html.theme-rosepine td, html.theme-rosepine tr { border-bottom-color: #26233a !important; }
+        html.theme-rosepine .cowatch-grid > div + div { border-color: #393552 !important; }
+        html.theme-rosepine div[style*="background:#0f172a"], html.theme-rosepine div[style*="background: #0f172a"] { background-color: #191724 !important; border-color: #393552 !important; }
+        html.theme-rosepine div[style*="background:#1e293b"], html.theme-rosepine div[style*="background: #1e293b"] { background-color: #21202e !important; border-color: #393552 !important; }
+
+        /* Accent Overrides */
+        html.accent-sky { --accent-color: #0284c7; --accent-hover: #0369a1; --btn-copy-bg: #0284c7; }
+        html.accent-amber { --accent-color: #f59e0b; --accent-hover: #d97706; --btn-copy-bg: #f59e0b; }
+        html.accent-trakt { --accent-color: #ed1c24; --accent-hover: #c41219; --btn-copy-bg: #ed1c24; }
+        html.accent-plex { --accent-color: #e5a00d; --accent-hover: #cc8e0a; --btn-copy-bg: #e5a00d; }
+        html.accent-jellyfin { --accent-color: #aa5cc3; --accent-hover: #9346ab; --btn-copy-bg: #aa5cc3; }
+        html.accent-emerald { --accent-color: #10b981; --accent-hover: #059669; --btn-copy-bg: #10b981; }
+        html.accent-cyan { --accent-color: #06b6d4; --accent-hover: #0891b2; --btn-copy-bg: #06b6d4; }
+        html.accent-rose { --accent-color: #eb6f92; --accent-hover: #d4597d; --btn-copy-bg: #eb6f92; }
+        html.accent-mauve { --accent-color: #cba6f7; --accent-hover: #b48cf0; --btn-copy-bg: #cba6f7; }
+
+        html[class*="accent-"] .btn-copy { background-color: var(--btn-copy-bg) !important; }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { max-width: 100%; overflow-x: hidden; }
-        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 32px 20px; }
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: var(--bg-page); color: var(--text-main); padding: 32px 20px; transition: background-color 0.2s ease, color 0.2s ease; }
         .container { max-width: 1000px; margin: 0 auto; width: 100%; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #1e293b; gap: 12px; flex-wrap: wrap; }
-        .title { font-size: 24px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border-subtle); gap: 12px; flex-wrap: wrap; }
+        .title { font-size: 24px; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
         .title-brand { display: flex; align-items: center; gap: 10px; }
-        .title-sub { font-size: 13px; font-weight: 500; color: #94a3b8; }
+        .title-sub { font-size: 13px; font-weight: 500; color: var(--text-muted); }
         .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .card { background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid #334155; }
-        .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: #e2e8f0; }
+        .card { background: var(--bg-surface); border-radius: 12px; padding: 24px; margin-bottom: 24px; border: 1px solid var(--border-color); transition: background 0.2s ease, border-color 0.2s ease; }
+        .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text-heading); }
         #stream-title { word-break: break-word; }
         .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
-        .info-item { background: #0f172a; padding: 14px; border-radius: 8px; border: 1px solid #334155; }
-        .info-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
-        .info-value { font-size: 15px; font-weight: 600; margin: 4px 0 2px 0; color: #f1f5f9; }
+        .info-item { background: var(--bg-subtle); padding: 14px; border-radius: 8px; border: 1px solid var(--border-color); transition: background 0.2s ease, border-color 0.2s ease; }
+        .info-label { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .info-value { font-size: 15px; font-weight: 600; margin: 4px 0 2px 0; color: var(--text-main); }
         .webhook-row { display: flex; gap: 8px; }
         .cowatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
         .cowatch-form-row { display: flex; gap: 8px; position: relative; }
-        .cowatch-account-row { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+        .cowatch-account-row { background: var(--bg-subtle); border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
         .cowatch-account-info { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
-        .cowatch-account-name { font-weight: 600; color: #f8fafc; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cowatch-account-name { font-weight: 600; color: var(--text-main); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .cowatch-account-status { display: flex; align-items: center; gap: 6px; flex-shrink: 0; white-space: nowrap; }
         .cowatch-chip-del { background: none; border: none; color: #f87171; cursor: pointer; margin-left: 6px; font-size: 13px; font-weight: 700; line-height: 1; padding: 2px 4px; border-radius: 4px; transition: color 0.15s; }
         .cowatch-chip-del:hover { color: #ef4444; }
-        .custom-scroll { scrollbar-width: thin; scrollbar-color: #334155 #0f172a; }
+        .custom-scroll { scrollbar-width: thin; scrollbar-color: var(--border-color) var(--bg-subtle); }
         .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scroll::-webkit-scrollbar-track { background: #0f172a; border-radius: 4px; }
-        .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: var(--bg-subtle); border-radius: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
         .custom-scroll::-webkit-scrollbar-thumb:hover { background: #475569; }
-        .activity-header { padding: 16px 20px; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .activity-header { padding: 16px 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
         .activity-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; text-align: left; }
-        th { background: #0f172a; padding: 10px 12px; font-size: 12px; text-transform: uppercase; color: #94a3b8; letter-spacing: 0.05em; border-bottom: 1px solid #334155; }
-        .btn-sm { background: #334155; border: none; color: #e2e8f0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s, opacity 0.15s; }
+        th { background: var(--bg-subtle); padding: 10px 12px; font-size: 12px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; border-bottom: 1px solid var(--border-table); }
+        .btn-sm { background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-main); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; transition: background 0.15s, opacity 0.15s, border-color 0.15s; }
         .btn-sm:hover { opacity: 0.9; }
-        .btn-copy { background: #0284c7; color: #fff; border: none; border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+        .btn-copy { background: var(--btn-copy-bg); color: var(--accent-text); border: none; border-radius: 8px; padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #reconcile-settings-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal, #settings-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
-        .modal-dialog { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
+        #theme-modal, #shortcuts-modal, #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #reconcile-settings-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal, #settings-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        .modal-dialog { background: var(--modal-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
-        .modal-dialog-lg { max-width: 850px; background: #0f172a; padding: 24px; }
+        .modal-dialog-lg { max-width: 850px; background: var(--bg-subtle); padding: 24px; }
         .search-form-row { display: flex; gap: 8px; }
         .logs-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
         .logs-filter-group { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 220px; }
         .logs-status-group { display: flex; align-items: center; gap: 12px; }
-        .scrobble-item { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .scrobble-item { background: var(--bg-subtle); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
         .eco-card { transition: opacity 0.2s ease, border-color 0.2s ease; }
         .eco-card-disabled { opacity: 0.65; }
         .eco-card-disabled:hover { opacity: 1 !important; }
-        .footer { margin-top: 24px; padding-top: 18px; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; color: #64748b; font-size: 12px; flex-wrap: wrap; gap: 8px; }
+        .footer { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; color: var(--text-muted); font-size: 12px; flex-wrap: wrap; gap: 8px; }
 
         /* Responsive Breakpoints for Mobile Viewports (<= 640px) */
         @media (max-width: 640px) {
@@ -91,7 +303,7 @@
             .header .title { font-size: 20px; flex-direction: column; align-items: flex-start; gap: 2px; }
             .header .title-brand { font-size: 20px; }
             .header .title-brand svg { width: 24px; height: 24px; }
-            .header .title-sub { font-size: 11px; margin-left: 34px; color: #94a3b8; word-break: break-word; }
+            .header .title-sub { font-size: 11px; margin-left: 34px; color: var(--text-muted); word-break: break-word; }
             .header-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
             .card { padding: 16px 14px; margin-bottom: 16px; border-radius: 10px; }
             .card h3 { font-size: 15px; }
@@ -100,7 +312,7 @@
             .webhook-row { flex-direction: column; align-items: stretch; gap: 8px; }
             .webhook-row .btn-copy { width: 100%; text-align: center; padding: 12px; min-height: 42px; display: flex; align-items: center; justify-content: center; }
             .cowatch-grid { grid-template-columns: 1fr; gap: 16px; }
-            .cowatch-grid > div + div { border-top: 1px solid #334155; padding-top: 16px; }
+            .cowatch-grid > div + div { border-top: 1px solid var(--border-color); padding-top: 16px; }
             .cowatch-form-row { display: flex; gap: 8px; align-items: center; }
             .cowatch-form-row button { width: auto; padding: 8px 12px; font-size: 12px; flex-shrink: 0; white-space: nowrap; }
             .cowatch-account-row { padding: 9px 12px; gap: 6px; }
@@ -125,14 +337,6 @@
             #logs-terminal { min-height: 220px !important; font-size: 11px !important; padding: 10px !important; }
             .footer { flex-direction: column; align-items: center; text-align: center; gap: 12px; }
         }
-
-        /* OLED True-Black Theme */
-        html.theme-oled body { background-color: #000000 !important; color: #f4f4f5 !important; }
-        html.theme-oled .card, html.theme-oled .modal-dialog { background: #09090b !important; border-color: #27272a !important; }
-        html.theme-oled .info-item, html.theme-oled .scrobble-item, html.theme-oled .cowatch-account-row, html.theme-oled th { background: #000000 !important; border-color: #27272a !important; }
-        html.theme-oled .header, html.theme-oled .activity-header { border-color: #27272a !important; }
-        html.theme-oled td, html.theme-oled tr { border-bottom-color: #18181b !important; }
-        html.theme-oled .cowatch-grid > div + div { border-color: #27272a !important; }
     </style>
 
     <!-- GitHub Pages Client-Side Simulation Engine -->
@@ -140,7 +344,7 @@
     (function() {
         const initialShows = ["A Knight of the Seven Kingdoms", "Fallout", "Lanterns", "Rick and Morty", "Severance", "Sh\u014dgun", "Succession", "The Expanse", "The Last of Us", "The Office", "The White Lotus", "Widow's Bay"];
         const initialDevices = ["Living Room Apple TV"];
-        const initialEvents = [{"timestamp": "2026-10-03 18:02:10", "user": "demo_viewer", "event": "media.play", "action": "play", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-03 17:28:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Lanterns S01E01 - Pilot", "type": "episode", "show_title": "Lanterns", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2026, "season": 1, "episode": 1, "ids": {"imdb": "tt20885210"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_partner", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 16:41:10", "user": "demo_viewer", "event": "media.rate", "action": "rate", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok", "cowatch_status": {"synced": false, "reason": "Movie co-watching is disabled"}, "is_cowatch_show": false}, {"timestamp": "2026-10-03 14:56:10", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_viewer", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 12:46:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Widow's Bay S01E01 - Pilot", "type": "episode", "show_title": "Widow's Bay", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2025, "season": 1, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_partner", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 10:06:10", "user": "demo_viewer", "event": "media.pause", "action": "pause", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-03 08:06:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27993074"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": false, "reason": "Not in shared co-watch list"}, "is_cowatch_show": false}, {"timestamp": "2026-10-03 06:06:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Fallout S01E01 - The End", "type": "episode", "show_title": "Fallout", "media_payload": {"media_type": "episode", "title": "The End", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt12637874"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_partner", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 03:56:10", "user": "demo_viewer", "event": "media.rate", "action": "rate", "title": "Oppenheimer (2023)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Oppenheimer", "year": 2023, "ids": {"imdb": "tt15398776"}}, "progress": "10/10", "result_status": "ok", "cowatch_status": {"synced": false, "reason": "Movie co-watching is disabled"}, "is_cowatch_show": false}, {"timestamp": "2026-10-03 01:26:10", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble", "title": "The Last of Us S01E01 - When You're Lost in the Darkness", "type": "episode", "show_title": "The Last of Us", "media_payload": {"media_type": "episode", "title": "When You're Lost in the Darkness", "year": 2023, "season": 1, "episode": 1, "ids": {"imdb": "tt14500888"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_viewer", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-02 22:06:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "The White Lotus S02E01 - Ciao", "type": "episode", "show_title": "The White Lotus", "media_payload": {"media_type": "episode", "title": "Ciao", "year": 2022, "season": 2, "episode": 1, "ids": {"imdb": "tt15214040"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-02 18:06:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "The Expanse S01E01 - Dulcinea", "type": "episode", "show_title": "The Expanse", "media_payload": {"media_type": "episode", "title": "Dulcinea", "year": 2015, "season": 1, "episode": 1, "ids": {"imdb": "tt3463140"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-02 12:06:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Rick and Morty S07E01 - How Poopy Got His Poop Back", "type": "episode", "show_title": "Rick and Morty", "media_payload": {"media_type": "episode", "title": "How Poopy Got His Poop Back", "year": 2023, "season": 7, "episode": 1, "ids": {"imdb": "tt29297298"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-02 07:06:10", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Better Call Saul S06E01 - Wine and Roses", "type": "episode", "show_title": "Better Call Saul", "media_payload": {"media_type": "episode", "title": "Wine and Roses", "year": 2022, "season": 6, "episode": 1, "ids": {"imdb": "tt12154866"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": false}];
+        const initialEvents = [{"timestamp": "2026-10-03 21:51:53", "user": "demo_viewer", "event": "media.play", "action": "play", "title": "Severance S02E01 - Hello, Kier", "type": "episode", "show_title": "Severance", "media_payload": {"media_type": "episode", "title": "Hello, Kier", "year": 2025, "season": 2, "episode": 1, "ids": {"imdb": "tt11280740"}}, "progress": "68.4%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-03 21:17:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Lanterns S01E01 - Pilot", "type": "episode", "show_title": "Lanterns", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2026, "season": 1, "episode": 1, "ids": {"imdb": "tt20885210"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_partner", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 20:30:53", "user": "demo_viewer", "event": "media.rate", "action": "rate", "title": "Dune: Part Two (2024)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Dune: Part Two", "year": 2024, "ids": {"imdb": "tt15239678"}}, "progress": "9/10", "result_status": "ok", "cowatch_status": {"synced": false, "reason": "Movie co-watching is disabled"}, "is_cowatch_show": false}, {"timestamp": "2026-10-03 18:45:53", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble", "title": "Succession S04E03 - Connor's Wedding", "type": "episode", "show_title": "Succession", "media_payload": {"media_type": "episode", "title": "Connor's Wedding", "year": 2023, "season": 4, "episode": 3, "ids": {"imdb": "tt19363162"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_viewer", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 16:35:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Widow's Bay S01E01 - Pilot", "type": "episode", "show_title": "Widow's Bay", "media_payload": {"media_type": "episode", "title": "Pilot", "year": 2025, "season": 1, "episode": 1, "ids": {"imdb": "tt21876404"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_partner", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 13:55:53", "user": "demo_viewer", "event": "media.pause", "action": "pause", "title": "Sh\u014dgun S01E01 - Anjin", "type": "episode", "show_title": "Sh\u014dgun", "media_payload": {"media_type": "episode", "title": "Anjin", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt8888322"}}, "progress": "42.1%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-03 11:55:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "The Bear S03E01 - Tomorrow", "type": "episode", "show_title": "The Bear", "media_payload": {"media_type": "episode", "title": "Tomorrow", "year": 2024, "season": 3, "episode": 1, "ids": {"imdb": "tt27993074"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": false, "reason": "Not in shared co-watch list"}, "is_cowatch_show": false}, {"timestamp": "2026-10-03 09:55:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Fallout S01E01 - The End", "type": "episode", "show_title": "Fallout", "media_payload": {"media_type": "episode", "title": "The End", "year": 2024, "season": 1, "episode": 1, "ids": {"imdb": "tt12637874"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_partner", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 07:45:53", "user": "demo_viewer", "event": "media.rate", "action": "rate", "title": "Oppenheimer (2023)", "type": "movie", "show_title": null, "media_payload": {"media_type": "movie", "title": "Oppenheimer", "year": 2023, "ids": {"imdb": "tt15398776"}}, "progress": "10/10", "result_status": "ok", "cowatch_status": {"synced": false, "reason": "Movie co-watching is disabled"}, "is_cowatch_show": false}, {"timestamp": "2026-10-03 05:15:53", "user": "demo_partner", "event": "media.scrobble", "action": "scrobble", "title": "The Last of Us S01E01 - When You're Lost in the Darkness", "type": "episode", "show_title": "The Last of Us", "media_payload": {"media_type": "episode", "title": "When You're Lost in the Darkness", "year": 2023, "season": 1, "episode": 1, "ids": {"imdb": "tt14500888"}}, "progress": "100.0%", "result_status": "ok", "cowatch_status": {"synced": true, "target": "demo_viewer", "reason": "Shared show whitelist match"}, "is_cowatch_show": true}, {"timestamp": "2026-10-03 01:55:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "The White Lotus S02E01 - Ciao", "type": "episode", "show_title": "The White Lotus", "media_payload": {"media_type": "episode", "title": "Ciao", "year": 2022, "season": 2, "episode": 1, "ids": {"imdb": "tt15214040"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-02 21:55:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "The Expanse S01E01 - Dulcinea", "type": "episode", "show_title": "The Expanse", "media_payload": {"media_type": "episode", "title": "Dulcinea", "year": 2015, "season": 1, "episode": 1, "ids": {"imdb": "tt3463140"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-02 15:55:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Rick and Morty S07E01 - How Poopy Got His Poop Back", "type": "episode", "show_title": "Rick and Morty", "media_payload": {"media_type": "episode", "title": "How Poopy Got His Poop Back", "year": 2023, "season": 7, "episode": 1, "ids": {"imdb": "tt29297298"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": true}, {"timestamp": "2026-10-02 10:55:53", "user": "demo_viewer", "event": "media.scrobble", "action": "scrobble", "title": "Better Call Saul S06E01 - Wine and Roses", "type": "episode", "show_title": "Better Call Saul", "media_payload": {"media_type": "episode", "title": "Wine and Roses", "year": 2022, "season": 6, "episode": 1, "ids": {"imdb": "tt12154866"}}, "progress": "100.0%", "result_status": "ok", "is_cowatch_show": false}];
         const initialReconciliation = [{"id": "movie:101", "type": "movie", "title": "Interstellar", "series_title": null, "season": null, "episode": null, "year": 2014, "rating_key": "101", "ids": {"imdb": "tt0816692", "tmdb": "157336"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}, {"id": "movie:102", "type": "movie", "title": "Dune: Part Two", "series_title": null, "season": null, "episode": null, "year": 2024, "rating_key": "102", "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "status": "rating_mismatch", "plex_watched": true, "trakt_watched": true, "plex_rating": 8.0, "trakt_rating": 9, "action_recommended": "sync_rating_to_plex"}, {"id": "episode:201", "type": "episode", "title": "Pilot", "series_title": "Lanterns", "season": 1, "episode": 1, "year": 2026, "rating_key": "201", "ids": {"imdb": "tt20885210"}, "status": "plex_only", "plex_watched": true, "trakt_watched": false, "plex_rating": null, "trakt_rating": null, "action_recommended": "sync_to_trakt"}, {"id": "episode:202", "type": "episode", "title": "Felina", "series_title": "Breaking Bad", "season": 5, "episode": 16, "year": 2013, "rating_key": "202", "ids": {"imdb": "tt2301451"}, "status": "trakt_only", "plex_watched": false, "trakt_watched": true, "plex_rating": null, "trakt_rating": 10, "action_recommended": "mark_plex_watched"}];
         const initialCrossDiff = [{"id": "diff_movie_t2s_tt15239678", "media_type": "movie", "title": "Dune: Part Two", "year": 2024, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt15239678", "tmdb": "693134"}, "watched_at": "2026-09-27T21:40:00Z"}, {"id": "diff_ep_t2s_tt11280740_s2e1", "media_type": "episode", "title": "S02E01", "year": 2025, "season": 2, "episode": 1, "show_title": "Severance", "direction": "trakt_to_simkl", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt11280740", "tvdb": "371980"}, "watched_at": "2026-09-28T02:15:00Z"}, {"id": "diff_movie_s2t_tt0245429", "media_type": "movie", "title": "Spirited Away", "year": 2001, "season": null, "episode": null, "show_title": null, "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt0245429", "tmdb": "129", "simkl": "2608"}, "watched_at": "2026-09-26T18:30:00Z"}, {"id": "diff_ep_s2t_tt29930773_s1e1", "media_type": "episode", "title": "S01E01", "year": 2023, "season": 1, "episode": 1, "show_title": "Frieren: Beyond Journey's End", "direction": "simkl_to_trakt", "sync_type": "watched", "source_status": "watched", "target_status": "unwatched", "source_rating": null, "target_rating": null, "ids": {"imdb": "tt29930773", "tvdb": "424759", "simkl": "2029530"}, "watched_at": "2026-09-25T14:10:00Z"}, {"id": "diff_movie_rating_t2s_tt15398776", "media_type": "movie", "title": "Oppenheimer", "year": 2023, "season": null, "episode": null, "show_title": null, "direction": "trakt_to_simkl", "sync_type": "rating", "source_status": "10/10", "target_status": "unrated", "source_rating": 10, "target_rating": null, "ids": {"imdb": "tt15398776", "tmdb": "872585"}, "watched_at": null}, {"id": "diff_ep_rating_s2t_tt2560140_s4e28", "media_type": "episode", "title": "S04E28", "year": 2022, "season": 4, "episode": 28, "show_title": "Attack on Titan", "direction": "simkl_to_trakt", "sync_type": "rating", "source_status": "9/10", "target_status": "unrated", "source_rating": 9, "target_rating": null, "ids": {"imdb": "tt2560140", "tvdb": "267440", "simkl": "40316"}, "watched_at": null}];
         const sonarrCatalog = [{"title": "Severance", "year": 2022, "status": "continuing"}, {"title": "Lanterns", "year": 2026, "status": "continuing"}, {"title": "Succession", "year": 2018, "status": "ended"}, {"title": "Sh\u014dgun", "year": 2024, "status": "continuing"}, {"title": "Widow's Bay", "year": 2025, "status": "continuing"}, {"title": "Fallout", "year": 2024, "status": "continuing"}, {"title": "Rick and Morty", "year": 2013, "status": "continuing"}, {"title": "The Last of Us", "year": 2023, "status": "continuing"}, {"title": "The White Lotus", "year": 2021, "status": "continuing"}, {"title": "The Office", "year": 2005, "status": "ended"}, {"title": "The Expanse", "year": 2015, "status": "ended"}, {"title": "A Knight of the Seven Kingdoms", "year": 2025, "status": "continuing"}, {"title": "Yellowstone", "year": 2018, "status": "continuing"}, {"title": "True Detective", "year": 2014, "status": "continuing"}, {"title": "Better Call Saul", "year": 2015, "status": "ended"}];
@@ -989,7 +1193,7 @@
                 <span class="title-sub" id="header-title-sub">Universal Media Scrobbler &amp; Multi-Tracker Hub</span>
             </div>
             <div class="header-actions">
-                <button type="button" onclick="toggleTheme()" id="theme-toggle-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;cursor:pointer;" title="Toggle OLED Dark Theme">🌙 OLED</button>
+                <button type="button" onclick="openThemeModal()" id="theme-toggle-btn" class="btn-sm theme-toggle" style="background:var(--bg-surface);border:1px solid var(--border-color);color:var(--text-main);cursor:pointer;display:inline-flex;align-items:center;gap:6px;" title="Theme &amp; Accent Palette (Press 'T' to cycle, click to configure)">🎨 <span id="theme-btn-label">Slate</span></button>
                 <span style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">● Connected as @demo_viewer &bull; Demo</span>
                 <button onclick="openSettingsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#f8fafc;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:600;" title="Configure Media Servers, Trackers, and Automation"><span>⚙️</span><span>Settings Hub</span></button>
                 <span style="font-size:12px;color:#38bdf8;background:#1e293b;border:1px solid #334155;padding:4px 10px;border-radius:6px;font-weight:600;">👑 Demo Admin</span>
@@ -1612,7 +1816,7 @@
                     <tbody id="events-tbody">
                         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 18:02:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 21:51:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Severance S02E01 - Hello, Kier</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1622,7 +1826,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 17:28:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 21:17:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Lanterns S01E01 - Pilot</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1632,7 +1836,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 16:41:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 20:30:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Dune: Part Two (2024)</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1642,7 +1846,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 14:56:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 18:45:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Succession S04E03 - Connor&#x27;s Wedding</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_partner</span></div></td>
@@ -1652,7 +1856,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 12:46:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 16:35:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Widow&#x27;s Bay S01E01 - Pilot</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1662,7 +1866,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 10:06:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 13:55:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Shōgun S01E01 - Anjin</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1672,7 +1876,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 08:06:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 11:55:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">The Bear S03E01 - Tomorrow</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1682,7 +1886,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 06:06:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 09:55:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Fallout S01E01 - The End</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1692,7 +1896,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 03:56:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 07:45:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">Oppenheimer (2023)</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">movie</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_viewer</span></div></td>
@@ -1702,7 +1906,7 @@
         </tr>
         
         <tr style="border-bottom: 1px solid #334155;">
-            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 01:26:10</td>
+            <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">2026-10-03 05:15:53</td>
             <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">The Last of Us S01E01 - When You&#x27;re Lost in the Darkness</td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">episode</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;"><span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span><span>demo_partner</span></div></td>
@@ -2164,6 +2368,9 @@
                 </button>
                 <button type="button" id="settings-tab-btn-rules" onclick="switchSettingsTab('rules')" class="btn-sm settings-nav-tab" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:6px 14px;border-radius:6px;display:flex;align-items:center;gap:6px;">
                     <span>🛡️</span> Rules &amp; Filters
+                </button>
+                <button type="button" id="settings-tab-btn-appearance" onclick="switchSettingsTab('appearance')" class="btn-sm settings-nav-tab" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:6px 14px;border-radius:6px;display:flex;align-items:center;gap:6px;">
+                    <span>🎨</span> Appearance
                 </button>
             </div>
 
@@ -2805,6 +3012,43 @@
                         <textarea id="settings-rules-ignore-paths" rows="3" placeholder="/extras/&#10;/behind the scenes/&#10;\\.sample\\." style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #334155;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;font-family:monospace;resize:vertical;"></textarea>
                     </div>
                 </div>
+
+                <!-- Tab 6: Appearance & Themes -->
+                <div id="settings-panel-appearance" class="settings-content-panel" style="display:none;flex-direction:column;gap:14px;">
+                    <!-- Theme Palettes -->
+                    <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:14px;">
+                        <div style="font-size:13px;font-weight:600;color:var(--text-heading);margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                            <span>🎨</span> Base Color Palette
+                        </div>
+                        <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;line-height:1.4;">
+                            Select a curated dark mode palette. Applied immediately across the entire dashboard and saved to local storage.
+                        </p>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:10px;" id="settings-theme-grid">
+                            <!-- Populated by renderThemePickers() -->
+                        </div>
+                    </div>
+
+                    <!-- Accent Colors -->
+                    <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:14px;">
+                        <div style="font-size:13px;font-weight:600;color:var(--text-heading);margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                            <span>✨</span> Primary Accent Highlight
+                        </div>
+                        <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;line-height:1.4;">
+                            Choose an accent color for action buttons, active navigation tabs, and system highlights.
+                        </p>
+                        <div style="display:flex;flex-wrap:wrap;gap:8px;" id="settings-accent-grid">
+                            <!-- Populated by renderThemePickers() -->
+                        </div>
+                    </div>
+
+                    <!-- Quick Shortcuts Info -->
+                    <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                        <div style="font-size:12px;color:var(--text-muted);">
+                            💡 Tip: Press <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:11px;color:var(--text-main);">T</kbd> anywhere to cycle themes, or <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:11px;color:var(--text-main);">?</kbd> for all shortcuts.
+                        </div>
+                        <button type="button" onclick="openShortcutsModal()" class="btn-sm" style="background:var(--bg-surface);border:1px solid var(--border-color);color:var(--text-main);padding:4px 10px;font-size:11px;cursor:pointer;">⌨️ View Shortcuts</button>
+                    </div>
+                </div>
             </div>
 
             <!-- Footer Feedback & Save Button -->
@@ -3149,6 +3393,101 @@
                     <button type="button" id="cross-sync-selected-btn" onclick="executeSelectedCrossSync()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;" disabled>⚡ Sync Selected</button>
                     <button type="button" id="cross-sync-all-btn" onclick="executeAllCrossSync()" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">⚡ Sync All Both Ways</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Theme & Appearance Modal -->
+    <div id="theme-modal" onclick="if(event.target===this)closeThemeModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:var(--text-main);display:flex;align-items:center;gap:8px;">
+                    <span>🎨</span> Theme &amp; Appearance
+                </h3>
+                <button onclick="closeThemeModal()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:var(--text-muted);font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Personalize your Omniscrobble workspace. Select from 8 curated dark palettes and custom accent colors.
+            </p>
+
+            <div class="custom-scroll" style="max-height:65vh;overflow-y:auto;padding-right:4px;display:flex;flex-direction:column;gap:16px;">
+                <!-- Base Palettes -->
+                <div>
+                    <div style="font-size:13px;font-weight:600;color:var(--text-heading);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>🎭</span> Base Color Palette
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(160px, 1fr));gap:10px;" id="theme-modal-palette-grid">
+                        <!-- Populated by renderThemePickers() -->
+                    </div>
+                </div>
+
+                <!-- Accent Highlights -->
+                <div>
+                    <div style="font-size:13px;font-weight:600;color:var(--text-heading);margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                        <span>✨</span> Accent Color
+                    </div>
+                    <div style="display:flex;flex-wrap:wrap;gap:8px;" id="theme-modal-accent-grid">
+                        <!-- Populated by renderThemePickers() -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;padding-top:12px;border-top:1px solid var(--border-color);flex-wrap:wrap;gap:8px;">
+                <div style="font-size:12px;color:var(--text-muted);">
+                    Shortcut: <kbd style="background:var(--bg-subtle);border:1px solid var(--border-color);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:11px;color:var(--text-main);">T</kbd> cycles themes
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button type="button" onclick="openShortcutsModal()" class="btn-sm" style="background:var(--bg-subtle);border:1px solid var(--border-color);color:var(--text-muted);padding:8px 14px;cursor:pointer;">⌨️ Shortcuts</button>
+                    <button type="button" onclick="closeThemeModal()" class="btn-sm" style="background:var(--btn-copy-bg);color:var(--accent-text);font-weight:600;padding:8px 18px;cursor:pointer;">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div id="shortcuts-modal" onclick="if(event.target===this)closeShortcutsModal()">
+        <div class="modal-dialog modal-dialog-sm" style="max-width:440px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:var(--text-main);display:flex;align-items:center;gap:8px;">
+                    <span>⌨️</span> Keyboard Shortcuts
+                </h3>
+                <button onclick="closeShortcutsModal()" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:var(--text-muted);font-size:13px;margin:0 0 14px;line-height:1.4;">
+                Quickly navigate and control Omniscrobble from anywhere on the dashboard.
+            </p>
+
+            <div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:9px 12px;">
+                    <span style="font-size:13px;color:var(--text-main);">Cycle Theme Palette</span>
+                    <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px;font-weight:600;color:var(--text-heading);">T</kbd>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:9px 12px;">
+                    <span style="font-size:13px;color:var(--text-main);">Open Settings Hub</span>
+                    <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px;font-weight:600;color:var(--text-heading);">S</kbd>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:9px 12px;">
+                    <span style="font-size:13px;color:var(--text-main);">Open Live Logs</span>
+                    <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px;font-weight:600;color:var(--text-heading);">L</kbd>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:9px 12px;">
+                    <span style="font-size:13px;color:var(--text-main);">Refresh Activity &amp; Queue</span>
+                    <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px;font-weight:600;color:var(--text-heading);">R</kbd>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:9px 12px;">
+                    <span style="font-size:13px;color:var(--text-main);">Show Shortcuts Help</span>
+                    <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px;font-weight:600;color:var(--text-heading);">?</kbd>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:9px 12px;">
+                    <span style="font-size:13px;color:var(--text-main);">Close Active Modal</span>
+                    <kbd style="background:var(--bg-surface);border:1px solid var(--border-color);padding:3px 8px;border-radius:4px;font-family:monospace;font-size:12px;font-weight:600;color:var(--text-heading);">Esc</kbd>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div style="display:flex;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--border-color);">
+                <button type="button" onclick="closeShortcutsModal()" class="btn-sm" style="background:var(--btn-copy-bg);color:var(--accent-text);font-weight:600;padding:8px 18px;cursor:pointer;">Got it</button>
             </div>
         </div>
     </div>
@@ -3832,7 +4171,10 @@
         }
 
         function switchSettingsTab(tabName) {
-            const tabs = ['servers', 'trackers', 'automation', 'notifications', 'rules'];
+            const tabs = ['servers', 'trackers', 'automation', 'notifications', 'rules', 'appearance'];
+            if (tabName === 'appearance') {
+                renderThemePickers();
+            }
             tabs.forEach(t => {
                 const btn = document.getElementById(`settings-tab-btn-${t}`);
                 const panel = document.getElementById(`settings-panel-${t}`);
@@ -6160,16 +6502,216 @@
             refreshTimer = setInterval(fetchEvents, 30000);
         }
 
-        // Omniscrobble Theme Toggle (OLED / Slate)
-        function toggleTheme() {
-            const isOled = document.documentElement.classList.toggle('theme-oled');
-            localStorage.setItem('omniscrobble_theme', isOled ? 'oled' : 'slate');
-            const btn = document.getElementById('theme-toggle-btn');
-            if (btn) btn.innerHTML = isOled ? '☀️ Slate' : '🌙 OLED';
+        // -------------------------------------------------------------
+        // Multi-Theme Palette Engine & Accents (Phase 1)
+        // -------------------------------------------------------------
+        const THEMES = [
+            { id: 'slate', name: 'Slate', desc: 'Oceanic Slate (Default)', icon: '🌊', bg: '#0f172a', card: '#1e293b', border: '#334155' },
+            { id: 'oled', name: 'OLED', desc: 'True Black (#000000)', icon: '⬛', bg: '#000000', card: '#09090b', border: '#27272a' },
+            { id: 'nord', name: 'Nord', desc: 'Arctic Frost & Polar Night', icon: '❄️', bg: '#242933', card: '#2e3440', border: '#4c566a' },
+            { id: 'catppuccin', name: 'Catppuccin', desc: 'Cozy Mocha Dark', icon: '☕', bg: '#181825', card: '#1e1e2e', border: '#313244' },
+            { id: 'tokyonight', name: 'Tokyo Night', desc: 'Cyberpunk Neon Dark', icon: '🌃', bg: '#1a1b26', card: '#1f2335', border: '#292e42' },
+            { id: 'dracula', name: 'Dracula', desc: 'Classic Vampire Contrast', icon: '🧛', bg: '#21222c', card: '#282a36', border: '#44475a' },
+            { id: 'emerald', name: 'Emerald', desc: 'Forest Pine Obsidian', icon: '🌲', bg: '#061a14', card: '#0d2820', border: '#1b4337' },
+            { id: 'rosepine', name: 'Rosé Pine', desc: 'All Natural Dark Aesthetic', icon: '🌹', bg: '#191724', card: '#21202e', border: '#393552' }
+        ];
+
+        const ACCENTS = [
+            { id: 'sky', name: 'Sky', hex: '#0284c7' },
+            { id: 'amber', name: 'Amber', hex: '#f59e0b' },
+            { id: 'trakt', name: 'Trakt Red', hex: '#ed1c24' },
+            { id: 'plex', name: 'Plex Gold', hex: '#e5a00d' },
+            { id: 'jellyfin', name: 'Jellyfin Purple', hex: '#aa5cc3' },
+            { id: 'emerald', name: 'Emerald', hex: '#10b981' },
+            { id: 'cyan', name: 'Cyan', hex: '#06b6d4' },
+            { id: 'rose', name: 'Rosé', hex: '#eb6f92' },
+            { id: 'mauve', name: 'Mauve', hex: '#cba6f7' }
+        ];
+
+        function getCurrentTheme() {
+            return localStorage.getItem('omniscrobble_theme') || 'slate';
         }
-        if (localStorage.getItem('omniscrobble_theme') === 'oled') {
-            const btn = document.getElementById('theme-toggle-btn');
-            if (btn) btn.innerHTML = '☀️ Slate';
+
+        function getCurrentAccent() {
+            return localStorage.getItem('omniscrobble_accent') || 'sky';
+        }
+
+        function setTheme(themeId) {
+            const root = document.documentElement;
+            THEMES.forEach(t => root.classList.remove('theme-' + t.id));
+            if (themeId && themeId !== 'slate') {
+                root.classList.add('theme-' + themeId);
+            }
+            if (themeId === 'oled') {
+                root.classList.add('theme-oled');
+            }
+            localStorage.setItem('omniscrobble_theme', themeId);
+            updateThemeUI();
+        }
+
+        function setAccent(accentId) {
+            const root = document.documentElement;
+            ACCENTS.forEach(a => root.classList.remove('accent-' + a.id));
+            if (accentId && accentId !== 'sky') {
+                root.classList.add('accent-' + accentId);
+            }
+            localStorage.setItem('omniscrobble_accent', accentId);
+            updateThemeUI();
+        }
+
+        function cycleTheme() {
+            const current = getCurrentTheme();
+            const idx = THEMES.findIndex(t => t.id === current);
+            const nextIdx = (idx + 1) % THEMES.length;
+            setTheme(THEMES[nextIdx].id);
+        }
+
+        function toggleTheme() {
+            // Backward-compatible helper
+            const current = getCurrentTheme();
+            setTheme(current === 'oled' ? 'slate' : 'oled');
+        }
+
+        function updateThemeUI() {
+            const currentTheme = getCurrentTheme();
+            const themeObj = THEMES.find(t => t.id === currentTheme) || THEMES[0];
+
+            // Header button update
+            const btnLabel = document.getElementById('theme-btn-label');
+            if (btnLabel) {
+                btnLabel.textContent = themeObj.name;
+            }
+            const themeBtn = document.getElementById('theme-toggle-btn');
+            if (themeBtn) {
+                themeBtn.title = `Current Theme: ${themeObj.name} (Press 'T' to cycle, click to configure)`;
+            }
+
+            renderThemePickers();
+        }
+
+        function renderThemePickers() {
+            const currentTheme = getCurrentTheme();
+            const currentAccent = getCurrentAccent();
+
+            const themeContainers = [
+                document.getElementById('theme-modal-palette-grid'),
+                document.getElementById('settings-theme-grid')
+            ];
+
+            themeContainers.forEach(container => {
+                if (!container) return;
+                container.innerHTML = THEMES.map(t => {
+                    const isSelected = t.id === currentTheme;
+                    return `
+                        <div onclick="setTheme('${t.id}')" style="cursor:pointer;background:${t.card};border:2px solid ${isSelected ? 'var(--accent-color, #0284c7)' : t.border};border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:10px;transition:all 0.15s ease;box-shadow:${isSelected ? '0 0 10px rgba(0,0,0,0.5)' : 'none'};">
+                            <div style="width:24px;height:24px;border-radius:50%;background:${t.bg};border:1px solid ${t.border};display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">
+                                ${t.icon}
+                            </div>
+                            <div style="min-width:0;flex:1;">
+                                <div style="font-size:13px;font-weight:600;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                    ${t.name} ${isSelected ? '✓' : ''}
+                                </div>
+                                <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                    ${t.desc}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            });
+
+            const accentContainers = [
+                document.getElementById('theme-modal-accent-grid'),
+                document.getElementById('settings-accent-grid')
+            ];
+
+            accentContainers.forEach(container => {
+                if (!container) return;
+                container.innerHTML = ACCENTS.map(a => {
+                    const isSelected = a.id === currentAccent;
+                    return `
+                        <button type="button" onclick="setAccent('${a.id}')" style="cursor:pointer;background:var(--bg-surface);border:2px solid ${isSelected ? a.hex : 'var(--border-color)'};border-radius:20px;padding:5px 12px;display:inline-flex;align-items:center;gap:6px;transition:all 0.15s ease;color:var(--text-main);font-size:12px;font-weight:${isSelected ? '600' : 'normal'};">
+                            <span style="width:10px;height:10px;border-radius:50%;background:${a.hex};display:inline-block;"></span>
+                            <span>${a.name}</span>
+                            ${isSelected ? '<span style="font-size:11px;">✓</span>' : ''}
+                        </button>
+                    `;
+                }).join('');
+            });
+        }
+
+        function openThemeModal() {
+            const modal = document.getElementById('theme-modal');
+            if (modal) {
+                modal.style.display = 'flex';
+                renderThemePickers();
+            }
+        }
+
+        function closeThemeModal() {
+            const modal = document.getElementById('theme-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        function openShortcutsModal() {
+            const modal = document.getElementById('shortcuts-modal');
+            if (modal) modal.style.display = 'flex';
+        }
+
+        function closeShortcutsModal() {
+            const modal = document.getElementById('shortcuts-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        // Global Keyboard Shortcuts
+        document.addEventListener('keydown', function(e) {
+            const target = e.target;
+            const tag = target.tagName ? target.tagName.toUpperCase() : '';
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable) {
+                return;
+            }
+
+            if (e.key === 'Escape') {
+                if (typeof closeThemeModal === 'function') closeThemeModal();
+                if (typeof closeShortcutsModal === 'function') closeShortcutsModal();
+                if (typeof closeSettingsModal === 'function') closeSettingsModal();
+                if (typeof closeLogsModal === 'function') closeLogsModal();
+                if (typeof closeScrobbleModal === 'function') closeScrobbleModal();
+                if (typeof closeArrModal === 'function') closeArrModal();
+                if (typeof closeSimklModal === 'function') closeSimklModal();
+                if (typeof closeCrossSyncModal === 'function') closeCrossSyncModal();
+                if (typeof closeAnilistModal === 'function') closeAnilistModal();
+                if (typeof closeMalModal === 'function') closeMalModal();
+                if (typeof closeReconcileModal === 'function') closeReconcileModal();
+                if (typeof closeReconcileSettingsModal === 'function') closeReconcileSettingsModal();
+                if (typeof closeTestWebhookModal === 'function') closeTestWebhookModal();
+                if (typeof closeUnlockModal === 'function') closeUnlockModal();
+                return;
+            }
+
+            if (e.key === 't' || e.key === 'T') {
+                e.preventDefault();
+                cycleTheme();
+            } else if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+                e.preventDefault();
+                openShortcutsModal();
+            } else if (e.key === 's' || e.key === 'S') {
+                e.preventDefault();
+                openSettingsModal('servers');
+            } else if (e.key === 'l' || e.key === 'L') {
+                e.preventDefault();
+                openLogsModal();
+            } else if (e.key === 'r' || e.key === 'R') {
+                e.preventDefault();
+                fetchEvents();
+            }
+        });
+
+        // Initialize Theme UI on load
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', updateThemeUI);
+        } else {
+            updateThemeUI();
         }
 
         // Multi-Server Webhook URL Tab Switching

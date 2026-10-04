@@ -38,7 +38,7 @@ A lightweight, high-performance Python service that receives media server webhoo
 - **🔄 Two-Way Library Reconciliation**: Bi-directional matching of watched history and star ratings between media servers and cloud trackers (`/api/sync/*`). Includes interactive discrepancy diff modals, selective batch syncing, and automated echo loop suppression (`LoopPreventionManager`).
 - **👥 Watch Together (Co-Watching)**: Dual-scrobble shared TV shows and movies to your partner's Trakt profile automatically, with dynamic show whitelists, living room hardware player filters (`CO_WATCH_PLAYERS`), and live Sonarr autocomplete.
 - **⚡ Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to **Sonarr** and **Radarr** for automated media acquisition, library deduplication, and direct webhook ingestion for instant Trakt collection sync on download.
-- **🛡️ Resilience & Homelab Observability**: Persistent SQLite offline retry queue (`data/queue.db`), thread-safe Prometheus metrics (`/metrics`), real-time terminal log viewer with secret redaction, 1-click backup/restore (`.zip`), and an installable PWA dashboard with OLED theme.
+- **🛡️ Resilience & Homelab Observability**: Persistent SQLite offline retry queue (`data/queue.db`), thread-safe Prometheus metrics (`/metrics`), real-time terminal log viewer with secret redaction, 1-click backup/restore (`.zip`), and an installable PWA dashboard with 8 curated dark palettes, custom accent colors, and global keyboard shortcuts.
 
 ---
 

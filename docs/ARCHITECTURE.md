@@ -110,7 +110,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ### 7. Observability & UI Layer
 
 - **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, and activity feed rows, separating UI presentation logic from HTTP route handling.
-- **`app/templates/dashboard.html`**: Fully responsive, single-file HTML/CSS/JavaScript dashboard. Features real-time active stream cards, ecosystem health dots, paginated activity history, interactive reconciliation diff modals, and live settings management.
+- **`app/templates/dashboard.html`**: Fully responsive, single-file HTML/CSS/JavaScript dashboard. Features real-time active stream cards, ecosystem health dots, paginated activity history, interactive reconciliation diff modals, live settings management, a multi-theme palette engine (8 dark modes, 9 accent highlights with zero-FOUC initialization), and global keyboard shortcuts.
 - **`app/metrics.py`**: Custom thread-safe Prometheus metrics registry exporting directly on `/metrics`.
 - **`app/services/log_manager.py`**: Real-time log streamer combining `journalctl --user` with an in-memory 1,000-line ring buffer. Features strict privacy redaction for query parameters and authorization headers.
 

@@ -9153,3 +9153,80 @@ def test_background_sync_endpoints():
     res_real = client.get("/api/sync/background/status")
     assert res_real.status_code == 200
     assert "is_running" in res_real.json()
+
+
+def test_multi_theme_palette_engine_and_accents():
+    """Verify that all 8 theme palettes, 9 accent highlights, modals, and keyboard shortcuts render on the dashboard."""
+    from app.main import app
+
+    client = TestClient(app)
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.text
+
+    # 1. Zero-FOUC inline head script
+    assert "omniscrobble_theme" in html
+    assert "omniscrobble_accent" in html
+    assert "document.documentElement.classList.add('theme-' + theme)" in html
+    assert "document.documentElement.classList.add('accent-' + accent)" in html
+
+    # 2. Curated Theme Palettes (8 themes)
+    for theme in [
+        "theme-slate",
+        "theme-oled",
+        "theme-nord",
+        "theme-catppuccin",
+        "theme-tokyonight",
+        "theme-dracula",
+        "theme-emerald",
+        "theme-rosepine",
+    ]:
+        assert f"html.{theme}" in html
+
+    # 3. Accent Highlight Classes (9 accents)
+    for accent in [
+        "accent-sky",
+        "accent-amber",
+        "accent-trakt",
+        "accent-plex",
+        "accent-jellyfin",
+        "accent-emerald",
+        "accent-cyan",
+        "accent-rose",
+        "accent-mauve",
+    ]:
+        assert f"html.{accent}" in html
+
+    # 4. Header theme trigger button
+    assert 'id="theme-toggle-btn"' in html
+    assert "openThemeModal()" in html
+    assert "theme-toggle" in html
+    assert 'id="theme-btn-label"' in html
+
+    # 5. Dedicated Modals: #theme-modal and #shortcuts-modal
+    assert 'id="theme-modal"' in html
+    assert 'id="theme-modal-palette-grid"' in html
+    assert 'id="theme-modal-accent-grid"' in html
+    assert 'id="shortcuts-modal"' in html
+    assert "Cycle Theme Palette" in html
+    assert "Refresh Activity &amp; Queue" in html
+
+    # 6. Settings Hub Appearance Tab
+    assert 'id="settings-tab-btn-appearance"' in html
+    assert "switchSettingsTab('appearance')" in html
+    assert 'id="settings-panel-appearance"' in html
+    assert 'id="settings-theme-grid"' in html
+    assert 'id="settings-accent-grid"' in html
+
+    # 7. JavaScript theme engine functions
+    assert "function setTheme(themeId)" in html
+    assert "function setAccent(accentId)" in html
+    assert "function cycleTheme()" in html
+    assert "function toggleTheme()" in html
+    assert "function updateThemeUI()" in html
+    assert "function renderThemePickers()" in html
+    assert "openThemeModal()" in html
+    assert "closeThemeModal()" in html
+    assert "openShortcutsModal()" in html
+    assert "closeShortcutsModal()" in html
+

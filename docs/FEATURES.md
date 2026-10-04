@@ -13,6 +13,7 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 5. [Library Filtering & Trakt Collection Sync](#5-library-filtering--trakt-collection-sync)
 6. [Multi-Channel Notifications & Throttling](#6-multi-channel-notifications--throttling)
 7. [Homelab Observability & Prometheus Scrape](#7-homelab-observability--prometheus-scrape)
+8. [Multi-Theme Palette Engine & Accents](#8-multi-theme-palette-engine--accents)
 
 ---
 
@@ -264,3 +265,41 @@ scrape_configs:
 - **Interactive Controls**: Filter by log severity (`INFO`, `WARNING`, `ERROR`), search by keyword, and auto-scroll live log streams.
 
 > 📖 For full metric type specifications and Prometheus query examples, see [**Prometheus Metrics**](./API.md#prometheus-metrics) in `docs/API.md`.
+
+---
+
+## 8. Multi-Theme Palette Engine & Accents
+
+Omniscrobble includes a comprehensive, client-side appearance engine featuring 8 curated dark palettes and 9 accent colors.
+
+### Curated Dark Palettes
+
+| Palette | Description | Base Tone |
+| :--- | :--- | :--- |
+| **Slate** | Oceanic Slate (Default) | Deep navy slate `#0f172a` |
+| **OLED** | True Black | Pure black `#000000` for OLED displays |
+| **Nord** | Arctic Frost & Polar Night | Muted arctic blue-gray `#242933` |
+| **Catppuccin** | Mocha | Warm, comforting dark `#181825` |
+| **Tokyo Night** | Cyberpunk Neon Dark | Modern deep indigo `#1a1b26` |
+| **Dracula** | Vampire Contrast | Classic high-contrast dark `#21222c` |
+| **Emerald** | Forest Obsidian | Rich dark pine `#061a14` |
+| **Rosé Pine** | Natural Aesthetic | Soft vintage pine `#191724` |
+
+### Primary Accent Highlights
+
+Customize buttons, links, and system badges with 9 accent colors: `Sky` (default blue), `Amber`, `Trakt Red`, `Plex Gold`, `Jellyfin Purple`, `Emerald Green`, `Cyan`, `Rosé Pink`, and `Mauve`.
+
+### Zero-FOUC (Flash of Unstyled Content)
+
+Theme selections are persisted in browser `localStorage` and restored via an inline synchronous `<head>` script prior to DOM rendering, guaranteeing zero flicker or flash of unstyled content during navigation or reloads.
+
+### Global Keyboard Shortcuts
+
+Control Omniscrobble quickly with keyboard navigation:
+
+- <kbd>T</kbd>: Cycle to the next theme palette.
+- <kbd>S</kbd>: Open the Settings Hub modal.
+- <kbd>L</kbd>: Open the Live Terminal Log viewer.
+- <kbd>R</kbd>: Refresh live activity feed and offline queue status.
+- <kbd>?</kbd>: Open the Keyboard Shortcuts reference modal.
+- <kbd>Esc</kbd>: Close the active modal dialog.
