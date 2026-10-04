@@ -15,25 +15,14 @@ from typing import Any, Optional
 
 logger = logging.getLogger("omniscrobble.webhook_debugger")
 
-SENSITIVE_HEADER_KEYS = {
-    "authorization",
-    "x-webhook-secret",
-    "cookie",
-    "token",
-    "x-plex-token",
-    "x-emby-token",
-    "x-mediabrowser-token",
-}
-
-SENSITIVE_PAYLOAD_KEYS = {
-    "token",
-    "secret",
-    "password",
-    "access_token",
-    "refresh_token",
-    "api_key",
-    "webhook_secret",
-}
+def is_sensitive_key(key: Any) -> bool:
+    """Check if a header or payload key contains credential/secret patterns."""
+    norm = str(key).lower().replace("-", "").replace("_", "")
+    if any(p in norm for p in ("token", "secret", "password", "passwd", "apikey", "credential", "cookie", "authorization", "authenticate")):
+        return True
+    if "oauth" in norm or norm in ("auth", "authenticator"):
+        return True
+    return False
 
 
 def sanitize_headers(headers: Optional[dict[str, str]]) -> dict[str, str]:
@@ -42,8 +31,7 @@ def sanitize_headers(headers: Optional[dict[str, str]]) -> dict[str, str]:
         return {}
     sanitized: dict[str, str] = {}
     for k, v in headers.items():
-        low_k = k.lower()
-        if low_k in SENSITIVE_HEADER_KEYS:
+        if is_sensitive_key(k):
             sanitized[k] = "[REDACTED]"
         else:
             sanitized[k] = str(v)
@@ -55,7 +43,7 @@ def sanitize_payload(payload: Any) -> Any:
     if isinstance(payload, dict):
         clean_dict = {}
         for k, v in payload.items():
-            if str(k).lower() in SENSITIVE_PAYLOAD_KEYS:
+            if is_sensitive_key(k):
                 clean_dict[k] = "[REDACTED]"
             else:
                 clean_dict[k] = sanitize_payload(v)

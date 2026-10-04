@@ -1,7 +1,7 @@
 import json
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -11283,6 +11283,197 @@ def test_analytics_endpoints_and_dashboard_integration():
     assert "OmniWrapped" in html
     assert "webhook-debugger-modal" in html
     assert "omniwrapped-modal" in html
+
+
+def test_webhook_debugger_redaction_comprehensive():
+    """Verify that all variants of secrets/credentials in headers and payloads are redacted."""
+    from app.services.webhook_debugger import sanitize_headers, sanitize_payload
+
+    headers = {
+        "ApiKey": "abc-key",
+        "accessToken": "bearer-token",
+        "Proxy-Authorization": "Basic 123",
+        "X-Api-Key": "xyz-key",
+        "X-Emby-Token": "emby-token",
+        "Set-Cookie": "session=123",
+        "Normal-Header": "Normal-Value",
+    }
+    cleaned_h = sanitize_headers(headers)
+    assert cleaned_h["ApiKey"] == "[REDACTED]"
+    assert cleaned_h["accessToken"] == "[REDACTED]"
+    assert cleaned_h["Proxy-Authorization"] == "[REDACTED]"
+    assert cleaned_h["X-Api-Key"] == "[REDACTED]"
+    assert cleaned_h["X-Emby-Token"] == "[REDACTED]"
+    assert cleaned_h["Set-Cookie"] == "[REDACTED]"
+    assert cleaned_h["Normal-Header"] == "Normal-Value"
+
+    payload = {
+        "apiKey": "123",
+        "api_key": "456",
+        "oauth_token": "789",
+        "admin_password": "pass",
+        "user_passwd": "pw",
+        "client_secret": "sec",
+        "credentials": {"cert": "data"},
+        "title": "Inception",
+    }
+    cleaned_p = sanitize_payload(payload)
+    assert cleaned_p["apiKey"] == "[REDACTED]"
+    assert cleaned_p["api_key"] == "[REDACTED]"
+    assert cleaned_p["oauth_token"] == "[REDACTED]"
+    assert cleaned_p["admin_password"] == "[REDACTED]"
+    assert cleaned_p["user_passwd"] == "[REDACTED]"
+    assert cleaned_p["client_secret"] == "[REDACTED]"
+    assert cleaned_p["credentials"] == "[REDACTED]"
+    assert cleaned_p["title"] == "Inception"
+
+
+def test_replay_dispatch_security_gate():
+    """Verify that dispatching replayed webhooks requires strict admin authorization."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        body = {
+            "source": "standalone",
+            "dispatch": True,
+            "payload": {
+                "title": "Replay Movie",
+                "media_type": "movie",
+                "action": "scrobble",
+            },
+        }
+
+        # 1. Non-admin with ?demo=true attempting dispatch should get 403 Forbidden
+        res_demo_dispatch = client.post("/api/debug/replay?demo=true", json=body)
+        assert res_demo_dispatch.status_code == 403
+        assert "Admin authorization required" in res_demo_dispatch.json()["detail"]
+
+        # 2. Non-admin with ?demo=true with dispatch=False (dry-run simulation) is allowed
+        body_sim = dict(body, dispatch=False)
+        res_demo_sim = client.post("/api/debug/replay?demo=true", json=body_sim)
+        assert res_demo_sim.status_code == 200
+        assert res_demo_sim.json()["status"] == "simulated"
+
+        # 3. Admin with cookie can dispatch
+        client.cookies.set("admin_token", "admin_secret")
+        with patch("app.main.process_media_event", new_callable=AsyncMock) as mock_pme:
+            mock_pme.return_value = {"status": "scrobbled"}
+            res_admin_dispatch = client.post("/api/debug/replay", json=body)
+            assert res_admin_dispatch.status_code == 200
+            assert res_admin_dispatch.json()["status"] == "dispatched"
+            assert mock_pme.await_count == 1
+
+
+def test_analytics_privacy_masking_and_calendar_filtering():
+    """Verify non-admin privacy masking for devices/partner and dynamic year calendar filtering."""
+    from app.services.analytics_manager import AnalyticsManager
+
+    events_data = [
+        {
+            "action": "scrobble",
+            "media_type": "episode",
+            "title": "Better Call Saul S01E01",
+            "player": "Living Room Shield TV",
+            "server": "plex",
+            "cowatch_reason": "eligible: matched user and device",
+            "timestamp": "2025-06-15T12:00:00Z",
+            "duration": 50,
+            "genres": ["Crime", "Drama"],
+        },
+        {
+            "action": "scrobble",
+            "media_type": "episode",
+            "title": "The Simpsons S35E01",
+            "player": "Bedroom Apple TV",
+            "server": "jellyfin",
+            "cowatch_reason": "Ineligible: device not whitelisted",
+            "timestamp": "2026-03-10T12:00:00Z",
+            "duration": 22,
+            "genres": ["Animation", "Comedy"],
+        },
+    ]
+
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=json.dumps(events_data))), \
+         patch.object(Config, "CO_WATCH_USER", "jane_doe"):
+
+        am = AnalyticsManager()
+
+        # Calendar year 2025: should only include Better Call Saul
+        sum_2025 = am.get_summary(period="all", year=2025, is_admin=True)
+        assert sum_2025["episodes_watched"] == 1
+        assert sum_2025["top_shows"][0]["show"] == "Better Call Saul"
+        assert sum_2025["top_genres"][0]["genre"] == "Crime"
+        assert sum_2025["cowatch_hours"] > 0
+
+        # Calendar year 2026: should only include The Simpsons
+        sum_2026 = am.get_summary(period="all", year=2026, is_admin=True)
+        assert sum_2026["episodes_watched"] == 1
+        assert sum_2026["top_shows"][0]["show"] == "The Simpsons"
+        assert sum_2026["cowatch_hours"] == 0  # Ineligible was correctly not counted as cowatch
+
+        # Non-admin privacy masking
+        sum_masked = am.get_summary(period="all", year=2025, is_admin=False)
+        assert sum_masked["top_devices"][0]["device"] == "Player 1"
+
+        wrapped_masked = am.get_omniwrapped(year=2025, is_admin=False)
+        assert wrapped_masked["cowatch_breakdown"]["partner_user"] == "ja****"
+
+        # Admin unmasked
+        wrapped_admin = am.get_omniwrapped(year=2025, is_admin=True)
+        assert wrapped_admin["cowatch_breakdown"]["partner_user"] == "jane_doe"
+
+
+def test_webhook_error_marks_debugger_entry():
+    """Verify that an exception in process_media_event updates webhook_debugger status to 'error'."""
+    from app.services.webhook_debugger import webhook_debugger
+    client = TestClient(app, raise_server_exceptions=False)
+
+    webhook_debugger.clear()
+
+    payload = {
+        "event": "media.scrobble",
+        "Account": {"title": "selits"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Crash Movie",
+            "year": 2026,
+            "librarySectionTitle": "Movies",
+        },
+        "Player": {"title": "Living Room TV"},
+    }
+
+    with patch.object(Config, "PLEX_ALLOWED_USERS", ["selits"]), \
+         patch("app.main.settings_mgr.is_server_enabled", return_value=True), \
+         patch("app.main.process_media_event", side_effect=RuntimeError("Simulated pipeline crash")):
+        res = client.post("/webhook", data={"payload": json.dumps(payload)})
+        assert res.status_code == 500
+
+    history = webhook_debugger.get_history()
+    assert len(history) > 0
+    latest = history[0]
+    assert latest["status"] == "error"
+    assert "Simulated pipeline crash" in latest["reason"]
+
+
+def test_csrf_cross_site_protection():
+    """Verify Sec-Fetch-Site: cross-site is rejected for cookie-authenticated admin mutating requests."""
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        client.cookies.set("admin_token", "admin_secret")
+
+        # GET request with cross-site is allowed
+        res_get = client.get("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
+        assert res_get.status_code == 200
+
+        # Mutating DELETE request with cross-site is blocked
+        res_del = client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
+        assert res_del.status_code == 403
+
+        # Mutating DELETE request with same-origin is allowed
+        res_del_ok = client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "same-origin"})
+        assert res_del_ok.status_code == 200
+
 
 
 

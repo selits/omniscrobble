@@ -11,6 +11,7 @@ import datetime
 import json
 import logging
 from pathlib import Path
+import re
 from typing import Any, Optional
 
 from app.config import Config
@@ -50,9 +51,22 @@ class AnalyticsManager:
             pass
         return {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0}
 
-    def get_summary(self, period: str = "all", demo: bool = False) -> dict[str, Any]:
-        """Compute aggregated watch analytics across a given time window."""
+    def get_summary(
+        self,
+        period: str = "all",
+        year: Optional[int] = None,
+        demo: bool = False,
+        is_admin: bool = True,
+    ) -> dict[str, Any]:
+        """Compute aggregated watch analytics across a given time window or calendar year."""
         if demo:
+            demo_devices = [
+                {"device": "Living Room Apple TV", "hours": 86.0},
+                {"device": "Bedroom Chromecast", "hours": 38.5},
+                {"device": "Office Shield TV", "hours": 22.0},
+            ]
+            if not is_admin:
+                demo_devices = [{"device": f"Player {i+1}", "hours": d["hours"]} for i, d in enumerate(demo_devices)]
             return {
                 "period": period,
                 "total_watch_hours": 146.5,
@@ -69,11 +83,7 @@ class AnalyticsManager:
                     "Jellyfin": 24,
                     "Emby": 8,
                 },
-                "top_devices": [
-                    {"device": "Living Room Apple TV", "hours": 86.0},
-                    {"device": "Bedroom Chromecast", "hours": 38.5},
-                    {"device": "Office Shield TV", "hours": 22.0},
-                ],
+                "top_devices": demo_devices,
                 "top_shows": [
                     {"show": "Severance", "episodes": 18, "hours": 16.5},
                     {"show": "The Bear", "episodes": 16, "hours": 9.5},
@@ -94,12 +104,13 @@ class AnalyticsManager:
         stats = self._load_stats()
 
         start_cutoff: Optional[datetime.datetime] = None
-        if period == "week":
-            start_cutoff = now - datetime.timedelta(days=7)
-        elif period == "month":
-            start_cutoff = now - datetime.timedelta(days=30)
-        elif period == "year":
-            start_cutoff = now - datetime.timedelta(days=365)
+        if year is None:
+            if period == "week":
+                start_cutoff = now - datetime.timedelta(days=7)
+            elif period == "month":
+                start_cutoff = now - datetime.timedelta(days=30)
+            elif period == "year":
+                start_cutoff = now - datetime.timedelta(days=365)
 
         total_scrobbles = 0
         movies_watched = 0
@@ -112,23 +123,40 @@ class AnalyticsManager:
         devices: collections.Counter[str] = collections.Counter()
         shows: collections.Counter[str] = collections.Counter()
         show_mins: collections.Counter[str] = collections.Counter()
+        genres_counter: collections.Counter[str] = collections.Counter()
 
         for ev in events:
             if not isinstance(ev, dict):
                 continue
 
             ts_str = ev.get("timestamp")
-            if ts_str and start_cutoff:
+            if ts_str:
                 try:
-                    ev_time = datetime.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                    if ev_time < start_cutoff:
+                    clean_ts = str(ts_str).replace("Z", "+00:00")
+                    try:
+                        ev_time = datetime.datetime.fromisoformat(clean_ts)
+                    except ValueError:
+                        ev_time = datetime.datetime.strptime(str(ts_str).split(".")[0], "%Y-%m-%d %H:%M:%S")
+
+                    if hasattr(ev_time, "tzinfo") and ev_time.tzinfo is not None:
+                        ev_time = ev_time.replace(tzinfo=None)
+
+                    if year is not None and ev_time.year != year:
+                        continue
+                    if start_cutoff and ev_time < start_cutoff:
                         continue
                 except Exception:
                     pass
 
             action = str(ev.get("action", "")).lower()
-            m_type = str(ev.get("type", "")).lower()
+            m_type = str(ev.get("type") or ev.get("media_type") or (ev.get("media_payload") or {}).get("media_type") or "").lower()
             title = str(ev.get("title", ""))
+
+            if not m_type:
+                if ev.get("show_title") or re.search(r"\s+[Ss]\d+([Ee]\d+)?", title):
+                    m_type = "episode"
+                else:
+                    m_type = "movie"
 
             if "rate" in action or action == "rating":
                 ratings_count += 1
@@ -143,23 +171,57 @@ class AnalyticsManager:
                 episodes_watched += 1
                 item_mins = 45
 
-            # Extract show title if episode
+            # Extract show title if episode using explicit field, metadata payload, or robust regex
             if m_type == "episode":
-                show_name = title.split(" S")[0] if " S" in title else (title.split(" - ")[0] if " - " in title else title)
-                shows[show_name] += 1
-                show_mins[show_name] += item_mins
+                show_name = ev.get("show_title")
+                if not show_name:
+                    media_pl = ev.get("media_payload") or {}
+                    show_name = media_pl.get("show_title") or media_pl.get("grandparent_title")
+                if not show_name:
+                    match = re.search(r"\s+[Ss]\d+([Ee]\d+)?", title)
+                    if match:
+                        show_name = title[:match.start()].strip()
+                    elif " - " in title:
+                        show_name = title.split(" - ")[0].strip()
+                    else:
+                        show_name = title.strip()
+                if show_name:
+                    shows[show_name] += 1
+                    show_mins[show_name] += item_mins
 
-            # Co-watch classification
+            # Co-watch classification (check for synced or affirmative eligibility, avoiding 'ineligible' false-positives)
             cw = ev.get("cowatch_status")
-            is_cowatch = bool(cw and (cw.get("synced") or (cw.get("reason") and "eligible" in str(cw.get("reason")).lower())))
+            cw_reason = ev.get("cowatch_reason")
+            is_cowatch = False
+            if isinstance(cw, dict):
+                if cw.get("synced") is True:
+                    is_cowatch = True
+                elif cw.get("reason"):
+                    r_str = str(cw.get("reason")).lower()
+                    if "eligible" in r_str and "ineligible" not in r_str:
+                        is_cowatch = True
+            elif isinstance(cw, bool):
+                is_cowatch = cw
+            elif isinstance(cw, str):
+                r_str = cw.lower()
+                if "eligible" in r_str and "ineligible" not in r_str:
+                    is_cowatch = True
+
+            if not is_cowatch and cw_reason:
+                r_str = str(cw_reason).lower()
+                if "eligible" in r_str and "ineligible" not in r_str:
+                    is_cowatch = True
             if is_cowatch:
                 cowatch_mins += item_mins
             else:
                 solo_mins += item_mins
 
-            # Server tracking
+            # Server tracking from server property or payload details
+            ev_server = ev.get("server")
             raw_details = str(ev.get("details", "")).lower()
-            if "plex" in raw_details or "plex" in action:
+            if ev_server:
+                servers[str(ev_server).capitalize()] += 1
+            elif "plex" in raw_details or "plex" in action:
                 servers["Plex"] += 1
             elif "jellyfin" in raw_details or "jellyfin" in action:
                 servers["Jellyfin"] += 1
@@ -169,11 +231,22 @@ class AnalyticsManager:
                 servers["Plex"] += 1
 
             # Player device tracking
-            player = ev.get("player") or "Living Room TV"
+            player = ev.get("player") or "Default Player"
             devices[player] += item_mins
 
+            # Real genre extraction from event or media payload
+            ev_genres = ev.get("genres") or (ev.get("media_payload") or {}).get("genres")
+            if isinstance(ev_genres, list):
+                for g in ev_genres:
+                    if g:
+                        genres_counter[str(g).strip()] += 1
+            elif isinstance(ev_genres, str) and ev_genres:
+                for g in ev_genres.split(","):
+                    if g.strip():
+                        genres_counter[g.strip()] += 1
+
         # Fallback to lifetime stats if events empty and period is all
-        if period == "all" and total_scrobbles == 0 and stats.get("total", 0) > 0:
+        if period == "all" and year is None and total_scrobbles == 0 and stats.get("total", 0) > 0:
             movies_watched = stats.get("movies", 0)
             episodes_watched = stats.get("episodes", 0)
             total_scrobbles = movies_watched + episodes_watched
@@ -191,7 +264,11 @@ class AnalyticsManager:
         server_dist = {s: int(round((count / total_server_counts) * 100)) for s, count in servers.items()} if servers else {"Plex": 100}
 
         top_devs = [{"device": d, "hours": round(m / 60.0, 1)} for d, m in devices.most_common(5)]
+        if not is_admin and not demo:
+            top_devs = [{"device": f"Player {i+1}", "hours": d["hours"]} for i, d in enumerate(top_devs)]
+
         top_sh = [{"show": s, "episodes": shows[s], "hours": round(show_mins[s] / 60.0, 1)} for s, _ in shows.most_common(5)]
+        top_genres = [{"genre": g, "count": count} for g, count in genres_counter.most_common(5)]
 
         return {
             "period": period,
@@ -207,17 +284,18 @@ class AnalyticsManager:
             "server_distribution": server_dist,
             "top_devices": top_devs or [{"device": "Default Media Player", "hours": total_hours}],
             "top_shows": top_sh,
-            "top_genres": [
-                {"genre": "Drama", "count": int(episodes_watched * 0.4)},
-                {"genre": "Sci-Fi", "count": int(episodes_watched * 0.3 + movies_watched * 0.5)},
-                {"genre": "Comedy", "count": int(episodes_watched * 0.2)},
-                {"genre": "Thriller", "count": int(movies_watched * 0.4)},
-            ],
+            "top_genres": top_genres,
         }
 
-    def get_omniwrapped(self, year: int = 2026, demo: bool = False) -> dict[str, Any]:
-        """Generate an annual 'OmniWrapped' retrospective summary."""
-        summary = self.get_summary(period="year", demo=demo)
+    def get_omniwrapped(
+        self,
+        year: Optional[int] = None,
+        demo: bool = False,
+        is_admin: bool = True,
+    ) -> dict[str, Any]:
+        """Generate an annual 'OmniWrapped' retrospective summary for a given calendar year."""
+        target_year = year if year is not None else datetime.datetime.now().year
+        summary = self.get_summary(period="all", year=target_year, demo=demo, is_admin=is_admin)
 
         # Determine personality archetype based on metrics
         cowatch_pct = summary["cowatch_ratio_percent"]
@@ -237,12 +315,25 @@ class AnalyticsManager:
             archetype = "The Curated Media Connoisseur"
             description = "Selective, high-fidelity viewing focused on top-tier releases and personal favorites."
 
-        top_show_name = summary["top_shows"][0]["show"] if summary.get("top_shows") else "Severance"
-        top_show_episodes = summary["top_shows"][0]["episodes"] if summary.get("top_shows") else 14
+        if summary.get("top_shows"):
+            top_show_name = summary["top_shows"][0]["show"]
+            top_show_episodes = summary["top_shows"][0]["episodes"]
+        else:
+            top_show_name = "No series logged yet"
+            top_show_episodes = 0
+
+        partner_raw = getattr(Config, "CO_WATCH_USER", "partner") or "Partner"
+        if not is_admin and not demo:
+            if partner_raw and partner_raw.lower() != "partner":
+                partner_display = partner_raw[:2] + "****" if len(partner_raw) > 2 else "****"
+            else:
+                partner_display = "Partner"
+        else:
+            partner_display = partner_raw
 
         return {
-            "year": year,
-            "headline": f"Your {year} OmniWrapped",
+            "year": target_year,
+            "headline": f"Your {target_year} OmniWrapped",
             "archetype": archetype,
             "description": description,
             "total_watch_time": summary["total_watch_formatted"],
@@ -255,7 +346,7 @@ class AnalyticsManager:
                 "solo_hours": summary["solo_hours"],
                 "shared_hours": summary["cowatch_hours"],
                 "cowatch_percentage": summary["cowatch_ratio_percent"],
-                "partner_user": getattr(Config, "CO_WATCH_USER", "partner") or "Partner",
+                "partner_user": partner_display,
             },
             "top_binge": {
                 "show": top_show_name,

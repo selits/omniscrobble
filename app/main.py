@@ -220,6 +220,10 @@ def is_admin_request(request: Request) -> bool:
     if cookie_token and secrets.compare_digest(cookie_token, Config.WEBHOOK_SECRET):
         # Enforce CSRF protection for cookie-authenticated mutating requests
         if request.method in ("POST", "DELETE", "PUT", "PATCH"):
+            fetch_site = request.headers.get("sec-fetch-site")
+            if fetch_site == "cross-site":
+                logger.warning("CSRF check blocked cross-site mutating admin request from %s", request.client.host if request.client else "unknown")
+                return False
             header_csrf = request.headers.get("x-csrf-token")
             cookie_csrf = request.cookies.get("csrf_token")
             if cookie_csrf:
@@ -1228,9 +1232,13 @@ async def plex_webhook(request: Request):
         webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Non-media event, filtered user/library, or unsupported media type")
         return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
-    res = await process_media_event(parsed, endpoint_name="webhook")
-    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
-    return res
+    try:
+        res = await process_media_event(parsed, endpoint_name="webhook")
+        webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+        return res
+    except Exception as exc:
+        webhook_debugger.update_status(debug_entry["id"], status="error", reason=str(exc))
+        raise
 
 
 @app.get("/webhook/jellyfin")
@@ -1279,9 +1287,13 @@ async def jellyfin_webhook(request: Request):
         webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Non-media event, filtered user/library, or unsupported media type")
         return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
-    res = await process_media_event(parsed, endpoint_name="webhook_jellyfin")
-    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
-    return res
+    try:
+        res = await process_media_event(parsed, endpoint_name="webhook_jellyfin")
+        webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+        return res
+    except Exception as exc:
+        webhook_debugger.update_status(debug_entry["id"], status="error", reason=str(exc))
+        raise
 
 
 @app.get("/webhook/emby")
@@ -1330,9 +1342,13 @@ async def emby_webhook(request: Request):
         webhook_debugger.update_status(debug_entry["id"], status="ignored", reason="Non-media event, filtered user/library, or unsupported media type")
         return {"status": "ignored", "reason": "Non-media event, filtered user/library, or unsupported media type"}
 
-    res = await process_media_event(parsed, endpoint_name="webhook_emby")
-    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
-    return res
+    try:
+        res = await process_media_event(parsed, endpoint_name="webhook_emby")
+        webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+        return res
+    except Exception as exc:
+        webhook_debugger.update_status(debug_entry["id"], status="error", reason=str(exc))
+        raise
 
 
 class StandaloneScrobblePayload(BaseModel):
@@ -1440,9 +1456,13 @@ async def standalone_scrobble_endpoint(request: Request, payload: StandaloneScro
         view_offset_ms=payload.view_offset_ms,
     )
 
-    res = await process_media_event(parsed, endpoint_name="api_scrobble")
-    webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
-    return res
+    try:
+        res = await process_media_event(parsed, endpoint_name="api_scrobble")
+        webhook_debugger.update_status(debug_entry["id"], status="processed", reason=res.get("status"))
+        return res
+    except Exception as exc:
+        webhook_debugger.update_status(debug_entry["id"], status="error", reason=str(exc))
+        raise
 
 
 @app.get("/sonarr")
@@ -4249,6 +4269,13 @@ async def replay_debug_webhook(request: Request, body: ReplayWebhookRequest):
             "parsed": parsed_dict,
         }
 
+    # Pipeline dispatch strictly requires admin authorization (cannot be bypassed via ?demo=true)
+    if not is_admin_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin authorization required to dispatch replayed webhooks into the pipeline",
+        )
+
     dispatch_res = await process_media_event(parsed, endpoint_name=f"debug_replay_{source}")
     return {
         "status": "dispatched",
@@ -4262,15 +4289,17 @@ async def replay_debug_webhook(request: Request, body: ReplayWebhookRequest):
 async def get_analytics_summary(request: Request, period: str = "all", demo: bool = False):
     """Retrieve viewing analytics metrics across a given time window (all, year, month, week)."""
     is_demo = demo or request.query_params.get("demo") == "true"
-    summary = analytics_mgr.get_summary(period=period, demo=is_demo)
+    is_admin = is_admin_request(request)
+    summary = analytics_mgr.get_summary(period=period, demo=is_demo, is_admin=is_admin)
     return summary
 
 
 @app.get("/api/analytics/wrapped")
-async def get_analytics_wrapped(request: Request, year: int = 2026, demo: bool = False):
+async def get_analytics_wrapped(request: Request, year: Optional[int] = None, demo: bool = False):
     """Retrieve the OmniWrapped annual viewing retrospective and archetype summary."""
     is_demo = demo or request.query_params.get("demo") == "true"
-    wrapped = analytics_mgr.get_omniwrapped(year=year, demo=is_demo)
+    is_admin = is_admin_request(request)
+    wrapped = analytics_mgr.get_omniwrapped(year=year, demo=is_demo, is_admin=is_admin)
     return wrapped
 
 

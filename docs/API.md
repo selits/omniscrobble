@@ -246,7 +246,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | --- | :---: | :---: | --- |
 | **`/api/debug/webhooks`** | `GET` | Admin | **Webhook Inspector History**: Returns recently captured raw webhook payloads (up to 25 items) with sanitized tokens, endpoint provenance, and processing status. Supports `?limit=15` and `?demo=true`. |
 | **`/api/debug/webhooks`** | `DELETE` | Admin | **Clear Debugger Buffer**: Purges the in-memory ring buffer of captured raw webhook events. |
-| **`/api/debug/replay`** | `POST` | Admin | **Replay & Test Payload**: Replays or tests a captured webhook payload through parser logic. Supports dry-run simulation (`dispatch: false`) or live pipeline execution (`dispatch: true`). |
+| **`/api/debug/replay`** | `POST` | Admin | **Replay & Test Payload**: Replays or tests a captured webhook payload through parser logic. Supports dry-run simulation (`dispatch: false`) or live pipeline execution (`dispatch: true`, strictly requiring admin authorization). |
 
 ---
 
@@ -254,5 +254,5 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/analytics/summary`** | `GET` | Public | **Viewing Analytics Summary**: Returns aggregated watch metrics (cumulative watch time, completed movies/episodes, star ratings, solo vs shared co-watching ratios, and media server platform distribution). Supports `?period=all\|year\|month\|week` and `?demo=true`. |
-| **`/api/analytics/wrapped`** | `GET` | Public | **OmniWrapped Retrospective**: Computes an annual viewing celebration card including personality archetype heuristics, top binge show, co-watch breakdown, and genre telemetry. Supports `?year=YYYY` and `?demo=true`. |
+| **`/api/analytics/summary`** | `GET` | Public | **Viewing Analytics Summary**: Returns aggregated watch metrics (cumulative watch time, completed movies/episodes, star ratings, solo vs shared co-watching ratios, and media server platform distribution). Supports `?period=all\|year\|month\|week`, `?demo=true`, and applies privacy shielding for non-admin callers. |
+| **`/api/analytics/wrapped`** | `GET` | Public | **OmniWrapped Retrospective**: Computes an annual viewing celebration card including personality archetype heuristics, top binge show, co-watch breakdown, and genre telemetry. Supports `?year=YYYY` (defaults to current year), `?demo=true`, and applies partner/device privacy masking for non-admin callers. |
