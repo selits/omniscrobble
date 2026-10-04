@@ -96,10 +96,11 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 - **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. A background worker drains the queue with exponential backoff.
 - **`app/services/settings_manager.py`**: Thread-safe runtime settings manager (`data/settings.json`). Preserves media server listener states, tracker pause states, dynamic rules & filters, and active servers across reboots without modifying `.env`.
-- **`app/services/user_manager.py`**: Manages isolated multi-user tokens in `data/tokens/{username}_tokens.json`.
+- **`app/services/user_manager.py`**: Manages isolated multi-user profiles and token storage in `data/tokens/{username}_tokens.json` (including partner secondary cloud trackers: `_simkl_tokens.json`, `_anilist_tokens.json`, `_mal_tokens.json`), client caching, and live tracker status matrices.
 
 ### 6. Background Workers & Automation Engines
 
+- **`app/services/cloud_sync_manager.py`**: Orchestrates automated background cloud synchronization, periodic two-way media server diffs, Simkl cross-sync, Letterboxd RFC-4180 CSV watch diary snapshots (`data/exports/letterboxd_diary.csv`), and shared concurrency mutex locking (`asyncio.Lock`) preventing collisions with manual reconciliation.
 - **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation.
 - **`app/services/cross_tracker_sync.py`**: Cross-tracker reconciliation engine for Trakt and Simkl.
 - **`app/services/arr_bridge.py`**: Content Bridge background worker. Polls Trakt Watchlists and automatically triggers searches in Radarr and Sonarr for newly bookmarked media.
@@ -138,6 +139,7 @@ omniscrobble/
 │   ├── services/                    # Core business logic and background services
 │   │   ├── anime_resolver.py        # Anime detection heuristics, title normalization & GUID caching
 │   │   ├── arr_bridge.py            # Content Bridge manager for Trakt watchlist sync & ecosystem health
+│   │   ├── cloud_sync_manager.py    # Automated background cloud reconciliation, Letterboxd CSV snapshots & mutex locks
 │   │   ├── cowatch_manager.py       # Watch Together whitelist & dual-scrobble rules engine
 │   │   ├── cross_tracker_sync.py    # Trakt <-> Simkl reconciliation & bi-directional sync engine
 │   │   ├── demo_manager.py          # Air-gapped mock playback, stats, and activity generator
@@ -165,7 +167,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (34 endpoints)
+│   ├── API.md                       # Full REST API specification (37 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
@@ -173,7 +175,7 @@ omniscrobble/
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
-├── tests/                           # Comprehensive test suite (199 tests, 0 external calls)
+├── tests/                           # Comprehensive test suite (206 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool
