@@ -468,7 +468,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
