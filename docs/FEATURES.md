@@ -303,3 +303,34 @@ Control Omniscrobble quickly with keyboard navigation:
 - <kbd>R</kbd>: Refresh live activity feed and offline queue status.
 - <kbd>?</kbd>: Open the Keyboard Shortcuts reference modal.
 - <kbd>Esc</kbd>: Close the active modal dialog.
+
+---
+
+## 9. Ambient Visuals, Display Density & Card Customization
+
+Omniscrobble provides interface customization options designed for desktop browsers, home theater setups, and wall-mounted dashboard tablets.
+
+### Ambient Stream Poster & Frosted Backdrop
+
+The active playback banner card dynamically presents media artwork extracted from media server payloads:
+
+- **Frosted Glass Ambient Backdrop**: A wide, ambient-blurred backdrop (`filter: blur(35px); opacity: 0.22`) renders behind active playback information, echoing modern streaming interfaces.
+- **Leading Poster Thumbnail**: High-resolution movie and episode artwork with a smooth fallback icon (`🎬`) for untracked home videos.
+- **CDN Resolution Fallback**: When media servers provide local or relative thumbnail URLs, Omniscrobble automatically resolves poster and fanart backdrops via the Metahub CDN (`https://images.metahub.space/`) using standard IMDb IDs.
+
+### Display Density Modes
+
+Toggle between two display density modes directly from the **Appearance** tab in the Settings Hub:
+
+- **Comfortable** (Default): Spacious layout with generous card padding (24px) and relaxed table heights.
+- **Compact**: Condensed spacing with streamlined card padding (14px) and tighter table row heights. Specifically optimized for wall-mounted tablet displays (such as iPad, Amazon Fire HD, and WallPanel kiosks) to fit all essential scrobbler telemetry without requiring vertical scrolling.
+- **Zero-FOUC**: The chosen density mode is saved to `omniscrobble_density` in `localStorage` and injected during early document parsing via an inline `<head>` script, ensuring no flash of unstyled content on reload.
+
+### Dashboard Card Customization
+
+Customize the dashboard to display only the features you actively use:
+
+- **Individual Card Visibility**: Turn off cards you do not need (such as *Arr Content Bridge if you don't run Sonarr/Radarr, Watch Together if viewing solo, or Two-Way Reconciliation if you only perform real-time scrobbling).
+- **Instant Toggles**: Manage card visibility in the Settings Hub Appearance tab with live preview.
+- **1-Click Reset**: Restore default card layout instantly with the **Reset to Default** button.
+- **Pre-Render Style Injection**: Disabled cards are suppressed before first paint via an inline `<style id="fouc-card-style">` element, preventing layout shift on page load.

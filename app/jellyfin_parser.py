@@ -251,6 +251,22 @@ def parse_jellyfin_webhook(
     item_id = str(item.get("Id") or payload.get("ItemId") or payload.get("Id") or "").strip() or None
     file_path = str(item.get("Path") or payload.get("Path") or "").strip() or None
 
+    # Ambient Artwork & Poster URL resolution
+    imdb_id = ids.get("imdb")
+    poster_url = None
+    backdrop_url = None
+    primary_tag = item.get("PrimaryImageTag") or payload.get("PrimaryImageTag") or item.get("ImageUrl") or payload.get("ImageUrl")
+    backdrop_tag = item.get("BackdropImageTag") or payload.get("BackdropImageTag")
+    if primary_tag and str(primary_tag).startswith(("http://", "https://")):
+        poster_url = str(primary_tag)
+    elif imdb_id:
+        poster_url = f"https://images.metahub.space/poster/medium/{imdb_id}/img"
+
+    if backdrop_tag and str(backdrop_tag).startswith(("http://", "https://")):
+        backdrop_url = str(backdrop_tag)
+    elif imdb_id:
+        backdrop_url = f"https://images.metahub.space/background/medium/{imdb_id}/img"
+
     return ParsedMedia(
         event=event,
         username=username,
@@ -271,6 +287,8 @@ def parse_jellyfin_webhook(
         server_type="jellyfin",
         rating_key=item_id,
         file_path=file_path,
+        poster_url=poster_url,
+        backdrop_url=backdrop_url,
         ids=ids,
         raw_payload=payload,
     )

@@ -87,6 +87,8 @@ class ParsedMedia(BaseModel):
     server_type: str = "plex"
     rating_key: Optional[str] = None
     file_path: Optional[str] = None
+    poster_url: Optional[str] = None
+    backdrop_url: Optional[str] = None
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -534,6 +536,22 @@ def parse_plex_webhook(
 
     rating_key = str(metadata.get("ratingKey", "")) if metadata.get("ratingKey") is not None else None
 
+    # Ambient Artwork & Poster URL resolution
+    imdb_id = ids.get("imdb")
+    poster_url = None
+    backdrop_url = None
+    thumb = metadata.get("thumb") or metadata.get("grandparentThumb")
+    art = metadata.get("art") or metadata.get("grandparentArt")
+    if thumb and str(thumb).startswith(("http://", "https://")):
+        poster_url = str(thumb)
+    elif imdb_id:
+        poster_url = f"https://images.metahub.space/poster/medium/{imdb_id}/img"
+
+    if art and str(art).startswith(("http://", "https://")):
+        backdrop_url = str(art)
+    elif imdb_id:
+        backdrop_url = f"https://images.metahub.space/background/medium/{imdb_id}/img"
+
     if media_type == "episode":
         grandparent_year = metadata.get("grandparentYear")
         show_year = int(grandparent_year) if grandparent_year else None
@@ -559,6 +577,8 @@ def parse_plex_webhook(
             library_section_title=library_section_title,
             rating_key=rating_key,
             file_path=file_path,
+            poster_url=poster_url,
+            backdrop_url=backdrop_url,
             ids=ids,
             raw_payload=payload,
         )
@@ -581,6 +601,8 @@ def parse_plex_webhook(
             library_section_title=library_section_title,
             rating_key=rating_key,
             file_path=file_path,
+            poster_url=poster_url,
+            backdrop_url=backdrop_url,
             ids=ids,
             raw_payload=payload,
         )
@@ -603,6 +625,8 @@ def parse_plex_webhook(
             library_section_title=library_section_title,
             rating_key=rating_key,
             file_path=file_path,
+            poster_url=poster_url,
+            backdrop_url=backdrop_url,
             ids=ids,
             raw_payload=payload,
         )

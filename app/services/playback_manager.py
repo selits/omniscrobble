@@ -55,6 +55,8 @@ class PlaybackManager:
             "view_offset_ms": media.view_offset_ms,
             "updated_at": time.time(),
             "trakt_url": trakt_url,
+            "poster_url": media.poster_url,
+            "backdrop_url": media.backdrop_url,
             "ids": media.ids,
         }
         self.sessions[key] = session
@@ -83,6 +85,8 @@ class PlaybackManager:
             "progress": round(media.progress, 1),
             "finished_at": time.time(),
             "trakt_url": trakt_url,
+            "poster_url": media.poster_url or (existing.get("poster_url") if existing else None),
+            "backdrop_url": media.backdrop_url or (existing.get("backdrop_url") if existing else None),
             "remaining_str": "Finished",
         }
         self.recently_finished = finished_entry

@@ -30,6 +30,17 @@
                 if (accent) {
                     document.documentElement.classList.add('accent-' + accent);
                 }
+                var density = localStorage.getItem('omniscrobble_density') || 'comfortable';
+                if (density === 'compact') {
+                    document.documentElement.classList.add('density-compact');
+                }
+                var hiddenCards = JSON.parse(localStorage.getItem('omniscrobble_hidden_cards') || '[]');
+                if (hiddenCards && hiddenCards.length) {
+                    var s = document.createElement('style');
+                    s.id = 'fouc-card-style';
+                    s.textContent = hiddenCards.map(function(id) { return '#' + id + ' { display: none !important; }'; }).join(' ');
+                    document.head.appendChild(s);
+                }
             } catch (e) {}
         })();
     </script>
@@ -238,6 +249,22 @@
 
         html[class*="accent-"] .btn-copy { background-color: var(--btn-copy-bg) !important; }
 
+        /* Display Density - Compact Mode (Tablet & Wall-Mount Optimized) */
+        html.density-compact body { padding: 18px 14px; }
+        html.density-compact .header { margin-bottom: 16px; padding-bottom: 14px; }
+        html.density-compact .card { padding: 14px 16px; margin-bottom: 14px; border-radius: 9px; }
+        html.density-compact .card h3 { font-size: 14px; margin-bottom: 8px; }
+        html.density-compact .info-grid { gap: 10px; }
+        html.density-compact .info-item { padding: 8px 12px; }
+        html.density-compact .info-value { font-size: 14px; margin: 2px 0; }
+        html.density-compact th { padding: 6px 10px; font-size: 11px; }
+        html.density-compact td { padding: 6px 10px; font-size: 11px; }
+        html.density-compact .activity-header { padding: 10px 14px; }
+        html.density-compact .cowatch-grid { gap: 12px; }
+        html.density-compact .cowatch-account-row { padding: 6px 10px; margin-bottom: 6px; }
+        html.density-compact #stream-poster-container { width: 56px; height: 78px; }
+        html.density-compact #active-playback-card { margin-bottom: 14px; }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { max-width: 100%; overflow-x: hidden; }
         body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background-color: var(--bg-page); color: var(--text-main); padding: 32px 20px; transition: background-color 0.2s ease, color 0.2s ease; }
@@ -375,7 +402,7 @@
 
         {{ACTIVE_PLAYBACK_CARD}}
 
-        <div class="card">
+        <div class="card" id="card-server-config">
             <h3>Server & Account Configuration</h3>
             <div class="info-grid">
                 <div class="info-item">
@@ -414,7 +441,7 @@
 
         {{BACKUP_CARD}}
 
-        <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="card" id="card-activity" style="padding: 0; overflow: hidden;">
             <div class="activity-header">
                 <h3 style="margin: 0;">Live Activity & Scrobble History</h3>
                 <div class="activity-actions">
@@ -1568,6 +1595,40 @@
                         </div>
                     </div>
 
+                    <!-- Display Density -->
+                    <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:14px;">
+                        <div style="font-size:13px;font-weight:600;color:var(--text-heading);margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                            <span>📐</span> Display Density (Tablet &amp; Wall-Mount Friendly)
+                        </div>
+                        <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;line-height:1.4;">
+                            Adjust the spacing and padding across cards and tables. Compact mode condenses layouts for wall-mounted tablet displays.
+                        </p>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button type="button" id="density-btn-comfortable" onclick="setDensity('comfortable')" class="btn-sm" style="padding:8px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                                <span>🛋️</span> Comfortable (Default)
+                            </button>
+                            <button type="button" id="density-btn-compact" onclick="setDensity('compact')" class="btn-sm" style="padding:8px 16px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                                <span>📱</span> Compact (Condensed)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Dashboard Card Visibility -->
+                    <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:14px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:8px;">
+                            <div style="font-size:13px;font-weight:600;color:var(--text-heading);display:flex;align-items:center;gap:6px;">
+                                <span>👁️</span> Dashboard Card Visibility
+                            </div>
+                            <button type="button" onclick="resetCardVisibility()" class="btn-sm" style="background:var(--bg-surface);border:1px solid var(--border-color);color:var(--text-muted);padding:3px 8px;font-size:11px;cursor:pointer;">Reset to Default</button>
+                        </div>
+                        <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;line-height:1.4;">
+                            Toggle visibility of individual dashboard cards. Useful for hiding unused services (such as Co-Watching or *Arr automation).
+                        </p>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));gap:8px;" id="settings-card-visibility-grid">
+                            <!-- Populated by renderCardVisibilityPickers() -->
+                        </div>
+                    </div>
+
                     <!-- Quick Shortcuts Info -->
                     <div style="background:var(--bg-subtle);border:1px solid var(--border-color);border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
                         <div style="font-size:12px;color:var(--text-muted);">
@@ -2701,6 +2762,8 @@
             const tabs = ['servers', 'trackers', 'automation', 'notifications', 'rules', 'appearance'];
             if (tabName === 'appearance') {
                 renderThemePickers();
+                if (typeof updateDensityUI === 'function') updateDensityUI();
+                if (typeof renderCardVisibilityPickers === 'function') renderCardVisibilityPickers();
             }
             tabs.forEach(t => {
                 const btn = document.getElementById(`settings-tab-btn-${t}`);
@@ -4202,6 +4265,10 @@
             const card = document.getElementById('active-playback-card');
             if (!card) return;
             const sessions = data.active_sessions || [];
+            const posterImg = document.getElementById('stream-poster-img');
+            const posterFallback = document.getElementById('stream-poster-fallback');
+            const backdropEl = document.getElementById('stream-ambient-backdrop');
+
             if (sessions.length > 0) {
                 const s = sessions[0];
                 card.style.display = 'block';
@@ -4216,6 +4283,28 @@
                 document.getElementById('stream-progress-text').textContent = progText;
                 document.getElementById('stream-progress-bar').style.width = `${s.progress}%`;
                 document.getElementById('stream-progress-bar').style.background = s.state === 'playing' ? '#10b981' : '#f59e0b';
+
+                // Poster & Ambient Backdrop Update
+                const pUrl = s.poster_url || (s.ids && s.ids.imdb ? `https://images.metahub.space/poster/medium/${s.ids.imdb}/img` : null);
+                const bUrl = s.backdrop_url || (s.ids && s.ids.imdb ? `https://images.metahub.space/background/medium/${s.ids.imdb}/img` : pUrl);
+                if (posterImg && posterFallback) {
+                    if (pUrl) {
+                        posterImg.src = pUrl;
+                        posterImg.style.display = 'block';
+                        posterFallback.style.display = 'none';
+                    } else {
+                        posterImg.style.display = 'none';
+                        posterFallback.style.display = 'flex';
+                    }
+                }
+                if (backdropEl) {
+                    if (bUrl) {
+                        backdropEl.style.backgroundImage = `url('${bUrl}')`;
+                    } else {
+                        backdropEl.style.backgroundImage = 'none';
+                        backdropEl.style.background = 'radial-gradient(circle at top right, var(--accent-glow, rgba(56, 189, 248, 0.3)), transparent 60%)';
+                    }
+                }
             } else if (data.recently_finished) {
                 const f = data.recently_finished;
                 card.style.display = 'block';
@@ -4231,6 +4320,28 @@
                 document.getElementById('stream-progress-text').textContent = '100.0% • Finished';
                 document.getElementById('stream-progress-bar').style.width = '100%';
                 document.getElementById('stream-progress-bar').style.background = '#38bdf8';
+
+                // Poster & Ambient Backdrop Update
+                const pUrl = f.poster_url;
+                const bUrl = f.backdrop_url || pUrl;
+                if (posterImg && posterFallback) {
+                    if (pUrl) {
+                        posterImg.src = pUrl;
+                        posterImg.style.display = 'block';
+                        posterFallback.style.display = 'none';
+                    } else {
+                        posterImg.style.display = 'none';
+                        posterFallback.style.display = 'flex';
+                    }
+                }
+                if (backdropEl) {
+                    if (bUrl) {
+                        backdropEl.style.backgroundImage = `url('${bUrl}')`;
+                    } else {
+                        backdropEl.style.backgroundImage = 'none';
+                        backdropEl.style.background = 'radial-gradient(circle at top right, var(--accent-glow, rgba(56, 189, 248, 0.3)), transparent 60%)';
+                    }
+                }
             } else {
                 card.style.display = 'none';
             }
@@ -5167,6 +5278,136 @@
             });
         }
 
+        // Display Density (Comfortable vs Compact)
+        function getDensity() {
+            return localStorage.getItem('omniscrobble_density') || 'comfortable';
+        }
+
+        function setDensity(mode) {
+            const root = document.documentElement;
+            if (mode === 'compact') {
+                root.classList.add('density-compact');
+                localStorage.setItem('omniscrobble_density', 'compact');
+            } else {
+                root.classList.remove('density-compact');
+                localStorage.setItem('omniscrobble_density', 'comfortable');
+            }
+            updateDensityUI();
+        }
+
+        function updateDensityUI() {
+            const mode = getDensity();
+            const btnComf = document.getElementById('density-btn-comfortable');
+            const btnComp = document.getElementById('density-btn-compact');
+            if (btnComf) {
+                if (mode === 'comfortable') {
+                    btnComf.style.background = 'var(--accent-color, #0284c7)';
+                    btnComf.style.color = '#fff';
+                    btnComf.style.borderColor = 'var(--accent-color, #0284c7)';
+                } else {
+                    btnComf.style.background = 'var(--bg-surface)';
+                    btnComf.style.color = 'var(--text-muted)';
+                    btnComf.style.borderColor = 'var(--border-color)';
+                }
+            }
+            if (btnComp) {
+                if (mode === 'compact') {
+                    btnComp.style.background = 'var(--accent-color, #0284c7)';
+                    btnComp.style.color = '#fff';
+                    btnComp.style.borderColor = 'var(--accent-color, #0284c7)';
+                } else {
+                    btnComp.style.background = 'var(--bg-surface)';
+                    btnComp.style.color = 'var(--text-muted)';
+                    btnComp.style.borderColor = 'var(--border-color)';
+                }
+            }
+        }
+
+        // Dashboard Card Visibility Controls
+        const DASHBOARD_CARDS = [
+            { id: 'active-playback-card', label: 'Active Playback Stream', desc: 'Live sessions, progress bar, ambient backdrop' },
+            { id: 'card-server-config', label: 'Server & Account Status', desc: 'Trakt account pairing, endpoints, sync controls' },
+            { id: 'card-ecosystem', label: 'Multi-Server Ecosystem', desc: 'Plex, Jellyfin, and Emby ingest status cards' },
+            { id: 'card-multi-tracker', label: 'Multi-Tracker Cloud Hub', desc: 'Simkl, AniList, and MyAnimeList sync status' },
+            { id: 'card-cowatch', label: 'Watch Together (Multi-User)', desc: 'Partner scrobble status, co-watch shows & rules' },
+            { id: 'card-reconciliation', label: 'Two-Way Library Reconciliation', desc: 'Scan & sync discrepancies across libraries' },
+            { id: 'card-arr-bridge', label: 'Automation & Content Bridge', desc: 'Sonarr & Radarr instant webhook monitoring' },
+            { id: 'card-backup', label: 'System Operations & Backup', desc: 'Snapshot creation, state restore, and maintenance' },
+            { id: 'card-activity', label: 'Live Activity History', desc: 'Real-time telemetry event stream and search' }
+        ];
+
+        function getHiddenCards() {
+            try {
+                const stored = localStorage.getItem('omniscrobble_hidden_cards');
+                return stored ? JSON.parse(stored) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+
+        function setCardVisibility(cardId, isVisible) {
+            let hidden = getHiddenCards();
+            if (isVisible) {
+                hidden = hidden.filter(id => id !== cardId);
+            } else {
+                if (!hidden.includes(cardId)) {
+                    hidden.push(cardId);
+                }
+            }
+            localStorage.setItem('omniscrobble_hidden_cards', JSON.stringify(hidden));
+            applyCardVisibility();
+            renderCardVisibilityPickers();
+        }
+
+        function resetCardVisibility() {
+            localStorage.removeItem('omniscrobble_hidden_cards');
+            applyCardVisibility();
+            renderCardVisibilityPickers();
+        }
+
+        function applyCardVisibility() {
+            const hidden = getHiddenCards();
+            let foucStyle = document.getElementById('fouc-card-style');
+            if (!foucStyle) {
+                foucStyle = document.createElement('style');
+                foucStyle.id = 'fouc-card-style';
+                document.head.appendChild(foucStyle);
+            }
+            if (hidden.length > 0) {
+                foucStyle.textContent = hidden.map(id => '#' + id + ' { display: none !important; }').join(' ');
+            } else {
+                foucStyle.textContent = '';
+            }
+        }
+
+        function renderCardVisibilityPickers() {
+            const container = document.getElementById('settings-card-visibility-grid');
+            if (!container) return;
+            const hidden = getHiddenCards();
+
+            container.innerHTML = DASHBOARD_CARDS.map(card => {
+                const isVisible = !hidden.includes(card.id);
+                return `
+                    <div style="background:var(--bg-surface);border:1px solid var(--border-color);border-radius:8px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                        <div style="min-width:0;flex:1;">
+                            <div style="font-size:13px;font-weight:600;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                ${card.label}
+                            </div>
+                            <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                ${card.desc}
+                            </div>
+                        </div>
+                        <label style="position:relative;display:inline-block;width:38px;height:22px;flex-shrink:0;cursor:pointer;">
+                            <input type="checkbox" ${isVisible ? 'checked' : ''} onchange="setCardVisibility('${card.id}', this.checked)" style="opacity:0;width:0;height:0;">
+                            <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${isVisible ? 'var(--accent-color, #0284c7)' : 'var(--border-color, #334155)'};border-radius:22px;transition:0.2s;">
+                                <span style="position:absolute;content:'';height:16px;width:16px;left:${isVisible ? '19px' : '3px'};bottom:3px;background:white;border-radius:50%;transition:0.2s;"></span>
+                            </span>
+                        </label>
+                    </div>
+                `;
+            }).join('');
+        }
+
         function openThemeModal() {
             const modal = document.getElementById('theme-modal');
             if (modal) {
@@ -5234,11 +5475,17 @@
             }
         });
 
-        // Initialize Theme UI on load
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', updateThemeUI);
-        } else {
+        // Initialize Theme, Density & Card Visibility UI on load
+        function initAppearance() {
             updateThemeUI();
+            updateDensityUI();
+            applyCardVisibility();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initAppearance);
+        } else {
+            initAppearance();
         }
 
         // Multi-Server Webhook URL Tab Switching

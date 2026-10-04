@@ -179,7 +179,7 @@ omniscrobble/
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
-├── tests/                           # Comprehensive test suite (206 tests, 0 external calls)
+├── tests/                           # Comprehensive test suite (208 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool

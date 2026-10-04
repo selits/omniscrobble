@@ -239,6 +239,8 @@ class DashboardRenderer:
         is_admin: bool,
     ) -> str:
         """Render active playback stream banner card with progress bar."""
+        poster_url = None
+        backdrop_url = None
         if active_sessions:
             s = active_sessions[0]
             card_display = "block"
@@ -252,6 +254,8 @@ class DashboardRenderer:
             if s.get("remaining_str"):
                 stream_prog_text += f" • {s['remaining_str']}"
             stream_prog_width = f"{s['progress']}%"
+            poster_url = s.get("poster_url")
+            backdrop_url = s.get("backdrop_url") or poster_url
         elif recently_finished:
             f = recently_finished
             card_display = "block"
@@ -263,6 +267,8 @@ class DashboardRenderer:
             stream_url = f['trakt_url']
             stream_prog_text = "100.0% • Finished"
             stream_prog_width = "100%"
+            poster_url = f.get("poster_url")
+            backdrop_url = f.get("backdrop_url") or poster_url
         else:
             card_display = "none"
             card_border = "#10b981"
@@ -280,28 +286,53 @@ class DashboardRenderer:
         clean_stream_url = stream_url if str(stream_url).startswith(("https://", "http://")) else "https://trakt.tv"
         clean_stream_url_esc = html.escape(clean_stream_url)
 
+        poster_display = "block" if poster_url else "none"
+        fallback_display = "none" if poster_url else "flex"
+        poster_img_src = html.escape(str(poster_url)) if poster_url else ""
+        if backdrop_url:
+            backdrop_style = f"background-image: url('{html.escape(str(backdrop_url))}');"
+        else:
+            backdrop_style = "background: radial-gradient(circle at top right, var(--accent-glow, rgba(56, 189, 248, 0.3)), transparent 60%);"
+
         return f"""
-        <div id="active-playback-card" class="card" style="border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
-                <div>
-                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-                        <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
-                        <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
-                        <span style="font-size:12px; color:#94a3b8;" id="stream-user-device">{user_dev_esc}</span>
+        <div id="active-playback-card" class="card" style="position: relative; overflow: hidden; border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
+            <!-- Frosted Ambient Backdrop -->
+            <div id="stream-ambient-backdrop" style="position: absolute; inset: 0; {backdrop_style} background-size: cover; background-position: center; filter: blur(35px); opacity: 0.22; pointer-events: none; z-index: 0; transition: all 0.5s ease;"></div>
+
+            <!-- Content Area -->
+            <div style="position: relative; z-index: 1; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+                <!-- Leading Poster Thumbnail -->
+                <div id="stream-poster-container" style="flex-shrink: 0; width: 68px; height: 96px; border-radius: 8px; overflow: hidden; background: var(--bg-subtle); border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.35);">
+                    <img id="stream-poster-img" src="{poster_img_src}" alt="Poster" style="width: 100%; height: 100%; object-fit: cover; display: {poster_display};" onerror="this.style.display='none'; document.getElementById('stream-poster-fallback').style.display='flex';" />
+                    <div id="stream-poster-fallback" style="display: {fallback_display}; width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 26px; color: var(--text-muted); background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(0,0,0,0.2));">
+                        🎬
                     </div>
-                    <h2 style="margin:4px 0 8px 0; font-size:18px; color:#f8fafc;" id="stream-title">{stream_title_esc}</h2>
                 </div>
-                <div id="stream-actions">
-                    <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm" style="background:#334155; color:#38bdf8; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
-                </div>
-            </div>
-            <div style="margin-top:12px;">
-                <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:6px;">
-                    <span>Playback Progress</span>
-                    <span id="stream-progress-text" style="font-weight:600; color:#f8fafc;">{stream_prog_text_esc}</span>
-                </div>
-                <div style="background:#0f172a; border-radius:9999px; height:8px; overflow:hidden; border:1px solid #334155;">
-                    <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
+
+                <!-- Playback Details & Progress -->
+                <div style="flex: 1; min-width: 240px;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                        <div>
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                                <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
+                                <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
+                                <span style="font-size:12px; color:var(--text-muted);" id="stream-user-device">{user_dev_esc}</span>
+                            </div>
+                            <h2 style="margin:4px 0 8px 0; font-size:18px; color:var(--text-main);" id="stream-title">{stream_title_esc}</h2>
+                        </div>
+                        <div id="stream-actions">
+                            <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm" style="background:var(--bg-subtle); border:1px solid var(--border-color); color:var(--accent-color); text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
+                        </div>
+                    </div>
+                    <div style="margin-top:8px;">
+                        <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); margin-bottom:6px;">
+                            <span>Playback Progress</span>
+                            <span id="stream-progress-text" style="font-weight:600; color:var(--text-main);">{stream_prog_text_esc}</span>
+                        </div>
+                        <div style="background:var(--bg-subtle); border-radius:9999px; height:8px; overflow:hidden; border:1px solid var(--border-color);">
+                            <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -467,7 +498,7 @@ class DashboardRenderer:
             """
 
         return f"""
-        <div class="card">
+        <div class="card" id="card-cowatch">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>👥</span> Watch Together & Multi-User Accounts
@@ -622,7 +653,7 @@ class DashboardRenderer:
         any_server_configured = plex_cfg or jf_cfg or emby_cfg
         if any_server_configured:
             return f"""
-            <div class="card">
+            <div class="card" id="card-reconciliation">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
@@ -656,7 +687,7 @@ class DashboardRenderer:
             """
         else:
             return f"""
-            <div class="card">
+            <div class="card" id="card-reconciliation">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🔄</span> Two-Way Library Reconciliation
@@ -681,7 +712,7 @@ class DashboardRenderer:
     def render_backup_card(is_admin: bool) -> str:
         """Render system operations, backup download/restore, and observability card."""
         return f"""
-        <div class="card">
+        <div class="card" id="card-backup">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>💾</span> System Operations & Observability
@@ -804,7 +835,7 @@ class DashboardRenderer:
             """
 
         return f"""
-        <div class="card">
+        <div class="card" id="card-ecosystem">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>🌐</span> Multi-Server Ecosystem
@@ -915,7 +946,7 @@ class DashboardRenderer:
             """
 
         return f"""
-        <div class="card">
+        <div class="card" id="card-multi-tracker">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                     <span>🌐</span> Multi-Tracker Hub &bull; Cloud Synchronization
@@ -999,7 +1030,7 @@ class DashboardRenderer:
             )
 
             return f"""
-            <div class="card">
+            <div class="card" id="card-arr-bridge">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🎬</span> Content Bridge & *Arr Watchlist Automation
@@ -1027,7 +1058,7 @@ class DashboardRenderer:
             """
         else:
             return f"""
-            <div class="card">
+            <div class="card" id="card-arr-bridge">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                     <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
                         <span>🎬</span> Content Bridge & *Arr Automation

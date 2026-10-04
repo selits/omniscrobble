@@ -47,6 +47,8 @@ class DemoManager:
             "device": "tvOS 18.2",
             "progress": 68.4,
             "trakt_url": "https://trakt.tv/search?q=Severance",
+            "poster_url": "https://images.metahub.space/poster/medium/tt11280740/img",
+            "backdrop_url": "https://images.metahub.space/background/medium/tt11280740/img",
         }
 
     def get_demo_stats(self) -> dict[str, int]:

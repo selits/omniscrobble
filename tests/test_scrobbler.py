@@ -9230,3 +9230,173 @@ def test_multi_theme_palette_engine_and_accents():
     assert "openShortcutsModal()" in html
     assert "closeShortcutsModal()" in html
 
+
+def test_ambient_visuals_compact_mode_and_card_visibility():
+    """Verify ambient stream poster & backdrop blur, compact density mode, and card visibility controls."""
+    from app.plex_parser import parse_plex_webhook
+    from app.jellyfin_parser import parse_jellyfin_webhook
+    from app.emby_parser import parse_emby_webhook
+    from app.services.dashboard_renderer import DashboardRenderer
+
+    # 1. Artwork extraction in Media Server Parsers
+    # Plex with direct thumb/art
+    plex_payload = {
+        "event": "media.play",
+        "Account": {"title": "selits"},
+        "Server": {"title": "PlexServer"},
+        "Player": {"title": "Living Room TV"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Inception",
+            "year": 2010,
+            "duration": 8880000,
+            "viewOffset": 4440000,
+            "Guid": [{"id": "imdb://tt1375666"}],
+            "thumb": "https://custom-art.com/poster.jpg",
+            "art": "https://custom-art.com/fanart.jpg",
+        },
+    }
+    parsed_plex = parse_plex_webhook(plex_payload)
+    assert parsed_plex is not None
+    assert parsed_plex.poster_url == "https://custom-art.com/poster.jpg"
+    assert parsed_plex.backdrop_url == "https://custom-art.com/fanart.jpg"
+
+    # Plex fallback to Metahub CDN using IMDb ID
+    plex_meta = {
+        "event": "media.play",
+        "Account": {"title": "selits"},
+        "Server": {"title": "PlexServer"},
+        "Player": {"title": "Living Room TV"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Inception",
+            "year": 2010,
+            "duration": 8880000,
+            "viewOffset": 4440000,
+            "Guid": [{"id": "imdb://tt1375666"}],
+        },
+    }
+    parsed_meta = parse_plex_webhook(plex_meta)
+    assert parsed_meta is not None
+    assert parsed_meta.poster_url == "https://images.metahub.space/poster/medium/tt1375666/img"
+    assert parsed_meta.backdrop_url == "https://images.metahub.space/background/medium/tt1375666/img"
+
+    # Jellyfin artwork extraction & Metahub fallback
+    jf_payload = {
+        "NotificationType": "PlaybackStart",
+        "NotificationUsername": "selits",
+        "ItemType": "Movie",
+        "Name": "Dune",
+        "Year": 2021,
+        "RunTimeTicks": 1000000000,
+        "PlaybackPositionTicks": 500000000,
+        "ProviderIds": {"Imdb": "tt1160419"},
+    }
+    parsed_jf = parse_jellyfin_webhook(jf_payload)
+    assert parsed_jf is not None
+    assert parsed_jf.poster_url == "https://images.metahub.space/poster/medium/tt1160419/img"
+    assert parsed_jf.backdrop_url == "https://images.metahub.space/background/medium/tt1160419/img"
+
+    # Emby artwork extraction & Metahub fallback
+    emby_payload = {
+        "Event": "playback.start",
+        "User": {"Name": "selits"},
+        "Item": {
+            "Type": "Movie",
+            "Name": "Interstellar",
+            "ProductionYear": 2014,
+            "RunTimeTicks": 1000000000,
+            "ProviderIds": {"Imdb": "tt0816692"},
+        },
+        "PlaybackInfo": {"PositionTicks": 500000000},
+    }
+    parsed_emby = parse_emby_webhook(emby_payload)
+    assert parsed_emby is not None
+    assert parsed_emby.poster_url == "https://images.metahub.space/poster/medium/tt0816692/img"
+    assert parsed_emby.backdrop_url == "https://images.metahub.space/background/medium/tt0816692/img"
+
+    # 2. Active Playback Banner with Ambient Backdrop & Poster Thumbnail
+    active_session = {
+        "title": "Severance - S01E01 - Good News About Hell",
+        "username": "selits",
+        "player": "Shield TV",
+        "device": "Android TV",
+        "progress": 42.5,
+        "state": "playing",
+        "trakt_url": "https://trakt.tv/shows/severance",
+        "remaining_str": "32m left",
+        "poster_url": "https://images.metahub.space/poster/medium/tt11280740/img",
+        "backdrop_url": "https://images.metahub.space/background/medium/tt11280740/img",
+    }
+    card_html = DashboardRenderer.render_active_playback_card([active_session], None, is_admin=True)
+    assert 'id="active-playback-card"' in card_html
+    assert 'id="stream-ambient-backdrop"' in card_html
+    assert "https://images.metahub.space/background/medium/tt11280740/img" in card_html
+    assert 'id="stream-poster-container"' in card_html
+    assert 'id="stream-poster-img"' in card_html
+    assert "https://images.metahub.space/poster/medium/tt11280740/img" in card_html
+    assert 'id="stream-poster-fallback"' in card_html
+
+    # Fallback when poster/backdrop is empty
+    empty_session = {
+        "title": "Unknown Home Video",
+        "username": "selits",
+        "player": "Web",
+        "device": "Chrome",
+        "progress": 10.0,
+        "state": "playing",
+        "trakt_url": "https://trakt.tv",
+    }
+    fallback_html = DashboardRenderer.render_active_playback_card([empty_session], None, is_admin=True)
+    assert 'id="active-playback-card"' in fallback_html
+    assert 'id="stream-poster-fallback"' in fallback_html
+    assert "radial-gradient" in fallback_html
+
+    # 3. Client Dashboard HTML & UI Components
+    client = TestClient(app)
+    res = client.get("/")
+    assert res.status_code == 200
+    html = res.text
+
+    # Ambient Backdrop elements in template
+    assert 'id="stream-ambient-backdrop"' in html
+    assert 'id="stream-poster-img"' in html
+    assert 'id="stream-poster-fallback"' in html
+
+    # Compact Density Mode CSS and controls
+    assert "html.density-compact" in html
+    assert 'id="density-btn-comfortable"' in html
+    assert 'id="density-btn-compact"' in html
+    assert "setDensity('comfortable')" in html
+    assert "setDensity('compact')" in html
+
+    # Unique Dashboard Card IDs
+    for card_id in [
+        "active-playback-card",
+        "card-server-config",
+        "card-ecosystem",
+        "card-multi-tracker",
+        "card-cowatch",
+        "card-reconciliation",
+        "card-arr-bridge",
+        "card-backup",
+        "card-activity",
+    ]:
+        assert f'id="{card_id}"' in html
+
+    # Dashboard Card Visibility controls in Settings Hub
+    assert 'id="settings-card-visibility-grid"' in html
+    assert "resetCardVisibility()" in html
+
+    # JavaScript Density & Card Visibility Functions
+    assert "function getDensity()" in html
+    assert "function setDensity(mode)" in html
+    assert "function updateDensityUI()" in html
+    assert "const DASHBOARD_CARDS =" in html
+    assert "function getHiddenCards()" in html
+    assert "function setCardVisibility(cardId, isVisible)" in html
+    assert "function resetCardVisibility()" in html
+    assert "function applyCardVisibility()" in html
+    assert "function renderCardVisibilityPickers()" in html
+    assert "function initAppearance()" in html
+
