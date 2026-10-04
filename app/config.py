@@ -153,6 +153,10 @@ class Config:
     CO_WATCH_DEVICES_DATA_FILE: Path = (
         Path(_cowatch_devices_file_env) if Path(_cowatch_devices_file_env).is_absolute() else (BASE_DIR / _cowatch_devices_file_env)
     )
+    _household_rules_file_env = os.getenv("HOUSEHOLD_RULES_DATA_FILE", "data/household_rules.json")
+    HOUSEHOLD_RULES_DATA_FILE: Path = (
+        Path(_household_rules_file_env) if Path(_household_rules_file_env).is_absolute() else (BASE_DIR / _household_rules_file_env)
+    )
 
     # Sonarr & Radarr Integrations & Watchlist Automation
     SONARR_URL: str = os.getenv("SONARR_URL", "").strip().rstrip("/")

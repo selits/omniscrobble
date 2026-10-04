@@ -634,6 +634,23 @@ class ReverseSyncManager:
             finally:
                 self._is_scanning = False
 
+    def get_chunked_diff(self, cursor: int = 0, limit: int = 50) -> dict[str, Any]:
+        """Return a cursor-paginated slice of cached discrepancies to preserve low memory overhead."""
+        diff = self._last_diff or []
+        total = len(diff)
+        c = max(0, cursor)
+        lim = max(1, limit)
+        chunk = diff[c : c + lim]
+        next_cursor = (c + lim) if (c + lim) < total else None
+        return {
+            "status": "ok",
+            "diff": chunk,
+            "count": len(chunk),
+            "total": total,
+            "cursor": next_cursor,
+            "has_more": next_cursor is not None,
+        }
+
     async def execute_reconciliation(
         self,
         item_ids: Optional[list[str]] = None,

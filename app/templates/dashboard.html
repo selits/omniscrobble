@@ -2026,6 +2026,60 @@
         </div>
     </div>
 
+    <!-- Household Multi-Tenant Routing Rule Modal -->
+    <div id="household-rule-modal" onclick="if(event.target===this)closeHouseholdRuleModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+                    <span>🏡</span> Add Household Routing Rule
+                </h3>
+                <button onclick="closeHouseholdRuleModal()" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin:0 0 16px;line-height:1.4;">
+                Create granular scrobble routing rules for specific household player devices, media types, and user profiles (e.g. Living Room TV routes to User A & Kids).
+            </p>
+            <form onsubmit="event.preventDefault();submitHouseholdRule();" style="display:flex;flex-direction:column;gap:14px;">
+                <div>
+                    <label style="display:block;font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:4px;">Rule Name</label>
+                    <input type="text" id="hr-rule-name" placeholder="e.g. Living Room TV - Family" required
+                           style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:4px;">Target Profile Usernames (comma-separated)</label>
+                    <input type="text" id="hr-rule-targets" placeholder="e.g. partner, kids, alice" required
+                           style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;" />
+                    <div style="font-size:11px;color:#64748b;margin-top:2px;">Playback on matching devices will dual-scrobble to these profiles.</div>
+                </div>
+                <div>
+                    <label style="display:block;font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:4px;">Allowed Players / Devices (comma-separated, or * for all)</label>
+                    <input type="text" id="hr-rule-devices" placeholder="e.g. Living Room Apple TV, Shield TV, *"
+                           style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;" />
+                </div>
+                <div>
+                    <label style="display:block;font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:4px;">Media Types</label>
+                    <div style="display:flex;gap:16px;align-items:center;">
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#e2e8f0;cursor:pointer;">
+                            <input type="checkbox" id="hr-type-movie" checked style="accent-color:#2563eb;" /> Movies
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#e2e8f0;cursor:pointer;">
+                            <input type="checkbox" id="hr-type-episode" checked style="accent-color:#2563eb;" /> TV Episodes
+                        </label>
+                    </div>
+                </div>
+                <div>
+                    <label style="display:block;font-size:12px;font-weight:600;color:#cbd5e1;margin-bottom:4px;">Show Whitelist (optional, comma-separated or * for all)</label>
+                    <input type="text" id="hr-rule-shows" placeholder="e.g. Bluey, Severance, *"
+                           style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;" />
+                    <div style="font-size:11px;color:#64748b;margin-top:2px;">Leave empty or * to allow all shows on this player.</div>
+                </div>
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+                    <button type="button" onclick="closeHouseholdRuleModal()" class="btn-sm" style="background:#334155;color:#94a3b8;">Cancel</button>
+                    <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Save Rule</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Cross-Tracker Sync (Trakt <-> Simkl) Modal -->
     <div id="cross-sync-modal" onclick="if(event.target===this)closeCrossSyncModal()">
         <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;">
@@ -5155,6 +5209,167 @@
             if (uname && uname.trim()) {
                 window.location.href = '/auth?user=' + encodeURIComponent(uname.trim());
             }
+        }
+
+        function openHouseholdRuleModal() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const modal = document.getElementById('household-rule-modal');
+            if (modal) modal.style.display = 'flex';
+        }
+
+        function closeHouseholdRuleModal() {
+            const modal = document.getElementById('household-rule-modal');
+            if (modal) modal.style.display = 'none';
+        }
+
+        async function submitHouseholdRule() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            const name = (document.getElementById('hr-rule-name')?.value || '').trim();
+            const targetsRaw = (document.getElementById('hr-rule-targets')?.value || '').trim();
+            const devicesRaw = (document.getElementById('hr-rule-devices')?.value || '').trim();
+            const showsRaw = (document.getElementById('hr-rule-shows')?.value || '').trim();
+            const movieChecked = document.getElementById('hr-type-movie')?.checked ?? true;
+            const episodeChecked = document.getElementById('hr-type-episode')?.checked ?? true;
+
+            const targets = targetsRaw.split(',').map(s => s.trim().replace(/^@/, '')).filter(Boolean);
+            const devices = devicesRaw ? devicesRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+            const shows = showsRaw ? showsRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+            const media_types = [];
+            if (movieChecked) media_types.push('movie');
+            if (episodeChecked) media_types.push('episode');
+
+            if (!targets.length) {
+                alert('Please provide at least one target profile username.');
+                return;
+            }
+
+            try {
+                const url = isDemo ? '/api/household/rules?demo=true' : '/api/household/rules';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        targets: targets,
+                        devices: devices,
+                        shows: shows,
+                        media_types: media_types,
+                        enabled: true
+                    })
+                });
+                if (res.ok) {
+                    closeHouseholdRuleModal();
+                    loadHouseholdRules();
+                } else {
+                    const err = await res.json();
+                    alert('Failed to save rule: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error saving household rule: ' + e.message);
+            }
+        }
+
+        async function deleteHouseholdRule(ruleId) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (!confirm('Are you sure you want to delete this household routing rule?')) return;
+            try {
+                const url = isDemo ? `/api/household/rules/${encodeURIComponent(ruleId)}?demo=true` : `/api/household/rules/${encodeURIComponent(ruleId)}`;
+                const res = await fetch(url, { method: 'DELETE' });
+                if (res.ok) {
+                    loadHouseholdRules();
+                } else {
+                    const err = await res.json();
+                    alert('Failed to delete rule: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function toggleHouseholdRule(ruleId) {
+            if (!isAdmin) { openUnlockModal(); return; }
+            try {
+                const url = isDemo ? `/api/household/rules/${encodeURIComponent(ruleId)}/toggle?demo=true` : `/api/household/rules/${encodeURIComponent(ruleId)}/toggle`;
+                const res = await fetch(url, { method: 'POST' });
+                if (res.ok) {
+                    loadHouseholdRules();
+                } else {
+                    const err = await res.json();
+                    alert('Failed to toggle rule: ' + (err.detail || 'Error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function loadHouseholdRules() {
+            try {
+                const url = isDemo ? '/api/household/rules?demo=true' : '/api/household/rules';
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    renderHouseholdRulesList(data.rules || []);
+                }
+            } catch (e) {
+                console.error('Failed to load household rules:', e);
+            }
+        }
+
+        function renderHouseholdRulesList(rules) {
+            const container = document.getElementById('household-rules-container');
+            const badge = document.getElementById('household-rules-count-badge');
+            if (badge) badge.innerText = rules.length;
+            if (!container) return;
+
+            if (!rules.length) {
+                container.innerHTML = '<div style="color:#64748b;font-size:12px;font-style:italic;padding:8px 4px;">No custom household routing rules configured. Secondary scrobbles follow the default partner settings above.</div>';
+                return;
+            }
+
+            container.innerHTML = rules.map(r => {
+                const rid = escapeHtml(r.id || '');
+                const rname = escapeHtml(r.name || 'Rule');
+                const renabled = r.enabled !== false;
+                const targetsStr = escapeHtml((r.targets || []).map(t => '@' + t).join(', ') || 'None');
+                const devicesStr = escapeHtml((r.devices && r.devices.length) ? r.devices.join(', ') : 'All Devices');
+                const showsStr = escapeHtml((r.shows && r.shows.length) ? r.shows.join(', ') : 'All Shows');
+                const mediaStr = escapeHtml((r.media_types && r.media_types.length) ? r.media_types.map(m => m.charAt(0).toUpperCase() + m.slice(1)).join(', ') : 'All Media');
+
+                const statusBg = renabled ? '#065f46' : '#334155';
+                const statusCol = renabled ? '#34d399' : '#94a3b8';
+                const statusTxt = renabled ? 'Active' : 'Paused';
+
+                let actions = '';
+                if (isAdmin) {
+                    const encId = encodeURIComponent(r.id || '');
+                    actions = `
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleHouseholdRule(decodeURIComponent('${encId}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#e2e8f0;cursor:pointer;">
+                            ${renabled ? 'Pause' : 'Activate'}
+                        </button>
+                        <button onclick="deleteHouseholdRule(decodeURIComponent('${encId}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#7f1d1d;color:#fecaca;border:none;cursor:pointer;">
+                            &times; Delete
+                        </button>
+                    </div>`;
+                }
+
+                return `
+                <div class="household-rule-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <strong style="color:#f8fafc;font-size:13px;">${rname}</strong>
+                            <span style="background:${statusBg};color:${statusCol};font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;">${statusTxt}</span>
+                        </div>
+                        ${actions}
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:6px;font-size:11px;color:#94a3b8;">
+                        <div><span style="color:#64748b;">Targets:</span> <strong style="color:#cbd5e1;">${targetsStr}</strong></div>
+                        <div><span style="color:#64748b;">Players:</span> <strong style="color:#cbd5e1;">📺 ${devicesStr}</strong></div>
+                        <div><span style="color:#64748b;">Media:</span> <strong style="color:#cbd5e1;">🎬 ${mediaStr}</strong></div>
+                        <div><span style="color:#64748b;">Shows:</span> <strong style="color:#cbd5e1;">📺 ${showsStr}</strong></div>
+                    </div>
+                </div>`;
+            }).join('');
         }
 
         async function uploadBackup(input) {

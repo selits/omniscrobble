@@ -21,7 +21,7 @@ This document provides the complete API reference for **Omniscrobble**, includin
 5. [Activity Feed, Playback & System Logs](#5-activity-feed-playback--system-logs)
 6. [Manual Scrobbling, Standalone Players & Trakt Watchlist](#6-manual-scrobbling-standalone-players--trakt-watchlist)
 7. [Offline Queue & Disaster Recovery](#7-offline-queue--disaster-recovery)
-8. [Watch Together & Multi-User Accounts](#8-watch-together--multi-user-accounts)
+8. [Watch Together & Household Multi-Tenancy](#8-watch-together--household-multi-tenancy)
 9. [Two-Way Media Server Reconciliation & Background Cloud Sync](#9-two-way-media-server-reconciliation--background-cloud-sync)
 10. [Content Bridge (*Arr Automation)](#10-content-bridge-arr-automation)
 11. [Multi-Tracker Hub (9 Trackers & Relays)](#11-multi-tracker-hub-9-trackers--relays)
@@ -119,12 +119,13 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/queue`** | `GET` | Public | **Offline Queue Status**: Returns pending queue item count and database path. |
 | **`/api/queue/retry`** | `POST` | Admin | **Flush Queue**: Immediately drains and retries all pending offline items against Trakt. |
 | **`/api/queue/clear`** | `POST` | Admin | **Purge Queue**: Clears all pending and failed offline items from the SQLite database. |
+| **`/api/queue/prune`** | `POST` | Admin | **Prune Queue Retention**: Prunes completed and expired offline queue records older than configured retention period (default 90 days). Accepts optional JSON body `{"days": <int>}`. |
 | **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped archive containing all OAuth tokens, settings, and SQLite queue. Supports AES-256-GCM encryption via `?passphrase=`, `x-backup-passphrase` header, or `CONFIG_ENCRYPTION_KEY`. |
 | **`/api/restore`** | `POST` | Admin | **Restore Backup**: Accepts a multipart archive upload with Zip Slip path-traversal protection and transparent AES-256-GCM decryption via form field `passphrase` or header. |
 
 ---
 
-## 8. Watch Together & Multi-User Accounts
+## 8. Watch Together & Household Multi-Tenancy
 
 | Endpoint | Method | Auth | Description |
 | --- | :--- | :--- | --- |
@@ -136,6 +137,10 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/cowatch/devices`** | `DELETE` | Admin | **Remove Allowed Device**: Removes a client device identifier from the Co-Watch whitelist. |
 | **`/api/cowatch/settings`** | `POST` | Admin | **Toggle Co-Watch Settings**: Dynamically toggles movie dual-sync (`movies: true/false`). |
 | **`/api/cowatch/sync`** | `POST` | Admin | **1-Click Partner Dual Sync**: Manually pushes a watched event to your partner's Trakt profile. |
+| **`/api/household/rules`** | `GET` | Public | **List Household Rules**: Returns active and configured multi-tenant routing rules (`data/household_rules.json`). Supports `?demo=true`. |
+| **`/api/household/rules`** | `POST` | Admin | **Create or Update Household Rule**: Adds or updates a household routing rule based on device, media type, and show title targeting specific user profiles. Supports `?demo=true`. |
+| **`/api/household/rules/{rule_id}`** | `DELETE` | Admin | **Delete Household Rule**: Removes a household routing rule by ID. Supports `?demo=true`. |
+| **`/api/household/rules/{rule_id}/toggle`** | `POST` | Admin | **Toggle Household Rule**: Toggles active/disabled status of a household routing rule. Supports `?demo=true`. |
 | **`/api/sonarr/shows`** | `GET` | Admin | **Live Show Autocomplete**: Queries Sonarr for series titles, excluding already whitelisted shows. |
 
 ---
@@ -147,7 +152,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/sync/status`** | `GET` | Public | **Reconciliation Telemetry**: Connection state, active media server, and last sync timestamp. |
 | **`/api/sync/settings`** | `GET` | Public | **Reconciliation Settings**: Retrieves current reconciliation server configuration, masked tokens, sync interval, and ratings sync toggles. |
 | **`/api/sync/settings`** | `POST` | Admin | **Update Reconciliation Settings**: Updates media server URLs, tokens, user IDs, sync interval, and trigger startup flags with immediate background engine reload. |
-| **`/api/sync/diff`** | `GET` | Admin | **Scan Discrepancies**: Compares Trakt watched history against media server library sections. |
+| **`/api/sync/diff`** | `GET` | Admin | **Scan Discrepancies**: Compares Trakt watched history against media server library sections. Supports chunked streaming pagination via query parameters `?cursor=<int>` and `?limit=<int>` (default: 50) for memory-efficient client reconciliation. |
 | **`/api/sync/reconcile`** | `POST` | Admin | **Execute Reconciliation**: Triggers background batch reconciliation for selected or all items. Mutex-protected (returns `HTTP 409 Conflict` if a sync is running). |
 | **`/api/sync/progress`** | `GET` | Public | **Sync Progress**: Returns live percentage and progress counts for active sync batches. |
 | **`/api/sync/test-connection`** | `POST` | Admin | **Test Media Server**: Validates connectivity and credentials for Plex, Jellyfin, or Emby. |

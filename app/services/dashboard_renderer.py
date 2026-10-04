@@ -352,6 +352,7 @@ class DashboardRenderer:
         is_demo: bool,
         raw_username: Optional[str],
         mask_username_fn: Callable[[Optional[str]], str],
+        household_rules: Optional[list[dict[str, Any]]] = None,
     ) -> str:
         """Render Watch Together & Multi-User Accounts management card."""
         # Shared show chips
@@ -497,18 +498,101 @@ class DashboardRenderer:
             </div>
             """
 
+        # Section 3: Household Multi-Tenant Routing Rules (3+ Profiles)
+        rules = household_rules or []
+        rules_badge = str(len(rules))
+        if not rules:
+            rules_html = '<div style="color:#64748b;font-size:12px;font-style:italic;padding:8px 4px;">No custom household routing rules configured. Secondary scrobbles follow the default partner settings above.</div>'
+        else:
+            rule_items = []
+            for r in rules:
+                rid = r.get("id", "")
+                rname = r.get("name", "Rule")
+                renabled = r.get("enabled", True)
+                rtargets = r.get("targets", [])
+                rdevices = r.get("devices", [])
+                rshows = r.get("shows", [])
+                rmedia = r.get("media_types", [])
+
+                if not is_admin:
+                    targets_str = ", ".join(f"@{mask_username_fn(t)}" for t in rtargets)
+                else:
+                    targets_str = ", ".join(f"@{t}" for t in rtargets)
+                if not targets_str:
+                    targets_str = "None"
+
+                devices_str = ", ".join(rdevices) if rdevices else "All Devices"
+                shows_str = ", ".join(rshows) if rshows else "All Shows"
+                media_str = ", ".join(m.capitalize() for m in rmedia) if rmedia else "All Media"
+
+                status_bg = "#065f46" if renabled else "#334155"
+                status_col = "#34d399" if renabled else "#94a3b8"
+                status_txt = "Active" if renabled else "Paused"
+
+                actions_html = ""
+                if is_admin:
+                    rid_esc = urllib.parse.quote(rid)
+                    actions_html = f'''
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <button onclick="toggleHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#e2e8f0;cursor:pointer;">
+                            {"Pause" if renabled else "Activate"}
+                        </button>
+                        <button onclick="deleteHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#7f1d1d;color:#fecaca;border:none;cursor:pointer;">
+                            &times; Delete
+                        </button>
+                    </div>
+                    '''
+
+                rule_items.append(f'''
+                <div class="household-rule-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <strong style="color:#f8fafc;font-size:13px;">{html.escape(rname)}</strong>
+                            <span style="background:{status_bg};color:{status_col};font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;">{status_txt}</span>
+                        </div>
+                        {actions_html}
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:6px;font-size:11px;color:#94a3b8;">
+                        <div><span style="color:#64748b;">Targets:</span> <strong style="color:#cbd5e1;">{html.escape(targets_str)}</strong></div>
+                        <div><span style="color:#64748b;">Players:</span> <strong style="color:#cbd5e1;">📺 {html.escape(devices_str)}</strong></div>
+                        <div><span style="color:#64748b;">Media:</span> <strong style="color:#cbd5e1;">🎬 {html.escape(media_str)}</strong></div>
+                        <div><span style="color:#64748b;">Shows:</span> <strong style="color:#cbd5e1;">📺 {html.escape(shows_str)}</strong></div>
+                    </div>
+                </div>
+                ''')
+            rules_html = "".join(rule_items)
+
+        household_section_html = f'''
+        <!-- Household Multi-Tenant Routing Rules (3+ Profiles) -->
+        <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+                <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                    <span>🏡 Household Multi-Tenant Routing Rules</span>
+                    <span id="household-rules-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{rules_badge}</span>
+                </div>
+                {f'<button onclick="openHouseholdRuleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:4px 10px;font-size:11px;">+ New Routing Rule</button>' if is_admin else ''}
+            </div>
+            <p style="color:#94a3b8;font-size:12px;margin:0 0 10px 0;line-height:1.4;">
+                Route scrobbles to specific family members or kids profiles based on player devices (e.g. Living Room TV vs Bedroom TV) and media types.
+            </p>
+            <div id="household-rules-container">
+                {rules_html}
+            </div>
+        </div>
+        '''
+
         return f"""
         <div class="card" id="card-cowatch">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                    <span>👥</span> Watch Together & Multi-User Accounts
+                    <span>👥</span> Watch Together & Household Multi-Tenancy
                 </h3>
                 <span style="background:#0f172a;border:1px solid #334155;color:#38bdf8;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">
-                    {f"Partner: @{cw_user_display}" if cw_user else "Single-User Mode"}
+                    {f"Partner: @{cw_user_display}" if cw_user else "Multi-Profile Routing"}
                 </span>
             </div>
             <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-                Dual-scrobble watched shows to your partner's Trakt account automatically, without syncing your solo shows.
+                Dual-scrobble watched shows to your partner's Trakt account and route household playback across arbitrary user profiles.
             </p>
             <!-- Top Section: Targeting & Destinations (Accounts & Devices side-by-side) -->
             <div class="cowatch-grid">
@@ -572,6 +656,7 @@ class DashboardRenderer:
                     {f'<button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies ({ "Disable" if cowatch_movies else "Enable" })</button>' if is_admin else ''}
                 </div>
             </div>
+            {household_section_html}
         </div>
         """
 

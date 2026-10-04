@@ -30,6 +30,8 @@ from app.clients.trakt_client import TraktClient
 from app.metrics import metrics_registry
 from app.services.atomic_writer import atomic_write_json
 from app.services.cowatch_manager import cowatch_mgr
+household_mgr = cowatch_mgr
+from app.services.household_manager import HouseholdManager
 from app.services.notifier import notifier
 from app.services.digest_manager import digest_mgr
 from app.services.playback_manager import playback_mgr
@@ -235,10 +237,19 @@ weekly_digest_worker_task: Optional[asyncio.Task] = None
 
 async def queue_worker_loop():
     """Background worker periodically checking and retrying offline queued events."""
+    last_prune_time = 0.0
     while True:
         try:
             interval = max(5, Config.QUEUE_RETRY_INTERVAL)
             await asyncio.sleep(interval)
+            now = time.time()
+            if now - last_prune_time > 86400:  # Daily queue retention maintenance (90-day retention)
+                try:
+                    queue_mgr.prune_queue(days=90)
+                except Exception as pe:
+                    logger.warning(f"Error during scheduled offline queue pruning: {pe}")
+                last_prune_time = now
+
             if queue_mgr.get_pending_count() > 0:
                 logger.info("Background queue worker draining pending offline items...")
                 await process_queue(trakt, queue_mgr, user_mgr=user_mgr)
@@ -797,89 +808,100 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
     save_scrobble_stats()
 
 
-async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
-    """Dual-scrobble/sync watched history to the partner's authenticated cloud trackers (Trakt, Simkl, AniList, MAL)."""
-    target_user = Config.CO_WATCH_USER
-    if not target_user:
+async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Optional[list[str]] = None):
+    """Dual-scrobble/sync watched history to the partner's or household target profiles' authenticated cloud trackers."""
+    if targets is not None:
+        target_users = list(targets)
+    else:
+        resolved = household_mgr.resolve_targets(parsed)
+        if resolved:
+            target_users = resolved
+        elif Config.CO_WATCH_USER:
+            target_users = [Config.CO_WATCH_USER]
+        else:
+            target_users = []
+
+    if not target_users:
         return
 
     tasks = []
-
-    # 1. Partner Trakt
-    cw_trakt = user_mgr.get_client(target_user)
     watched_at_ts = datetime.datetime.now(timezone.utc).isoformat()
-    if cw_trakt and cw_trakt.is_authenticated():
-        async def _sync_trakt():
-            try:
-                logger.info(f"Co-watching dual-sync triggering for partner @{target_user} (Trakt): {parsed.title}")
-                history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
-                res = await cw_trakt.sync_history(history_payload)
-                if is_temporary_error(res):
-                    queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
-                    metrics_registry.record_cowatch("queued")
-                elif isinstance(res, dict) and res.get("status") == "error":
-                    logger.warning(f"Co-watch Trakt error for @{target_user}: {res.get('error')}")
-                    metrics_registry.record_cowatch("failed")
-                else:
-                    logger.info(f"Co-watch dual-sync succeeded for partner @{target_user} (Trakt): {parsed.title}")
-                    metrics_registry.record_cowatch("success")
-            except Exception as e:
-                logger.error(f"Error during co-watch Trakt dual-sync for @{target_user}: {e}")
-                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(e), username=target_user)
-                metrics_registry.record_cowatch("failed")
-        tasks.append(_sync_trakt())
-    else:
-        logger.debug(f"Co-watch partner @{target_user} Trakt is not authenticated.")
 
-    # 2. Partner Simkl
-    cw_simkl = user_mgr.get_tracker_client(target_user, "simkl")
-    if cw_simkl and cw_simkl.is_authenticated():
-        async def _sync_simkl():
-            try:
-                logger.info(f"Co-watching dual-sync triggering for partner @{target_user} (Simkl): {parsed.title}")
-                if action == "rate":
-                    await cw_simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
-                else:
-                    res = await cw_simkl.scrobble_stop(parsed, progress=parsed.progress)
-                    await cw_simkl.sync_history(parsed, watched_at=watched_at_ts)
-                    if isinstance(res, dict) and res.get("status") == "error":
-                        logger.warning(f"Co-watch Simkl error for @{target_user}: {res.get('error')}")
-            except Exception as e:
-                logger.warning(f"Error during co-watch Simkl dual-sync for @{target_user}: {e}")
-        tasks.append(_sync_simkl())
-
-    # 3. Partner Anime Trackers (AniList & MAL)
-    cw_anilist = user_mgr.get_tracker_client(target_user, "anilist")
-    cw_mal = user_mgr.get_tracker_client(target_user, "mal")
-    ani_auth = bool(cw_anilist and cw_anilist.is_authenticated())
-    mal_auth = bool(cw_mal and cw_mal.is_authenticated())
-
-    if ani_auth or mal_auth:
-        async def _sync_anime():
-            try:
-                resolved_anime = await anime_resolver.resolve(parsed)
-                if resolved_anime and resolved_anime.get("is_anime"):
-                    if action == "rate":
-                        if ani_auth:
-                            await cw_anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
-                        if mal_auth and resolved_anime.get("mal_id"):
-                            await cw_mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+    for target_user in target_users:
+        # 1. Partner/Profile Trakt
+        cw_trakt = user_mgr.get_client(target_user)
+        if cw_trakt and cw_trakt.is_authenticated():
+            async def _sync_trakt(u=target_user, client=cw_trakt):
+                try:
+                    logger.info(f"Household sync triggering for profile @{u} (Trakt): {parsed.title}")
+                    history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
+                    res = await client.sync_history(history_payload)
+                    if is_temporary_error(res):
+                        queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=u)
+                        metrics_registry.record_cowatch("queued")
+                    elif isinstance(res, dict) and res.get("status") == "error":
+                        logger.warning(f"Household Trakt error for @{u}: {res.get('error')}")
+                        metrics_registry.record_cowatch("failed")
                     else:
-                        if ani_auth:
-                            await cw_anilist.update_progress(
-                                resolved_anime["anilist_id"],
-                                resolved_anime["episode_number"],
-                                resolved_anime.get("episodes"),
-                            )
-                        if mal_auth and resolved_anime.get("mal_id"):
-                            await cw_mal.update_progress(
-                                resolved_anime["mal_id"],
-                                resolved_anime["episode_number"],
-                                resolved_anime.get("episodes"),
-                            )
-            except Exception as e:
-                logger.warning(f"Error during co-watch anime dual-sync for @{target_user}: {e}")
-        tasks.append(_sync_anime())
+                        logger.info(f"Household sync succeeded for profile @{u} (Trakt): {parsed.title}")
+                        metrics_registry.record_cowatch("success")
+                except Exception as e:
+                    logger.error(f"Error during household Trakt sync for @{u}: {e}")
+                    queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(e), username=u)
+                    metrics_registry.record_cowatch("failed")
+            tasks.append(_sync_trakt())
+        else:
+            logger.debug(f"Household profile @{target_user} Trakt is not authenticated.")
+
+        # 2. Partner/Profile Simkl
+        cw_simkl = user_mgr.get_tracker_client(target_user, "simkl")
+        if cw_simkl and cw_simkl.is_authenticated():
+            async def _sync_simkl(u=target_user, client=cw_simkl):
+                try:
+                    logger.info(f"Household sync triggering for profile @{u} (Simkl): {parsed.title}")
+                    if action == "rate":
+                        await client.sync_ratings(parsed, rating=int(parsed.rating or 10))
+                    else:
+                        res = await client.scrobble_stop(parsed, progress=parsed.progress)
+                        await client.sync_history(parsed, watched_at=watched_at_ts)
+                        if isinstance(res, dict) and res.get("status") == "error":
+                            logger.warning(f"Household Simkl error for @{u}: {res.get('error')}")
+                except Exception as e:
+                    logger.warning(f"Error during household Simkl sync for @{u}: {e}")
+            tasks.append(_sync_simkl())
+
+        # 3. Partner/Profile Anime Trackers (AniList & MAL)
+        cw_anilist = user_mgr.get_tracker_client(target_user, "anilist")
+        cw_mal = user_mgr.get_tracker_client(target_user, "mal")
+        ani_auth = bool(cw_anilist and cw_anilist.is_authenticated())
+        mal_auth = bool(cw_mal and cw_mal.is_authenticated())
+
+        if ani_auth or mal_auth:
+            async def _sync_anime(u=target_user, a_auth=ani_auth, m_auth=mal_auth, c_ani=cw_anilist, c_mal=cw_mal):
+                try:
+                    resolved_anime = await anime_resolver.resolve(parsed)
+                    if resolved_anime and resolved_anime.get("is_anime"):
+                        if action == "rate":
+                            if a_auth:
+                                await c_ani.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
+                            if m_auth and resolved_anime.get("mal_id"):
+                                await c_mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+                        else:
+                            if a_auth:
+                                await c_ani.update_progress(
+                                    resolved_anime["anilist_id"],
+                                    resolved_anime["episode_number"],
+                                    resolved_anime.get("episodes"),
+                                )
+                            if m_auth and resolved_anime.get("mal_id"):
+                                await c_mal.update_progress(
+                                    resolved_anime["mal_id"],
+                                    resolved_anime["episode_number"],
+                                    resolved_anime.get("episodes"),
+                                )
+                except Exception as e:
+                    logger.warning(f"Error during household anime sync for @{u}: {e}")
+            tasks.append(_sync_anime())
 
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -1110,22 +1132,32 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             return {"status": "ignored", "event": event, "action": action_taken, "reason": f"Event '{event}' is not a scrobble playback trigger"}
 
         eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
+        targets = cowatch_mgr.resolve_targets(parsed)
         is_sync_trigger = (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= threshold))
         cowatch_info = None
 
         if is_sync_trigger:
-            if eligible:
-                cowatch_info = {"synced": True, "reason": reason, "target": Config.CO_WATCH_USER}
-                asyncio.create_task(execute_cowatch_sync(parsed, action_taken))
+            if targets or eligible:
+                primary_target = targets[0] if targets else Config.CO_WATCH_USER
+                target_str = ", ".join(targets) if len(targets) > 1 else primary_target
+                sync_reason = f"Household routing to {target_str}" if len(targets) > 1 else reason
+                cowatch_info = {
+                    "synced": bool(targets or eligible),
+                    "reason": sync_reason,
+                    "target": primary_target,
+                    "targets": targets,
+                }
+                asyncio.create_task(execute_cowatch_sync(parsed, action_taken, targets=targets))
             else:
-                cowatch_info = {"synced": False, "reason": reason, "target": Config.CO_WATCH_USER}
-        elif eligible:
-            cowatch_info = {"synced": False, "in_list": True, "reason": reason, "target": Config.CO_WATCH_USER}
+                cowatch_info = {"synced": False, "reason": reason, "target": Config.CO_WATCH_USER, "targets": []}
+        elif eligible or targets:
+            primary_target = targets[0] if targets else Config.CO_WATCH_USER
+            cowatch_info = {"synced": False, "in_list": True, "reason": reason, "target": primary_target, "targets": targets}
 
         log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
 
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
-            partner_target = Config.CO_WATCH_USER if (cowatch_info and cowatch_info.get("synced")) else None
+            partner_target = (", ".join(targets) if targets else Config.CO_WATCH_USER) if (cowatch_info and cowatch_info.get("synced")) else None
             asyncio.create_task(notifier.dispatch(parsed, action_taken, cowatch_partner=partner_target))
 
         # Real-time multi-server watched status and rating mirroring
@@ -1978,6 +2010,22 @@ def trigger_queue_clear(request: Request):
     return {"status": "ok", "pending_count": 0}
 
 
+class QueuePruneRequest(BaseModel):
+    days: Optional[int] = 90
+
+
+@app.post("/api/queue/prune")
+def trigger_queue_prune(request: Request, payload: Optional[QueuePruneRequest] = None):
+    """Prune completed and old failed records from the offline retry queue."""
+    if request.query_params.get("demo") == "true":
+        return {"status": "ok", "pruned": 0, "retention_days": 90}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    retention_days = (payload.days if payload and payload.days is not None else 90)
+    pruned = queue_mgr.prune_queue(days=retention_days)
+    return {"status": "ok", "pruned": pruned, "retention_days": retention_days}
+
+
 @app.get("/api/playback")
 def get_playback_status(request: Request):
     if request.query_params.get("demo") == "true":
@@ -2710,6 +2758,92 @@ def get_cowatch_trackers_status(request: Request):
     }
 
 
+class HouseholdRuleRequest(BaseModel):
+    id: Optional[str] = None
+    name: str
+    targets: list[str]
+    devices: Optional[list[str]] = None
+    shows: Optional[list[str]] = None
+    media_types: Optional[list[str]] = None
+    enabled: Optional[bool] = True
+
+
+@app.get("/api/household/rules")
+def get_household_rules(request: Request):
+    """Return configured household multi-tenant routing rules."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {"status": "ok", "rules": demo_mgr.get_demo_household_rules()}
+    is_admin = is_admin_request(request)
+    rules = household_mgr.get_rules()
+    if not is_admin:
+        masked_rules = []
+        for r in rules:
+            r_copy = dict(r)
+            r_copy["targets"] = [mask_username(t) for t in r.get("targets", [])]
+            masked_rules.append(r_copy)
+        rules = masked_rules
+    return {"status": "ok", "rules": rules}
+
+
+@app.post("/api/household/rules")
+def save_household_rule(payload: HouseholdRuleRequest, request: Request):
+    """Create or update a household multi-tenant routing rule."""
+    if request.query_params.get("demo") == "true":
+        demo_rule = demo_mgr.add_demo_household_rule(payload.model_dump())
+        return {"status": "ok", "rule": demo_rule}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    clean_targets = [t.strip() for t in payload.targets if t and t.strip()]
+    if not clean_targets:
+        raise HTTPException(status_code=400, detail="Rule must have at least one target username")
+
+    if payload.id:
+        existing = household_mgr.update_rule(payload.id, payload.model_dump(exclude_unset=True))
+        if existing:
+            return {"status": "ok", "rule": existing}
+
+    rule = household_mgr.add_rule(
+        name=payload.name,
+        targets=clean_targets,
+        devices=payload.devices,
+        shows=payload.shows,
+        media_types=payload.media_types,
+        enabled=True if payload.enabled is None else payload.enabled,
+        rule_id=payload.id,
+    )
+    return {"status": "ok", "rule": rule}
+
+
+@app.delete("/api/household/rules/{rule_id}")
+def delete_household_rule(rule_id: str, request: Request):
+    """Delete a household routing rule by ID."""
+    if request.query_params.get("demo") == "true":
+        demo_mgr.delete_demo_household_rule(rule_id)
+        return {"status": "ok", "deleted": True}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    deleted = household_mgr.delete_rule(rule_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"status": "ok", "deleted": True}
+
+
+@app.post("/api/household/rules/{rule_id}/toggle")
+def toggle_household_rule(rule_id: str, request: Request):
+    """Toggle enabled status of a household routing rule."""
+    if request.query_params.get("demo") == "true":
+        new_state = demo_mgr.toggle_demo_household_rule(rule_id)
+        return {"status": "ok", "enabled": new_state}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    new_state = household_mgr.toggle_rule(rule_id)
+    if new_state is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"status": "ok", "enabled": new_state}
+
+
 class ReconcileRequest(BaseModel):
     item_ids: Optional[list[str]] = None
     direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt", "trakt_to_server", "server_to_trakt"
@@ -2900,15 +3034,50 @@ async def get_sync_status(request: Request, server: Optional[str] = None):
 
 
 @app.get("/api/sync/diff")
-async def get_sync_diff(request: Request, force: bool = False, server: Optional[str] = None):
-    """Scan and return discrepancies between media server and Trakt."""
+async def get_sync_diff(
+    request: Request,
+    force: bool = False,
+    server: Optional[str] = None,
+    cursor: Optional[int] = None,
+    limit: Optional[int] = None,
+):
+    """Scan and return discrepancies between media server and Trakt with optional chunked cursor pagination."""
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
-        return {"status": "ok", "diff": demo_mgr.get_demo_reconciliation(), "count": len(demo_mgr.get_demo_reconciliation())}
+        demo_diff = demo_mgr.get_demo_reconciliation()
+        total_cnt = len(demo_diff)
+        if cursor is not None or limit is not None:
+            c = max(0, cursor or 0)
+            lim = max(1, limit or 50)
+            chunk = demo_diff[c : c + lim]
+            next_cursor = (c + lim) if (c + lim) < total_cnt else None
+            return {
+                "status": "ok",
+                "diff": chunk,
+                "count": len(chunk),
+                "total": total_cnt,
+                "cursor": next_cursor,
+                "has_more": next_cursor is not None,
+            }
+        return {"status": "ok", "diff": demo_diff, "count": total_cnt}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     diff = await reverse_sync_mgr.scan_discrepancies(force=force, server=server)
-    return {"status": "ok", "diff": diff, "count": len(diff)}
+    total_cnt = len(diff)
+    if cursor is not None or limit is not None:
+        c = max(0, cursor or 0)
+        lim = max(1, limit or 50)
+        chunk = diff[c : c + lim]
+        next_cursor = (c + lim) if (c + lim) < total_cnt else None
+        return {
+            "status": "ok",
+            "diff": chunk,
+            "count": len(chunk),
+            "total": total_cnt,
+            "cursor": next_cursor,
+            "has_more": next_cursor is not None,
+        }
+    return {"status": "ok", "diff": diff, "count": total_cnt}
 
 
 @app.post("/api/sync/reconcile")
@@ -3209,18 +3378,20 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
         return {"status": "ignored", "reason": bypass_reason}
 
     eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
+    targets = cowatch_mgr.resolve_targets(parsed)
     simulated_result: dict[str, Any] = {"status": "ok", "mode": "simulated"}
 
     if payload.execute_trakt:
         if trakt.is_authenticated():
             simulated_result = await trakt.sync_history(parsed.to_trakt_history_payload())
-            if eligible and Config.CO_WATCH_USER:
-                await execute_cowatch_sync(parsed, "test_webhook")
+            if targets or (eligible and Config.CO_WATCH_USER):
+                await execute_cowatch_sync(parsed, "test_webhook", targets=targets)
         else:
             simulated_result = {"status": "warning", "message": "Trakt not authenticated"}
 
     action_name = "test_webhook"
-    cw_info = {"synced": eligible and payload.execute_trakt, "reason": reason, "target": Config.CO_WATCH_USER}
+    primary_target = targets[0] if targets else Config.CO_WATCH_USER
+    cw_info = {"synced": bool(targets or eligible) and payload.execute_trakt, "reason": reason, "target": primary_target, "targets": targets}
     log_event(parsed, action_name, simulated_result, cowatch_status=cw_info)
 
     return {
@@ -3236,9 +3407,10 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
             "view_offset_ms": parsed.view_offset_ms,
         },
         "cowatch": {
-            "eligible": eligible,
+            "eligible": eligible or bool(targets),
             "reason": reason,
             "partner": Config.CO_WATCH_USER,
+            "targets": targets,
         },
         "result": simulated_result,
     }
@@ -4115,6 +4287,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         cw_devices = demo_mgr.get_demo_cowatch_devices()
         configured_users = demo_mgr.get_demo_users()
         cw_trackers = demo_mgr.get_demo_cowatch_trackers()["trackers"]
+        household_rules = demo_mgr.get_demo_household_rules()
     else:
         cw_user = Config.CO_WATCH_USER
         cw_user_display = cw_user if is_admin else "●●●●●●●●"
@@ -4122,6 +4295,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         cw_devices = cowatch_mgr.get_devices()
         configured_users = user_mgr.list_configured_users()
         cw_trackers = user_mgr.get_user_trackers_status(cw_user) if cw_user else {}
+        household_rules = household_mgr.get_rules()
 
     cowatch_card_html = dashboard_renderer.render_cowatch_card(
         cw_user=cw_user,
@@ -4136,6 +4310,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         is_demo=is_demo,
         raw_username=raw_username,
         mask_username_fn=mask_username,
+        household_rules=household_rules,
     )
 
     # Two-Way Library Reconciliation Card

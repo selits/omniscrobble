@@ -42,7 +42,8 @@ class QueueManager:
                     created_at INTEGER NOT NULL,
                     retry_count INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT DEFAULT '',
-                    status TEXT NOT NULL DEFAULT 'pending'
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    completed_at INTEGER DEFAULT NULL
                 )
                 """
             )
@@ -50,8 +51,15 @@ class QueueManager:
                 conn.execute("ALTER TABLE queued_events ADD COLUMN username TEXT DEFAULT 'default'")
             except Exception:
                 pass
+            try:
+                conn.execute("ALTER TABLE queued_events ADD COLUMN completed_at INTEGER DEFAULT NULL")
+            except Exception:
+                pass
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_queued_events_status ON queued_events(status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_queued_events_completed_at ON queued_events(completed_at)"
             )
             conn.commit()
 
@@ -106,9 +114,13 @@ class QueueManager:
         return items
 
     def mark_success(self, item_id: int) -> None:
-        """Remove a successfully processed item from the queue."""
+        """Mark a successfully processed item as completed in the queue."""
+        now = int(time.time())
         with self._get_connection() as conn:
-            conn.execute("DELETE FROM queued_events WHERE id = ?", (item_id,))
+            conn.execute(
+                "UPDATE queued_events SET status = 'completed', completed_at = ? WHERE id = ?",
+                (now, item_id),
+            )
             conn.commit()
 
     def mark_failure(self, item_id: int, error: str = "", max_retries: int = 5) -> None:
@@ -149,10 +161,30 @@ class QueueManager:
                 "SELECT status, COUNT(*) as cnt FROM queued_events GROUP BY status"
             )
             rows = cursor.fetchall()
-        counts = {"pending": 0, "failed": 0}
+        counts = {"pending": 0, "failed": 0, "completed": 0}
         for r in rows:
             counts[r["status"]] = int(r["cnt"])
         return counts
+
+    def prune_queue(self, days: int = 90) -> int:
+        """Prune completed and failed records older than the specified retention days (default 90)."""
+        cutoff = int(time.time()) - (days * 86400)
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM queued_events
+                WHERE (status = 'completed' AND (completed_at < ? OR (completed_at IS NULL AND created_at < ?)))
+                   OR (status = 'failed' AND created_at < ?)
+                """,
+                (cutoff, cutoff, cutoff),
+            )
+            conn.commit()
+            deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info(f"Pruned {deleted} offline queue records older than {days} days")
+        return deleted
+
+    prune_completed = prune_queue
 
     def clear_queue(self) -> None:
         """Purge all queued events."""

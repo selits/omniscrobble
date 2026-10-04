@@ -10591,4 +10591,450 @@ def test_api_weekly_digest_endpoint():
             assert res_live.json()["message"] == "Digest sent"
 
 
+def test_household_manager_crud_and_persistence(tmp_path):
+    """Verify HouseholdManager rule CRUD operations, toggle, and atomic JSON persistence."""
+    from app.services.household_manager import HouseholdManager
+    from app.config import Config
+
+    rules_file = tmp_path / "household_rules.json"
+
+    class CustomConfig(Config):
+        HOUSEHOLD_RULES_DATA_FILE = rules_file
+        CO_WATCH_DATA_FILE = tmp_path / "cowatch_shows.json"
+        CO_WATCH_DEVICES_DATA_FILE = tmp_path / "cowatch_devices.json"
+
+    mgr = HouseholdManager(config=CustomConfig)
+    assert mgr.get_rules() == []
+
+    # 1. Add rule
+    r1 = mgr.add_rule(
+        name="Living Room Family",
+        targets=["alice", "kids"],
+        devices=["Living Room Apple TV", "Shield Pro"],
+        shows=["*"],
+        media_types=["movie", "episode"],
+        enabled=True,
+    )
+    assert r1["name"] == "Living Room Family"
+    assert r1["targets"] == ["alice", "kids"]
+    assert len(mgr.get_rules()) == 1
+
+    # 2. Add second rule
+    r2 = mgr.add_rule(
+        name="Kids Playroom",
+        targets=["kids"],
+        devices=["Playroom TV"],
+        shows=["Bluey"],
+        media_types=["episode"],
+        enabled=True,
+    )
+    assert len(mgr.get_rules()) == 2
+
+    # 3. Update rule
+    up = mgr.update_rule(r1["id"], {"name": "Living Room All", "targets": ["alice", "kids", "bob"]})
+    assert up is not None
+    assert up["name"] == "Living Room All"
+    assert "bob" in up["targets"]
+
+    # 4. Toggle rule
+    new_state = mgr.toggle_rule(r2["id"])
+    assert new_state is False
+    assert next(r for r in mgr.get_rules() if r["id"] == r2["id"])["enabled"] is False
+
+    # 5. Persistence across reloads
+    mgr_reloaded = HouseholdManager(config=CustomConfig)
+    rules_reloaded = mgr_reloaded.get_rules()
+    assert len(rules_reloaded) == 2
+    r1_reloaded = next(r for r in rules_reloaded if r["id"] == r1["id"])
+    assert r1_reloaded["name"] == "Living Room All"
+    assert r1_reloaded["targets"] == ["alice", "kids", "bob"]
+
+    # 6. Delete rule
+    deleted = mgr.delete_rule(r2["id"])
+    assert deleted is True
+    assert len(mgr.get_rules()) == 1
+    assert mgr.delete_rule("non_existent_id") is False
+
+
+def test_household_manager_resolve_targets(tmp_path):
+    """Verify HouseholdManager resolves multi-tenant targets based on device, type, and show filters."""
+    from app.services.household_manager import HouseholdManager
+    from app.config import Config
+    from app.plex_parser import ParsedMedia
+
+    class CustomConfig(Config):
+        CO_WATCH_USER = "partner_jane"
+        CO_WATCH_SHOWS = ["Severance"]
+        CO_WATCH_PLAYERS = []
+        CO_WATCH_MOVIES = True
+        HOUSEHOLD_RULES_DATA_FILE = tmp_path / "household_rules.json"
+        CO_WATCH_DATA_FILE = tmp_path / "cowatch_shows.json"
+        CO_WATCH_DEVICES_DATA_FILE = tmp_path / "cowatch_devices.json"
+
+    mgr = HouseholdManager(config=CustomConfig)
+
+    # Add household rule for Living Room TV
+    mgr.add_rule(
+        name="Living Room Family",
+        targets=["kids", "partner_jane"],
+        devices=["Living Room Apple TV"],
+        shows=["*"],
+        media_types=["movie", "episode"],
+        enabled=True,
+    )
+    # Add household rule for Bedroom TV
+    mgr.add_rule(
+        name="Bedroom TV Solo",
+        targets=["alice"],
+        devices=["Bedroom Chromecast"],
+        shows=["*"],
+        media_types=["episode"],
+        enabled=True,
+    )
+
+    # 1. Severance playing on Living Room Apple TV by "selits"
+    # Matches CO_WATCH_USER (Severance is in CO_WATCH_SHOWS) + rule targets ("kids", "partner_jane")
+    # Result should include partner_jane and kids (deduplicated)
+    m1 = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        show_title="Severance",
+        title="Severance S02E01",
+        player="Living Room Apple TV",
+    )
+    targets1 = mgr.resolve_targets(m1)
+    assert "partner_jane" in targets1
+    assert "kids" in targets1
+    assert "selits" not in targets1  # Playing user must never self-scrobble
+
+    # 2. Movie playing on Bedroom Chromecast
+    # Rule for Bedroom TV only allows "episode", so bedroom rule does NOT match.
+    # But CO_WATCH_MOVIES is True, so partner_jane is eligible.
+    m2 = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        player="Bedroom Chromecast",
+    )
+    targets2 = mgr.resolve_targets(m2)
+    assert targets2 == ["partner_jane"]
+
+    # 3. Episode playing on Bedroom Chromecast by "partner_jane"
+    # Traditional co-watch partner is playing, so traditional co-watch is NOT eligible (self playback by partner).
+    # But Bedroom TV rule targets "alice" and media is episode!
+    m3 = ParsedMedia(
+        event="media.scrobble",
+        username="partner_jane",
+        media_type="episode",
+        show_title="Ted Lasso",
+        title="Ted Lasso S01E01",
+        player="Bedroom Chromecast",
+    )
+    targets3 = mgr.resolve_targets(m3)
+    assert targets3 == ["alice"]
+    assert "partner_jane" not in targets3
+
+
+def test_household_rules_api_endpoints():
+    """Verify REST API endpoints for household multi-tenant rules management."""
+    client = TestClient(app)
+
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_pass"):
+        # 1. GET /api/household/rules unauthenticated -> masks targets
+        res_unauth = client.get("/api/household/rules")
+        assert res_unauth.status_code == 200
+        data_unauth = res_unauth.json()
+        assert data_unauth["status"] == "ok"
+        assert isinstance(data_unauth["rules"], list)
+
+        # 2. POST /api/household/rules without auth -> 401
+        res_fail = client.post("/api/household/rules", json={"name": "Test", "targets": ["alice"]})
+        assert res_fail.status_code == 401
+
+        # 3. POST /api/household/rules with auth but empty targets -> 400
+        client.cookies.set("admin_token", "admin_pass")
+        res_empty = client.post("/api/household/rules", json={"name": "Test", "targets": []})
+        assert res_empty.status_code == 400
+
+        # 4. POST /api/household/rules with auth -> creates rule
+        rule_payload = {
+            "name": "Basement Shield",
+            "targets": ["alice", "bob"],
+            "devices": ["Basement Shield"],
+            "shows": ["*"],
+            "media_types": ["movie", "episode"],
+            "enabled": True,
+        }
+        res_create = client.post("/api/household/rules", json=rule_payload)
+        assert res_create.status_code == 200
+        created_rule = res_create.json()["rule"]
+        assert created_rule["name"] == "Basement Shield"
+        assert created_rule["targets"] == ["alice", "bob"]
+        rule_id = created_rule["id"]
+
+        # 5. POST /api/household/rules with existing id -> updates rule
+        update_payload = dict(rule_payload)
+        update_payload["id"] = rule_id
+        update_payload["name"] = "Basement Shield Pro"
+        res_update = client.post("/api/household/rules", json=update_payload)
+        assert res_update.status_code == 200
+        assert res_update.json()["rule"]["name"] == "Basement Shield Pro"
+
+        # 6. POST /api/household/rules/{id}/toggle -> toggles enabled
+        res_toggle = client.post(f"/api/household/rules/{rule_id}/toggle")
+        assert res_toggle.status_code == 200
+        assert res_toggle.json()["enabled"] is False
+
+        # 7. DELETE /api/household/rules/{id} -> deletes rule
+        res_del = client.delete(f"/api/household/rules/{rule_id}")
+        assert res_del.status_code == 200
+        assert res_del.json()["deleted"] is True
+
+        # 8. DELETE non-existent rule -> 404
+        res_del_404 = client.delete("/api/household/rules/non_existent_123")
+        assert res_del_404.status_code == 404
+
+        # 9. Demo mode for all endpoints
+        res_demo_get = client.get("/api/household/rules?demo=true")
+        assert res_demo_get.status_code == 200
+        assert len(res_demo_get.json()["rules"]) >= 1
+
+        res_demo_post = client.post("/api/household/rules?demo=true", json={"name": "Demo Rule", "targets": ["demo_partner"]})
+        assert res_demo_post.status_code == 200
+
+        res_demo_toggle = client.post("/api/household/rules/rule_living_room/toggle?demo=true")
+        assert res_demo_toggle.status_code == 200
+
+        res_demo_del = client.delete("/api/household/rules/rule_living_room?demo=true")
+        assert res_demo_del.status_code == 200
+        assert res_demo_del.json()["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_household_multi_tenant_webhook_dual_sync():
+    """Verify live webhook dispatches dual-sync across multiple resolved household target profiles."""
+    import asyncio
+    from app.services.household_manager import household_mgr
+    from app.services.user_manager import user_mgr
+    from app.main import recent_events
+    from app.config import Config
+
+    client = TestClient(app)
+
+    # Add a household rule targeting 'kids_user' and 'partner_user' on Living Room TV
+    rule = household_mgr.add_rule(
+        name="Living Room Family Sync",
+        targets=["kids_user", "partner_user"],
+        devices=["Living Room Apple TV"],
+        shows=["*"],
+        media_types=["episode"],
+        enabled=True,
+    )
+
+    try:
+        mock_partner = MagicMock()
+        mock_partner.is_authenticated.return_value = True
+        mock_partner.sync_history = AsyncMock(return_value={"action": "scrobble"})
+
+        mock_kids = MagicMock()
+        mock_kids.is_authenticated.return_value = True
+        mock_kids.sync_history = AsyncMock(return_value={"action": "scrobble"})
+
+        mock_selits = MagicMock()
+        mock_selits.is_authenticated.return_value = True
+        mock_selits.scrobble_stop = AsyncMock(return_value={"action": "scrobble"})
+        mock_selits.sync_history = AsyncMock(return_value={"added": {"episodes": 1}})
+
+        def mock_get_client(user):
+            if user == "partner_user":
+                return mock_partner
+            elif user == "kids_user":
+                return mock_kids
+            elif user == "selits":
+                return mock_selits
+            return MagicMock()
+
+        webhook_payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "selits"},
+            "Player": {"title": "Living Room Apple TV"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Severance",
+                "title": "Good News About Hell",
+                "year": 2022,
+                "parentIndex": 1,
+                "index": 1,
+                "viewOffset": 3600000,
+                "duration": 3600000,
+            }
+        }
+
+        with patch.object(Config, "CO_WATCH_USER", "partner_user"), \
+             patch.object(user_mgr, "get_client", side_effect=mock_get_client), \
+             patch("app.main.trakt.is_authenticated", return_value=True), \
+             patch("app.main.trakt.scrobble_stop", new_callable=AsyncMock) as mock_trakt_stop, \
+             patch("app.main.trakt.sync_history", new_callable=AsyncMock) as mock_trakt_hist, \
+             patch("app.main.notifier.dispatch", new_callable=AsyncMock):
+            mock_trakt_stop.return_value = {"action": "scrobble"}
+            mock_trakt_hist.return_value = {"added": {"episodes": 1}}
+
+            res = client.post("/webhook", json=webhook_payload)
+            assert res.status_code == 200
+
+            # Yield control to event loop to allow asyncio.create_task(execute_cowatch_sync(...)) to complete
+            await asyncio.sleep(0.05)
+
+            # Both partner_user and kids_user should have had sync_history called!
+            mock_partner.sync_history.assert_called_once()
+            mock_kids.sync_history.assert_called_once()
+
+            # Verify cowatch_status recorded in recent_events contains targets
+            ev = recent_events[0]
+            assert ev.get("cowatch_status") is not None
+            assert ev["cowatch_status"]["synced"] is True
+            assert "partner_user" in ev["cowatch_status"]["targets"]
+            assert "kids_user" in ev["cowatch_status"]["targets"]
+
+    finally:
+        household_mgr.delete_rule(rule["id"])
+
+
+def test_queue_prune_and_completed_status(tmp_path):
+    """Verify QueueManager transitions items to status 'completed' and prunes records older than retention threshold."""
+    from app.services.queue_manager import QueueManager
+    import time
+
+    db_file = tmp_path / "test_prune_queue.db"
+    qm = QueueManager(db_file)
+
+    now = int(time.time())
+    day_sec = 86400
+
+    # 1. Enqueue 4 items
+    id_old_completed = qm.enqueue("sync_history", {"title": "Old Completed"}, error="", username="alice")
+    id_recent_completed = qm.enqueue("sync_history", {"title": "Recent Completed"}, error="", username="alice")
+    id_old_failed = qm.enqueue("sync_history", {"title": "Old Failed"}, error="Timeout", username="alice")
+    id_pending = qm.enqueue("sync_history", {"title": "Still Pending"}, error="", username="alice")
+
+    # Mark success for completed items
+    qm.mark_success(id_old_completed)
+    qm.mark_success(id_recent_completed)
+
+    # Mark failure for old failed item
+    qm.mark_failure(id_old_failed, error="Server error", max_retries=1)
+
+    # Manually backdate old_completed (100 days ago) and old_failed (100 days ago)
+    with qm._get_connection() as conn:
+        old_time = now - (100 * day_sec)
+        conn.execute("UPDATE queued_events SET created_at = ?, completed_at = ? WHERE id = ?", (old_time, old_time, id_old_completed))
+        conn.execute("UPDATE queued_events SET created_at = ? WHERE id = ?", (old_time, id_old_failed))
+        conn.commit()
+
+    # Verify counts before pruning
+    counts = qm.get_all_count()
+    assert counts["completed"] == 2
+    assert counts["failed"] == 1
+    assert counts["pending"] == 1
+
+    # Prune records older than 90 days
+    pruned_count = qm.prune_queue(days=90)
+    assert pruned_count == 2  # old_completed and old_failed
+
+    # Verify state after pruning
+    with qm._get_connection() as conn:
+        cursor = conn.execute("SELECT id, status FROM queued_events ORDER BY id ASC")
+        remaining = cursor.fetchall()
+        remaining_ids = [r["id"] for r in remaining]
+        assert id_old_completed not in remaining_ids
+        assert id_old_failed not in remaining_ids
+        assert id_recent_completed in remaining_ids
+        assert id_pending in remaining_ids
+
+    # Test POST /api/queue/prune endpoint
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        # Unauthenticated -> 401
+        res_unauth = client.post("/api/queue/prune")
+        assert res_unauth.status_code == 401
+
+        # Demo mode -> 200
+        res_demo = client.post("/api/queue/prune?demo=true")
+        assert res_demo.status_code == 200
+        assert res_demo.json()["pruned"] == 0
+
+        # Admin authorized
+        client.cookies.set("admin_token", "admin_secret")
+        res_admin = client.post("/api/queue/prune", json={"days": 90})
+        assert res_admin.status_code == 200
+        assert "pruned" in res_admin.json()
+        assert res_admin.json()["retention_days"] == 90
+
+
+def test_chunked_discrepancy_streamer():
+    """Verify cursor-based discrepancy pagination on reverse_sync_mgr and /api/sync/diff endpoint."""
+    from app.services.reverse_sync_manager import reverse_sync_mgr
+
+    client = TestClient(app)
+
+    # 1. ReverseSyncManager.get_chunked_diff
+    mock_diff = [
+        {"id": f"plex:movie:{i}", "title": f"Movie {i}", "action_recommended": "sync_to_trakt"}
+        for i in range(10)
+    ]
+    with patch.object(reverse_sync_mgr, "_last_diff", mock_diff):
+        chunk1 = reverse_sync_mgr.get_chunked_diff(cursor=0, limit=4)
+        assert chunk1["count"] == 4
+        assert chunk1["total"] == 10
+        assert chunk1["cursor"] == 4
+        assert chunk1["has_more"] is True
+        assert chunk1["diff"][0]["id"] == "plex:movie:0"
+        assert chunk1["diff"][3]["id"] == "plex:movie:3"
+
+        chunk2 = reverse_sync_mgr.get_chunked_diff(cursor=4, limit=4)
+        assert chunk2["count"] == 4
+        assert chunk2["cursor"] == 8
+        assert chunk2["has_more"] is True
+        assert chunk2["diff"][0]["id"] == "plex:movie:4"
+
+        chunk3 = reverse_sync_mgr.get_chunked_diff(cursor=8, limit=4)
+        assert chunk3["count"] == 2
+        assert chunk3["cursor"] is None
+        assert chunk3["has_more"] is False
+
+    # 2. GET /api/sync/diff with cursor and limit (Demo mode)
+    res_demo = client.get("/api/sync/diff?demo=true&cursor=0&limit=2")
+    assert res_demo.status_code == 200
+    d_data = res_demo.json()
+    assert d_data["status"] == "ok"
+    assert d_data["count"] == 2
+    assert d_data["cursor"] == 2
+    assert d_data["has_more"] is True
+
+    # 3. GET /api/sync/diff with cursor and limit (Admin authenticated live)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"), \
+         patch.object(reverse_sync_mgr, "scan_discrepancies", new_callable=AsyncMock) as mock_scan:
+        mock_scan.return_value = mock_diff
+        client.cookies.set("admin_token", "admin_secret")
+
+        # Full diff when cursor/limit omitted
+        res_full = client.get("/api/sync/diff")
+        assert res_full.status_code == 200
+        assert res_full.json()["count"] == 10
+        assert "cursor" not in res_full.json()
+
+        # Chunked diff when cursor/limit provided
+        res_chunked = client.get("/api/sync/diff?cursor=2&limit=3")
+        assert res_chunked.status_code == 200
+        c_data = res_chunked.json()
+        assert c_data["count"] == 3
+        assert c_data["total"] == 10
+        assert c_data["cursor"] == 5
+        assert c_data["has_more"] is True
+        assert c_data["diff"][0]["id"] == "plex:movie:2"
+
+
+
 

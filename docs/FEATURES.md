@@ -6,7 +6,7 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 
 ## Table of Contents
 
-1. [Watch Together (Co-Watching) & Multi-User Accounts](#1-watch-together-co-watching--multi-user-accounts)
+1. [Watch Together (Co-Watching) & Household Multi-Tenancy](#1-watch-together-co-watching--household-multi-tenancy)
 2. [Two-Way Synchronization & Multi-Server Reconciliation](#2-two-way-synchronization--multi-server-reconciliation)
 3. [Content Bridge & *Arr Automation](#3-content-bridge--arr-automation)
 4. [Persistent Offline Queue & Disaster Recovery](#4-persistent-offline-queue--disaster-recovery)
@@ -20,20 +20,22 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 
 ---
 
-## 1. Watch Together (Co-Watching) & Multi-User Accounts
+## 1. Watch Together (Co-Watching) & Household Multi-Tenancy
 
-When watching movies or TV series together on a shared living room profile, Omniscrobble automatically dual-scrobbles watch history to **both** your Trakt profile and your partner's profile simultaneously, while keeping solo binges exclusive to your own account.
+When watching movies or TV series together on a shared living room profile or across family rooms, Omniscrobble automatically dual-scrobbles watch history to **both** your Trakt profile and your partner's profile simultaneously, while keeping solo binges exclusive to your own account. For households with 3 or more members, the **Household Routing Engine** extends this into arbitrary multi-profile routing.
 
 ```mermaid
 flowchart LR
-    A["Media Server Webhook\n(Plex / Jellyfin / Emby)"] --> B{"Eligibility Check"}
+    A["Media Server Webhook\n(Plex / Jellyfin / Emby)"] --> B{"Eligibility & Household Rules"}
     B -- "Solo Content / Personal Device" --> C["Primary Trakt Account"]
     B -- "Shared Show & Living Room TV" --> C
     B -- "Shared Show & Living Room TV" --> D["Partner Trakt Account\n(Dual Scrobble)"]
+    B -- "Rule: Living Room Family" --> E["Kids Profile & Roommates\n(Multi-Tenant Target)"]
 ```
 
 ### Key Capabilities
 
+- **Household Multi-Tenant Routing (3+ Users)**: Configure granular routing rules targeting arbitrary user profiles (`data/tokens/{username}_tokens.json`) based on playback device (e.g. `Living Room Apple TV`), media types (`movie`, `episode`), and shows (`*` or specific series).
 - **Dynamic Show Whitelist**: Define shared series in `.env` or manage them on the fly directly from the dashboard without service restarts. Includes live Sonarr autocomplete.
 - **Hardware Player Filtering (`CO_WATCH_PLAYERS`)**: Restrict dual-scrobbling to specific devices (such as living room Apple TVs or Nvidia Shields) so playback on bedroom phones or tablets remains solo.
 - **Movie Co-Watching**: Toggle movie dual-sync with 1 click on the dashboard (`POST /api/cowatch/settings`).
@@ -85,6 +87,7 @@ Standard scrobbling is one-directional (Media Server $\to$ Trakt). Omniscrobble 
   - `Rating Mismatch`: Star rating differences between platforms.
 - **Smart Echo Loop Prevention (`LoopPreventionManager`)**: An in-memory TTL cache drops outgoing webhooks triggered by server updates during reconciliation, preventing infinite scrobble ping-pong loops.
 - **Interactive Diff & Selective Sync UI**: Inspect all discrepancies on the dashboard, filter by discrepancy type, select specific titles, and trigger 1-click batch updates with real-time progress bars.
+- **Memory-Efficient Chunked Discrepancy Streamer**: For massive media libraries (10,000+ items), the reconciliation scanner streams diffs in paginated chunks (`GET /api/sync/diff?cursor=...&limit=50`), maintaining sub-50MB RAM consumption and sub-second UI responsiveness.
 - **Automated Background Cloud Reconciliation**: An asynchronous background worker (`CloudSyncManager`) periodically syncs two-way watch history, generates Letterboxd RFC-4180 CSV snapshots (`data/exports/letterboxd_diary.csv`), and enforces shared mutex lock protection against concurrency collisions (`HTTP 409 Conflict`).
 - **1-Click Webhook Auto-Registration**: Automatically registers Omniscrobble's webhook endpoint in Plex (via `plex.tv/api/v2/user/webhooks`), Jellyfin (via Webhook plugin configuration), and Emby (via `/Webhooks`) directly from the Settings Hub, eliminating manual copy-pasting.
 
@@ -175,6 +178,7 @@ stateDiagram-v2
 - **Automatic Buffering**: If Trakt or Simkl return transient 5xx server errors or 429 rate limit responses, events are immediately enqueued into an ACID-compliant SQLite database.
 - **Intelligent Classification**: Differentiates between recoverable transient errors (HTTP 500/502/503/504, 429, timeouts) and permanent errors (HTTP 400/404), discarding malformed requests to prevent queue poisoning.
 - **Exponential Backoff Worker**: A background worker drains pending queue items as soon as connectivity recovers, honoring upstream `Retry-After` headers.
+- **Automated Retention & Pruning (`POST /api/queue/prune`)**: To prevent unbounded SQLite disk growth over years of operation, the background worker automatically prunes successfully completed and expired offline queue records older than 90 days during its daily maintenance sweep. Administrators can also trigger on-demand queue pruning via the REST API.
 
 ### 1-Click System Backup & Restore
 

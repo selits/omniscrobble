@@ -595,6 +595,16 @@ Co-watch partners can also link and synchronize their own secondary cloud tracke
 
 All partner credentials are fully isolated in `data/tokens/`. During co-watched events, Omniscrobble dispatches to all partner-authenticated platforms concurrently with isolated error catching, ensuring partner network issues or token expirations never interfere with your primary scrobbles. Proactive token refresh runs automatically in the background every 12 hours.
 
+### Household Multi-Tenant Routing Rules (3+ Users)
+
+For homes with 3 or more viewers (e.g. family members, kids profiles, or roommates), Omniscrobble provides a granular **Household Routing Engine**. Instead of syncing solely to a single partner account, you can create rule sets matching player hardware devices, media types, and show titles to dynamically target multiple authenticated user profiles.
+
+- **Granular Filter Matching**: Rules match specific player devices (e.g. `Living Room Apple TV`), media types (`movie`, `episode`), and show titles (`*` for all shows or specific titles like `Severance`).
+- **Multi-Target Dispatch**: Each rule can target one or more authenticated profiles simultaneously (e.g. Living Room TV scrobbles to `partner`, `kids`, and `roommate`).
+- **Dynamic Dashboard Management**: Add, enable, disable, and delete rules directly from the **Co-Watch & Household Routing** card using the interactive modal.
+- **Persistent Storage**: Rules are stored in `data/household_rules.json` (configurable via `HOUSEHOLD_RULES_DATA_FILE`).
+- **Backward Compatibility**: Existing 2-user `CO_WATCH_*` environment variables remain fully supported alongside household rules.
+
 > [!TIP]
 > You can add shows dynamically to your shared co-watch whitelist on your mobile phone or desktop without restarting the service by clicking the **`+ Co-Watch`** button in the Recent Activity table. Connect and disconnect partner trackers anytime from the **Co-Watch & Multi-User** card on the dashboard.
 
@@ -776,6 +786,7 @@ WEEKLY_DIGEST_HOUR=20
 | **`CO_WATCH_SHOWS`** | `""` | String (CSV) | **Yes** | Whitelist of TV show titles eligible for dual-sync. |
 | **`CO_WATCH_PLAYERS`** | `""` | String (CSV) | **Yes** | Whitelist of player/device names eligible for dual-sync. |
 | **`CO_WATCH_MOVIES`** | `false` | Boolean | **Yes** | Enables dual-sync for feature movies. |
+| **`HOUSEHOLD_RULES_DATA_FILE`** | `data/household_rules.json` | Path | No | Persistent JSON store for multi-tenant household routing rules. |
 | **`QUEUE_DB_FILE`** | `data/queue.db` | String | No | SQLite database path for offline retry queue. |
 | **`QUEUE_RETRY_INTERVAL`** | `300` | Integer | No | Offline queue retry worker cadence in seconds. |
 | **`PROMETHEUS_METRICS_ENABLED`** | `true` | Boolean | No | Exposes Prometheus telemetry at `/metrics`. |

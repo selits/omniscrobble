@@ -151,7 +151,7 @@ For in-depth guides, variable references, and operational walk-throughs, explore
 | [**Deployment Guide**](./DEPLOYMENT.md) | systemd user service setup, Docker Compose, Unraid/TrueNAS, lingering, and reverse proxies. |
 | [**Feature Guides**](./docs/FEATURES.md) | Deep dives for Co-Watching, Two-Way Reconciliation, Content Bridge, Queue, and Notifications. |
 | [**Architecture Blueprint**](./docs/ARCHITECTURE.md) | Complete component layers, data flows, and file-by-file directory manifest. |
-| [**REST API Specification**](./docs/API.md) | Documentation for all 99 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
+| [**REST API Specification**](./docs/API.md) | Documentation for all 101 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
 | [**Troubleshooting & FAQ**](./docs/TROUBLESHOOTING.md) | Solutions for common errors (422, 409, 80%), health diagnostics, and networking setup. |
 
 ---

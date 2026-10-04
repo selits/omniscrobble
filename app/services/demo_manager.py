@@ -82,6 +82,55 @@ class DemoManager:
         self.DEMO_DEVICES = [d for d in self.DEMO_DEVICES if d.strip().lower() != clean]
         return list(self.DEMO_DEVICES)
 
+    DEMO_HOUSEHOLD_RULES = [
+        {
+            "id": "rule_living_room",
+            "name": "Family Living Room",
+            "targets": ["demo_partner", "demo_kids"],
+            "devices": ["Living Room Apple TV"],
+            "shows": ["*"],
+            "media_types": ["movie", "episode"],
+            "enabled": True,
+        },
+        {
+            "id": "rule_kids_room",
+            "name": "Kids Playroom",
+            "targets": ["demo_kids"],
+            "devices": ["Playroom Shield"],
+            "shows": ["*"],
+            "media_types": ["episode"],
+            "enabled": True,
+        },
+    ]
+
+    def get_demo_household_rules(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.DEMO_HOUSEHOLD_RULES]
+
+    def add_demo_household_rule(self, rule: dict[str, Any]) -> dict[str, Any]:
+        new_rule = {
+            "id": rule.get("id") or f"rule_{len(self.DEMO_HOUSEHOLD_RULES) + 1}",
+            "name": str(rule.get("name", "New Rule")).strip(),
+            "targets": [str(t).strip() for t in (rule.get("targets") or []) if str(t).strip()],
+            "devices": [str(d).strip() for d in (rule.get("devices") or []) if str(d).strip()],
+            "shows": [str(s).strip() for s in (rule.get("shows") or []) if str(s).strip()],
+            "media_types": [str(m).strip().lower() for m in (rule.get("media_types") or []) if str(m).strip()],
+            "enabled": bool(rule.get("enabled", True)),
+        }
+        self.DEMO_HOUSEHOLD_RULES.append(new_rule)
+        return dict(new_rule)
+
+    def delete_demo_household_rule(self, rule_id: str) -> bool:
+        init_len = len(self.DEMO_HOUSEHOLD_RULES)
+        self.DEMO_HOUSEHOLD_RULES = [r for r in self.DEMO_HOUSEHOLD_RULES if r["id"] != rule_id]
+        return len(self.DEMO_HOUSEHOLD_RULES) < init_len
+
+    def toggle_demo_household_rule(self, rule_id: str) -> Optional[bool]:
+        for r in self.DEMO_HOUSEHOLD_RULES:
+            if r["id"] == rule_id:
+                r["enabled"] = not r["enabled"]
+                return r["enabled"]
+        return None
+
     def get_demo_users(self) -> list[dict[str, Any]]:
         return [
             {
@@ -94,6 +143,12 @@ class DemoManager:
                 "username": "demo_partner",
                 "is_default": False,
                 "is_cowatch_target": True,
+                "authenticated": True,
+            },
+            {
+                "username": "demo_kids",
+                "is_default": False,
+                "is_cowatch_target": False,
                 "authenticated": True,
             },
         ]
