@@ -609,6 +609,7 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`FORWARDED_ALLOW_IPS`** | `*` | String | No | Permitted reverse proxy IP range for `ProxyHeadersMiddleware`. |
 | **`SSL_CERT_FILE`** | `""` | String | No | Path to TLS certificate for direct HTTPS termination in Uvicorn. |
 | **`SSL_KEY_FILE`** | `""` | String | No | Path to TLS private key for direct HTTPS termination in Uvicorn. |
+| **`EXTERNAL_URL`** | `""` | String | No | Public-facing base URL (e.g. `https://omniscrobble.example.com`) for reverse proxy links. |
 | **`DEBUG`** | `false` | Boolean | No | Enables verbose debug logging and traceback outputs. |
 | **`WEBHOOK_SECRET`** | `""` | String | No | Secret token protecting endpoints (`?token=...`) and locking the admin dashboard. |
 | **`PLEX_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Plex webhooks (`/webhook`). |
@@ -656,6 +657,20 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`MAL_ENABLED`** | `false` | Boolean | **Yes** | Enables dispatch to MyAnimeList. |
 | **`MAL_CLIENT_ID`** | `""` | String | **Yes** | MyAnimeList API Client ID. Configurable live in Settings Hub. |
 | **`MAL_CLIENT_SECRET`** | `""` | String | **Yes** | MyAnimeList API Client Secret. Configurable live in Settings Hub. |
+| **`TMDB_ENABLED`** | `true` | Boolean | **Yes** | Enables watch history, watchlist, and rating dispatch to TMDb. |
+| **`TMDB_API_KEY`** | `""` | String | **Yes** | The Movie Database (TMDb) v3 API key. |
+| **`TMDB_SESSION_ID`** | `""` | String | **Yes** | TMDb authenticated user session ID for ratings and scrobbles. |
+| **`TMDB_READ_ACCESS_TOKEN`** | `""` | String | **Yes** | TMDb v4 API Read Access Token (Bearer). |
+| **`KITSU_ENABLED`** | `true` | Boolean | **Yes** | Enables anime progress and rating dispatch to Kitsu. |
+| **`KITSU_API_KEY`** | `""` | String | **Yes** | Kitsu user API / Bearer token. |
+| **`KITSU_USER_ID`** | `""` | String | **Yes** | Kitsu account user ID. |
+| **`LETTERBOXD_ENABLED`** | `true` | Boolean | **Yes** | Enables automated Letterboxd diary accumulation and RFC-4180 CSV exports. |
+| **`LETTERBOXD_USERNAME`** | `""` | String | **Yes** | Letterboxd account username. |
+| **`SERIALIZD_ENABLED`** | `true` | Boolean | **Yes** | Enables episode logging and season rating dispatch to Serializd. |
+| **`SERIALIZD_USERNAME`** | `""` | String | **Yes** | Serializd account username. |
+| **`SERIALIZD_TOKEN`** | `""` | String | **Yes** | Serializd session or API token. |
+| **`MDBLIST_ENABLED`** | `true` | Boolean | **Yes** | Enables aggregated critic/audience rating queries and list sync. |
+| **`MDBLIST_API_KEY`** | `""` | String | **Yes** | MDBList API key. |
 | **`CO_WATCH_USER`** | `""` | String | **Yes** | Target partner Trakt username for dual-syncing watched media. |
 | **`CO_WATCH_SHOWS`** | `""` | String (CSV) | **Yes** | Whitelist of TV show titles eligible for dual-sync. |
 | **`CO_WATCH_PLAYERS`** | `""` | String (CSV) | **Yes** | Whitelist of player/device names eligible for dual-sync. |

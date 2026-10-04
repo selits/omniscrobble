@@ -94,7 +94,8 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 ### 5. Offline Queue & Persistence Layer
 
-- **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. A background worker drains the queue with exponential backoff.
+- **`app/services/atomic_writer.py`**: Thread-safe, crash-resilient atomic file persistence (`atomic_write_json`, `atomic_write_text`). Writes data to a temporary file in the destination directory and performs `os.fsync` before executing an atomic filesystem rename (`os.replace`), preventing corrupted JSON state or empty OAuth token files during sudden power losses or process interruptions.
+- **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Operates with Write-Ahead Logging (`PRAGMA journal_mode=WAL;`, `PRAGMA synchronous=NORMAL;`, `PRAGMA busy_timeout=5000;`) for high concurrency and non-blocking reads. Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. A background worker drains the queue with exponential backoff.
 - **`app/services/settings_manager.py`**: Thread-safe runtime settings manager (`data/settings.json`). Preserves media server listener states, tracker pause states, dynamic rules & filters, and active servers across reboots without modifying `.env`.
 - **`app/services/user_manager.py`**: Manages isolated multi-user profiles and token storage in `data/tokens/{username}_tokens.json` (including partner secondary cloud trackers: `_simkl_tokens.json`, `_anilist_tokens.json`, `_mal_tokens.json`), client caching, and live tracker status matrices.
 
@@ -108,6 +109,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 ### 7. Observability & UI Layer
 
+- **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, and activity feed rows, separating UI presentation logic from HTTP route handling.
 - **`app/templates/dashboard.html`**: Fully responsive, single-file HTML/CSS/JavaScript dashboard. Features real-time active stream cards, ecosystem health dots, paginated activity history, interactive reconciliation diff modals, and live settings management.
 - **`app/metrics.py`**: Custom thread-safe Prometheus metrics registry exporting directly on `/metrics`.
 - **`app/services/log_manager.py`**: Real-time log streamer combining `journalctl --user` with an in-memory 1,000-line ring buffer. Features strict privacy redaction for query parameters and authorization headers.
@@ -139,16 +141,18 @@ omniscrobble/
 │   ├── services/                    # Core business logic and background services
 │   │   ├── anime_resolver.py        # Anime detection heuristics, title normalization & GUID caching
 │   │   ├── arr_bridge.py            # Content Bridge manager for Trakt watchlist sync & ecosystem health
+│   │   ├── atomic_writer.py         # Crash-resilient atomic JSON/text file persistence with fsync
 │   │   ├── cloud_sync_manager.py    # Automated background cloud reconciliation, Letterboxd CSV snapshots & mutex locks
 │   │   ├── cowatch_manager.py       # Watch Together whitelist & dual-scrobble rules engine
 │   │   ├── cross_tracker_sync.py    # Trakt <-> Simkl reconciliation & bi-directional sync engine
+│   │   ├── dashboard_renderer.py    # Decoupled SSR dashboard HTML component & card renderer
 │   │   ├── demo_manager.py          # Air-gapped mock playback, stats, and activity generator
 │   │   ├── log_manager.py           # Systemd journalctl reader, in-memory ring buffer & secret redaction
 │   │   ├── loop_prevention.py       # Thread-safe TTL cache for echo loop suppression
 │   │   ├── multi_tracker.py         # Multi-tracker coordinator for dual-dispatch scrobbling and rating sync
 │   │   ├── notifier.py              # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover)
 │   │   ├── playback_manager.py      # Active streaming sessions & dashboard cards
-│   │   ├── queue_manager.py         # Persistent SQLite offline retry queue & background worker
+│   │   ├── queue_manager.py         # Persistent SQLite offline retry queue with WAL mode & background worker
 │   │   ├── reverse_sync_manager.py  # Bi-directional library reconciliation & reverse sync engine
 │   │   ├── settings_manager.py      # Persistent runtime media server listeners, tracker pause toggles & rules engine
 │   │   └── user_manager.py          # Multi-user account client cache & token persistence
@@ -167,7 +171,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (37 endpoints)
+│   ├── API.md                       # Full REST API specification (80 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
