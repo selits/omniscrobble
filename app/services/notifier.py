@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import asyncio
 import datetime
 import html
 import logging
 import time
 import urllib.parse
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import httpx
 
 try:
