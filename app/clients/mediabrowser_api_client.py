@@ -433,3 +433,144 @@ class BaseMediaBrowserClient:
             logger.error("Failed to search %s for item %s: %s", self.product_name, search_title, exc)
         return None
 
+    async def register_webhook(self, webhook_url: str) -> dict[str, Any]:
+        """Auto-register an Omniscrobble webhook destination in Jellyfin or Emby."""
+        if not self.is_configured():
+            return {
+                "success": False,
+                "server": self.server_type,
+                "error": f"{self.product_name} server URL or token is not configured.",
+            }
+
+        target_url = (webhook_url or "").strip()
+        if not target_url:
+            return {"success": False, "server": self.server_type, "error": "Webhook URL cannot be empty."}
+
+        client = self.get_client()
+
+        if self.server_type == "emby":
+            # Emby /Webhooks endpoint
+            try:
+                resp = await client.get(f"{self.base_url}/Webhooks", headers=self._get_headers())
+                if resp.status_code == 200:
+                    existing = resp.json()
+                    if isinstance(existing, list):
+                        for wh in existing:
+                            if isinstance(wh, dict) and wh.get("Url") == target_url:
+                                return {
+                                    "success": True,
+                                    "status": "already_registered",
+                                    "server": "emby",
+                                    "url": target_url,
+                                    "message": "Webhook is already registered on Emby.",
+                                }
+
+                payload = {
+                    "Url": target_url,
+                    "Name": "Omniscrobble",
+                    "Events": [
+                        "playback.start",
+                        "playback.pause",
+                        "playback.unpause",
+                        "playback.stop",
+                        "playback.scrobble",
+                        "item.rate",
+                        "user.data.saved",
+                    ],
+                }
+                reg_resp = await client.post(f"{self.base_url}/Webhooks", json=payload, headers=self._get_headers())
+                if reg_resp.status_code in (200, 201, 204):
+                    logger.info("Successfully registered webhook on Emby: %s", target_url)
+                    return {
+                        "success": True,
+                        "status": "registered",
+                        "server": "emby",
+                        "url": target_url,
+                        "message": "Successfully registered webhook destination on Emby!",
+                    }
+                return {
+                    "success": False,
+                    "server": "emby",
+                    "error": f"Emby returned HTTP {reg_resp.status_code}: {reg_resp.text[:150]}",
+                }
+            except Exception as exc:
+                logger.error("Failed to register webhook on Emby: %s", exc)
+                return {"success": False, "server": "emby", "error": str(exc)}
+
+        else:
+            # Jellyfin Webhook Plugin
+            try:
+                plugins_resp = await client.get(f"{self.base_url}/Plugins", headers=self._get_headers())
+                if plugins_resp.status_code != 200:
+                    return {
+                        "success": False,
+                        "server": "jellyfin",
+                        "error": f"Jellyfin returned HTTP {plugins_resp.status_code} when listing plugins",
+                    }
+
+                plugins = plugins_resp.json()
+                webhook_plugin = None
+                for p in plugins:
+                    p_name = p.get("Name", "").lower()
+                    p_id = p.get("Id", "")
+                    if "webhook" in p_name or p_id == "a2b0c239-0d12-4e08-9844-3d9698d5c414":
+                        webhook_plugin = p
+                        break
+
+                if not webhook_plugin:
+                    return {
+                        "success": False,
+                        "server": "jellyfin",
+                        "error": "Jellyfin Webhook plugin is not installed. Please install it from Dashboard > Plugins > Catalog.",
+                    }
+
+                plugin_id = webhook_plugin.get("Id")
+                config_url = f"{self.base_url}/Plugins/{plugin_id}/Configuration"
+                cfg_resp = await client.get(config_url, headers=self._get_headers())
+                if cfg_resp.status_code != 200:
+                    return {
+                        "success": False,
+                        "server": "jellyfin",
+                        "error": f"Could not retrieve Jellyfin Webhook configuration: HTTP {cfg_resp.status_code}",
+                    }
+
+                cfg = cfg_resp.json()
+                webhooks = cfg.get("Webhooks", [])
+                for wh in webhooks:
+                    if wh.get("Url") == target_url:
+                        return {
+                            "success": True,
+                            "status": "already_registered",
+                            "server": "jellyfin",
+                            "url": target_url,
+                            "message": "Webhook is already registered in Jellyfin Webhook plugin.",
+                        }
+
+                new_wh = {
+                    "Name": "Omniscrobble",
+                    "Url": target_url,
+                    "NotificationType": ["PlaybackStart", "PlaybackProgress", "PlaybackStop", "UserDataSaved"],
+                }
+                webhooks.append(new_wh)
+                cfg["Webhooks"] = webhooks
+
+                update_resp = await client.post(config_url, json=cfg, headers=self._get_headers())
+                if update_resp.status_code in (200, 204):
+                    logger.info("Successfully registered webhook on Jellyfin: %s", target_url)
+                    return {
+                        "success": True,
+                        "status": "registered",
+                        "server": "jellyfin",
+                        "url": target_url,
+                        "message": "Successfully registered webhook destination in Jellyfin Webhook plugin!",
+                    }
+                return {
+                    "success": False,
+                    "server": "jellyfin",
+                    "error": f"Failed to save Jellyfin Webhook config: HTTP {update_resp.status_code}",
+                }
+            except Exception as exc:
+                logger.error("Failed to register webhook on Jellyfin: %s", exc)
+                return {"success": False, "server": "jellyfin", "error": str(exc)}
+
+

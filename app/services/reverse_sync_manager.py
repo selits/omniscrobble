@@ -921,5 +921,28 @@ class ReverseSyncManager:
         except Exception as exc:
             logger.error("Error during startup reverse sync: %s", exc)
 
+    async def register_webhook(self, server: str, webhook_url: Optional[str] = None) -> dict[str, Any]:
+        """Automatically register the Omniscrobble webhook endpoint with the specified media server."""
+        target = (server or "plex").lower().strip()
+        client = self.get_server_client(target)
+        if not client.is_configured():
+            return {
+                "success": False,
+                "server": target,
+                "error": f"{target.capitalize()} server URL or token is not configured.",
+            }
+
+        target_url = (webhook_url or "").strip()
+        if not target_url:
+            path_map = {
+                "plex": "/webhook",
+                "jellyfin": "/webhook/jellyfin",
+                "emby": "/webhook/emby",
+            }
+            target_url = path_map.get(target, "/webhook")
+
+        return await client.register_webhook(target_url)
+
 
 reverse_sync_mgr = ReverseSyncManager()
+

@@ -147,11 +147,11 @@ For in-depth guides, variable references, and operational walk-throughs, explore
 
 | Guide | Description & Scope |
 | :--- | :--- |
-| [**Configuration Reference**](./CONFIGURATION.md) | Exhaustive documentation of all 45+ environment variables, server credentials, and secrets. |
+| [**Configuration Reference**](./CONFIGURATION.md) | Exhaustive documentation of all 55+ environment variables, server credentials, and secrets. |
 | [**Deployment Guide**](./DEPLOYMENT.md) | systemd user service setup, Docker Compose, Unraid/TrueNAS, lingering, and reverse proxies. |
 | [**Feature Guides**](./docs/FEATURES.md) | Deep dives for Co-Watching, Two-Way Reconciliation, Content Bridge, Queue, and Notifications. |
 | [**Architecture Blueprint**](./docs/ARCHITECTURE.md) | Complete component layers, data flows, and file-by-file directory manifest. |
-| [**REST API Specification**](./docs/API.md) | Documentation for all 94 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
+| [**REST API Specification**](./docs/API.md) | Documentation for all 99 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
 | [**Troubleshooting & FAQ**](./docs/TROUBLESHOOTING.md) | Solutions for common errors (422, 409, 80%), health diagnostics, and networking setup. |
 
 ---
@@ -163,15 +163,15 @@ Omniscrobble is built on an asynchronous FastAPI foundation with decoupled clien
 ```text
 omniscrobble/
 ├── app/
-│   ├── clients/             # API integrations (Trakt, Simkl, AniList, MAL, Plex, JF, Emby, *Arr)
-│   ├── services/            # Core engines (co-watch, reconciliation, multi-tracker, queue, alerts)
+│   ├── clients/             # API integrations (Trakt, Simkl, AniList, MAL, Plex, JF, Emby, *Arr, Overseerr)
+│   ├── services/            # Core engines (co-watch, reconciliation, multi-tracker, queue, alerts, digest)
 │   ├── templates/           # Real-time HTML5/JS responsive web dashboard & auth views
 │   ├── config.py            # Centralized settings & environment variables
 │   ├── main.py              # FastAPI app, route handlers & webhook ingestion
 │   └── metrics.py           # Thread-safe Prometheus metrics registry
 ├── docs/                    # Static demo (GitHub Pages), Architecture, API, Features & FAQ
 ├── scripts/                 # Demo compilation & branding asset generators
-└── tests/                   # Pytest test suite (213 unit & integration tests)
+└── tests/                   # Pytest test suite (228 unit & integration tests)
 ```
 
 > 🏛️ For the complete architectural diagram, component layers, and detailed directory manifest, see [**`docs/ARCHITECTURE.md`**](./docs/ARCHITECTURE.md).
@@ -180,13 +180,13 @@ omniscrobble/
 
 ## 🗺️ Roadmap & Horizons
 
-- [x] **Universal Media Server Ingestion**: Multi-server webhooks for Plex, Jellyfin, and Emby.
+- [x] **Universal Media Server Ingestion & Auto-Registration**: Multi-server webhooks and 1-click webhook auto-registration for Plex, Jellyfin, and Emby.
 - [x] **Multi-Tracker Synchronization**: Simultaneous dispatch across Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, BetaSeries, and Serializd.
 - [x] **Bi-Directional Library Reconciliation**: Discrepancy diffing and played/rating sync across Plex, Jellyfin, Emby, Trakt, and Simkl.
 - [x] **Watch Together / Co-Watch**: Dynamic multi-user partner scrobbling with show and device whitelists.
-- [x] **Content Bridge**: Automated Trakt Watchlist sync to Sonarr and Radarr.
+- [x] **Content Bridge & Request Engine**: Automated Trakt Watchlist sync to Overseerr/Jellyseerr requests or direct Sonarr/Radarr grabs.
 - [x] **Offline Queue & Resilience**: SQLite persistence with exponential backoff and transient failure retries.
-- [x] **Dashboard Notification Configuration**: Live configuration of Discord, Telegram, Ntfy, and Pushover channels with per-channel test dispatch — no restarts required.
+- [x] **Homelab Notifications & Weekly Digests**: Live configuration of Discord (with Action Row Link Buttons), Telegram, Ntfy, Pushover, Gotify, Matrix, and scheduled weekly activity digests.
 - [x] **Dynamic Rules & Filters Engine**: Granular episode vs. movie thresholds, minimum duration filters, library section ignore lists, and path regex pattern matching.
 - [x] **Automated Background Cloud Reconciliation & Co-Watch Multi-Tracker Hub**: Periodic Letterboxd RFC-4180 CSV snapshots, two-way server diffs, Simkl cross-sync, and partner cloud tracker profiles (Simkl, AniList, MAL).
 - [ ] **Direct P2P Sync**: Mesh synchronization between distributed Omniscrobble instances.

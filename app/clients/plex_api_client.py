@@ -324,3 +324,83 @@ class PlexApiClient:
             logger.error("Failed to search Plex for item %s: %s", search_title, exc)
         return None
 
+    async def get_webhooks(self) -> list[str]:
+        """Fetch currently registered webhook URLs from plex.tv account API."""
+        if not self.token:
+            return []
+
+        url = "https://plex.tv/api/v2/user/webhooks"
+        headers = {
+            "Accept": "application/json",
+            "X-Plex-Token": self.token,
+            "X-Plex-Client-Identifier": "omniscrobble",
+            "X-Plex-Product": "Omniscrobble",
+        }
+        client = self.get_client()
+        try:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    return [w if isinstance(w, str) else w.get("url", "") for w in data]
+            return []
+        except Exception as exc:
+            logger.warning("Failed to fetch Plex webhooks: %s", exc)
+            return []
+
+    async def register_webhook(self, webhook_url: str) -> dict[str, Any]:
+        """Auto-register an Omniscrobble webhook destination in Plex via plex.tv."""
+        if not self.token:
+            return {"success": False, "server": "plex", "error": "Plex token is required for webhook registration."}
+
+        target_url = (webhook_url or "").strip()
+        if not target_url:
+            return {"success": False, "server": "plex", "error": "Webhook URL cannot be empty."}
+
+        client = self.get_client()
+        headers = {
+            "Accept": "application/json",
+            "X-Plex-Token": self.token,
+            "X-Plex-Client-Identifier": "omniscrobble",
+            "X-Plex-Product": "Omniscrobble",
+        }
+
+        # Check existing webhooks to avoid duplicates
+        existing = await self.get_webhooks()
+        if target_url in existing:
+            return {
+                "success": True,
+                "status": "already_registered",
+                "server": "plex",
+                "url": target_url,
+                "message": "Webhook is already registered on Plex account.",
+            }
+
+        url = "https://plex.tv/api/v2/user/webhooks"
+        try:
+            resp = await client.post(url, headers=headers, params={"url": target_url}, json={"url": target_url})
+            if resp.status_code in (200, 201):
+                logger.info("Successfully registered webhook on Plex: %s", target_url)
+                return {
+                    "success": True,
+                    "status": "registered",
+                    "server": "plex",
+                    "url": target_url,
+                    "message": "Successfully registered webhook destination on Plex!",
+                }
+            elif resp.status_code == 403:
+                return {
+                    "success": False,
+                    "server": "plex",
+                    "error": "Plex Pass is required by Plex to configure webhook destinations.",
+                }
+            return {
+                "success": False,
+                "server": "plex",
+                "error": f"Plex returned HTTP {resp.status_code}: {resp.text[:150]}",
+            }
+        except Exception as exc:
+            logger.error("Failed to register webhook on Plex: %s", exc)
+            return {"success": False, "server": "plex", "error": str(exc)}
+
+

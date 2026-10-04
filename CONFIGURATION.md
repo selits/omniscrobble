@@ -320,6 +320,28 @@ RADARR_QUALITY_PROFILE_ID=
 RADARR_ROOT_FOLDER=
 ```
 
+### Overseerr / Jellyseerr Request Bridge
+
+Route newly bookmarked Trakt Watchlist items to **Overseerr** or **Jellyseerr** as formal media requests rather than sending directly to Sonarr/Radarr. This honors user quotas, quality profiles, and approval workflows:
+
+1. Sign in to your Overseerr or Jellyseerr web interface.
+2. Navigate to **Settings** &rarr; **General** &rarr; **API Key**.
+3. Configure the following variables in `.env` or the **Settings Hub (*Arr)**:
+
+```ini
+# Base URL to Overseerr / Jellyseerr
+OVERSEERR_URL=http://<your-server-ip-or-domain>:5055
+
+# API Key found in Settings -> General
+OVERSEERR_API_KEY=your_overseerr_api_key_here
+
+# Enable routing Trakt Watchlist acquisitions to Overseerr
+OVERSEERR_ENABLED=true
+```
+
+> [!TIP]
+> When `OVERSEERR_ENABLED=true`, watchlist items are routed to Overseerr/Jellyseerr. If a show or movie already exists or Overseerr is disabled, Omniscrobble automatically falls back to direct Sonarr/Radarr dispatch.
+
 ---
 
 ## 4. Tracker Developer Applications & OAuth Setup
@@ -628,9 +650,48 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
    PUSHOVER_PRIORITY=0
    ```
 
+### Gotify Push Alerts
+
+1. Log in to your self-hosted [Gotify](https://gotify.net) web UI.
+2. Navigate to **Apps** &rarr; **Create Application**, name it `Omniscrobble`, and copy the generated **App Token**.
+3. In `.env`:
+
+   ```ini
+   GOTIFY_URL=http://<your-server-ip-or-domain>:8080
+   GOTIFY_TOKEN=your_gotify_app_token_here
+   GOTIFY_PRIORITY=5
+   ```
+
+### Matrix Room Alerts
+
+1. Create or select a dedicated alerts room in your Matrix client (Element, Cinny, etc.).
+2. Obtain a Bot Access Token and the Internal Room ID (e.g., `!roomid:matrix.org`).
+3. In `.env`:
+
+   ```ini
+   MATRIX_HOMESERVER_URL=https://matrix.org
+   MATRIX_ACCESS_TOKEN=your_matrix_bot_access_token_here
+   MATRIX_ROOM_ID=!roomid:matrix.org
+   ```
+
+### Scheduled Weekly Activity Digest
+
+Omniscrobble can compile and dispatch an automated summary report across all enabled notification channels highlighting weekly watch hours, completed movies and episodes, ratings, co-watched sessions, active media servers, and playback clients:
+
+```ini
+# Enable scheduled weekly activity digest engine
+WEEKLY_DIGEST_ENABLED=true
+
+# Day of week to dispatch digest (sunday, monday, etc.)
+WEEKLY_DIGEST_DAY=sunday
+
+# Hour of day (0-23 in local server time, default: 20 for 8:00 PM)
+WEEKLY_DIGEST_HOUR=20
+```
+
 > [!TIP]
 > **Dashboard Configuration & Channel Testing**:
-> All notification channels and event toggles can also be configured dynamically in the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab on your desktop or mobile browser without modifying `.env` or restarting the server. Each channel includes a 1-click **Test** button to verify webhook and bot token delivery immediately.
+> All notification channels, event toggles, and digest settings can also be configured dynamically in the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab on your desktop or mobile browser without modifying `.env` or restarting the server. Each channel includes a 1-click **Test** button to verify delivery immediately, and the **⚡ Send Digest Now** button tests the digest generator instantly.
 
 ---
 
@@ -681,6 +742,9 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`SONARR_API_KEY`** | `""` | String | **Yes** | Sonarr 32-character API key. |
 | **`RADARR_URL`** | `""` | String | **Yes** | Base URL to Radarr instance (e.g., `http://192.168.1.50:7878`). |
 | **`RADARR_API_KEY`** | `""` | String | **Yes** | Radarr 32-character API key. |
+| **`OVERSEERR_URL`** | `""` | String | **Yes** | Base URL to Overseerr or Jellyseerr instance (e.g., `http://192.168.1.50:5055`). |
+| **`OVERSEERR_API_KEY`** | `""` | String | **Yes** | Overseerr / Jellyseerr API key found in Settings &rarr; General. |
+| **`OVERSEERR_ENABLED`** | `false` | Boolean | **Yes** | Routes Trakt Watchlist bookmarks to Overseerr/Jellyseerr media requests. |
 | **`AUTO_ADD_FROM_WATCHLIST`** | `false` | Boolean | **Yes** | Automatically grab movies/shows added to your Trakt watchlist. |
 | **`SEARCH_ON_ADD`** | `true` | Boolean | **Yes** | Trigger immediate download searches in Sonarr/Radarr when importing. |
 | **`ARR_WATCHLIST_INTERVAL`** | `0` | Integer | **Yes** | Watchlist sync polling frequency in seconds (`0` = manual, `1800` = 30m). |
@@ -721,6 +785,15 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`NTFY_URL`** | `""` | String | **Yes** | Ntfy server URL and topic name. |
 | **`PUSHOVER_USER_KEY`** | `""` | String | **Yes** | Pushover User Key. |
 | **`PUSHOVER_API_TOKEN`** | `""` | String | **Yes** | Pushover Application API Token. |
+| **`GOTIFY_URL`** | `""` | String | **Yes** | Gotify push server base URL (e.g., `http://192.168.1.50:8080`). |
+| **`GOTIFY_TOKEN`** | `""` | String | **Yes** | Gotify application token for push notifications. |
+| **`GOTIFY_PRIORITY`** | `5` | Integer | **Yes** | Gotify notification delivery priority (0–10). |
+| **`MATRIX_HOMESERVER_URL`** | `""` | String | **Yes** | Matrix homeserver base URL (e.g., `https://matrix.org`). |
+| **`MATRIX_ACCESS_TOKEN`** | `""` | String | **Yes** | Matrix bot account access token (Bearer). |
+| **`MATRIX_ROOM_ID`** | `""` | String | **Yes** | Matrix target internal Room ID (e.g., `!roomid:matrix.org`). |
+| **`WEEKLY_DIGEST_ENABLED`** | `false` | Boolean | **Yes** | Enables scheduled background weekly activity digest dispatches. |
+| **`WEEKLY_DIGEST_DAY`** | `sunday` | String | **Yes** | Day of week to dispatch the activity digest (`sunday`, `monday`, etc.). |
+| **`WEEKLY_DIGEST_HOUR`** | `20` | Integer | **Yes** | Hour of day (0–23 in local server time) to dispatch the activity digest. |
 | **`NOTIFY_ON_SCROBBLE`** | `true` | Boolean | **Yes** | Dispatches alerts on completed scrobbles. |
 | **`NOTIFY_ON_RATE`** | `true` | Boolean | **Yes** | Dispatches alerts when items are rated. |
 | **`NOTIFY_ON_COLLECTION`** | `true` | Boolean | **Yes** | Dispatches alerts on library collection adds. |

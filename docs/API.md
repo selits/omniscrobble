@@ -153,6 +153,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/sync/test-connection`** | `POST` | Admin | **Test Media Server**: Validates connectivity and credentials for Plex, Jellyfin, or Emby. |
 | **`/api/sync/background/status`** | `GET` | Public | **Background Cloud Sync Telemetry**: Returns automated background cloud sync status from `data/sync_state.json` (last run status, items reconciled, next scheduled run, task breakdowns). Supports `?demo=true`. |
 | **`/api/sync/background/run`** | `POST` | Admin | **Trigger Cloud Sync Now**: Manually executes a full background synchronization and Letterboxd CSV export cycle. Mutex-protected (returns `HTTP 409 Conflict` if a sync is running). Supports `?demo=true`. |
+| **`/api/sync/register-webhook`** | `POST` | Admin | **Auto-Register Media Server Webhook**: Automatically registers Omniscrobble's webhook endpoint in Plex (`plex.tv`), Jellyfin (Webhook plugin), or Emby (`/Webhooks`). Supports `?demo=true`. |
 
 ---
 
@@ -160,10 +161,10 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/arr/status`** | `GET` | Public | **Content Bridge Status**: Connection health, latency, and library totals for Sonarr and Radarr. |
-| **`/api/arr/sync`** | `POST` | Admin | **Sync Watchlist Now**: Scans Trakt watchlist and sends missing media to Sonarr/Radarr. |
-| **`/api/arr/test-connection`** | `POST` | Admin | **Test *Arr Connection**: Tests connectivity to Sonarr or Radarr URL and API key. |
-| **`/api/ecosystem`** | `GET` | Public | **Ecosystem Status**: Aggregated health status (9/9 services) across servers, trackers, and downloaders. |
+| **`/api/arr/status`** | `GET` | Public | **Content Bridge Status**: Connection health, latency, and library totals for Sonarr, Radarr, and Overseerr/Jellyseerr. |
+| **`/api/arr/sync`** | `POST` | Admin | **Sync Watchlist Now**: Scans Trakt watchlist and sends missing media to Overseerr/Sonarr/Radarr. |
+| **`/api/arr/test-connection`** | `POST` | Admin | **Test *Arr / Overseerr Connection**: Tests connectivity to Sonarr, Radarr, or Overseerr/Jellyseerr URL and API key. |
+| **`/api/ecosystem`** | `GET` | Public | **Ecosystem Status**: Aggregated health status (10/10 services) across servers, trackers, and downloaders/request managers. |
 
 ---
 
@@ -219,7 +220,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/settings/rules`** | `POST` | Admin | **Update Scrobble Rules**: Updates scrobble thresholds, minimum playback duration, ignored libraries, and regex patterns with automatic clamping and validation. |
 | **`/api/settings/toggle`** | `POST` | Admin | **Toggle Service**: Enables/disables media server listeners or pauses/resumes trackers. |
 | **`/api/settings/save-all`** | `POST` | Admin | **Save Settings Hub**: Atomically saves all Settings Hub tabs (servers, trackers, rules, notifications) to `data/settings.json` without server restarts. |
-| **`/api/notifications/test`** | `POST` | Admin | **Test Notification Channel**: Dispatches a test message to a specified channel (`discord`, `telegram`, `ntfy`, `pushover`). Body: `{"channel": "discord"}`. Returns `{"ok": true}` on success. |
+| **`/api/notifications/test`** | `POST` | Admin | **Test Notification Channel**: Dispatches a test message to a specified channel (`discord`, `telegram`, `ntfy`, `pushover`, `gotify`, `matrix`). Body: `{"channel": "discord"}`. Returns `{"ok": true}` on success. |
+| **`/api/notifications/digest`** | `POST` | Admin | **Dispatch Weekly Activity Digest**: Manually triggers immediate dispatch of the weekly activity digest across all active channels. Supports `?demo=true` simulation. |
 
 ---
 

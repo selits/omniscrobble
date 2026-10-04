@@ -1003,6 +1003,9 @@ class DashboardRenderer:
         sonarr_conn = arr_status.get("sonarr_connected", False)
         radarr_cfg = arr_status.get("radarr_configured", False)
         radarr_conn = arr_status.get("radarr_connected", False)
+        overseerr_cfg = arr_status.get("overseerr_configured", False)
+        overseerr_conn = arr_status.get("overseerr_connected", False)
+        overseerr_app = arr_status.get("overseerr_app_name", "Overseerr")
 
         if arr_cfg:
             auto_int = arr_status.get("interval_minutes", 0)
@@ -1010,6 +1013,13 @@ class DashboardRenderer:
 
             sonarr_desc = "Online" if sonarr_conn else "Unreachable"
             radarr_desc = "Online" if radarr_conn else "Unreachable"
+            overseerr_desc = "Online" if overseerr_conn else "Unreachable"
+
+            overseerr_pill = (
+                f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#a855f7;">✨ {overseerr_app}</span><span style="color:#10b981;font-weight:600;">{overseerr_desc}</span></span>'
+                if overseerr_cfg
+                else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">✨ Overseerr: Off</span>'
+            )
 
             sonarr_pill = (
                 f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#38bdf8;">📺 Sonarr</span><span style="color:#10b981;font-weight:600;">{sonarr_desc}</span></span>'
@@ -1040,10 +1050,11 @@ class DashboardRenderer:
                     </div>
                 </div>
                 <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-                    Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Radarr and Sonarr with automatic search and notification dispatch.
+                    Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Overseerr, Radarr, and Sonarr with automatic search and notification dispatch.
                 </p>
                 <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
                     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                        {overseerr_pill}
                         {sonarr_pill}
                         {radarr_pill}
                         <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>{'Enabled' if arr_status.get('search_on_add') else 'Disabled'}</strong> &bull; Alerts: <strong>{'On' if Config.ARR_NOTIFY_ON_ADD else 'Off'}</strong></span>

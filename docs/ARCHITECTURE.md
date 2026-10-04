@@ -91,8 +91,9 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 - **`app/clients/betaseries_client.py`**: BetaSeries / TV Time REST API client for TV episode scrobbles, movie logs, and user ratings.
 - **`app/clients/serializd_client.py`**: Serializd client for episode logging and TV diary management.
 - **`app/clients/mdblist_client.py`**: MDBList client for aggregated scores and rating synchronization.
-- **`app/clients/plex_api_client.py`**, **`jellyfin_api_client.py`**, **`emby_api_client.py`**: Direct REST clients for media servers supporting library section discovery, watch status toggling, and rating management.
+- **`app/clients/plex_api_client.py`**, **`jellyfin_api_client.py`**, **`emby_api_client.py`**: Direct REST clients for media servers supporting library section discovery, watch status toggling, rating management, and 1-click webhook auto-registration.
 - **`app/clients/sonarr_client.py`**, **`radarr_client.py`**: Direct REST clients for *Arr acquisition automation, library duplicate checks, and live show autocomplete.
+- **`app/clients/overseerr_client.py`**: Direct REST API client for Overseerr and Jellyseerr supporting quota checks, media request routing, discovery, and approval workflows.
 
 ### 5. Offline Queue & Persistence Layer
 
@@ -105,12 +106,13 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ### 6. Background Workers & Automation Engines
 
 - **`app/services/cloud_sync_manager.py`**: Orchestrates automated background cloud synchronization, periodic two-way media server diffs, Simkl cross-sync, Letterboxd RFC-4180 CSV watch diary snapshots (`data/exports/letterboxd_diary.csv`), and shared concurrency mutex locking (`asyncio.Lock`) preventing collisions with manual reconciliation.
-- **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation and real-time mirroring engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation. When `MULTI_SERVER_MIRRORING` is active, instantly mirrors scrobbles and ratings across active media servers (Plex ⇄ Jellyfin / Emby) with cross-server item lookup (`find_item`) and echo suppression (`loop_prevention.ignore(key, ttl=180.0)`).
+- **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation and real-time mirroring engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation. When `MULTI_SERVER_MIRRORING` is active, instantly mirrors scrobbles and ratings across active media servers (Plex ⇄ Jellyfin / Emby) with cross-server item lookup (`find_item`) and echo suppression (`loop_prevention.ignore(key, ttl=180.0)`). Also handles 1-click webhook registration across Plex, Jellyfin, and Emby.
 - **`app/services/cross_tracker_sync.py`**: Cross-tracker reconciliation engine for Trakt and Simkl.
-- **`app/services/arr_bridge.py`**: Content Bridge background worker. Polls Trakt Watchlists and automatically triggers searches in Radarr and Sonarr for newly bookmarked media.
+- **`app/services/arr_bridge.py`**: Content Bridge manager. Polls Trakt Watchlists and intelligently routes acquisitions to Overseerr/Jellyseerr requests (honoring user quotas and approval flows) or directly to Radarr and Sonarr.
+- **`app/services/digest_manager.py`**: Scheduled weekly activity digest engine. Computes 7-day watch metrics (watch hours, scrobbles, ratings, co-watch sessions, active servers, top clients) and generates rich multi-channel reports.
 - **`app/services/token_health_monitor.py`**: Proactive OAuth lifespan evaluator and self-healing resilience worker. Periodically monitors expiration windows for Trakt, Simkl, MyAnimeList, and partner accounts, proactively attempting automatic renewal within 24 hours of expiration and dispatching rich push notifications with re-authorization links when manual action is needed.
 - **Scrobble Keep-Alive Heartbeat Worker**: Periodic background worker loop in FastAPI lifespan periodically evaluating active playing sessions in `PlaybackManager` (> 10 minutes) and dispatching keep-alive `scrobble_start` to Trakt and Simkl to prevent live "Watching Now" indicator timeout during long movies.
-- **`app/services/notifier.py`**: Multi-channel alert dispatcher (Discord, Telegram, Ntfy, Pushover) with an in-memory 30-minute deduplication cooldown.
+- **`app/services/notifier.py`**: Multi-channel alert dispatcher (Discord with Action Row Link Buttons, Telegram, Ntfy, Pushover, Gotify, Matrix) with an in-memory 30-minute deduplication cooldown.
 
 ### 7. Observability & UI Layer
 
@@ -142,7 +144,8 @@ omniscrobble/
 │   │   ├── jellyfin_api_client.py   # Direct Jellyfin Media Server REST API client
 │   │   ├── emby_api_client.py       # Direct Emby Media Server REST API client
 │   │   ├── sonarr_client.py         # Sonarr REST API client for TV series & download imports
-│   │   └── radarr_client.py         # Radarr REST API client for movies, quality profiles & root folders
+│   │   ├── radarr_client.py         # Radarr REST API client for movies, quality profiles & root folders
+│   │   └── overseerr_client.py      # Overseerr / Jellyseerr REST API client for media request management
 │   ├── services/                    # Core business logic and background services
 │   │   ├── anime_resolver.py        # Anime detection heuristics, title normalization & GUID caching
 │   │   ├── arr_bridge.py            # Content Bridge manager for Trakt watchlist sync & ecosystem health
@@ -153,10 +156,11 @@ omniscrobble/
 │   │   ├── crypto_manager.py        # At-rest AES-256-GCM symmetric encryption & PBKDF2 key derivation
 │   │   ├── dashboard_renderer.py    # Decoupled SSR dashboard HTML component & card renderer
 │   │   ├── demo_manager.py          # Air-gapped mock playback, stats, and activity generator
+│   │   ├── digest_manager.py        # Scheduled weekly activity digest engine & multi-channel report generator
 │   │   ├── log_manager.py           # Systemd journalctl reader, in-memory ring buffer & secret redaction
 │   │   ├── loop_prevention.py       # Thread-safe TTL cache for echo loop suppression
 │   │   ├── multi_tracker.py         # Multi-tracker coordinator for dual-dispatch scrobbling and rating sync
-│   │   ├── notifier.py              # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover)
+│   │   ├── notifier.py              # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover, Gotify, Matrix)
 │   │   ├── playback_manager.py      # Active streaming sessions & dashboard cards
 │   │   ├── queue_manager.py         # Persistent SQLite offline retry queue with WAL mode & background worker
 │   │   ├── reverse_sync_manager.py  # Bi-directional library reconciliation & reverse sync engine
@@ -178,7 +182,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (94 endpoints)
+│   ├── API.md                       # Full REST API specification (99 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
@@ -186,7 +190,7 @@ omniscrobble/
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
-├── tests/                           # Comprehensive test suite (219 tests, 0 external calls)
+├── tests/                           # Comprehensive test suite (228 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool

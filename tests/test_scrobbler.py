@@ -5059,11 +5059,11 @@ async def test_arr_bridge_ecosystem_and_status():
 
     # Demo ecosystem
     demo_eco = await arr_bridge.get_ecosystem_status(demo=True)
-    assert demo_eco["healthy_count"] == 5
-    assert demo_eco["total_count"] == 5
+    assert demo_eco["healthy_count"] == 6
+    assert demo_eco["total_count"] == 6
     server_ids = [s["id"] for s in demo_eco["servers"]]
-    # Reordered: Media Servers (Plex, Jellyfin, Emby) -> Acquisition Engines (Sonarr, Radarr)
-    assert server_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+    # Reordered: Media Servers (Plex, Jellyfin, Emby) -> Requests (Overseerr) -> Acquisition Engines (Sonarr, Radarr)
+    assert server_ids == ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
 
     # Live ecosystem
     live_eco = await arr_bridge.get_ecosystem_status(demo=False)
@@ -5089,7 +5089,7 @@ async def test_ecosystem_reordering_and_disabled_sorting():
     # 1. Verify demo mode canonical order
     demo_res = await arr_bridge.get_ecosystem_status(demo=True)
     demo_ids = [s["id"] for s in demo_res["servers"]]
-    assert demo_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+    assert demo_ids == ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
 
     # 2. Verify live mode ordering with toggled settings
     orig_jellyfin = settings_mgr.is_server_enabled("jellyfin")
@@ -5119,8 +5119,8 @@ async def test_ecosystem_reordering_and_disabled_sorting():
         full_ids = [s["id"] for s in servers]
         assert full_ids == active_ids + disabled_ids
 
-        # Within disabled items, ordering should remain Servers -> Arr
-        service_order = ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+        # Within disabled items, ordering should remain Servers -> Requests -> Arr
+        service_order = ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
         disabled_indices = [service_order.index(sid) for sid in disabled_ids if sid in service_order]
         assert disabled_indices == sorted(disabled_indices)
     finally:
@@ -5147,9 +5147,9 @@ def test_arr_api_endpoints_and_auth():
 
     res_eco_demo = client.get("/api/ecosystem?demo=true")
     assert res_eco_demo.status_code == 200
-    assert res_eco_demo.json()["healthy_count"] == 5
+    assert res_eco_demo.json()["healthy_count"] == 6
     demo_api_ids = [s["id"] for s in res_eco_demo.json()["servers"]]
-    assert demo_api_ids == ["plex", "jellyfin", "emby", "sonarr", "radarr"]
+    assert demo_api_ids == ["plex", "jellyfin", "emby", "overseerr", "sonarr", "radarr"]
 
     # 3. /api/arr/sync
     # Demo execution allowed without auth
@@ -10085,5 +10085,510 @@ def test_standalone_scrobble_rest_bridge():
             assert res_ep.json()["action"] == "mark_watched"
             mock_stop.assert_awaited_once()
             mock_hist.assert_awaited_once()
+
+
+# =====================================================================
+# Phase 5: Homelab Automation & Ecosystem Bridges Tests
+# =====================================================================
+
+@pytest.mark.asyncio
+async def test_overseerr_client_full():
+    """Verify OverseerrClient methods: check_connection, get_request_counts, search, has_media, request_media."""
+    from app.clients.overseerr_client import OverseerrClient
+
+    client = OverseerrClient(base_url="http://mock-overseerr:5055", api_key="valid_api_key")
+    assert client.is_configured is True
+
+    # 1. check_connection success
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(200, json={"version": "1.33.2"})
+        res = await client.check_connection()
+        assert res["status"] == "connected"
+        assert res["version"] == "1.33.2"
+
+        # check_connection 401
+        mock_get.return_value = httpx.Response(401, json={"message": "Unauthorized"})
+        res_unauth = await client.check_connection()
+        assert res_unauth["status"] == "error"
+
+        # check_connection exception
+        mock_get.side_effect = httpx.ConnectError("Connection refused")
+        res_err = await client.check_connection()
+        assert res_err["status"] == "error"
+        assert "Connection refused" in res_err["message"]
+
+    # 2. get_request_counts
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(200, json={
+            "total": 15, "movie": 7, "tv": 8, "pending": 3, "approved": 10, "available": 2
+        })
+        counts = await client.get_request_counts()
+        assert counts["total"] == 15
+        assert counts["pending"] == 3
+        assert counts["available"] == 2
+
+    # 3. search
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = httpx.Response(200, json={
+            "page": 1, "totalPages": 1, "totalResults": 1,
+            "results": [{"id": 693134, "mediaType": "movie", "title": "Dune: Part Two"}]
+        })
+        results = await client.search("Dune")
+        assert len(results) == 1
+        assert results[0]["id"] == 693134
+
+    # 4. has_media
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+        # Status 5: available
+        mock_get.return_value = httpx.Response(200, json={"id": 693134, "mediaInfo": {"status": 5}})
+        exists = await client.has_media("movie", 693134)
+        assert exists is True
+
+        # Status 3: processing
+        mock_get.return_value = httpx.Response(200, json={"id": 693134, "mediaInfo": {"status": 3}})
+        exists = await client.has_media("movie", 693134)
+        assert exists is True
+
+        # Not requested
+        mock_get.return_value = httpx.Response(200, json={"id": 693134, "mediaInfo": None})
+        exists = await client.has_media("movie", 693134)
+        assert exists is False
+
+        # 404 not found
+        mock_get.return_value = httpx.Response(404, json={"message": "Not found"})
+        exists = await client.has_media("movie", 999999)
+        assert exists is False
+
+    # 5. request_media
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = httpx.Response(201, json={"id": 42, "status": 1})
+        # Movie request
+        req_res = await client.request_media("movie", 693134)
+        assert req_res.get("success") is True
+        assert req_res.get("request", {})["id"] == 42
+        mock_post.assert_awaited_with(
+            "http://mock-overseerr:5055/api/v1/request",
+            json={"mediaType": "movie", "mediaId": 693134, "is4k": False},
+            headers={"X-Api-Key": "valid_api_key", "Accept": "application/json", "Content-Type": "application/json"}
+        )
+
+        # TV request with specific seasons
+        req_res_tv = await client.request_media("tv", 97951, seasons=[1, 2])
+        assert req_res_tv.get("success") is True
+        mock_post.assert_awaited_with(
+            "http://mock-overseerr:5055/api/v1/request",
+            json={"mediaType": "tv", "mediaId": 97951, "is4k": False, "seasons": [1, 2]},
+            headers={"X-Api-Key": "valid_api_key", "Accept": "application/json", "Content-Type": "application/json"}
+        )
+
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_arr_bridge_watchlist_sync_with_overseerr():
+    """Verify that when Overseerr is enabled in ArrBridgeManager, Watchlist items route to Overseerr."""
+    from app.services.arr_bridge import ArrBridgeManager
+    from app.clients.sonarr_client import SonarrClient
+    from app.clients.radarr_client import RadarrClient
+    from app.clients.overseerr_client import OverseerrClient
+    from app.services.settings_manager import settings_mgr
+
+    sonarr_c = SonarrClient(base_url="http://mock-sonarr:8989", api_key="sonarr_key")
+    radarr_c = RadarrClient(base_url="http://mock-radarr:7878", api_key="radarr_key")
+    overseerr_c = OverseerrClient(base_url="http://mock-overseerr:5055", api_key="overseerr_key")
+
+    class MockTraktClient:
+        def is_authenticated(self):
+            return True
+
+        async def get_watchlist(self, media_type: str = "movies"):
+            if media_type == "movies":
+                return [
+                    {
+                        "type": "movie",
+                        "movie": {
+                            "title": "Dune: Part Two",
+                            "year": 2024,
+                            "ids": {"tmdb": 693134, "imdb": "tt15239678"},
+                        },
+                    }
+                ]
+            else:
+                return [
+                    {
+                        "type": "show",
+                        "show": {
+                            "title": "Severance",
+                            "year": 2022,
+                            "ids": {"tmdb": 97951, "tvdb": 371980},
+                        },
+                    }
+                ]
+
+    bridge = ArrBridgeManager(
+        sonarr_client=sonarr_c,
+        radarr_client=radarr_c,
+        overseerr_client=overseerr_c,
+        trakt_client=MockTraktClient(),
+    )
+
+    # Enable Overseerr via settings_mgr
+    with patch.object(settings_mgr, "is_overseerr_enabled", return_value=True), \
+         patch.object(bridge.overseerr, "has_media", new_callable=AsyncMock) as mock_has, \
+         patch.object(bridge.overseerr, "request_media", new_callable=AsyncMock) as mock_req, \
+         patch.object(bridge.radarr, "has_movie", new_callable=AsyncMock) as mock_radarr_has, \
+         patch.object(bridge.sonarr, "has_series", new_callable=AsyncMock) as mock_sonarr_has:
+
+        mock_has.return_value = False
+        mock_req.return_value = {"success": True, "request": {"id": 101}}
+
+        stats = await bridge.sync_watchlist(demo=False)
+
+        assert stats["added"]["movies"] == 1
+        assert stats["added"]["shows"] == 1
+        assert len(stats["items"]) == 2
+        assert stats["items"][0]["app"] == "Overseerr"
+        assert stats["items"][1]["app"] == "Overseerr"
+
+        # Overseerr was invoked
+        assert mock_req.await_count == 2
+        # Direct Radarr and Sonarr were NOT invoked because Overseerr handled both
+        mock_radarr_has.assert_not_awaited()
+        mock_sonarr_has.assert_not_awaited()
+    await sonarr_c.close()
+    await radarr_c.close()
+    await overseerr_c.close()
+
+
+def test_arr_test_connection_endpoint_overseerr():
+    """Verify POST /api/arr/test-connection supports 'overseerr'."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "test_admin_secret"):
+        client.cookies.set("admin_token", "test_admin_secret")
+
+        # Demo mode
+        res_demo = client.post(
+            "/api/arr/test-connection?demo=true",
+            json={"app": "overseerr", "url": "http://mock-overseerr:5055", "api_key": "any_key"}
+        )
+        assert res_demo.status_code == 200
+        assert res_demo.json()["status"] == "connected"
+        assert res_demo.json()["app"] == "overseerr"
+        assert res_demo.json()["version"] == "1.33.2"
+
+        # Live mode with mock
+        with patch("app.clients.overseerr_client.OverseerrClient.check_connection", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = {"status": "connected", "version": "1.33.2", "app_name": "Overseerr"}
+            res_live = client.post(
+                "/api/arr/test-connection",
+                json={"app": "overseerr", "url": "http://127.0.0.1:5055", "api_key": "valid_key"}
+            )
+            assert res_live.status_code == 200
+            assert res_live.json()["status"] == "connected"
+            assert res_live.json()["version"] == "1.33.2"
+
+
+@pytest.mark.asyncio
+async def test_media_server_webhook_auto_registration():
+    """Verify 1-click webhook registration for Plex, Jellyfin, and Emby."""
+    from app.clients.plex_api_client import PlexApiClient
+    from app.clients.jellyfin_api_client import JellyfinApiClient
+    from app.clients.emby_api_client import EmbyApiClient
+    from app.services.reverse_sync_manager import ReverseSyncManager
+
+    # 1. Plex webhook registration
+    plex = PlexApiClient(base_url="http://mock-plex:32400", token="valid_plex_token")
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_plex_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_plex_post:
+        mock_plex_get.return_value = httpx.Response(200, json=[])
+        mock_plex_post.return_value = httpx.Response(201, json={"status": "created"})
+        res_plex = await plex.register_webhook("http://omniscrobble:8000/webhook/plex")
+        assert res_plex["success"] is True
+        assert "Successfully registered" in res_plex["message"]
+        mock_plex_post.assert_awaited_once()
+        call_args, call_kwargs = mock_plex_post.await_args
+        assert call_args[0] == "https://plex.tv/api/v2/user/webhooks"
+        assert call_kwargs["json"] == {"url": "http://omniscrobble:8000/webhook/plex"}
+        assert call_kwargs["headers"]["X-Plex-Token"] == "valid_plex_token"
+    await plex.close()
+
+    # 2. Jellyfin webhook registration (Plugin config update)
+    jf = JellyfinApiClient(base_url="http://mock-jellyfin:8096", token="jf_token", user_id="jf_user")
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_jf_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_jf_post:
+        # Mock Plugins list
+        mock_jf_get.side_effect = [
+            httpx.Response(200, json=[{"Name": "Webhook", "Id": "plugin-webhook-guid-123"}]),
+            httpx.Response(200, json={"Webhooks": []}),
+        ]
+        mock_jf_post.return_value = httpx.Response(204)
+
+        res_jf = await jf.register_webhook("http://omniscrobble:8000/webhook/jellyfin")
+        assert res_jf["success"] is True
+        assert "Successfully registered" in res_jf["message"]
+        assert mock_jf_post.await_count == 1
+    await jf.close()
+
+    # 3. Emby webhook registration (/Webhooks endpoint)
+    emby = EmbyApiClient(base_url="http://mock-emby:8096", token="emby_token", user_id="emby_user")
+    with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_emby_get, \
+         patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_emby_post:
+        mock_emby_get.return_value = httpx.Response(200, json=[])
+        mock_emby_post.return_value = httpx.Response(200, json={"Id": "dest-123"})
+        res_emby = await emby.register_webhook("http://omniscrobble:8000/webhook/emby")
+        assert res_emby["success"] is True
+        assert "Successfully registered" in res_emby["message"]
+        mock_emby_post.assert_awaited_once()
+    await emby.close()
+
+    # 4. ReverseSyncManager delegation
+    mgr = ReverseSyncManager()
+    with patch.object(mgr.plex, "is_configured", return_value=True), \
+         patch.object(mgr.plex, "register_webhook", new_callable=AsyncMock) as mock_reg:
+        mock_reg.return_value = {"success": True, "message": "Plex success"}
+        res = await mgr.register_webhook("plex", "http://test-webhook")
+        assert res.get("success") is True
+        assert res.get("message") == "Plex success"
+
+
+def test_api_sync_register_webhook_endpoint():
+    """Verify POST /api/sync/register-webhook endpoint security, demo, and execution."""
+    client = TestClient(app)
+
+    # 1. Unauthenticated -> 401
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
+        res_unauth = client.post("/api/sync/register-webhook", json={"server": "plex"})
+        assert res_unauth.status_code == 401
+
+        # 2. Demo mode -> 200 simulation
+        res_demo = client.post("/api/sync/register-webhook?demo=true", json={"server": "jellyfin"})
+        assert res_demo.status_code == 200
+        assert res_demo.json()["status"] == "success"
+        assert "Demo Mode" in res_demo.json()["message"]
+
+        # 3. Admin authorized live call
+        client.cookies.set("admin_token", "super_secret")
+        with patch("app.services.reverse_sync_manager.reverse_sync_mgr.register_webhook", new_callable=AsyncMock) as mock_reg:
+            mock_reg.return_value = {"success": True, "message": "Webhook configured in Emby"}
+            res_live = client.post("/api/sync/register-webhook", json={"server": "emby"})
+            assert res_live.status_code == 200
+            assert res_live.json()["success"] is True
+            assert res_live.json()["message"] == "Webhook configured in Emby"
+
+
+@pytest.mark.asyncio
+async def test_notification_channels_gotify_and_matrix():
+    """Verify Discord action buttons, Gotify dispatch, and Matrix dispatch."""
+    from app.services.notifier import notifier
+    from app.plex_parser import ParsedMedia
+
+    media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Spirited Away",
+        year=2001,
+        ids={"imdb": "tt0245429", "tmdb": 129},
+        playback_progress=100.0,
+    )
+
+    # 1. Discord payload includes action buttons
+    discord_payload = notifier.build_discord_payload(media, action="scrobble")
+    assert "components" in discord_payload
+    components = discord_payload["components"]
+    assert len(components) == 1
+    assert components[0]["type"] == 1  # Action Row
+    buttons = components[0]["components"]
+    assert len(buttons) == 3
+    labels = [b["label"] for b in buttons]
+    assert any("Trakt" in l for l in labels)
+    assert any("Letterboxd" in l for l in labels)
+    assert any("IMDb" in l for l in labels)
+
+    # 2. Gotify payload and send_gotify
+    gotify_payload = notifier.build_gotify_payload(media, action="scrobble")
+    assert "Spirited Away (2001)" in gotify_payload["title"]
+    assert "Scrobbled" in gotify_payload["message"]
+    assert gotify_payload["priority"] == 5
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = httpx.Response(200, json={"id": 1})
+        ok = await notifier.send_gotify(gotify_payload, "http://mock-gotify:8080", "app_token", priority=6)
+        assert ok is True
+        mock_post.assert_awaited_with(
+            "http://mock-gotify:8080/message",
+            json={**gotify_payload, "priority": 6},
+            headers={"X-Gotify-Key": "app_token"}
+        )
+
+    # 3. Matrix payload and send_matrix
+    matrix_payload = notifier.build_matrix_payload(media, action="scrobble")
+    assert matrix_payload["msgtype"] == "m.text"
+    assert matrix_payload["format"] == "org.matrix.custom.html"
+    assert "Spirited Away" in matrix_payload["formatted_body"]
+
+    with patch("httpx.AsyncClient.put", new_callable=AsyncMock) as mock_put:
+        mock_put.return_value = httpx.Response(200, json={"event_id": "$mock_event_123"})
+        ok = await notifier.send_matrix(matrix_payload, "https://matrix.org", "access_tok", "!room:matrix.org")
+        assert ok is True
+        assert mock_put.await_count == 1
+        put_url = mock_put.call_args[0][0]
+        assert "https://matrix.org/_matrix/client/v3/rooms/" in put_url
+        assert "/send/m.room.message/" in put_url
+
+    # 4. Status includes Gotify and Matrix
+    status = notifier.get_status()
+    assert "gotify" in status
+    assert "matrix" in status
+    assert "weekly_digest_enabled" in status
+
+
+def test_api_notification_test_endpoint_gotify_and_matrix():
+    """Verify POST /api/notifications/test with Gotify and Matrix channels."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
+        client.cookies.set("admin_token", "super_secret")
+
+        # Demo Gotify
+        res_demo_gotify = client.post("/api/notifications/test?demo=true", json={"channel": "gotify"})
+        assert res_demo_gotify.status_code == 200
+        assert res_demo_gotify.json()["success"] is True
+
+        # Demo Matrix
+        res_demo_matrix = client.post("/api/notifications/test?demo=true", json={"channel": "matrix"})
+        assert res_demo_matrix.status_code == 200
+        assert res_demo_matrix.json()["success"] is True
+
+        # Live Gotify mock
+        with patch("app.services.notifier.notifier.send_test_notification", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = (True, "Test alert sent to Gotify")
+            res_live = client.post(
+                "/api/notifications/test",
+                json={"channel": "gotify", "gotify_url": "http://127.0.0.1:8080", "gotify_token": "tok"}
+            )
+            assert res_live.status_code == 200
+            assert res_live.json()["success"] is True
+            assert res_live.json()["message"] == "Test alert sent to Gotify"
+
+
+@pytest.mark.asyncio
+async def test_weekly_activity_digest_full(tmp_path):
+    """Verify DigestManager statistics, formatting, and dispatch."""
+    import datetime
+    from app.services.digest_manager import DigestManager
+
+    # 1. Demo statistics
+    mock_events_file = tmp_path / "events.json"
+    digest = DigestManager(events_file=mock_events_file)
+    demo_stats = digest.generate_digest_stats(days=7, demo=True)
+    assert demo_stats["window_days"] == 7
+    assert demo_stats["total_scrobbles"] == 18
+    assert demo_stats["watch_time_formatted"] == "16h 20m"
+    assert "Severance" in demo_stats["cowatch_shows"]
+
+    # 2. Live statistics from mock events.json
+    now = datetime.datetime.now()
+    two_days_ago = (now - datetime.timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    ten_days_ago = (now - datetime.timedelta(days=10)).strftime("%Y-%m-%d %H:%M:%S")
+
+    sample_events = [
+        # In-window movie
+        {
+            "timestamp": two_days_ago,
+            "action": "scrobble",
+            "type": "movie",
+            "title": "Dune: Part Two (2024)",
+            "server": "Plex",
+            "device": "Apple TV 4K",
+            "duration_minutes": 166,
+            "cowatch_status": "Co-watched with @alice",
+        },
+        # In-window episode
+        {
+            "timestamp": two_days_ago,
+            "action": "scrobble",
+            "type": "episode",
+            "title": "Severance S02E01",
+            "show_title": "Severance",
+            "server": "Jellyfin",
+            "device": "Shield TV",
+            "duration_minutes": 55,
+            "cowatch_status": "Co-watched with @alice",
+        },
+        # In-window rating
+        {
+            "timestamp": two_days_ago,
+            "action": "rate",
+            "type": "movie",
+            "title": "Dune: Part Two (2024)",
+            "server": "Plex",
+        },
+        # Out-of-window event (should not be counted in 7-day stats)
+        {
+            "timestamp": ten_days_ago,
+            "action": "scrobble",
+            "type": "movie",
+            "title": "Old Movie",
+            "duration_minutes": 120,
+        },
+    ]
+    with open(mock_events_file, "w", encoding="utf-8") as f:
+        json.dump(sample_events, f)
+
+    live_stats = digest.generate_digest_stats(days=7, demo=False)
+    assert live_stats["total_scrobbles"] == 2
+    assert live_stats["movies_watched"] == 1
+    assert live_stats["episodes_watched"] == 1
+    assert live_stats["total_ratings"] == 1
+    assert live_stats["watch_time_minutes"] == 160
+    assert live_stats["watch_time_formatted"] == "2h 40m"
+    assert live_stats["cowatch_sessions"] == 2
+    assert live_stats["top_servers"] == {"Plex": 2, "Jellyfin": 1}
+    assert live_stats["top_devices"] == {"Apple TV 4K": 1, "Shield TV": 1}
+
+    # 3. Formatting
+    discord_payload = digest.format_discord_digest(live_stats)
+    assert "embeds" in discord_payload
+    discord_embed = discord_payload["embeds"][0]
+    assert "Weekly Activity Digest" in discord_embed["title"]
+    assert any("Watch Time" in f["name"] for f in discord_embed["fields"])
+
+    html_text = digest.format_html_digest(live_stats)
+    assert "Omniscrobble Weekly Activity Digest" in html_text
+    assert "2h 40m" in html_text
+
+    md_text = digest.format_markdown_digest(live_stats)
+    assert "Omniscrobble Weekly Digest" in md_text
+    assert "Watch Time:" in md_text
+
+    # 4. send_digest demo
+    res_demo = await digest.send_digest(demo=True)
+    assert res_demo["status"] == "success"
+    assert res_demo["success"] is True
+    assert "Weekly activity digest dispatched successfully" in res_demo["message"]
+
+
+def test_api_weekly_digest_endpoint():
+    """Verify POST /api/notifications/digest endpoint security and demo handling."""
+    client = TestClient(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
+        # 1. Unauthenticated -> 401
+        res_unauth = client.post("/api/notifications/digest")
+        assert res_unauth.status_code == 401
+
+        # 2. Demo mode -> 200
+        res_demo = client.post("/api/notifications/digest?demo=true")
+        assert res_demo.status_code == 200
+        assert res_demo.json()["status"] == "success"
+
+        # 3. Admin authorized live trigger
+        client.cookies.set("admin_token", "super_secret")
+        with patch("app.services.digest_manager.digest_mgr.send_digest", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = {"status": "success", "success": True, "message": "Digest sent"}
+            res_live = client.post("/api/notifications/digest")
+            assert res_live.status_code == 200
+            assert res_live.json()["success"] is True
+            assert res_live.json()["message"] == "Digest sent"
+
 
 

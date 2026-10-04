@@ -992,7 +992,10 @@
                                 </div>
                             </div>
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap;gap:6px;">
-                                <button type="button" onclick="testSettingsServerConnection('plex')" id="settings-plex-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;font-weight:600;padding:6px 12px;">🔌 Test Connection</button>
+                                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                                    <button type="button" onclick="testSettingsServerConnection('plex')" id="settings-plex-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;font-weight:600;padding:6px 12px;">🔌 Test Connection</button>
+                                    <button type="button" onclick="registerServerWebhook('plex')" id="settings-plex-webhook-btn" class="btn-sm" style="background:#1e293b;border:1px solid #eab308;color:#facc15;font-weight:600;padding:6px 12px;">⚡ Auto-Register Webhook</button>
+                                </div>
                                 <span id="settings-plex-test-status" style="font-size:12px;color:#94a3b8;"></span>
                             </div>
                         </div>
@@ -1017,7 +1020,10 @@
                                 </div>
                             </div>
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap;gap:6px;">
-                                <button type="button" onclick="testSettingsServerConnection('jellyfin')" id="settings-jellyfin-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #a855f7;color:#c084fc;font-weight:600;padding:6px 12px;">🔌 Test Jellyfin</button>
+                                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                                    <button type="button" onclick="testSettingsServerConnection('jellyfin')" id="settings-jellyfin-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #a855f7;color:#c084fc;font-weight:600;padding:6px 12px;">🔌 Test Jellyfin</button>
+                                    <button type="button" onclick="registerServerWebhook('jellyfin')" id="settings-jellyfin-webhook-btn" class="btn-sm" style="background:#1e293b;border:1px solid #eab308;color:#facc15;font-weight:600;padding:6px 12px;">⚡ Auto-Register Webhook</button>
+                                </div>
                                 <span id="settings-jellyfin-test-status" style="font-size:12px;color:#94a3b8;"></span>
                             </div>
                         </div>
@@ -1042,7 +1048,10 @@
                                 </div>
                             </div>
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap;gap:6px;">
-                                <button type="button" onclick="testSettingsServerConnection('emby')" id="settings-emby-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #10b981;color:#6ee7b7;font-weight:600;padding:6px 12px;">🔌 Test Emby</button>
+                                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                                    <button type="button" onclick="testSettingsServerConnection('emby')" id="settings-emby-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #10b981;color:#6ee7b7;font-weight:600;padding:6px 12px;">🔌 Test Emby</button>
+                                    <button type="button" onclick="registerServerWebhook('emby')" id="settings-emby-webhook-btn" class="btn-sm" style="background:#1e293b;border:1px solid #eab308;color:#facc15;font-weight:600;padding:6px 12px;">⚡ Auto-Register Webhook</button>
+                                </div>
                                 <span id="settings-emby-test-status" style="font-size:12px;color:#94a3b8;"></span>
                             </div>
                         </div>
@@ -1349,9 +1358,27 @@
                     <!-- Arr Acquisition Bridge -->
                     <div id="settings-section-arr" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
                         <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
-                            <span>🎬</span> Content Bridge &amp; *Arr Acquisition (Sonarr &amp; Radarr)
+                            <span>🎬</span> Content Bridge &amp; *Arr Acquisition (Overseerr, Sonarr &amp; Radarr)
                         </div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:10px;margin-bottom:10px;">
+                            <!-- Overseerr / Jellyseerr -->
+                            <div style="background:#020617;border:1px solid #1e293b;border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <div style="font-size:12px;font-weight:600;color:#c084fc;">Overseerr / Jellyseerr (Requests)</div>
+                                    <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8;cursor:pointer;">
+                                        <input type="checkbox" id="settings-arr-overseerr-enabled" /> Enabled
+                                    </label>
+                                </div>
+                                <input type="text" id="settings-arr-overseerr-url" placeholder="http://<your-server-ip-or-domain>:5055" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                                <div style="display:flex;gap:4px;">
+                                    <input type="password" id="settings-arr-overseerr-key" placeholder="Overseerr API Key" style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-arr-overseerr-key','settings-overseerr-key-btn')" id="settings-overseerr-key-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:6px 8px;">👁️</button>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;gap:6px;flex-wrap:wrap;">
+                                    <button type="button" onclick="testSettingsArrConnection('overseerr')" id="settings-overseerr-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #c084fc;color:#c084fc;font-size:11px;padding:3px 8px;">🔌 Test Overseerr</button>
+                                    <span id="settings-overseerr-test-status" style="font-size:11px;color:#94a3b8;"></span>
+                                </div>
+                            </div>
                             <!-- Sonarr -->
                             <div style="background:#020617;border:1px solid #1e293b;border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;">
                                 <div style="font-size:12px;font-weight:600;color:#38bdf8;">Sonarr (TV Shows)</div>
@@ -1489,6 +1516,85 @@
                                 <span id="settings-notif-pushover-status" style="font-size:11px;color:#94a3b8;"></span>
                             </div>
                         </div>
+
+                        <!-- Gotify -->
+                        <div style="background:#020617;border:1px solid #1e293b;border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <div style="font-size:12px;font-weight:600;color:#0ea5e9;display:flex;align-items:center;gap:4px;">
+                                    <span>📬</span> Gotify
+                                </div>
+                                <span id="settings-notif-gotify-badge" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                <input type="text" id="settings-notif-gotify-url" placeholder="http://<your-server-ip-or-domain>:8080" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                                <div style="display:flex;gap:4px;">
+                                    <input type="password" id="settings-notif-gotify-token" placeholder="App Token" style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-notif-gotify-token','settings-notif-gotify-btn')" id="settings-notif-gotify-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:6px 8px;">👁️</button>
+                                </div>
+                            </div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;gap:6px;flex-wrap:wrap;">
+                                <button type="button" onclick="testNotificationChannel('gotify')" id="settings-notif-gotify-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #0ea5e9;color:#38bdf8;font-size:11px;padding:4px 10px;">🔔 Test Gotify</button>
+                                <span id="settings-notif-gotify-status" style="font-size:11px;color:#94a3b8;"></span>
+                            </div>
+                        </div>
+
+                        <!-- Matrix -->
+                        <div style="background:#020617;border:1px solid #1e293b;border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <div style="font-size:12px;font-weight:600;color:#10b981;display:flex;align-items:center;gap:4px;">
+                                    <span>[m]</span> Matrix
+                                </div>
+                                <span id="settings-notif-matrix-badge" style="font-size:11px;color:#94a3b8;">Not Configured</span>
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                                <input type="text" id="settings-notif-matrix-url" placeholder="https://matrix.org" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                                <input type="text" id="settings-notif-matrix-room" placeholder="!roomId:matrix.org" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                            </div>
+                            <div style="display:flex;gap:4px;">
+                                <input type="password" id="settings-notif-matrix-token" placeholder="Access Token" style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-notif-matrix-token','settings-notif-matrix-btn')" id="settings-notif-matrix-btn" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:6px 8px;">👁️</button>
+                            </div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px;gap:6px;flex-wrap:wrap;">
+                                <button type="button" onclick="testNotificationChannel('matrix')" id="settings-notif-matrix-test-btn" class="btn-sm" style="background:#1e293b;border:1px solid #10b981;color:#34d399;font-size:11px;padding:4px 10px;">🔔 Test Matrix</button>
+                                <span id="settings-notif-matrix-status" style="font-size:11px;color:#94a3b8;"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Scheduled Weekly Activity Digest -->
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                            <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                                <span>📊</span> Scheduled Weekly Activity Digest
+                            </div>
+                            <button type="button" onclick="triggerWeeklyDigestNow()" id="settings-digest-now-btn" class="btn-sm" style="background:#1e293b;border:1px solid #38bdf8;color:#38bdf8;font-size:11px;padding:4px 10px;">⚡ Send Digest Now</button>
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.4;">
+                            Automatically compiles and dispatches a comprehensive 7-day watch summary (hours watched, items scrobbled, top devices, co-watch sessions) to your configured notification channels.
+                        </p>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;align-items:center;">
+                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#cbd5e1;cursor:pointer;">
+                                <input type="checkbox" id="settings-digest-enabled" />
+                                <span><strong>Enable Weekly Digest</strong></span>
+                            </label>
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:2px;">Day of Week</label>
+                                <select id="settings-digest-day" style="width:100%;background:#020617;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;">
+                                    <option value="sunday">Sunday</option>
+                                    <option value="monday">Monday</option>
+                                    <option value="tuesday">Tuesday</option>
+                                    <option value="wednesday">Wednesday</option>
+                                    <option value="thursday">Thursday</option>
+                                    <option value="friday">Friday</option>
+                                    <option value="saturday">Saturday</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display:block;font-size:11px;color:#94a3b8;margin-bottom:2px;">Hour of Day (24h UTC)</label>
+                                <input type="number" id="settings-digest-hour" min="0" max="23" value="20" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #334155;border-radius:4px;padding:6px 8px;color:#f8fafc;font-size:11px;" />
+                            </div>
+                        </div>
+                        <div id="settings-digest-status" style="font-size:11px;margin-top:6px;color:#94a3b8;"></div>
                     </div>
                 </div>
 
@@ -3201,13 +3307,19 @@
                 const sonarrKeyInput = document.getElementById('settings-arr-sonarr-key');
                 const radarrUrlInput = document.getElementById('settings-arr-radarr-url');
                 const radarrKeyInput = document.getElementById('settings-arr-radarr-key');
+                const overseerrUrlInput = document.getElementById('settings-arr-overseerr-url');
+                const overseerrKeyInput = document.getElementById('settings-arr-overseerr-key');
+                const overseerrEnabledCheck = document.getElementById('settings-arr-overseerr-enabled');
                 const arrAutoAddCheck = document.getElementById('settings-arr-auto-add');
                 const arrSearchAddCheck = document.getElementById('settings-arr-search-add');
                 if (sonarrUrlInput) sonarrUrlInput.value = arr.sonarr_url || '';
                 if (sonarrKeyInput) sonarrKeyInput.value = arr.masked_sonarr_key || '';
                 if (radarrUrlInput) radarrUrlInput.value = arr.radarr_url || '';
                 if (radarrKeyInput) radarrKeyInput.value = arr.masked_radarr_key || '';
-                if (arrAutoAddCheck) arrAutoAddCheck.checked = Boolean(arr.auto_add_watchlist);
+                if (overseerrUrlInput) overseerrUrlInput.value = arr.overseerr_url || '';
+                if (overseerrKeyInput) overseerrKeyInput.value = arr.masked_overseerr_key || '';
+                if (overseerrEnabledCheck) overseerrEnabledCheck.checked = Boolean(arr.overseerr_enabled);
+                if (arrAutoAddCheck) arrAutoAddCheck.checked = Boolean(arr.auto_add_watchlist || arr.auto_add_from_watchlist);
                 if (arrSearchAddCheck) arrSearchAddCheck.checked = Boolean(arr.search_on_add);
 
                 // 5. Notifications
@@ -3262,6 +3374,37 @@
                     pushBadge.textContent = hasPush ? '✓ Configured' : 'Not Configured';
                     pushBadge.style.color = hasPush ? '#10b981' : '#94a3b8';
                 }
+
+                const gotifyUrl = document.getElementById('settings-notif-gotify-url');
+                const gotifyToken = document.getElementById('settings-notif-gotify-token');
+                const gotifyBadge = document.getElementById('settings-notif-gotify-badge');
+                if (gotifyUrl) gotifyUrl.value = notifs.gotify_url || '';
+                if (gotifyToken) gotifyToken.value = notifs.masked_gotify_token || notifs.gotify_token || '';
+                if (gotifyBadge) {
+                    const hasGotify = Boolean(notifs.gotify_url && (notifs.gotify_token || notifs.masked_gotify_token));
+                    gotifyBadge.textContent = hasGotify ? '✓ Configured' : 'Not Configured';
+                    gotifyBadge.style.color = hasGotify ? '#10b981' : '#94a3b8';
+                }
+
+                const matrixUrl = document.getElementById('settings-notif-matrix-url');
+                const matrixRoom = document.getElementById('settings-notif-matrix-room');
+                const matrixToken = document.getElementById('settings-notif-matrix-token');
+                const matrixBadge = document.getElementById('settings-notif-matrix-badge');
+                if (matrixUrl) matrixUrl.value = notifs.matrix_homeserver_url || '';
+                if (matrixRoom) matrixRoom.value = notifs.matrix_room_id || '';
+                if (matrixToken) matrixToken.value = notifs.masked_matrix_token || notifs.matrix_access_token || '';
+                if (matrixBadge) {
+                    const hasMatrix = Boolean(notifs.matrix_homeserver_url && notifs.matrix_room_id);
+                    matrixBadge.textContent = hasMatrix ? '✓ Configured' : 'Not Configured';
+                    matrixBadge.style.color = hasMatrix ? '#10b981' : '#94a3b8';
+                }
+
+                const digestEnabledCheck = document.getElementById('settings-digest-enabled');
+                const digestDaySelect = document.getElementById('settings-digest-day');
+                const digestHourInput = document.getElementById('settings-digest-hour');
+                if (digestEnabledCheck) digestEnabledCheck.checked = Boolean(notifs.weekly_digest_enabled);
+                if (digestDaySelect && notifs.weekly_digest_day) digestDaySelect.value = String(notifs.weekly_digest_day).toLowerCase();
+                if (digestHourInput && notifs.weekly_digest_hour !== undefined) digestHourInput.value = notifs.weekly_digest_hour;
 
                 // 5. Rules & Filters
                 const rules = data.rules || {};
@@ -3362,6 +3505,9 @@
                         sonarr_api_key: document.getElementById('settings-arr-sonarr-key')?.value.trim() || '',
                         radarr_url: document.getElementById('settings-arr-radarr-url')?.value.trim() || '',
                         radarr_api_key: document.getElementById('settings-arr-radarr-key')?.value.trim() || '',
+                        overseerr_url: document.getElementById('settings-arr-overseerr-url')?.value.trim() || '',
+                        overseerr_api_key: document.getElementById('settings-arr-overseerr-key')?.value.trim() || '',
+                        overseerr_enabled: Boolean(document.getElementById('settings-arr-overseerr-enabled')?.checked),
                         auto_add_watchlist: Boolean(document.getElementById('settings-arr-auto-add')?.checked),
                         search_on_add: Boolean(document.getElementById('settings-arr-search-add')?.checked)
                     },
@@ -3373,6 +3519,14 @@
                         ntfy_auth_token: document.getElementById('settings-notif-ntfy-auth')?.value.trim() || '',
                         pushover_user_key: document.getElementById('settings-notif-pushover-user')?.value.trim() || '',
                         pushover_api_token: document.getElementById('settings-notif-pushover-token')?.value.trim() || '',
+                        gotify_url: document.getElementById('settings-notif-gotify-url')?.value.trim() || '',
+                        gotify_token: document.getElementById('settings-notif-gotify-token')?.value.trim() || '',
+                        matrix_homeserver_url: document.getElementById('settings-notif-matrix-url')?.value.trim() || '',
+                        matrix_room_id: document.getElementById('settings-notif-matrix-room')?.value.trim() || '',
+                        matrix_access_token: document.getElementById('settings-notif-matrix-token')?.value.trim() || '',
+                        weekly_digest_enabled: Boolean(document.getElementById('settings-digest-enabled')?.checked),
+                        weekly_digest_day: document.getElementById('settings-digest-day')?.value || 'sunday',
+                        weekly_digest_hour: parseInt(document.getElementById('settings-digest-hour')?.value, 10) || 20,
                         notify_on_scrobble: Boolean(document.getElementById('settings-notif-scrobble-check')?.checked),
                         notify_on_rate: Boolean(document.getElementById('settings-notif-rate-check')?.checked),
                         notify_on_collection: Boolean(document.getElementById('settings-notif-collection-check')?.checked),
@@ -3490,6 +3644,52 @@
             }
         }
 
+        async function registerServerWebhook(server = 'plex') {
+            const srv = (server || activeSettingsServerSubTab || 'plex').toLowerCase();
+            const btn = document.getElementById(`settings-${srv}-webhook-btn`);
+            const statusEl = document.getElementById(`settings-${srv}-test-status`);
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = '⚡ Registering...';
+            }
+            if (statusEl) {
+                statusEl.innerText = `Connecting to ${srv.charAt(0).toUpperCase() + srv.slice(1)} API...`;
+                statusEl.style.color = '#38bdf8';
+            }
+
+            try {
+                const url = isDemo ? '/api/sync/register-webhook?demo=true' : '/api/sync/register-webhook';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ server: srv })
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    if (statusEl) {
+                        statusEl.innerText = `✓ ${data.message || 'Webhook auto-registered!'}`;
+                        statusEl.style.color = '#10b981';
+                    }
+                } else {
+                    if (statusEl) {
+                        statusEl.innerText = `✗ ${data.message || 'Auto-registration failed'}`;
+                        statusEl.style.color = '#ef4444';
+                    }
+                }
+            } catch (err) {
+                if (statusEl) {
+                    statusEl.innerText = `✗ Error: ${err.message}`;
+                    statusEl.style.color = '#ef4444';
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = '⚡ Auto-Register Webhook';
+                }
+            }
+        }
+
         async function testSettingsArrConnection(appType = 'sonarr') {
             const app = appType.toLowerCase();
             const testBtn = document.getElementById(`settings-${app}-test-btn`);
@@ -3566,6 +3766,13 @@
                 } else if (ch === 'pushover') {
                     body.pushover_user_key = document.getElementById('settings-notif-pushover-user')?.value.trim() || '';
                     body.pushover_api_token = document.getElementById('settings-notif-pushover-token')?.value.trim() || '';
+                } else if (ch === 'gotify') {
+                    body.gotify_url = document.getElementById('settings-notif-gotify-url')?.value.trim() || '';
+                    body.gotify_token = document.getElementById('settings-notif-gotify-token')?.value.trim() || '';
+                } else if (ch === 'matrix') {
+                    body.matrix_homeserver_url = document.getElementById('settings-notif-matrix-url')?.value.trim() || '';
+                    body.matrix_room_id = document.getElementById('settings-notif-matrix-room')?.value.trim() || '';
+                    body.matrix_access_token = document.getElementById('settings-notif-matrix-token')?.value.trim() || '';
                 }
 
                 const url = isDemo ? '/api/notifications/test?demo=true' : '/api/notifications/test';
@@ -3595,6 +3802,50 @@
                 if (btn) {
                     btn.disabled = false;
                     btn.innerText = `🔔 Test ${ch.charAt(0).toUpperCase() + ch.slice(1)}`;
+                }
+            }
+        }
+
+        async function triggerWeeklyDigestNow() {
+            const btn = document.getElementById('settings-digest-now-btn');
+            const statusEl = document.getElementById('settings-digest-status');
+
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = 'Dispatching...';
+            }
+            if (statusEl) {
+                statusEl.innerText = 'Compiling 7-day watch telemetry...';
+                statusEl.style.color = '#38bdf8';
+            }
+
+            try {
+                const url = isDemo ? '/api/notifications/digest?demo=true' : '/api/notifications/digest';
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    if (statusEl) {
+                        statusEl.innerText = `✓ ${data.message || 'Weekly digest dispatched successfully!'}`;
+                        statusEl.style.color = '#10b981';
+                    }
+                } else {
+                    if (statusEl) {
+                        statusEl.innerText = `✗ ${data.message || 'Failed to send weekly digest'}`;
+                        statusEl.style.color = '#ef4444';
+                    }
+                }
+            } catch (err) {
+                if (statusEl) {
+                    statusEl.innerText = `✗ Error: ${err.message}`;
+                    statusEl.style.color = '#ef4444';
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = '⚡ Send Digest Now';
                 }
             }
         }

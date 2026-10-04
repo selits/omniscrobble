@@ -86,6 +86,7 @@ Standard scrobbling is one-directional (Media Server $\to$ Trakt). Omniscrobble 
 - **Smart Echo Loop Prevention (`LoopPreventionManager`)**: An in-memory TTL cache drops outgoing webhooks triggered by server updates during reconciliation, preventing infinite scrobble ping-pong loops.
 - **Interactive Diff & Selective Sync UI**: Inspect all discrepancies on the dashboard, filter by discrepancy type, select specific titles, and trigger 1-click batch updates with real-time progress bars.
 - **Automated Background Cloud Reconciliation**: An asynchronous background worker (`CloudSyncManager`) periodically syncs two-way watch history, generates Letterboxd RFC-4180 CSV snapshots (`data/exports/letterboxd_diary.csv`), and enforces shared mutex lock protection against concurrency collisions (`HTTP 409 Conflict`).
+- **1-Click Webhook Auto-Registration**: Automatically registers Omniscrobble's webhook endpoint in Plex (via `plex.tv/api/v2/user/webhooks`), Jellyfin (via Webhook plugin configuration), and Emby (via `/Webhooks`) directly from the Settings Hub, eliminating manual copy-pasting.
 
 ### Two-Way Sync Configuration
 
@@ -125,6 +126,7 @@ flowchart LR
 - **Automated Watchlist Ingestion**: Scans your Trakt Watchlist for newly bookmarked movies and shows, checking for duplicates before queuing.
 - **Intelligent Quality & Root Routing**: Queries Sonarr/Radarr lookup APIs by TMDb/TVDb ID, automatically selecting valid root folders and quality profiles.
 - **Instant Indexer Search**: Adds media as monitored and immediately initiates indexer search requests when `SEARCH_ON_ADD=true`.
+- **Overseerr & Jellyseerr Request Bridge**: Intelligently routes Trakt Watchlist bookmarks to Overseerr/Jellyseerr requests (honoring user quotas, quality profiles, and approval workflows) as an alternative to direct Sonarr/Radarr ingestion, falling back automatically if disabled or media already exists.
 - **Download & Collection Webhooks**: Ingests Sonarr and Radarr `Download` notifications to instantly update your Trakt collection with exact media specs (resolution, audio codec, and channels).
 - **Ecosystem Health Monitor**: Monitor server latency, versions, and trigger 1-click manual watchlist syncs directly from the dashboard (`GET /api/ecosystem`).
 
@@ -213,10 +215,12 @@ Deliver real-time notifications with rich poster artwork, star ratings, and dire
 
 | Channel | Configuration Keys | Embed Support |
 | :--- | :--- | :---: |
-| **Discord** | `DISCORD_WEBHOOK_URL` | Rich Embeds with Posters |
+| **Discord** | `DISCORD_WEBHOOK_URL` | Rich Embeds with Posters & Action Row Link Buttons |
 | **Telegram** | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Markdown Messages |
 | **Ntfy** | `NTFY_URL`, `NTFY_AUTH_TOKEN` | Push Notifications |
 | **Pushover** | `PUSHOVER_USER_KEY`, `PUSHOVER_API_TOKEN` | Priority Push Alerts |
+| **Gotify** | `GOTIFY_URL`, `GOTIFY_TOKEN`, `GOTIFY_PRIORITY` | Self-Hosted Push Alerts |
+| **Matrix** | `MATRIX_HOMESERVER_URL`, `MATRIX_ACCESS_TOKEN`, `MATRIX_ROOM_ID` | Formatted Room Alerts |
 
 ### Event Notification Toggles
 
@@ -227,11 +231,23 @@ NOTIFY_ON_COLLECTION=true
 NOTIFY_ON_FAILURE=true
 ```
 
+### Scheduled Weekly Activity Digest
+
+Omniscrobble includes a built-in background scheduled digest engine (`DigestManager`) that automatically compiles 7-day watch activity metrics (total watch time, completed movies & episodes, ratings, co-watched sessions, active media servers, and playback clients) and dispatches formatted reports across all enabled notification channels.
+
+```ini
+# Weekly digest configuration
+WEEKLY_DIGEST_ENABLED=true
+WEEKLY_DIGEST_DAY=sunday
+WEEKLY_DIGEST_HOUR=20
+```
+
 ### Dashboard Runtime Configuration & Channel Testing
 
-All notification channels and event toggles can be configured and managed live from the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab in the dashboard without editing `.env` or restarting services.
+All notification channels, event toggles, and weekly digest settings can be configured and managed live from the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab in the dashboard without editing `.env` or restarting services.
 
-- **1-Click Test Buttons**: Verify delivery for Discord, Telegram, Ntfy, or Pushover with instant visual status feedback directly in the modal.
+- **1-Click Test Buttons**: Verify delivery for Discord, Telegram, Ntfy, Pushover, Gotify, or Matrix with instant visual status feedback directly in the modal.
+- **⚡ Send Digest Now**: Test and immediately trigger a full activity digest across active notification channels or in demo mode.
 - **Credential Privacy**: Webhook URLs, bot tokens, auth tokens, and user keys are shielded (`••••••••`) in UI inputs and API payloads.
 
 ### Alert Throttling & Cooldowns

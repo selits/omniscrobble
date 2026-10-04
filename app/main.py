@@ -31,6 +31,7 @@ from app.metrics import metrics_registry
 from app.services.atomic_writer import atomic_write_json
 from app.services.cowatch_manager import cowatch_mgr
 from app.services.notifier import notifier
+from app.services.digest_manager import digest_mgr
 from app.services.playback_manager import playback_mgr
 from app.plex_parser import ParsedMedia, parse_plex_webhook
 from app.jellyfin_parser import parse_jellyfin_webhook
@@ -45,6 +46,7 @@ from app.clients.kitsu_client import KitsuClient
 from app.clients.letterboxd_client import LetterboxdClient
 from app.clients.mal_client import MyAnimeListClient
 from app.clients.mdblist_client import MDBListClient
+from app.clients.overseerr_client import OverseerrClient
 from app.clients.radarr_client import RadarrClient
 from app.clients.serializd_client import SerializdClient
 from app.clients.simkl_client import SimklClient
@@ -228,6 +230,7 @@ def is_admin_request(request: Request) -> bool:
 queue_worker_task: Optional[asyncio.Task] = None
 reverse_sync_worker_task: Optional[asyncio.Task] = None
 scrobble_heartbeat_worker_task: Optional[asyncio.Task] = None
+weekly_digest_worker_task: Optional[asyncio.Task] = None
 
 
 async def queue_worker_loop():
@@ -441,15 +444,55 @@ async def scrobble_heartbeat_worker_loop():
             logger.error(f"Error in scrobble heartbeat loop: {e}")
 
 
+async def weekly_digest_worker_loop() -> None:
+    """Background task that dispatches a weekly viewing activity digest on the configured day & hour."""
+    day_mapping = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6,
+    }
+    last_sent_day = -1
+    while True:
+        try:
+            await asyncio.sleep(60)  # Check every 60 seconds
+            if not settings_mgr.is_weekly_digest_enabled():
+                continue
+
+            cfg_notif = settings_mgr.get_notifications(mask=False)
+            target_day_name = str(cfg_notif.get("weekly_digest_day", Config.WEEKLY_DIGEST_DAY) or "sunday").lower().strip()
+            target_day = day_mapping.get(target_day_name, 6)
+            target_hour = int(cfg_notif.get("weekly_digest_hour", Config.WEEKLY_DIGEST_HOUR) or 20)
+
+            now = datetime.datetime.now()
+            today_day = now.weekday()
+            current_hour = now.hour
+
+            if today_day == target_day and current_hour == target_hour and last_sent_day != today_day:
+                logger.info(f"Weekly Digest: Triggering scheduled digest for {target_day_name.capitalize()} at {target_hour}:00...")
+                await digest_mgr.send_digest()
+                last_sent_day = today_day
+            elif today_day != target_day:
+                last_sent_day = -1
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in weekly digest worker loop: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global queue_worker_task, reverse_sync_worker_task, arr_watchlist_worker_task
     global partner_refresh_worker_task, background_cloud_sync_task, token_monitor_task
-    global scrobble_heartbeat_worker_task
+    global scrobble_heartbeat_worker_task, weekly_digest_worker_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
     reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
     scrobble_heartbeat_worker_task = asyncio.create_task(scrobble_heartbeat_worker_loop())
-    if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
+    weekly_digest_worker_task = asyncio.create_task(weekly_digest_worker_loop())
+    if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured or arr_bridge.overseerr.is_configured):
         arr_watchlist_worker_task = asyncio.create_task(arr_watchlist_worker_loop())
     partner_refresh_worker_task = asyncio.create_task(partner_token_refresh_loop())
     token_monitor_task = asyncio.create_task(token_monitor_worker_loop())
@@ -467,7 +510,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"Startup Diagnostics: Trakt token healthy (~{token_info.get('days_remaining')} days remaining).")
 
-    active_notifiers = [k for k, v in notifier.get_status().items() if v and k in ("discord", "telegram", "ntfy", "pushover")]
+    active_notifiers = [k for k, v in notifier.get_status().items() if v and k in ("discord", "telegram", "ntfy", "pushover", "gotify", "matrix")]
     logger.info(f"Startup Diagnostics: Active notification channels: {active_notifiers or 'None'}")
     if Config.ALLOWED_LIBRARIES:
         logger.info(f"Startup Diagnostics: Library whitelist active: {Config.ALLOWED_LIBRARIES}")
@@ -561,9 +604,16 @@ async def lifespan(app: FastAPI):
             await scrobble_heartbeat_worker_task
         except asyncio.CancelledError:
             pass
+    if weekly_digest_worker_task:
+        weekly_digest_worker_task.cancel()
+        try:
+            await weekly_digest_worker_task
+        except asyncio.CancelledError:
+            pass
     await reverse_sync_mgr.plex.close()
     await arr_bridge.sonarr.close()
     await arr_bridge.radarr.close()
+    await arr_bridge.overseerr.close()
     await simkl.close()
     await anilist.close()
     await mal.close()
@@ -2018,6 +2068,12 @@ class NotificationTestRequest(BaseModel):
     ntfy_auth_token: Optional[str] = None
     pushover_user_key: Optional[str] = None
     pushover_api_token: Optional[str] = None
+    gotify_url: Optional[str] = None
+    gotify_token: Optional[str] = None
+    gotify_priority: Optional[int] = None
+    matrix_homeserver_url: Optional[str] = None
+    matrix_access_token: Optional[str] = None
+    matrix_room_id: Optional[str] = None
 
     model_config = {"extra": "ignore"}
 
@@ -2080,6 +2136,8 @@ def update_settings_endpoint(payload: SettingsUpdateRequest, request: Request):
             sonarr_api_key=arr_cfg.get("sonarr_api_key"),
             radarr_url=arr_cfg.get("radarr_url"),
             radarr_api_key=arr_cfg.get("radarr_api_key"),
+            overseerr_url=arr_cfg.get("overseerr_url"),
+            overseerr_api_key=arr_cfg.get("overseerr_api_key"),
         )
 
     return {"status": "success", "settings": updated}
@@ -2106,10 +2164,27 @@ async def test_notification_endpoint(payload: NotificationTestRequest, request: 
         ntfy_auth_token=payload.ntfy_auth_token,
         pushover_user_key=payload.pushover_user_key,
         pushover_api_token=payload.pushover_api_token,
+        gotify_url=payload.gotify_url,
+        gotify_token=payload.gotify_token,
+        gotify_priority=payload.gotify_priority,
+        matrix_homeserver_url=payload.matrix_homeserver_url,
+        matrix_access_token=payload.matrix_access_token,
+        matrix_room_id=payload.matrix_room_id,
     )
     if not success:
         return JSONResponse(status_code=400, content={"status": "error", "success": False, "message": msg})
     return {"status": "success", "success": True, "message": msg}
+
+
+@app.post("/api/notifications/digest")
+async def trigger_weekly_digest_endpoint(request: Request):
+    """Trigger an immediate dispatch of the weekly activity digest."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return await digest_mgr.send_digest(demo=True)
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return await digest_mgr.send_digest()
 
 
 @app.post("/api/settings/save-all")
@@ -2897,6 +2972,37 @@ async def trigger_background_sync(request: Request):
     return result
 
 
+class RegisterWebhookRequest(BaseModel):
+    server: str = "plex"
+    webhook_url: Optional[str] = None
+
+    model_config = {"extra": "ignore"}
+
+
+@app.post("/api/sync/register-webhook")
+async def register_server_webhook(payload: RegisterWebhookRequest, request: Request):
+    """Automatically register Omniscrobble webhook URL with the target media server (Plex, Jellyfin, Emby)."""
+    is_demo = request.query_params.get("demo") == "true"
+    srv = (payload.server or "plex").lower().strip()
+    if is_demo:
+        demo_url = payload.webhook_url or f"https://omniscrobble.demo.internal/webhook{'/' + srv if srv != 'plex' else ''}"
+        return {
+            "status": "success",
+            "success": True,
+            "server": srv,
+            "url": demo_url,
+            "message": f"Demo Mode: Successfully registered webhook on {srv.capitalize()}!",
+        }
+
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    res = await reverse_sync_mgr.register_webhook(server=srv, webhook_url=payload.webhook_url)
+    if not res.get("success", False):
+        raise HTTPException(status_code=400, detail=res.get("error", "Failed to register webhook"))
+    return res
+
+
 class ArrTestConnectionRequest(BaseModel):
     app: Optional[str] = "sonarr"
     url: Optional[str] = None
@@ -2907,11 +3013,12 @@ class ArrTestConnectionRequest(BaseModel):
 
 @app.post("/api/arr/test-connection")
 async def test_arr_connection(payload: ArrTestConnectionRequest, request: Request):
-    """Test connectivity to Sonarr or Radarr with provided or active credentials."""
+    """Test connectivity to Sonarr, Radarr, or Overseerr/Jellyseerr with provided or active credentials."""
     is_demo = request.query_params.get("demo") == "true"
     app_type = (payload.app or "sonarr").lower().strip()
     if is_demo:
-        return {"status": "connected", "app": app_type, "version": "4.0.9" if app_type == "sonarr" else "5.9.1"}
+        ver = "4.0.9" if app_type == "sonarr" else ("5.9.1" if app_type == "radarr" else "1.33.2")
+        return {"status": "connected", "app": app_type, "version": ver}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
 
@@ -2936,6 +3043,18 @@ async def test_arr_connection(payload: ArrTestConnectionRequest, request: Reques
         if not target_key or settings_mgr._is_masked(target_key):
             target_key = arr_cfg.get("radarr_api_key", "")
         temp_client = RadarrClient(base_url=target_url, api_key=target_key)
+        try:
+            return await temp_client.check_connection()
+        finally:
+            await temp_client.close()
+    elif app_type in ("overseerr", "jellyseerr"):
+        target_url = (payload.url or "").strip() or arr_cfg.get("overseerr_url", "")
+        if target_url and not target_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
+        target_key = (payload.api_key or "").strip()
+        if not target_key or settings_mgr._is_masked(target_key):
+            target_key = arr_cfg.get("overseerr_api_key", "")
+        temp_client = OverseerrClient(base_url=target_url, api_key=target_key)
         try:
             return await temp_client.check_connection()
         finally:

@@ -88,7 +88,7 @@ class Config:
             return cls.EPISODE_SCROBBLE_THRESHOLD
         return cls.SCROBBLE_THRESHOLD
 
-    # Outgoing Notifications (Discord, Telegram, Ntfy, Pushover)
+    # Outgoing Notifications (Discord, Telegram, Ntfy, Pushover, Gotify, Matrix)
     DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -98,6 +98,15 @@ class Config:
     PUSHOVER_USER_KEY: str = os.getenv("PUSHOVER_USER_KEY", "").strip()
     PUSHOVER_API_TOKEN: str = os.getenv("PUSHOVER_API_TOKEN", "").strip()
     PUSHOVER_PRIORITY: int = int(os.getenv("PUSHOVER_PRIORITY", "0"))
+    GOTIFY_URL: str = os.getenv("GOTIFY_URL", "").strip().rstrip("/")
+    GOTIFY_TOKEN: str = os.getenv("GOTIFY_TOKEN", "").strip()
+    GOTIFY_PRIORITY: int = int(os.getenv("GOTIFY_PRIORITY", "5"))
+    MATRIX_HOMESERVER_URL: str = os.getenv("MATRIX_HOMESERVER_URL", "").strip().rstrip("/")
+    MATRIX_ACCESS_TOKEN: str = os.getenv("MATRIX_ACCESS_TOKEN", "").strip()
+    MATRIX_ROOM_ID: str = os.getenv("MATRIX_ROOM_ID", "").strip()
+    WEEKLY_DIGEST_ENABLED: bool = os.getenv("WEEKLY_DIGEST_ENABLED", "false").lower() in ("true", "1", "yes")
+    WEEKLY_DIGEST_DAY: str = os.getenv("WEEKLY_DIGEST_DAY", "sunday").strip().lower()
+    WEEKLY_DIGEST_HOUR: int = int(os.getenv("WEEKLY_DIGEST_HOUR", "20"))
     NOTIFY_ON_SCROBBLE: bool = os.getenv("NOTIFY_ON_SCROBBLE", "true").lower() in ("true", "1", "yes")
     NOTIFY_ON_RATE: bool = os.getenv("NOTIFY_ON_RATE", "true").lower() in ("true", "1", "yes")
     NOTIFY_ON_COLLECTION: bool = os.getenv("NOTIFY_ON_COLLECTION", "true").lower() in ("true", "1", "yes")
@@ -158,6 +167,11 @@ class Config:
     RADARR_QUALITY_PROFILE_ID: Optional[int] = int(os.getenv("RADARR_QUALITY_PROFILE_ID", "").strip()) if os.getenv("RADARR_QUALITY_PROFILE_ID", "").strip() else None
     RADARR_ROOT_FOLDER: Optional[str] = os.getenv("RADARR_ROOT_FOLDER", "").strip() or None
     ARR_NOTIFY_ON_ADD: bool = os.getenv("ARR_NOTIFY_ON_ADD", "true").lower() in ("true", "1", "yes")
+
+    # Overseerr & Jellyseerr Request Bridge
+    OVERSEERR_URL: str = os.getenv("OVERSEERR_URL", os.getenv("JELLYSEERR_URL", "")).strip().rstrip("/")
+    OVERSEERR_API_KEY: str = os.getenv("OVERSEERR_API_KEY", os.getenv("JELLYSEERR_API_KEY", "")).strip()
+    OVERSEERR_ENABLED: bool = os.getenv("OVERSEERR_ENABLED", os.getenv("JELLYSEERR_ENABLED", "false")).lower() in ("true", "1", "yes")
 
     # Two-Way Synchronization & Reverse Sync (Trakt -> Media Server)
     PLEX_URL: str = os.getenv("PLEX_URL", "").strip().rstrip("/")
