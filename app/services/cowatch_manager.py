@@ -7,11 +7,16 @@ from typing import Any, Optional
 try:
     from app.config import Config
     from app.plex_parser import ParsedMedia
+    from app.services.atomic_writer import atomic_write_json
 except ImportError:
     from config import Config
     from plex_parser import ParsedMedia
+    from atomic_writer import atomic_write_json
 
 logger = logging.getLogger("cowatch_manager")
+
+_YEAR_PARENS_RE = re.compile(r"\s*[\(\[]\d{4}[\)\]]")
+_PUNCTUATION_RE = re.compile(r"[^\w\s]")
 
 
 class CowatchManager:
@@ -56,9 +61,7 @@ class CowatchManager:
     def _save_shows(self) -> None:
         """Persist current shows to disk."""
         try:
-            self.data_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.data_file, "w", encoding="utf-8") as f:
-                json.dump(self._shows, f, indent=2)
+            atomic_write_json(self.data_file, self._shows)
         except Exception as e:
             logger.error(f"Error saving co-watch shows to {self.data_file}: {e}")
 
@@ -109,9 +112,7 @@ class CowatchManager:
     def _save_devices(self) -> None:
         """Persist current devices to disk."""
         try:
-            self.devices_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.devices_file, "w", encoding="utf-8") as f:
-                json.dump(self._devices, f, indent=2)
+            atomic_write_json(self.devices_file, self._devices)
         except Exception as e:
             logger.error(f"Error saving co-watch devices to {self.devices_file}: {e}")
 
@@ -154,8 +155,8 @@ class CowatchManager:
 
     def _normalize(self, text: str) -> str:
         """Strip remake years e.g. '(2024)', special punctuation, and lowercase."""
-        cleaned = re.sub(r"\s*[\(\[]\d{4}[\)\]]", "", text)
-        cleaned = re.sub(r"[^\w\s]", "", cleaned)
+        cleaned = _YEAR_PARENS_RE.sub("", text)
+        cleaned = _PUNCTUATION_RE.sub("", cleaned)
         return cleaned.strip().lower()
 
     def is_cowatch_show(self, show_title: Optional[str]) -> bool:

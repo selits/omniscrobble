@@ -20,9 +20,11 @@ from typing import Any, Optional
 
 try:
     from app.config import Config
+    from app.services.atomic_writer import atomic_write_json, atomic_write_text
     from app.services.settings_manager import settings_mgr
 except ImportError:
     from config import Config
+    from atomic_writer import atomic_write_json, atomic_write_text
     from settings_manager import settings_mgr
 
 logger = logging.getLogger("omniscrobble.cloud_sync")
@@ -72,8 +74,7 @@ class CloudSyncManager:
     def _save_state(self) -> None:
         """Persist sync telemetry to disk."""
         try:
-            with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump(self._last_state, f, indent=2, ensure_ascii=False)
+            atomic_write_json(self.state_file, self._last_state)
         except Exception as e:
             logger.error(f"Failed to save sync state file {self.state_file}: {e}")
 
@@ -115,8 +116,7 @@ class CloudSyncManager:
                     from app.main import letterboxd_client as lb_client
                 csv_data = lb_client.generate_csv()
                 export_file = self.exports_dir / "letterboxd_diary.csv"
-                with open(export_file, "w", encoding="utf-8") as f:
-                    f.write(csv_data)
+                atomic_write_text(export_file, csv_data)
                 task_results["letterboxd_export"] = {
                     "status": "success",
                     "file": str(export_file.name),

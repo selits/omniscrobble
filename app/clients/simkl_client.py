@@ -15,6 +15,7 @@ import httpx
 
 from app.config import Config
 from app.plex_parser import ParsedMedia
+from app.services.atomic_writer import atomic_write_json
 
 logger = logging.getLogger("omniscrobble.simkl")
 
@@ -95,7 +96,6 @@ class SimklClient:
     def save_tokens(self, token_data: dict[str, Any]) -> None:
         """Atomically persist token data to disk."""
         try:
-            self.tokens_file.parent.mkdir(parents=True, exist_ok=True)
             self.access_token = token_data.get("access_token")
             if "refresh_token" in token_data:
                 self.refresh_token = token_data.get("refresh_token")
@@ -114,8 +114,7 @@ class SimklClient:
                 "user_name": self.user_name,
                 "user": self.user_name,
             }
-            with open(self.tokens_file, "w", encoding="utf-8") as f:
-                json.dump(save_payload, f, indent=2)
+            atomic_write_json(self.tokens_file, save_payload)
             logger.info("Saved Simkl token for user: %s", self.user_name or "unknown")
         except Exception as e:
             logger.error("Failed to save Simkl tokens: %s", e)

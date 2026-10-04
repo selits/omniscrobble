@@ -488,6 +488,12 @@ class Notifier:
             logger.warning(f"Failed to deliver Pushover notification: {e}")
             return False
 
+    def _prune_failure_cache(self, now: float) -> None:
+        """Prune entries from failure deduplication cache older than TTL (1800s)."""
+        expired = [k for k, ts in self._failure_cache.items() if now - ts >= 1800.0]
+        for k in expired:
+            del self._failure_cache[k]
+
     async def send_failure_alert(
         self,
         media: ParsedMedia,
@@ -503,6 +509,7 @@ class Notifier:
 
         # TTL cache: deduplicate alerts for 30 minutes to prevent spam
         now = time.time()
+        self._prune_failure_cache(now)
         title = media.title or "Unknown"
         cache_key = f"{title}:{failed_tracker.lower()}:{str(error_msg)[:40]}"
         last_sent = self._failure_cache.get(cache_key, 0.0)

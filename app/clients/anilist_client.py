@@ -14,6 +14,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import Config
+from app.services.atomic_writer import atomic_write_json
 
 logger = logging.getLogger("omniscrobble.anilist")
 
@@ -59,7 +60,6 @@ class AniListClient:
     def save_tokens(self, token_data: dict[str, Any]) -> None:
         """Atomically persist token data to disk."""
         try:
-            self.tokens_file.parent.mkdir(parents=True, exist_ok=True)
             if "access_token" in token_data:
                 self.access_token = token_data.get("access_token")
             if "user_name" in token_data:
@@ -75,8 +75,7 @@ class AniListClient:
                 "user_avatar": self.user_avatar,
                 "user_id": self.user_id,
             }
-            with open(self.tokens_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+            atomic_write_json(self.tokens_file, payload)
             logger.info("Saved AniList token for user: %s", self.user_name or "unknown")
         except Exception as e:
             logger.error("Failed to save AniList tokens: %s", e)

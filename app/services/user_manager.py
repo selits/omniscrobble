@@ -20,6 +20,9 @@ except ImportError:
 
 logger = logging.getLogger("user_manager")
 
+_SAFE_FILENAME_RE = re.compile(r"[^a-z0-9_-]")
+_ALPHA_NUMERIC_RE = re.compile(r"[^a-z0-9]")
+
 
 class UserClientManager:
     """Manages multi-user client instances across Trakt, Simkl, AniList, and MAL."""
@@ -74,7 +77,7 @@ class UserClientManager:
         if direct_file.exists():
             return direct_file
         # Check alphanumeric-only filename if dot or hyphen was stripped
-        alpha_clean = re.sub(r"[^a-z0-9_-]", "", clean)
+        alpha_clean = _SAFE_FILENAME_RE.sub("", clean)
         alpha_file = self.tokens_dir / f"{alpha_clean}{suffix}"
         if alpha_file.exists():
             return alpha_file
@@ -191,7 +194,7 @@ class UserClientManager:
         users: list[dict[str, Any]] = []
         cowatch_user = getattr(self.config, "CO_WATCH_USER", "").strip()
         clean_cw = self._clean_username(cowatch_user) if cowatch_user else ""
-        alpha_cw = re.sub(r"[^a-z0-9]", "", clean_cw) if clean_cw else ""
+        alpha_cw = _ALPHA_NUMERIC_RE.sub("", clean_cw) if clean_cw else ""
 
         # 1. Default user
         default_client = self.get_client("default")
@@ -222,7 +225,7 @@ class UserClientManager:
                 clean_u = self._clean_username(uname)
                 if clean_u in seen_cleans:
                     continue
-                alpha_u = re.sub(r"[^a-z0-9]", "", clean_u)
+                alpha_u = _ALPHA_NUMERIC_RE.sub("", clean_u)
 
                 is_cw = bool(alpha_cw and (clean_u == clean_cw or alpha_u == alpha_cw))
                 display_uname = cowatch_user if is_cw else uname

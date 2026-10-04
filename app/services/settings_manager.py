@@ -299,11 +299,10 @@ class SettingsManager:
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
     def _save_settings(self) -> None:
-        """Persists current runtime settings to disk."""
+        """Persists current runtime settings to disk atomically."""
         try:
-            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.settings_file, "w", encoding="utf-8") as f:
-                json.dump(self._settings, f, indent=2)
+            from app.services.atomic_writer import atomic_write_json
+            atomic_write_json(self.settings_file, self._settings)
         except Exception as e:
             logger.error(f"Error saving settings to {self.settings_file}: {e}")
 
