@@ -493,7 +493,7 @@ def parse_plex_webhook(
     duration_raw = metadata.get("duration")
     view_offset_raw = metadata.get("viewOffset") if metadata.get("viewOffset") is not None else payload.get("viewOffset")
     duration_ms = int(duration_raw) if duration_raw is not None else None
-    view_offset_ms = int(view_offset_raw) if view_offset_raw is not None else None
+    view_offset_ms = int(view_offset_raw) if view_offset_raw is not None else 0
 
     duration = float(duration_ms or 0)
     view_offset = float(view_offset_ms or 0)

@@ -26,7 +26,7 @@
                 if (theme === 'oled') {
                     document.documentElement.classList.add('theme-oled');
                 }
-                var accent = localStorage.getItem('omniscrobble_accent') || 'amber';
+                var accent = localStorage.getItem('omniscrobble_accent') || 'sky';
                 if (accent) {
                     document.documentElement.classList.add('accent-' + accent);
                 }
@@ -60,9 +60,9 @@
             --modal-bg: #1e293b;
 
             /* Accent Highlights */
-            --accent-color: #f59e0b;
-            --accent-hover: #d97706;
-            --accent-glow: rgba(245, 158, 11, 0.35);
+            --accent-color: #0284c7;
+            --accent-hover: #0369a1;
+            --accent-glow: rgba(2, 132, 199, 0.35);
             --accent-text: #ffffff;
             --btn-copy-bg: #0284c7;
             --btn-copy-hover: #0369a1;
@@ -306,7 +306,8 @@
         .btn-copy:hover { opacity: 0.9; }
         .pulse-indicator { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); animation: pulse 1.8s infinite; display: inline-block; }
         @keyframes pulse { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        #theme-modal, #shortcuts-modal, #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #reconcile-settings-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal, #settings-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
+        .modal, .modal-overlay,
+        #theme-modal, #shortcuts-modal, #scrobble-modal, #unlock-modal, #logs-modal, #test-modal, #reconcile-modal, #reconcile-settings-modal, #arr-modal, #simkl-modal, #cross-sync-modal, #anilist-modal, #mal-modal, #household-rule-modal, #webhook-debugger-modal, #omniwrapped-modal, #settings-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; align-items: center; justify-content: center; backdrop-filter: blur(3px); }
         .modal-dialog { background: var(--modal-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 28px; width: 92%; max-height: 85vh; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
         .modal-dialog-sm { max-width: 400px; display: block; }
         .modal-dialog-md { max-width: 560px; }
@@ -518,7 +519,7 @@
     </div>
 
     <!-- Admin Unlock Modal -->
-    <div id="unlock-modal" onclick="if(event.target===this)closeUnlockModal()">
+    <div id="unlock-modal" class="modal" onclick="if(event.target===this)closeUnlockModal()">
         <div class="modal-dialog modal-dialog-sm">
             <h3 style="margin-top:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
                 <span>🔓</span> Unlock Admin Access
@@ -543,7 +544,7 @@
     </div>
 
     <!-- Quick-Mark & Media Control Modal -->
-    <div id="scrobble-modal" onclick="if(event.target===this)closeScrobbleModal()">
+    <div id="scrobble-modal" class="modal" onclick="if(event.target===this)closeScrobbleModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -703,7 +704,7 @@
     </div>
 
     <!-- Server Logs Modal -->
-    <div id="logs-modal" onclick="if(event.target===this)closeLogsModal()">
+    <div id="logs-modal" class="modal" onclick="if(event.target===this)closeLogsModal()">
         <div class="modal-dialog modal-dialog-lg">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -742,7 +743,7 @@
     </div>
 
     <!-- Synthetic Test Webhook Modal -->
-    <div id="test-modal" onclick="if(event.target===this)closeTestWebhookModal()">
+    <div id="test-modal" class="modal" onclick="if(event.target===this)closeTestWebhookModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -814,7 +815,7 @@
     </div>
 
     <!-- Library Reconciliation Modal -->
-    <div id="reconcile-modal" onclick="if(event.target===this)closeReconcileModal()">
+    <div id="reconcile-modal" class="modal" onclick="if(event.target===this)closeReconcileModal()">
         <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -896,7 +897,7 @@
     </div>
 
     <!-- Unified Settings Hub Modal -->
-    <div id="settings-modal" onclick="if(event.target===this)closeSettingsModal()">
+    <div id="settings-modal" class="modal" onclick="if(event.target===this)closeSettingsModal()">
         <div class="modal-dialog modal-dialog-lg" style="max-height:90vh;display:flex;flex-direction:column;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -1765,7 +1766,7 @@
     </div>
 
     <!-- Two-Way Reconciliation Settings Modal -->
-    <div id="reconcile-settings-modal" onclick="if(event.target===this)closeReconcileSettingsModal()">
+    <div id="reconcile-settings-modal" class="modal" onclick="if(event.target===this)closeReconcileSettingsModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -1951,7 +1952,7 @@
     </div>
 
     <!-- Arr Watchlist Automation Modal -->
-    <div id="arr-modal" onclick="if(event.target===this)closeArrModal()">
+    <div id="arr-modal" class="modal" onclick="if(event.target===this)closeArrModal()">
         <div class="modal-dialog modal-dialog-lg">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -1975,7 +1976,7 @@
     </div>
 
     <!-- Simkl Integration Modal -->
-    <div id="simkl-modal" onclick="if(event.target===this)closeSimklModal()">
+    <div id="simkl-modal" class="modal" onclick="if(event.target===this)closeSimklModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -1993,7 +1994,7 @@
     </div>
 
     <!-- AniList Integration Modal -->
-    <div id="anilist-modal" onclick="if(event.target===this)closeAnilistModal()">
+    <div id="anilist-modal" class="modal" onclick="if(event.target===this)closeAnilistModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -2011,7 +2012,7 @@
     </div>
 
     <!-- MyAnimeList Integration Modal -->
-    <div id="mal-modal" onclick="if(event.target===this)closeMalModal()">
+    <div id="mal-modal" class="modal" onclick="if(event.target===this)closeMalModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -2029,7 +2030,7 @@
     </div>
 
     <!-- Household Multi-Tenant Routing Rule Modal -->
-    <div id="household-rule-modal" onclick="if(event.target===this)closeHouseholdRuleModal()">
+    <div id="household-rule-modal" class="modal" onclick="if(event.target===this)closeHouseholdRuleModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
@@ -2083,7 +2084,7 @@
     </div>
 
     <!-- In-Browser Webhook Inspector & Payload Debugger Modal -->
-    <div id="webhook-debugger-modal" onclick="if(event.target===this)closeWebhookDebuggerModal()">
+    <div id="webhook-debugger-modal" class="modal" onclick="if(event.target===this)closeWebhookDebuggerModal()">
         <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;display:flex;flex-direction:column;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -2108,7 +2109,7 @@
     </div>
 
     <!-- Personal Analytics OmniWrapped Modal -->
-    <div id="omniwrapped-modal" onclick="if(event.target===this)closeOmniWrappedModal()">
+    <div id="omniwrapped-modal" class="modal" onclick="if(event.target===this)closeOmniWrappedModal()">
         <div class="modal-dialog modal-dialog-md" style="max-height:88vh;background:linear-gradient(145deg, #0f172a, #1e1b4b);border:1px solid #6366f1;box-shadow:0 10px 25px -5px rgba(99,102,241,0.4);">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -2162,7 +2163,7 @@
     </div>
 
     <!-- Cross-Tracker Sync (Trakt <-> Simkl) Modal -->
-    <div id="cross-sync-modal" onclick="if(event.target===this)closeCrossSyncModal()">
+    <div id="cross-sync-modal" class="modal" onclick="if(event.target===this)closeCrossSyncModal()">
         <div class="modal-dialog modal-dialog-lg" style="max-height:88vh;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <div style="display:flex;align-items:center;gap:10px;">
@@ -2233,7 +2234,7 @@
     </div>
 
     <!-- Theme & Appearance Modal -->
-    <div id="theme-modal" onclick="if(event.target===this)closeThemeModal()">
+    <div id="theme-modal" class="modal" onclick="if(event.target===this)closeThemeModal()">
         <div class="modal-dialog modal-dialog-md">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:var(--text-main);display:flex;align-items:center;gap:8px;">
@@ -2281,7 +2282,7 @@
     </div>
 
     <!-- Keyboard Shortcuts Modal -->
-    <div id="shortcuts-modal" onclick="if(event.target===this)closeShortcutsModal()">
+    <div id="shortcuts-modal" class="modal" onclick="if(event.target===this)closeShortcutsModal()">
         <div class="modal-dialog modal-dialog-sm" style="max-width:440px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
                 <h3 style="margin:0;font-size:18px;color:var(--text-main);display:flex;align-items:center;gap:8px;">
@@ -3043,7 +3044,7 @@
                 const panel = document.getElementById(`settings-panel-${t}`);
                 if (btn) {
                     if (t === tabName) {
-                        btn.style.background = '#0284c7';
+                        btn.style.background = 'var(--accent-color, #0284c7)';
                         btn.style.color = '#fff';
                         btn.style.fontWeight = '600';
                         btn.style.border = 'none';
@@ -5772,7 +5773,7 @@
         function setAccent(accentId) {
             const root = document.documentElement;
             ACCENTS.forEach(a => root.classList.remove('accent-' + a.id));
-            if (accentId && accentId !== 'sky') {
+            if (accentId) {
                 root.classList.add('accent-' + accentId);
             }
             localStorage.setItem('omniscrobble_accent', accentId);
@@ -5807,6 +5808,8 @@
             }
 
             renderThemePickers();
+            if (typeof updateDensityUI === 'function') updateDensityUI();
+            if (typeof renderCardVisibilityPickers === 'function') renderCardVisibilityPickers();
         }
 
         function renderThemePickers() {

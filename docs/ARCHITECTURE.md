@@ -199,7 +199,7 @@ omniscrobble/
 ├── templates/                       # Community deployment templates & app stores
 │   ├── unraid-omniscrobble.xml      # Official Unraid Community Applications template
 │   └── docker-compose.portainer.yml # Portainer stack & TrueNAS SCALE compose specification
-├── tests/                           # Comprehensive test suite (238 tests, 0 external calls)
+├── tests/                           # Comprehensive test suite (246 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool

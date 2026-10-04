@@ -28,6 +28,25 @@ class PlaybackManager:
         self.sessions: dict[str, dict[str, Any]] = {}
         self.recently_finished: Optional[dict[str, Any]] = None
 
+    @staticmethod
+    def estimate_position(session: dict[str, Any], now: Optional[float] = None) -> Optional[tuple[float, float]]:
+        """Estimate (current_sec, duration_sec) for a session, or None if duration is unknown.
+
+        A missing/None view_offset_ms is treated as 0 (playback started from the beginning).
+        Only advances with wall-clock time while the session state is "playing".
+        """
+        dur_ms = session.get("duration_ms")
+        if not dur_ms or dur_ms <= 0:
+            return None
+        now = time.time() if now is None else now
+        dur_sec = dur_ms / 1000.0
+        offset_sec = (session.get("view_offset_ms") or 0) / 1000.0
+        current_sec = offset_sec
+        if session.get("state", "playing") == "playing":
+            elapsed = max(0.0, now - session.get("updated_at", now))
+            current_sec = min(dur_sec, offset_sec + elapsed)
+        return current_sec, dur_sec
+
     def _get_key(self, media: ParsedMedia) -> str:
         player_identifier = media.player or media.device or "default"
         return f"{media.username}:{player_identifier}"
@@ -110,22 +129,15 @@ class PlaybackManager:
             item.pop("parsed_media", None)
 
             # Estimate real-time playback progress when streaming
-            dur_ms = s.get("duration_ms")
-            offset_ms = s.get("view_offset_ms")
-            if dur_ms and offset_ms is not None and dur_ms > 0:
-                dur_sec = dur_ms / 1000.0
-                offset_sec = offset_ms / 1000.0
+            pos = self.estimate_position(s, now)
+            if pos:
+                current_sec, dur_sec = pos
+                rem_min = int(round(max(0.0, dur_sec - current_sec) / 60.0))
                 if s.get("state") == "playing":
-                    elapsed = max(0.0, now - s.get("updated_at", now))
-                    current_sec = min(dur_sec, offset_sec + elapsed)
                     est_prog = min(99.0, max(0.0, (current_sec / dur_sec) * 100.0))
                     item["progress"] = round(est_prog, 1)
-                    rem_sec = max(0.0, dur_sec - current_sec)
-                    rem_min = int(round(rem_sec / 60.0))
                     item["remaining_str"] = f"{rem_min}m left"
                 else:
-                    rem_sec = max(0.0, dur_sec - offset_sec)
-                    rem_min = int(round(rem_sec / 60.0))
                     item["remaining_str"] = f"{rem_min}m left (paused)"
 
             if not is_admin:
