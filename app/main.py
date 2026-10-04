@@ -428,14 +428,10 @@ async def scrobble_heartbeat_worker_loop():
                         playback_mgr.record_heartbeat(key)
                         continue
 
-                    dur_ms = candidate.get("duration_ms")
-                    offset_ms = candidate.get("view_offset_ms")
                     est_prog = candidate.get("progress", 0.0)
-                    if dur_ms and offset_ms is not None and dur_ms > 0:
-                        dur_sec = dur_ms / 1000.0
-                        offset_sec = offset_ms / 1000.0
-                        elapsed = max(0.0, now - candidate.get("updated_at", now))
-                        current_sec = min(dur_sec, offset_sec + elapsed)
+                    pos = playback_mgr.estimate_position(candidate, now)
+                    if pos:
+                        current_sec, dur_sec = pos
                         est_prog = min(99.0, max(0.0, (current_sec / dur_sec) * 100.0))
 
                     # 1. Trakt keep-alive scrobble_start

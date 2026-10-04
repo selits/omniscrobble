@@ -2848,6 +2848,72 @@ def test_playback_interpolation_and_remaining():
     assert recent["remaining_str"] == "Finished"
 
 
+def test_playback_manager_zero_offset_progress_estimation():
+    """Verify that when playback starts at 0 offset (or view_offset_ms is None/0),
+    real-time progress estimation advances as time elapses rather than staying stalled at 0%."""
+    from app.services.playback_manager import PlaybackManager
+    import time
+
+    pm = PlaybackManager()
+    media = ParsedMedia(
+        event="media.play",
+        username="selits",
+        media_type="movie",
+        title="The Social Network",
+        year=2010,
+        duration_ms=7200000,     # 120 minutes (2 hours)
+        view_offset_ms=0,
+        progress=0.0,
+    )
+    pm.update_playback(media, state="playing")
+
+    # Simulate 38 minutes (2280 seconds) elapsed since playback began
+    key = pm._get_key(media)
+    pm.sessions[key]["updated_at"] = time.time() - (38 * 60)
+
+    sessions = pm.get_active_sessions(is_admin=True)
+    assert len(sessions) == 1
+    s = sessions[0]
+    assert s["state"] == "playing"
+    # 38 min / 120 min = 31.7%
+    assert 31.0 <= s["progress"] <= 33.0
+    assert any(f"{m}m left" in s["remaining_str"] for m in (81, 82, 83))
+
+    # Also test when view_offset_ms is None in the stored session dict
+    pm.sessions[key]["view_offset_ms"] = None
+    sessions_none = pm.get_active_sessions(is_admin=True)
+    assert len(sessions_none) == 1
+    assert 31.0 <= sessions_none[0]["progress"] <= 33.0
+    assert any(f"{m}m left" in sessions_none[0]["remaining_str"] for m in (81, 82, 83))
+
+    # Shared estimator (also used by the Trakt keep-alive heartbeat) handles None offsets
+    current_sec, dur_sec = PlaybackManager.estimate_position(pm.sessions[key])
+    assert dur_sec == 7200.0
+    assert 38 * 60 <= current_sec <= 38 * 60 + 5
+    assert PlaybackManager.estimate_position({"duration_ms": None}) is None
+
+
+def test_plex_parser_omitted_view_offset_defaults_to_zero():
+    """Verify Plex webhook without viewOffset sets view_offset_ms to 0 rather than None."""
+    payload = {
+        "event": "media.play",
+        "user": True,
+        "Account": {"title": "selits"},
+        "Server": {"title": "Home-Server"},
+        "Player": {"title": "Plex Web", "uuid": "client-1"},
+        "Metadata": {
+            "type": "movie",
+            "title": "The Social Network",
+            "year": 2010,
+            "duration": 7200000,
+        },
+    }
+    parsed = parse_plex_webhook(payload, allowed_users=["selits"])
+    assert parsed is not None
+    assert parsed.view_offset_ms == 0
+    assert parsed.progress == 0.0
+
+
 def test_synthetic_test_webhook():
     """Test POST /api/test/webhook for dry-run simulation and recent event generation."""
     client = TestClient(app)
@@ -7097,6 +7163,68 @@ def test_settings_modal_dashboard_rendering():
     assert '<button onclick="openSettingsModal()"' in demo_res.text
 
 
+def test_all_dashboard_modals_have_overlay_styling_and_hidden_by_default():
+    """Every element wrapping a .modal-dialog must be class="modal" with a unique "*-modal" id,
+    and the stylesheet must hide it by default as a fixed overlay.
+
+    Prevents modals (e.g. household routing, webhook debugger, omniwrapped) from leaking into the
+    bottom of the page in document flow.
+    """
+    import re
+    from html.parser import HTMLParser
+
+    class ModalCollector(HTMLParser):
+        VOID = {"br", "hr", "img", "input", "meta", "link", "source", "area", "base", "col", "embed", "wbr"}
+
+        def __init__(self):
+            super().__init__()
+            self.stack = []
+            self.parents = []  # attrs dicts of direct parents of .modal-dialog
+
+        def handle_starttag(self, tag, attrs):
+            if tag in self.VOID:
+                return
+            attrs = dict(attrs)
+            classes = (attrs.get("class") or "").split()
+            if "modal-dialog" in classes and self.stack:
+                self.parents.append(self.stack[-1])
+            self.stack.append(attrs)
+
+        def handle_endtag(self, tag):
+            if tag not in self.VOID and self.stack:
+                self.stack.pop()
+
+    client = TestClient(app)
+    for path in ("/", "/demo"):
+        res = client.get(path)
+        assert res.status_code == 200
+        html_content = res.text
+
+        collector = ModalCollector()
+        collector.feed(html_content)
+        assert collector.parents, "No modal dialogs found"
+
+        modal_ids = []
+        for attrs in collector.parents:
+            assert "modal" in (attrs.get("class") or "").split(), f"Modal container {attrs} missing class=\"modal\""
+            mid = attrs.get("id")
+            assert mid and mid.endswith("-modal"), f"Modal container {attrs} needs an id ending in '-modal'"
+            modal_ids.append(mid)
+        assert len(modal_ids) == len(set(modal_ids)), "Duplicate modal ids"
+
+        # v3.0.0 modals that originally leaked
+        for required in ("household-rule-modal", "webhook-debugger-modal", "omniwrapped-modal"):
+            assert required in modal_ids
+
+        # Universal CSS rule hides every modal by default as a fixed overlay
+        css_match = re.search(r'(\.modal,\s*\.modal-overlay,[^{]*\{[^}]*\})', html_content)
+        assert css_match, "Universal .modal CSS rule missing from stylesheet!"
+        modal_css = css_match.group(0)
+        assert "display: none;" in modal_css
+        assert "position: fixed;" in modal_css
+        assert "z-index: 9999;" in modal_css
+
+
 def test_activity_table_show_cowatch_alignment():
     """Verify that events with media_type=='show' resolve show_title, detect co-watching, and render aligned action buttons."""
     from app.services.cowatch_manager import cowatch_mgr
@@ -9230,6 +9358,11 @@ def test_multi_theme_palette_engine_and_accents():
     assert "closeThemeModal()" in html
     assert "openShortcutsModal()" in html
     assert "closeShortcutsModal()" in html
+
+    # 8. Accent configuration defaults & reactive switching
+    assert "localStorage.getItem('omniscrobble_accent') || 'sky'" in html
+    assert "--accent-color: #0284c7;" in html
+    assert "root.classList.add('accent-' + accentId);" in html
 
 
 def test_ambient_visuals_compact_mode_and_card_visibility():
