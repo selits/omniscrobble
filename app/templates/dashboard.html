@@ -689,6 +689,9 @@
                 <button type="button" id="settings-tab-btn-notifications" onclick="switchSettingsTab('notifications')" class="btn-sm settings-nav-tab" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:6px 14px;border-radius:6px;display:flex;align-items:center;gap:6px;">
                     <span>🔔</span> Notifications
                 </button>
+                <button type="button" id="settings-tab-btn-rules" onclick="switchSettingsTab('rules')" class="btn-sm settings-nav-tab" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:6px 14px;border-radius:6px;display:flex;align-items:center;gap:6px;">
+                    <span>🛡️</span> Rules &amp; Filters
+                </button>
             </div>
 
             <!-- Scrollable Tab Content Container -->
@@ -1246,6 +1249,87 @@
                                 <span id="settings-notif-pushover-status" style="font-size:11px;color:#94a3b8;"></span>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Tab 5: Rules & Filters -->
+                <div id="settings-panel-rules" class="settings-content-panel" style="display:none;flex-direction:column;gap:14px;">
+                    <!-- Scrobble Thresholds -->
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                            <span>⚖️</span> Scrobble Completion Thresholds
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 12px;line-height:1.4;">
+                            Define the minimum playback percentage required before an item is marked as fully watched and submitted to Trakt and connected trackers.
+                        </p>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:12px;">
+                            <div style="background:#020617;border:1px solid #1e293b;border-radius:6px;padding:10px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                                    <label style="font-size:12px;font-weight:600;color:#f8fafc;">TV Episode Threshold</label>
+                                    <span id="settings-rules-threshold-val" style="font-size:12px;font-weight:700;color:#38bdf8;">80%</span>
+                                </div>
+                                <input type="range" id="settings-rules-threshold" min="50" max="95" step="1" value="80" oninput="document.getElementById('settings-rules-threshold-val').textContent=this.value+'%'" style="width:100%;accent-color:#0284c7;cursor:pointer;" />
+                                <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748b;margin-top:2px;">
+                                    <span>50%</span>
+                                    <span>Default: 80%</span>
+                                    <span>95%</span>
+                                </div>
+                            </div>
+                            <div style="background:#020617;border:1px solid #1e293b;border-radius:6px;padding:10px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                                    <label style="font-size:12px;font-weight:600;color:#f8fafc;">Movie Threshold</label>
+                                    <span id="settings-rules-movie-threshold-val" style="font-size:12px;font-weight:700;color:#38bdf8;">90%</span>
+                                </div>
+                                <input type="range" id="settings-rules-movie-threshold" min="50" max="95" step="1" value="90" oninput="document.getElementById('settings-rules-movie-threshold-val').textContent=this.value+'%'" style="width:100%;accent-color:#0284c7;cursor:pointer;" />
+                                <div style="display:flex;justify-content:space-between;font-size:10px;color:#64748b;margin-top:2px;">
+                                    <span>50%</span>
+                                    <span>Default: 90%</span>
+                                    <span>95%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Minimum Playback Duration Filter -->
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                            <span>⏱️</span> Minimum Playback Duration Filter
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.4;">
+                            Bypass scrobbling for short clips, sample files, or trailers with duration below this limit.
+                        </p>
+                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                            <div style="flex:1;min-width:180px;">
+                                <label style="font-size:11px;color:#94a3b8;display:block;margin-bottom:4px;">Minimum Duration (seconds)</label>
+                                <input type="number" id="settings-rules-min-duration" min="0" step="10" placeholder="300" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #334155;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;" />
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;margin-top:16px;">
+                                <input type="checkbox" id="settings-rules-apply-episodes" style="accent-color:#0284c7;" />
+                                <label for="settings-rules-apply-episodes" style="font-size:12px;color:#cbd5e1;cursor:pointer;">Apply to TV Episodes (Uncheck to allow anime shorts)</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Library Name Exclusions -->
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                            <span>📁</span> Ignored Library Sections
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.4;">
+                            Comma-separated list of media server library names to completely bypass (e.g. <code>Home Videos, Fitness, Trailers</code>).
+                        </p>
+                        <input type="text" id="settings-rules-ignore-libraries" placeholder="Home Videos, Fitness, Trailers, Personal" style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #334155;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;" />
+                    </div>
+
+                    <!-- File Path Regex Patterns -->
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px;">
+                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                            <span>🚫</span> Ignored File Path Regex Patterns
+                        </div>
+                        <p style="font-size:12px;color:#94a3b8;margin:0 0 10px;line-height:1.4;">
+                            One regular expression per line. Media files matching any pattern will be automatically bypassed from scrobbling and history tracking.
+                        </p>
+                        <textarea id="settings-rules-ignore-paths" rows="3" placeholder="/extras/&#10;/behind the scenes/&#10;\\.sample\\." style="width:100%;box-sizing:border-box;background:#020617;border:1px solid #334155;border-radius:6px;padding:8px 10px;color:#f8fafc;font-size:12px;font-family:monospace;resize:vertical;"></textarea>
                     </div>
                 </div>
             </div>
@@ -2275,7 +2359,7 @@
         }
 
         function switchSettingsTab(tabName) {
-            const tabs = ['servers', 'trackers', 'automation', 'notifications'];
+            const tabs = ['servers', 'trackers', 'automation', 'notifications', 'rules'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`settings-tab-btn-${t}`);
                 const panel = document.getElementById(`settings-panel-${t}`);
@@ -2740,6 +2824,29 @@
                     pushBadge.style.color = hasPush ? '#10b981' : '#94a3b8';
                 }
 
+                // 5. Rules & Filters
+                const rules = data.rules || {};
+                const epThresh = document.getElementById('settings-rules-threshold');
+                const epThreshVal = document.getElementById('settings-rules-threshold-val');
+                if (epThresh) {
+                    epThresh.value = rules.scrobble_threshold !== undefined ? rules.scrobble_threshold : 80;
+                    if (epThreshVal) epThreshVal.textContent = epThresh.value + '%';
+                }
+                const movThresh = document.getElementById('settings-rules-movie-threshold');
+                const movThreshVal = document.getElementById('settings-rules-movie-threshold-val');
+                if (movThresh) {
+                    movThresh.value = rules.movie_scrobble_threshold !== undefined ? rules.movie_scrobble_threshold : 90;
+                    if (movThreshVal) movThreshVal.textContent = movThresh.value + '%';
+                }
+                const minDurInput = document.getElementById('settings-rules-min-duration');
+                if (minDurInput) minDurInput.value = rules.min_duration_seconds !== undefined ? rules.min_duration_seconds : 300;
+                const applyEpsCheck = document.getElementById('settings-rules-apply-episodes');
+                if (applyEpsCheck) applyEpsCheck.checked = Boolean(rules.apply_min_duration_to_episodes);
+                const ignoreLibsInput = document.getElementById('settings-rules-ignore-libraries');
+                if (ignoreLibsInput) ignoreLibsInput.value = (rules.ignore_libraries || []).join(', ');
+                const ignorePathsInput = document.getElementById('settings-rules-ignore-paths');
+                if (ignorePathsInput) ignorePathsInput.value = (rules.ignore_path_patterns || []).join('\n');
+
             } catch (err) {
                 console.error('Error fetching settings modal data:', err);
             }
@@ -2830,6 +2937,20 @@
                         notify_on_rate: Boolean(document.getElementById('settings-notif-rate-check')?.checked),
                         notify_on_collection: Boolean(document.getElementById('settings-notif-collection-check')?.checked),
                         notify_on_failure: Boolean(document.getElementById('settings-notif-failure-check')?.checked)
+                    },
+                    rules: {
+                        scrobble_threshold: parseInt(document.getElementById('settings-rules-threshold')?.value, 10) || 80,
+                        movie_scrobble_threshold: parseInt(document.getElementById('settings-rules-movie-threshold')?.value, 10) || 90,
+                        min_duration_seconds: parseInt(document.getElementById('settings-rules-min-duration')?.value, 10) || 0,
+                        apply_min_duration_to_episodes: Boolean(document.getElementById('settings-rules-apply-episodes')?.checked),
+                        ignore_libraries: (document.getElementById('settings-rules-ignore-libraries')?.value || '')
+                            .split(',')
+                            .map(s => s.trim())
+                            .filter(Boolean),
+                        ignore_path_patterns: (document.getElementById('settings-rules-ignore-paths')?.value || '')
+                            .split('\n')
+                            .map(s => s.trim())
+                            .filter(Boolean)
                     }
                 };
 
@@ -5863,6 +5984,119 @@ SIMKL_ENABLED=true</pre>
                     subEl.innerHTML = `${servers.join(' • ')} &rarr; ${trackers.join(' • ')}`;
                 }
             } catch (_) {}
+        }
+
+        async function triggerBackgroundCloudSync(btn) {
+            if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+            try {
+                const url = isDemo ? '/api/sync/background/run?demo=true' : '/api/sync/background/run';
+                const res = await fetch(url, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    alert('Automated cloud synchronization completed successfully! ' + (data.items_reconciled || 0) + ' items reconciled.');
+                    window.location.reload();
+                } else {
+                    alert('Cloud sync failed: ' + (data.detail || data.message || 'Unknown error'));
+                    if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Cloud Sync Now'; }
+                }
+            } catch (e) {
+                alert('Network error: ' + e.message);
+                if (btn) { btn.disabled = false; btn.textContent = '⚡ Run Cloud Sync Now'; }
+            }
+        }
+
+        async function disconnectPartnerTracker(tracker, user) {
+            if (!confirm(`Disconnect ${tracker.toUpperCase()} for partner @${user}?`)) return;
+            try {
+                const res = await fetch(`/api/${tracker}/disconnect?user=${encodeURIComponent(user)}`, { method: 'POST' });
+                if (res.ok) {
+                    window.location.reload();
+                } else {
+                    const data = await res.json();
+                    alert(`Failed to disconnect: ${data.detail || data.message || 'Error'}`);
+                }
+            } catch (e) {
+                alert(`Network error: ${e.message}`);
+            }
+        }
+
+        async function openPartnerTrackerAuth(tracker, user) {
+            if (tracker === 'trakt') {
+                window.location.href = `/auth?user=${encodeURIComponent(user)}`;
+                return;
+            }
+            if (tracker === 'simkl') {
+                try {
+                    const res = await fetch(`/api/simkl/pin?user=${encodeURIComponent(user)}`, { method: 'POST' });
+                    const data = await res.json();
+                    if (res.ok && data.user_code) {
+                        const url = data.verification_url || 'https://simkl.com/pin';
+                        window.open(url, '_blank');
+                        const confirmPoll = confirm(`Simkl PIN: ${data.user_code}\n\nAuthorize Omniscrobble on Simkl at ${url} with code ${data.user_code}, then click OK to verify.`);
+                        if (confirmPoll) {
+                            const pollRes = await fetch('/api/simkl/poll', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ user_code: data.user_code, device_code: data.device_code, user: user })
+                            });
+                            const pollData = await pollRes.json();
+                            if (pollRes.ok && (pollData.result === 'OK' || pollData.status === 'success' || pollData.access_token)) {
+                                alert(`✓ Simkl successfully linked for partner @${user}!`);
+                                window.location.reload();
+                            } else {
+                                alert(`Simkl authorization not completed: ${pollData.message || 'Pending authorization'}`);
+                            }
+                        }
+                    } else {
+                        alert(`Failed to get Simkl PIN: ${data.detail || data.error || 'Error'}`);
+                    }
+                } catch (e) {
+                    alert(`Network error: ${e.message}`);
+                }
+                return;
+            }
+            if (tracker === 'anilist') {
+                const token = prompt(`Enter AniList Personal Access Token for partner @${user}:\n(Generated from AniList Settings > Developer)`);
+                if (!token || !token.trim()) return;
+                try {
+                    const res = await fetch('/api/anilist/token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token.trim(), user: user })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.status === 'success') {
+                        alert(`✓ AniList connected for @${user} (@${data.user || 'user'})!`);
+                        window.location.reload();
+                    } else {
+                        alert(`Failed to link AniList: ${data.detail || data.error || 'Invalid token'}`);
+                    }
+                } catch (e) {
+                    alert(`Network error: ${e.message}`);
+                }
+                return;
+            }
+            if (tracker === 'mal') {
+                const token = prompt(`Enter MyAnimeList Access Token for partner @${user}:`);
+                if (!token || !token.trim()) return;
+                try {
+                    const res = await fetch('/api/mal/token', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ token: token.trim(), user: user })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.status === 'success') {
+                        alert(`✓ MyAnimeList connected for @${user} (@${data.user || 'user'})!`);
+                        window.location.reload();
+                    } else {
+                        alert(`Failed to link MyAnimeList: ${data.detail || data.error || 'Invalid token'}`);
+                    }
+                } catch (e) {
+                    alert(`Network error: ${e.message}`);
+                }
+                return;
+            }
         }
 
         // Reset scroll position for co-watch chips on load and reload so refresh starts cleanly at top

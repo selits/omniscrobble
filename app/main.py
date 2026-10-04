@@ -27,6 +27,7 @@ from app.clients.sonarr_client import (
 )
 from app.clients.trakt_client import TraktClient
 from app.metrics import metrics_registry
+from app.services.atomic_writer import atomic_write_json
 from app.services.cowatch_manager import cowatch_mgr
 from app.services.notifier import notifier
 from app.services.playback_manager import playback_mgr
@@ -54,6 +55,13 @@ from app.services.reverse_sync_manager import reverse_sync_mgr
 from app.services.arr_bridge import arr_bridge
 from app.services.cross_tracker_sync import CrossTrackerSyncManager
 from app.services.settings_manager import settings_mgr
+from app.services.cloud_sync_manager import cloud_sync_mgr
+from app.services.dashboard_renderer import (
+    format_action_label,
+    should_display_cowatch_badge,
+    render_status_badge,
+    dashboard_renderer,
+)
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
@@ -129,9 +137,7 @@ def load_scrobble_stats() -> dict[str, int]:
 def save_scrobble_stats() -> None:
     """Persist scrobble counters to data/stats.json."""
     try:
-        STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(STATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(scrobble_stats, f, indent=2)
+        atomic_write_json(STATS_FILE, scrobble_stats)
     except Exception as e:
         logger.warning(f"Could not save stats to {STATS_FILE}: {e}")
 
@@ -269,6 +275,8 @@ async def reverse_sync_worker_loop():
 
 
 arr_watchlist_worker_task: Optional[asyncio.Task] = None
+partner_refresh_worker_task: Optional[asyncio.Task] = None
+background_cloud_sync_task: Optional[asyncio.Task] = None
 
 
 async def arr_watchlist_worker_loop():
@@ -289,13 +297,74 @@ async def arr_watchlist_worker_loop():
             logger.error(f"Error in periodic Arr watchlist worker: {e}")
 
 
+async def partner_token_refresh_loop():
+    """Background worker periodically refreshing secondary partner and multi-user OAuth tokens before expiration."""
+    while True:
+        try:
+            # Check every 12 hours
+            await asyncio.sleep(43200)
+            users_to_check = set()
+            if Config.CO_WATCH_USER:
+                users_to_check.add(Config.CO_WATCH_USER)
+            for u in user_mgr.list_configured_users():
+                uname = u.get("username")
+                if uname:
+                    users_to_check.add(uname)
+
+            for target_user in users_to_check:
+                # 1. Partner Trakt token refresh
+                trakt_client = user_mgr.get_client(target_user)
+                if trakt_client and trakt_client.is_authenticated():
+                    token_info = trakt_client.get_token_info()
+                    if token_info.get("days_remaining", 999) <= 2:
+                        logger.info(f"Proactive token refresh: refreshing Trakt token for @{target_user}...")
+                        await trakt_client.refresh_token()
+                # 2. Partner MAL token refresh
+                mal_client = user_mgr.get_tracker_client(target_user, "mal")
+                if mal_client and mal_client.is_authenticated() and hasattr(mal_client, "refresh_token"):
+                    token_info = getattr(mal_client, "get_token_info", lambda: {})()
+                    if token_info.get("expires_in", 999999) < 86400:
+                        logger.info(f"Proactive token refresh: refreshing MAL token for @{target_user}...")
+                        await mal_client.refresh_token()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in partner token refresh loop: {e}")
+
+
+async def background_cloud_sync_worker_loop():
+    """Background worker periodically executing automated cloud reconciliation and Letterboxd diary export."""
+    interval_hours = max(1, getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24))
+    interval_seconds = interval_hours * 3600
+    logger.info(f"Background cloud sync worker started (running every {interval_hours}h)...")
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            logger.info("Executing periodic background cloud sync cycle...")
+            await cloud_sync_mgr.run_sync_cycle(
+                trigger="scheduled",
+                letterboxd_client=letterboxd,
+                reverse_sync_mgr=reverse_sync_mgr,
+                cross_tracker_sync=cross_tracker_sync,
+                arr_bridge=arr_bridge,
+            )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic background cloud sync worker: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global queue_worker_task, reverse_sync_worker_task, arr_watchlist_worker_task
+    global partner_refresh_worker_task, background_cloud_sync_task
     queue_worker_task = asyncio.create_task(queue_worker_loop())
     reverse_sync_worker_task = asyncio.create_task(reverse_sync_worker_loop())
     if Config.AUTO_ADD_FROM_WATCHLIST and Config.ARR_WATCHLIST_INTERVAL > 0 and (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
         arr_watchlist_worker_task = asyncio.create_task(arr_watchlist_worker_loop())
+    partner_refresh_worker_task = asyncio.create_task(partner_token_refresh_loop())
+    if getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24) > 0:
+        background_cloud_sync_task = asyncio.create_task(background_cloud_sync_worker_loop())
 
     # Startup self-diagnostics check
     token_info = trakt.get_token_info()
@@ -328,6 +397,9 @@ async def lifespan(app: FastAPI):
     int_mins = recon_startup.get("interval_minutes", Config.REVERSE_SYNC_INTERVAL)
     if int_mins > 0 and reverse_sync_mgr.plex.is_configured():
         logger.info(f"Startup Diagnostics: Reverse sync interval active ({int_mins}m).")
+    bg_sync_interval = getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24)
+    if bg_sync_interval > 0:
+        logger.info(f"Startup Diagnostics: Background cloud reconciliation enabled ({bg_sync_interval}h interval).")
     if simkl.is_enabled():
         if simkl.is_authenticated():
             logger.info(f"Startup Diagnostics: Simkl multi-tracker connected (@{simkl.user_name or 'user'}).")
@@ -373,6 +445,18 @@ async def lifespan(app: FastAPI):
             await arr_watchlist_worker_task
         except asyncio.CancelledError:
             pass
+    if partner_refresh_worker_task:
+        partner_refresh_worker_task.cancel()
+        try:
+            await partner_refresh_worker_task
+        except asyncio.CancelledError:
+            pass
+    if background_cloud_sync_task:
+        background_cloud_sync_task.cancel()
+        try:
+            await background_cloud_sync_task
+        except asyncio.CancelledError:
+            pass
     await reverse_sync_mgr.plex.close()
     await arr_bridge.sonarr.close()
     await arr_bridge.radarr.close()
@@ -389,7 +473,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -513,9 +597,7 @@ def reload_recent_events_in_place() -> None:
 def save_recent_events() -> None:
     """Persist stream history to data/events.json."""
     try:
-        EVENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(EVENTS_FILE, "w", encoding="utf-8") as f:
-            json.dump(list(recent_events), f, indent=2)
+        atomic_write_json(EVENTS_FILE, list(recent_events))
     except Exception as e:
         logger.warning(f"Could not save events to {EVENTS_FILE}: {e}")
 
@@ -560,28 +642,89 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
 
 
 async def execute_cowatch_sync(parsed: ParsedMedia, action: str):
-    """Dual-scrobble/sync watched history to the partner Trakt account (CO_WATCH_USER)."""
+    """Dual-scrobble/sync watched history to the partner's authenticated cloud trackers (Trakt, Simkl, AniList, MAL)."""
     target_user = Config.CO_WATCH_USER
     if not target_user:
         return
-    cw_client = user_mgr.get_client(target_user)
-    if not cw_client.is_authenticated():
-        logger.warning(f"Co-watch target user '{target_user}' Trakt is not authenticated. Skipping co-watch.")
-        return
-    try:
-        logger.info(f"Co-watching dual-sync triggering for partner @{target_user}: {parsed.title}")
-        history_payload = parsed.to_trakt_history_payload()
-        res = await cw_client.sync_history(history_payload)
-        if is_temporary_error(res):
-            queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
-            metrics_registry.record_cowatch("queued")
-        else:
-            logger.info(f"Co-watch dual-sync succeeded for partner @{target_user}: {parsed.title}")
-            metrics_registry.record_cowatch("success")
-    except Exception as e:
-        logger.error(f"Error during co-watch dual-sync for @{target_user}: {e}")
-        queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=target_user)
-        metrics_registry.record_cowatch("failed")
+
+    tasks = []
+
+    # 1. Partner Trakt
+    cw_trakt = user_mgr.get_client(target_user)
+    if cw_trakt and cw_trakt.is_authenticated():
+        async def _sync_trakt():
+            try:
+                logger.info(f"Co-watching dual-sync triggering for partner @{target_user} (Trakt): {parsed.title}")
+                history_payload = parsed.to_trakt_history_payload()
+                res = await cw_trakt.sync_history(history_payload)
+                if is_temporary_error(res):
+                    queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=target_user)
+                    metrics_registry.record_cowatch("queued")
+                elif isinstance(res, dict) and res.get("status") == "error":
+                    logger.warning(f"Co-watch Trakt error for @{target_user}: {res.get('error')}")
+                    metrics_registry.record_cowatch("failed")
+                else:
+                    logger.info(f"Co-watch dual-sync succeeded for partner @{target_user} (Trakt): {parsed.title}")
+                    metrics_registry.record_cowatch("success")
+            except Exception as e:
+                logger.error(f"Error during co-watch Trakt dual-sync for @{target_user}: {e}")
+                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=target_user)
+                metrics_registry.record_cowatch("failed")
+        tasks.append(_sync_trakt())
+    else:
+        logger.debug(f"Co-watch partner @{target_user} Trakt is not authenticated.")
+
+    # 2. Partner Simkl
+    cw_simkl = user_mgr.get_tracker_client(target_user, "simkl")
+    if cw_simkl and cw_simkl.is_authenticated():
+        async def _sync_simkl():
+            try:
+                logger.info(f"Co-watching dual-sync triggering for partner @{target_user} (Simkl): {parsed.title}")
+                if action == "rate":
+                    await cw_simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
+                else:
+                    res = await cw_simkl.scrobble_stop(parsed, progress=parsed.progress)
+                    if isinstance(res, dict) and res.get("status") == "error":
+                        logger.warning(f"Co-watch Simkl error for @{target_user}: {res.get('error')}")
+            except Exception as e:
+                logger.warning(f"Error during co-watch Simkl dual-sync for @{target_user}: {e}")
+        tasks.append(_sync_simkl())
+
+    # 3. Partner Anime Trackers (AniList & MAL)
+    cw_anilist = user_mgr.get_tracker_client(target_user, "anilist")
+    cw_mal = user_mgr.get_tracker_client(target_user, "mal")
+    ani_auth = bool(cw_anilist and cw_anilist.is_authenticated())
+    mal_auth = bool(cw_mal and cw_mal.is_authenticated())
+
+    if ani_auth or mal_auth:
+        async def _sync_anime():
+            try:
+                resolved_anime = await anime_resolver.resolve(parsed)
+                if resolved_anime and resolved_anime.get("is_anime"):
+                    if action == "rate":
+                        if ani_auth:
+                            await cw_anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
+                        if mal_auth and resolved_anime.get("mal_id"):
+                            await cw_mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+                    else:
+                        if ani_auth:
+                            await cw_anilist.update_progress(
+                                resolved_anime["anilist_id"],
+                                resolved_anime["episode_number"],
+                                resolved_anime.get("episodes"),
+                            )
+                        if mal_auth and resolved_anime.get("mal_id"):
+                            await cw_mal.update_progress(
+                                resolved_anime["mal_id"],
+                                resolved_anime["episode_number"],
+                                resolved_anime.get("episodes"),
+                            )
+            except Exception as e:
+                logger.warning(f"Error during co-watch anime dual-sync for @{target_user}: {e}")
+        tasks.append(_sync_anime())
+
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @app.get("/webhook")
@@ -641,6 +784,16 @@ async def extract_webhook_payload(request: Request, endpoint_name: str = "webhoo
     return None
 
 
+def get_effective_excluded_libraries() -> list[str]:
+    """Combines static Config.EXCLUDED_LIBRARIES with dynamic rules ignore_libraries."""
+    base = list(Config.EXCLUDED_LIBRARIES or [])
+    rules_libs = settings_mgr.get_rules_settings().get("ignore_libraries", [])
+    for lib in rules_libs:
+        if lib and lib not in base:
+            base.append(lib)
+    return base
+
+
 async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook") -> dict[str, Any]:
     # Loop Prevention: suppress bounce-back echo webhooks from media servers
     if parsed.rating_key and loop_prevention.is_ignored(parsed.rating_key):
@@ -652,6 +805,14 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             logger.info(f"Loop prevention: suppressing echo event '{parsed.event}' for ID {id_val} ({parsed.title})")
             metrics_registry.record_request(endpoint_name, 200)
             return {"status": "ignored", "reason": "loop_prevention", "key": str(id_val)}
+
+    # Dynamic Rules & Filters: check duration, library exclusions, and file path patterns
+    allowed, bypass_reason = settings_mgr.is_media_allowed(parsed)
+    if not allowed:
+        logger.info(f"Rules filter: bypassing event '{parsed.event}' for '{parsed.title}' ({bypass_reason})")
+        metrics_registry.record_request(endpoint_name, 200)
+        log_event(parsed, "bypassed", {"reason": bypass_reason})
+        return {"status": "ignored", "reason": bypass_reason}
 
     active_client = user_mgr.get_client(parsed.username)
     if not active_client.is_authenticated():
@@ -668,7 +829,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
     scrobble_payload = parsed.to_trakt_scrobble_payload()
     result: dict[str, Any] = {}
     action_taken = "none"
-    threshold = Config.get_threshold(parsed.media_type)
+    threshold = settings_mgr.get_effective_threshold(parsed.media_type)
 
     try:
         if event == "library.new":
@@ -851,7 +1012,7 @@ async def plex_webhook(request: Request):
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         metrics_registry.record_request("webhook", 200)
@@ -891,7 +1052,7 @@ async def jellyfin_webhook(request: Request):
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         metrics_registry.record_request("webhook_jellyfin", 200)
@@ -931,7 +1092,7 @@ async def emby_webhook(request: Request):
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         metrics_registry.record_request("webhook_emby", 200)
@@ -1573,6 +1734,7 @@ class SettingsUpdateRequest(BaseModel):
     credentials: Optional[dict[str, dict[str, Any]]] = None
     reconciliation: Optional[dict[str, Any]] = None
     arr: Optional[dict[str, Any]] = None
+    rules: Optional[dict[str, Any]] = None
     notifications: Optional[dict[str, Any]] = None
 
     model_config = {"extra": "ignore"}
@@ -1679,6 +1841,32 @@ async def test_notification_endpoint(payload: NotificationTestRequest, request: 
     if not success:
         return JSONResponse(status_code=400, content={"status": "error", "success": False, "message": msg})
     return {"status": "success", "success": True, "message": msg}
+
+
+@app.post("/api/settings/save-all")
+def save_all_settings_alias(payload: SettingsUpdateRequest, request: Request):
+    """Atomically save all Settings Hub configurations to data/settings.json."""
+    return update_settings_endpoint(payload, request)
+
+
+@app.get("/api/settings/rules")
+def get_rules_endpoint(request: Request):
+    """Retrieve current dynamic scrobble rules and filters configuration."""
+    return {
+        "status": "success",
+        "rules": settings_mgr.get_rules_settings(),
+    }
+
+
+@app.post("/api/settings/rules")
+def update_rules_endpoint(payload: dict[str, Any], request: Request):
+    """Update dynamic scrobble rules and filters configuration."""
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "success", "rules": settings_mgr.get_rules_settings()}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    updated = settings_mgr.update_rules_settings(payload)
+    return {"status": "success", "rules": updated}
 
 
 @app.post("/api/settings/toggle")
@@ -2158,6 +2346,26 @@ def update_cowatch_settings(payload: CowatchSettingsRequest, request: Request):
     return {"status": "ok", "co_watch_movies": cowatch_mgr.config.CO_WATCH_MOVIES}
 
 
+@app.get("/api/cowatch/trackers")
+def get_cowatch_trackers_status(request: Request):
+    """Return configured and authenticated trackers matrix for the co-watch partner."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_cowatch_trackers()
+    target_user = request.query_params.get("user") or Config.CO_WATCH_USER
+    if not target_user:
+        return {"configured": False, "user": None, "trackers": {}}
+    trackers = user_mgr.get_user_trackers_status(target_user)
+    is_admin = is_admin_request(request)
+    display_user = target_user if is_admin else mask_username(target_user)
+    return {
+        "configured": True,
+        "user": display_user,
+        "raw_user": target_user if is_admin else None,
+        "trackers": trackers,
+    }
+
+
 class ReconcileRequest(BaseModel):
     item_ids: Optional[list[str]] = None
     direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt", "trakt_to_server", "server_to_trakt"
@@ -2367,18 +2575,57 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
         return await reverse_sync_mgr.execute_reconciliation(demo=True, server=payload.server)
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    res = await reverse_sync_mgr.execute_reconciliation(
-        item_ids=payload.item_ids,
-        direction=payload.direction,
-        server=payload.server,
-    )
-    return res
+    if cloud_sync_mgr.sync_mutex.locked():
+        raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
+    async with cloud_sync_mgr.sync_mutex:
+        res = await reverse_sync_mgr.execute_reconciliation(
+            item_ids=payload.item_ids,
+            direction=payload.direction,
+            server=payload.server,
+        )
+        return res
 
 
 @app.get("/api/sync/progress")
 async def get_sync_progress(request: Request):
     """Poll reconciliation progress."""
     return reverse_sync_mgr._sync_progress
+
+
+@app.get("/api/sync/background/status")
+async def get_background_sync_status(request: Request):
+    """Return current background synchronization state and telemetry."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return demo_mgr.get_demo_background_sync_status()
+    return cloud_sync_mgr.get_status()
+
+
+@app.post("/api/sync/background/run")
+async def trigger_background_sync(request: Request):
+    """Manually trigger an automated background cloud reconciliation cycle."""
+    is_demo = request.query_params.get("demo") == "true"
+    if is_demo:
+        return {
+            "status": "success",
+            "message": "Demo background cloud reconciliation completed successfully.",
+            "last_run_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "items_reconciled": 3,
+        }
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if cloud_sync_mgr.sync_mutex.locked():
+        raise HTTPException(status_code=409, detail="A cloud synchronization or reconciliation is already in progress")
+    result = await cloud_sync_mgr.run_sync_cycle(
+        trigger="manual",
+        letterboxd_client=letterboxd,
+        reverse_sync_mgr=reverse_sync_mgr,
+        cross_tracker_sync=cross_tracker_sync,
+        arr_bridge=arr_bridge,
+    )
+    if isinstance(result, dict) and result.get("status") == "conflict":
+        raise HTTPException(status_code=409, detail=result.get("message"))
+    return result
 
 
 class ArrTestConnectionRequest(BaseModel):
@@ -2506,7 +2753,10 @@ async def execute_cross_sync(payload: CrossSyncExecuteRequest, request: Request)
         return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, demo=True)
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction)
+    if cloud_sync_mgr.sync_mutex.locked():
+        raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
+    async with cloud_sync_mgr.sync_mutex:
+        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction)
 
 
 @app.get("/api/cross-sync/progress")
@@ -2525,6 +2775,8 @@ class TestWebhookRequest(BaseModel):
     year: Optional[int] = 2025
     progress: float = 100.0
     execute_trakt: bool = False
+    library_section_title: Optional[str] = None
+    file_path: Optional[str] = None
 
 
 @app.post("/api/test/webhook")
@@ -2541,6 +2793,7 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
         "Player": {"title": Config.CO_WATCH_PLAYERS[0] if Config.CO_WATCH_PLAYERS else "Living Room TV", "local": True},
         "Metadata": {
             "librarySectionType": "show" if payload.media_type == "episode" else "movie",
+            "librarySectionTitle": payload.library_section_title or ("TV Shows" if payload.media_type == "episode" else "Movies"),
             "type": payload.media_type,
             "title": payload.title,
             "year": payload.year,
@@ -2550,6 +2803,7 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
             "parentIndex": payload.season if payload.media_type == "episode" else None,
             "index": payload.episode if payload.media_type == "episode" else None,
             "Guid": [{"id": "imdb://tt0000001"}],
+            "Media": [{"Part": [{"file": payload.file_path}]}] if payload.file_path else [],
         }
     }
 
@@ -2557,10 +2811,14 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
         mock_payload,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         return {"status": "ignored", "reason": "Filtered or invalid media payload"}
+
+    allowed, bypass_reason = settings_mgr.is_media_allowed(parsed)
+    if not allowed:
+        return {"status": "ignored", "reason": bypass_reason}
 
     eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
     simulated_result: dict[str, Any] = {"status": "ok", "mode": "simulated"}
@@ -2758,6 +3016,7 @@ async def disconnect_trakt(request: Request, user: Optional[str] = None):
 class SimklPollRequest(BaseModel):
     user_code: str
     device_code: Optional[str] = None
+    user: Optional[str] = None
 
 
 @app.get("/api/simkl/status")
@@ -2773,9 +3032,11 @@ async def get_simkl_status(request: Request):
             "account_id": 123456,
             "timezone": "America/New_York",
         }
-    status = await simkl.check_connection()
-    status["enabled"] = simkl.is_enabled()
-    status["configured"] = bool(simkl.effective_client_id)
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
+    status = await target_client.check_connection()
+    status["enabled"] = target_client.is_enabled()
+    status["configured"] = bool(target_client.effective_client_id)
     return status
 
 
@@ -2784,8 +3045,10 @@ async def get_simkl_pin(request: Request):
     """Obtain a new Device PIN / user_code to authorize Simkl via browser."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
     try:
-        data = await simkl.get_device_pin()
+        data = await target_client.get_device_pin()
         if isinstance(data, dict) and "error" in data:
             error_msg = data.get("error", "Failed to obtain Simkl PIN")
             if data.get("detail"):
@@ -2806,8 +3069,10 @@ async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if not payload.user_code or not str(payload.user_code).strip() or payload.user_code == "undefined":
         return {"status": "error", "result": "error", "message": "Missing user_code"}
+    target_user = payload.user or request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
     try:
-        res = await simkl.poll_device_pin(payload.user_code, device_code=payload.device_code)
+        res = await target_client.poll_device_pin(payload.user_code, device_code=payload.device_code)
         return res
     except Exception as e:
         return {"result": "error", "message": str(e)}
@@ -2818,6 +3083,10 @@ async def disconnect_simkl(request: Request):
     """Disconnect Simkl account and delete saved tokens."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    if target_user:
+        user_mgr.disconnect_user_tracker(target_user, "simkl")
+        return {"status": "ok", "message": f"Simkl disconnected for {target_user}"}
     simkl.delete_tokens()
     return {"status": "ok", "message": "Simkl disconnected"}
 
@@ -2832,6 +3101,7 @@ async def auth_simkl_page(request: Request):
 
 class TokenSubmitRequest(BaseModel):
     token: str
+    user: Optional[str] = None
 
 
 # --- AniList Anime Tracker Endpoints ---
@@ -2841,9 +3111,11 @@ async def get_anilist_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return demo_mgr.get_demo_anilist_status()
-    status = await anilist.check_connection()
-    status["enabled"] = anilist.is_enabled()
-    status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or anilist.is_authenticated())
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
+    status = await target_client.check_connection()
+    status["enabled"] = target_client.is_enabled()
+    status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or target_client.is_authenticated())
     return status
 
 
@@ -2855,10 +3127,12 @@ async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
     token_str = payload.token.strip()
     if not token_str:
         raise HTTPException(status_code=400, detail="Token cannot be empty")
-    anilist.access_token = token_str
-    conn = await anilist.check_connection()
+    target_user = payload.user or request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
+    target_client.access_token = token_str
+    conn = await target_client.check_connection()
     if conn.get("status") == "connected":
-        anilist.save_tokens({
+        target_client.save_tokens({
             "access_token": token_str,
             "user_name": conn.get("user"),
             "user_avatar": conn.get("avatar"),
@@ -2866,7 +3140,7 @@ async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
         })
         return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
     else:
-        anilist.load_tokens()
+        target_client.load_tokens()
         raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided AniList token"))
 
 
@@ -2875,6 +3149,10 @@ async def disconnect_anilist(request: Request):
     """Disconnect AniList account and delete stored tokens."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    if target_user:
+        user_mgr.disconnect_user_tracker(target_user, "anilist")
+        return {"status": "ok", "message": f"AniList disconnected for {target_user}"}
     anilist.delete_tokens()
     return {"status": "ok", "message": "AniList disconnected"}
 
@@ -2906,9 +3184,11 @@ async def get_mal_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return demo_mgr.get_demo_mal_status()
-    status = await mal.check_connection()
-    status["enabled"] = mal.is_enabled()
-    status["configured"] = bool(mal.effective_client_id or mal.is_authenticated())
+    target_user = request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
+    status = await target_client.check_connection()
+    status["enabled"] = target_client.is_enabled()
+    status["configured"] = bool(target_client.effective_client_id or target_client.is_authenticated())
     return status
 
 
@@ -2920,10 +3200,12 @@ async def save_mal_token(payload: TokenSubmitRequest, request: Request):
     token_str = payload.token.strip()
     if not token_str:
         raise HTTPException(status_code=400, detail="Token cannot be empty")
-    mal.access_token = token_str
-    conn = await mal.check_connection()
+    target_user = payload.user or request.query_params.get("user")
+    target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
+    target_client.access_token = token_str
+    conn = await target_client.check_connection()
     if conn.get("status") == "connected":
-        mal.save_tokens({
+        target_client.save_tokens({
             "access_token": token_str,
             "user_name": conn.get("user"),
             "user_avatar": conn.get("avatar"),
@@ -2931,7 +3213,7 @@ async def save_mal_token(payload: TokenSubmitRequest, request: Request):
         })
         return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
     else:
-        mal.load_tokens()
+        target_client.load_tokens()
         raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided MyAnimeList token"))
 
 
@@ -2940,6 +3222,10 @@ async def disconnect_mal(request: Request):
     """Disconnect MyAnimeList account and delete stored tokens."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = request.query_params.get("user")
+    if target_user:
+        user_mgr.disconnect_user_tracker(target_user, "mal")
+        return {"status": "ok", "message": f"MyAnimeList disconnected for {target_user}"}
     mal.delete_tokens()
     return {"status": "ok", "message": "MyAnimeList disconnected"}
 
@@ -3231,69 +3517,6 @@ async def dashboard(request: Request, response: Response):
     return await render_dashboard_response(request, response, is_demo=is_demo)
 
 
-def format_action_label(raw_action: str) -> str:
-    clean = str(raw_action or "").strip()
-    action_map = {
-        "scrobble_start": "play",
-        "scrobble_pause": "pause",
-        "scrobble_stop": "scrobble",
-        "mark_watched": "scrobble",
-        "playback_stopped": "stop",
-        "test_webhook": "test",
-        "none": "ignored",
-    }
-    return action_map.get(clean, clean)
-
-
-def should_display_cowatch_badge(action: str, result_status: str, progress: str) -> bool:
-    act = str(action or "").lower().strip()
-    status = str(result_status or "").lower().strip()
-    prog = str(progress or "").strip()
-    if status in ("ignored", "error") or prog == "0.0%":
-        return False
-    return act.startswith(("mark_watched", "scrobble_stop", "test_webhook")) or act in ("scrobble", "watched")
-
-
-def render_status_badge(action: str, result_status: str, progress: str = "", cowatch_status: dict | None = None) -> str:
-    raw_act = str(action or "").lower().strip()
-    clean_act = format_action_label(raw_act).lower()
-    stat = str(result_status or "").lower().strip()
-    cw = cowatch_status or {}
-
-    if cw.get("synced") and should_display_cowatch_badge(action, result_status, progress):
-        target_txt = html.escape(f"@{cw['target']}" if cw.get("target") else "partner")
-        reason_txt = html.escape(cw.get("reason") or "Shared show whitelist match")
-        return f'<span style="background:#701a75;color:#f5d0fe;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
-
-    if stat in ("ok", "200", "201"):
-        label = "✓ OK"
-        tooltip = "Action successful"
-        if clean_act == "scrobble" or raw_act.startswith(("mark_watched", "scrobble_stop")):
-            label = "✓ Scrobbled"
-            if cw.get("reason"):
-                tooltip = f"Scrobbled (Solo: {html.escape(cw.get('reason'))})"
-            else:
-                tooltip = "Scrobbled to connected trackers"
-        elif clean_act == "collection" or raw_act == "collection":
-            label = "✓ Added"
-            tooltip = "Added to collection"
-        elif clean_act == "rate" or raw_act.startswith("rate"):
-            label = "✓ Rated"
-            tooltip = "Rating synchronized"
-        return f'<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="{tooltip}">{label}</span>'
-
-    if stat == "ignored":
-        return '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;" title="Playback or event skipped">Ignored</span>'
-
-    if stat == "queued":
-        return '<span style="background:#78350f;color:#fde68a;border:1px solid #d97706;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Saved to offline retry queue">⏳ Queued</span>'
-
-    if stat in ("error", "500", "502", "503", "504"):
-        return '<span style="background:#7f1d1d;color:#fecaca;border:1px solid #ef4444;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Action failed">✕ Failed</span>'
-
-    return f'<span style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;">{html.escape(str(result_status))}</span>'
-
-
 async def render_dashboard_response(request: Request, response: Response, is_demo: bool = False) -> HTMLResponse:
     if is_demo:
         is_admin = True
@@ -3444,126 +3667,22 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
 
     # Events rows & pagination metadata
     events_list = demo_mgr.get_demo_events() if is_demo else list(recent_events)
-    total_events = len(events_list)
-    initial_page_size = 10
-    total_pages = max(1, (total_events + initial_page_size - 1) // initial_page_size) if total_events > 0 else 1
-    events_page_info = f"Showing 1–{min(initial_page_size, total_events)} of {total_events} events" if total_events > 0 else "0 events"
-    events_page_num = f"Page 1 of {total_pages}"
-    events_next_disabled = "" if total_pages > 1 else "disabled"
+    rows, events_page_info, events_page_num, events_next_disabled = dashboard_renderer.render_activity_table_rows(
+        events_list=events_list,
+        is_admin=is_admin,
+        is_demo=is_demo,
+        cowatch_user=Config.CO_WATCH_USER,
+        is_cowatch_show_fn=cowatch_mgr.is_cowatch_show,
+        mask_username_fn=mask_username,
+    )
 
-    ssr_events = events_list[:initial_page_size]
-    rows = ""
-    col_span = 7 if is_admin else 6
-    if not ssr_events:
-        rows = f'<tr><td colspan="{col_span}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex, Jellyfin, or Emby to test!</td></tr>'
-    else:
-        for ev in ssr_events:
-            color = "#10b981" if ev["result_status"] in ("ok", 200, 201) else "#f59e0b"
-            u = ev["user"] if is_admin else mask_username(ev["user"])
-            server_raw = ev.get("server", "plex").lower()
-            if server_raw == "jellyfin":
-                server_badge = '<span style="background:#3b0764;color:#d8b4fe;border:1px solid #7e22ce;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Jellyfin</span>'
-            elif server_raw == "emby":
-                server_badge = '<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Emby</span>'
-            else:
-                server_badge = '<span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span>'
-
-            action_col = ""
-            if is_admin:
-                show_title = ev.get("show_title") or (ev.get("title") if ev.get("type") == "show" else None)
-                if not show_title and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
-                    show_title = ev["media_payload"].get("title")
-                action_buttons = []
-                if show_title:
-                    show_esc = urllib.parse.quote(show_title)
-                    if not cowatch_mgr.is_cowatch_show(show_title):
-                        action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;white-space:nowrap;" title="Add show to co-watch whitelist">+ Co-Watch</button>')
-                if (Config.CO_WATCH_USER or is_demo) and ev.get("media_payload"):
-                    media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
-                    raw_act = str(ev.get("action", "")).lower().strip()
-                    res_stat = str(ev.get("result_status", "")).lower().strip()
-                    prog_val = str(ev.get("progress", "")).strip()
-                    is_completion = raw_act.startswith(("mark_watched", "scrobble_stop", "collection", "rate")) or raw_act in ("scrobble", "watched")
-                    if is_completion and res_stat != "ignored" and prog_val != "0.0%":
-                        cw = ev.get("cowatch_status") or {}
-                        if not cw.get("synced"):
-                            action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
-                        if raw_act.startswith(("mark_watched", "scrobble_stop")) or raw_act in ("scrobble", "watched"):
-                            action_buttons.append(f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>')
-                action_col = f'<td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
-
-            # Status column: show unified status badge
-            status_badge_html = render_status_badge(
-                ev.get("action"),
-                ev.get("result_status"),
-                ev.get("progress", ""),
-                ev.get("cowatch_status"),
-            )
-
-            title_disp = html.escape(str(ev.get('title', '')))
-            type_disp = html.escape(str(ev.get('type', '')))
-            user_disp = html.escape(str(u))
-            action_raw = str(ev.get('action', ''))
-            progress_raw = str(ev.get('progress', '')).strip()
-            clean_action = format_action_label(action_raw)
-            action_disp = html.escape(clean_action)
-            progress_disp = html.escape(progress_raw)
-            if progress_disp and progress_raw not in clean_action and "(" not in clean_action and clean_action.lower() not in ("collection", "ignored"):
-                action_text = f"{action_disp} ({progress_disp})"
-            else:
-                action_text = action_disp
-            time_disp = html.escape(str(ev.get('timestamp', '')))
-
-            rows += f"""
-            <tr style="border-bottom: 1px solid #334155;">
-                <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">{time_disp}</td>
-                <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">{title_disp}</td>
-                <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{type_disp}</span></td>
-                <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{user_disp}</span></div></td>
-                <td style="padding:10px 12px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">{action_text}</span></td>
-                <td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">{status_badge_html}</div></td>
-                {action_col}
-            </tr>
-            """
-
-    webhook_html_section = f"""
-    <div style="margin-top: 18px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
-            <div class="info-label">Media Server Webhook Endpoints</div>
-            <div style="display:flex;gap:6px;">
-                <button type="button" onclick="switchWebhookTab('plex')" id="btn-tab-plex" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Plex</button>
-                <button type="button" onclick="switchWebhookTab('jellyfin')" id="btn-tab-jellyfin" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Jellyfin</button>
-                <button type="button" onclick="switchWebhookTab('emby')" id="btn-tab-emby" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Emby</button>
-            </div>
-        </div>
-        <div class="webhook-row">
-            <input type="text" readonly id="webhook-url-input" value="{full_webhook_url}"
-                   data-plex="{full_webhook_url}" data-jellyfin="{full_jellyfin_url}" data-emby="{full_emby_url}"
-                   style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#38bdf8;font-family:monospace;font-size:13px;outline:none;" />
-            <button onclick="copyWebhookUrl()" id="copy-btn" class="btn-copy">
-                📋 Copy URL
-            </button>
-        </div>
-        <div id="webhook-instructions" style="font-size: 12px; color: #94a3b8; margin-top: 6px;">
-            Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Jellyfin (<code>/webhook/jellyfin</code>) &bull; Emby (<code>/webhook/emby</code>) &bull; Sonarr (<code>/sonarr</code>) &bull; Radarr (<code>/radarr</code>).
-        </div>
-    </div>
-    """ if is_admin else f"""
-    <div style="margin-top: 18px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <div class="info-label">Media Server Webhook Endpoints</div>
-            <span style="color:#f59e0b;font-size:11px;font-weight:600;">🔒 Secret Masked</span>
-        </div>
-        <div class="webhook-row">
-            <input type="text" readonly value="{masked_webhook_url}"
-                   style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#64748b;font-family:monospace;font-size:13px;outline:none;user-select:none;" />
-            <button onclick="openUnlockModal()" class="btn-copy" style="background:#2563eb;">
-                🔓 Unlock
-            </button>
-        </div>
-        <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Admin authorization required to reveal webhook URLs. Supports Plex, Jellyfin, Emby, Sonarr, and Radarr.</div>
-    </div>
-    """
+    webhook_html_section = dashboard_renderer.render_webhook_section(
+        full_webhook_url=full_webhook_url,
+        full_jellyfin_url=full_jellyfin_url,
+        full_emby_url=full_emby_url,
+        masked_webhook_url=masked_webhook_url,
+        is_admin=is_admin,
+    )
 
     clear_button_html = '<button onclick="clearHistory()" class="btn-sm" style="color:#f87171;">Clear</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="color:#64748b;" title="Admin unlock required to clear logs">🔒 Clear</button>'
     manual_scrobble_btn_html = '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">🔍 Manual Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;color:#94a3b8;border:1px solid #334155;">🔍 Manual Scrobble</button>'
@@ -3575,73 +3694,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         active_sessions = playback_mgr.get_active_sessions(is_admin=is_admin)
         recently_finished = playback_mgr.get_recently_finished(is_admin=is_admin)
 
-    if active_sessions:
-        s = active_sessions[0]
-        card_display = "block"
-        card_border = "#10b981" if s["state"] == "playing" else "#f59e0b"
-        badge_text = "Currently Streaming" if s["state"] == "playing" else "Paused"
-        badge_color = card_border
-        user_dev = f"• {s['username']}" + (f" on {s['player']}" if (is_admin and s['player']) else "") + (f" ({s['device']})" if (is_admin and s['device']) else "")
-        stream_title = s['title']
-        stream_url = s['trakt_url']
-        stream_prog_text = f"{s['progress']:.1f}%"
-        if s.get("remaining_str"):
-            stream_prog_text += f" • {s['remaining_str']}"
-        stream_prog_width = f"{s['progress']}%"
-    elif recently_finished:
-        f = recently_finished
-        card_display = "block"
-        card_border = "#38bdf8"
-        badge_text = "Recently Finished"
-        badge_color = "#38bdf8"
-        user_dev = f"• {f['username']}" + (f" on {f['player']}" if (is_admin and f['player']) else "")
-        stream_title = f['title']
-        stream_url = f['trakt_url']
-        stream_prog_text = "100.0% • Finished"
-        stream_prog_width = "100%"
-    else:
-        card_display = "none"
-        card_border = "#10b981"
-        badge_text = "Currently Streaming"
-        badge_color = "#10b981"
-        user_dev = ""
-        stream_title = ""
-        stream_url = "https://trakt.tv"
-        stream_prog_text = "0.0%"
-        stream_prog_width = "0%"
-
-    stream_title_esc = html.escape(str(stream_title))
-    user_dev_esc = html.escape(str(user_dev))
-    stream_prog_text_esc = html.escape(str(stream_prog_text))
-    clean_stream_url = stream_url if str(stream_url).startswith(("https://", "http://")) else "https://trakt.tv"
-    clean_stream_url_esc = html.escape(clean_stream_url)
-
-    active_playback_card_html = f"""
-        <div id="active-playback-card" class="card" style="border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
-                <div>
-                    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-                        <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
-                        <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
-                        <span style="font-size:12px; color:#94a3b8;" id="stream-user-device">{user_dev_esc}</span>
-                    </div>
-                    <h2 style="margin:4px 0 8px 0; font-size:18px; color:#f8fafc;" id="stream-title">{stream_title_esc}</h2>
-                </div>
-                <div id="stream-actions">
-                    <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm" style="background:#334155; color:#38bdf8; text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
-                </div>
-            </div>
-            <div style="margin-top:12px;">
-                <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8; margin-bottom:6px;">
-                    <span>Playback Progress</span>
-                    <span id="stream-progress-text" style="font-weight:600; color:#f8fafc;">{stream_prog_text_esc}</span>
-                </div>
-                <div style="background:#0f172a; border-radius:9999px; height:8px; overflow:hidden; border:1px solid #334155;">
-                    <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
-                </div>
-            </div>
-        </div>
-    """
+    active_playback_card_html = dashboard_renderer.render_active_playback_card(
+        active_sessions=active_sessions,
+        recently_finished=recently_finished,
+        is_admin=is_admin,
+    )
 
     # Co-Watching & Multi-User configuration
     if is_demo:
@@ -3650,183 +3707,29 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         cw_shows = demo_mgr.get_demo_cowatch_shows()
         cw_devices = demo_mgr.get_demo_cowatch_devices()
         configured_users = demo_mgr.get_demo_users()
+        cw_trackers = demo_mgr.get_demo_cowatch_trackers()["trackers"]
     else:
         cw_user = Config.CO_WATCH_USER
         cw_user_display = cw_user if is_admin else "●●●●●●●●"
         cw_shows = sorted(cowatch_mgr.get_shows(), key=lambda x: x.lower())
         cw_devices = cowatch_mgr.get_devices()
         configured_users = user_mgr.list_configured_users()
+        cw_trackers = user_mgr.get_user_trackers_status(cw_user) if cw_user else {}
 
-    # Shared show chips
-    if not is_admin:
-        count = len(cw_shows)
-        chips_html = f'<div style="color:#94a3b8;font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 2px;"><span>🔒</span><span><strong>{count} shared show{"s" if count != 1 else ""} configured</strong> &bull; Unlock admin access to view titles and manage whitelist.</span></div>'
-    else:
-        chips_html = ""
-        for s in cw_shows:
-            s_enc = urllib.parse.quote(s)
-            del_btn = f'<button data-show="{s_enc}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove {html.escape(s)}" class="cowatch-chip-del">&times;</button>'
-            chips_html += f'<span class="cowatch-chip" data-title="{html.escape(s.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">{html.escape(s)}{del_btn}</span>'
-        if not chips_html:
-            chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>'
-
-    # Allowed devices chips
-    if not is_admin:
-        device_chips_html = '<div style="color:#94a3b8;font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 2px;"><span>🔒</span><span>Unlock admin access to manage allowed devices.</span></div>'
-        devices_count_badge = "🔒"
-    else:
-        devices_count_badge = str(len(cw_devices)) if cw_devices else "All"
-        if not cw_devices:
-            device_chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>'
-        else:
-            device_chips_html = ""
-            for d in cw_devices:
-                d_enc = urllib.parse.quote(d)
-                del_btn = f'<button data-device="{d_enc}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove {html.escape(d)}" class="cowatch-chip-del">&times;</button>'
-                device_chips_html += f'<span class="cowatch-device-chip" data-title="{html.escape(d.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">📺 {html.escape(d)}{del_btn}</span>'
-
-    device_form_html = f'''
-    <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" style="margin:0;">
-        <div class="cowatch-form-row">
-            <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add device (e.g. Apple TV, Shield TV)..."
-                   style="flex:1;min-width:0;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
-                   autocomplete="off" />
-            <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;flex-shrink:0;">+ Add Device</button>
-        </div>
-    </form>
-    <div style="margin-top:4px;font-size:11px;color:#64748b;">
-        Leave empty to allow all devices. When configured, co-watching only dual-scrobbles on these players.
-    </div>
-    ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to configure allowed devices.</div>'
-
-    # Multi-user accounts list
-    users_badges_html = ""
-    for u in configured_users:
-        u_name = u["username"]
-        is_def = u.get("is_default", False)
-        is_cw = u.get("is_cowatch_target", False)
-        auth = u.get("authenticated", False)
-        status_color = "#10b981" if auth else "#ef4444"
-        status_text = "Connected" if auth else "Not Linked"
-        link_url = f"/auth?user={u_name}" if not is_def else "/auth"
-
-        link_btn = ""
-        if is_admin:
-            if not auth:
-                link_btn = f'<a href="{link_url}" class="btn-sm" style="background:#2563eb;color:#fff;text-decoration:none;padding:2px 8px;font-size:11px;">Link &rarr;</a>'
-            else:
-                link_btn = f'<a href="{link_url}" class="btn-sm" style="background:#334155;color:#94a3b8;text-decoration:none;padding:2px 8px;font-size:11px;">Reconnect</a>'
-
-        role_label = ""
-        if is_def:
-            role_label = '<span style="background:#1e3a8a;color:#93c5fd;font-size:10px;padding:2px 6px;border-radius:4px;flex-shrink:0;">Default</span>'
-        elif is_cw:
-            role_label = '<span style="background:#701a75;color:#f5d0fe;font-size:10px;padding:2px 6px;border-radius:4px;flex-shrink:0;">Partner</span>'
-
-        if is_def and raw_username:
-            display_name = raw_username if is_admin else mask_username(raw_username)
-        elif is_cw and not is_admin:
-            display_name = "●●●●●●●●"
-        else:
-            display_name = u_name if is_admin else mask_username(u_name)
-
-        users_badges_html += f"""
-        <div class="cowatch-account-row">
-            <div class="cowatch-account-info">
-                <span class="cowatch-account-name">@{display_name}</span>
-                {role_label}
-            </div>
-            <div class="cowatch-account-status">
-                <span style="color:{status_color};font-size:12px;font-weight:500;">● {status_text}</span>
-                {link_btn}
-            </div>
-        </div>
-        """
-
-    rule_movies_str = "Enabled" if Config.CO_WATCH_MOVIES else "Disabled"
-    sonarr_status_note = (
-        '<span style="color:#10b981;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px;">'
-        '✓ Connected to Sonarr (type to search library)</span>'
-        if sonarr.is_configured
-        else '<span style="color:#64748b;font-size:11px;">Configure SONARR_URL & SONARR_API_KEY in .env for library search</span>'
+    cowatch_card_html = dashboard_renderer.render_cowatch_card(
+        cw_user=cw_user,
+        cw_user_display=cw_user_display,
+        cw_shows=cw_shows,
+        cw_devices=cw_devices,
+        configured_users=configured_users,
+        cw_trackers=cw_trackers,
+        sonarr_configured=sonarr.is_configured,
+        cowatch_movies=Config.CO_WATCH_MOVIES,
+        is_admin=is_admin,
+        is_demo=is_demo,
+        raw_username=raw_username,
+        mask_username_fn=mask_username,
     )
-
-    cowatch_card_html = f"""
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>👥</span> Watch Together & Multi-User Accounts
-            </h3>
-            <span style="background:#0f172a;border:1px solid #334155;color:#38bdf8;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">
-                {f"Partner: @{cw_user_display}" if cw_user else "Single-User Mode"}
-            </span>
-        </div>
-        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-            Dual-scrobble watched shows to your partner's Trakt account automatically, without syncing your solo shows.
-        </p>
-        <!-- Top Section: Targeting & Destinations (Accounts & Devices side-by-side) -->
-        <div class="cowatch-grid">
-            <div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;">Linked Trakt Accounts</div>
-                    {f'<button onclick="promptLinkAccount()" class="btn-sm" style="background:#334155;color:#38bdf8;">+ Link Account</button>' if is_admin else ''}
-                </div>
-                <div>
-                    {users_badges_html}
-                </div>
-            </div>
-            <div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
-                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                        <span>Allowed Devices Whitelist</span>
-                        <span id="cowatch-devices-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{devices_count_badge}</span>
-                    </div>
-                </div>
-                <div id="cowatch-devices-chips-container" class="custom-scroll" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:44px;max-height:140px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
-                    {device_chips_html}
-                </div>
-                {device_form_html}
-            </div>
-        </div>
-
-        <!-- Bottom Section: Shared Media & Shows Whitelist (Full Width) -->
-        <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
-                <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
-                    <span>Shared Shows Whitelist</span>
-                    <span id="cowatch-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(cw_shows)}</span>
-                </div>
-                {f'<input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:130px;" />' if is_admin else ''}
-            </div>
-            <div id="cowatch-chips-container" class="custom-scroll" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;min-height:54px;max-height:220px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
-                {chips_html}
-            </div>
-            {f'''
-            <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
-                <div class="cowatch-form-row">
-                    <div style="flex:1;min-width:0;position:relative;">
-                        <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Severance, Lanterns)..."
-                               style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
-                               oninput="onCowatchShowInput(this.value)"
-                               onfocus="onCowatchShowInput(this.value)"
-                               autocomplete="off"
-                               data-lpignore="true"
-                               data-1p-ignore="true"
-                               onkeydown="if(event.key==='Enter')addCowatchShow()" />
-                        <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
-                    </div>
-                    <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;flex-shrink:0;">+ Add Show</button>
-                </div>
-            </form>
-            <div style="margin-top:4px;">{sonarr_status_note}</div>
-            ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to add or remove shared shows.</div>'}
-            <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <span>Movies: <strong id="cowatch-movies-status">{rule_movies_str}</strong></span>
-                {f'<button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies ({ "Disable" if Config.CO_WATCH_MOVIES else "Enable" })</button>' if is_admin else ''}
-            </div>
-        </div>
-    </div>
-    """
 
     # Two-Way Library Reconciliation Card
     sync_status = await reverse_sync_mgr.get_status() if not is_demo else {
@@ -3839,123 +3742,18 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         "sync_on_startup": False,
         "sync_ratings": True,
     }
+    bg_sync_state = cloud_sync_mgr.get_status() if not is_demo else demo_mgr.get_demo_background_sync_status()
+    bg_interval_hours = getattr(Config, "BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", 24)
 
-    active_srv = sync_status.get("active_server", "plex")
-    plex_cfg = sync_status.get("plex_configured", False)
-    plex_conn = sync_status.get("plex_connected", False)
-    jf_cfg = sync_status.get("jellyfin_configured", False)
-    jf_conn = sync_status.get("jellyfin_connected", False)
-    emby_cfg = sync_status.get("emby_configured", False)
-    emby_conn = sync_status.get("emby_connected", False)
+    reconcile_card_html = dashboard_renderer.render_reconciliation_card(
+        sync_status=sync_status,
+        bg_sync_state=bg_sync_state,
+        bg_interval_hours=bg_interval_hours,
+        is_admin=is_admin,
+        repo_url=REPO_URL,
+    )
 
-    server_status_badges = []
-    if plex_cfg:
-        col = "#10b981" if plex_conn else "#f59e0b"
-        st = "Online" if plex_conn else "Unreachable"
-        server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Plex {st}</span>')
-    if jf_cfg:
-        col = "#10b981" if jf_conn else "#f59e0b"
-        st = "Online" if jf_conn else "Unreachable"
-        server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Jellyfin {st}</span>')
-    if emby_cfg:
-        col = "#10b981" if emby_conn else "#f59e0b"
-        st = "Online" if emby_conn else "Unreachable"
-        server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Emby {st}</span>')
-
-    if not server_status_badges:
-        server_status_badges.append('<span style="color:#94a3b8;font-size:12px;">● Direct API Not Configured</span>')
-    server_badges_html = " ".join(server_status_badges)
-
-    diff_count = sync_status.get("diff_count", 0)
-    int_mins = sync_status.get("interval_minutes", 0)
-    auto_sync_badge = f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Every {int_mins}m</span>' if int_mins > 0 else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Manual</span>'
-
-    any_server_configured = plex_cfg or jf_cfg or emby_cfg
-    if any_server_configured:
-        reconcile_card_html = f"""
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                    <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
-                </h3>
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                    {server_badges_html}
-                    {auto_sync_badge}
-                </div>
-            </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-                Bi-directional sync matches watched history and ratings between your media servers (Plex, Jellyfin, Emby) and Trakt with automatic echo-loop suppression.
-            </p>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-                <div>
-                    <div style="font-size:14px;font-weight:600;color:#f8fafc;display:flex;align-items:center;gap:6px;">
-                        <span>Pending Discrepancies</span>
-                        <span id="reconcile-diff-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 8px;border-radius:9999px;font-size:12px;font-weight:700;">{diff_count}</span>
-                    </div>
-                    <div style="font-size:12px;color:#94a3b8;margin-top:4px;">
-                        Ratings sync: {'Enabled' if sync_status.get('sync_ratings') else 'Disabled'} &bull; Startup sync: {'Active' if sync_status.get('sync_on_startup') else 'Off'}
-                    </div>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    {f'<button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Configure</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Configure</button>'}
-                    {f'<button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Review Discrepancies</button>'}
-                    {f'<button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; {active_srv.capitalize()})</button>' if is_admin else ''}
-                </div>
-            </div>
-        </div>
-        """
-    else:
-        reconcile_card_html = f"""
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                    <span>🔄</span> Two-Way Library Reconciliation
-                </h3>
-                <span style="color:#94a3b8;font-size:12px;">● Direct API Not Configured</span>
-            </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;line-height:1.5;">
-                Enable direct media server reconciliation (Plex, Jellyfin, Emby) to pull watched history and user ratings from Trakt back to your media server with loop prevention.
-            </p>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                <span>Configure your media server direct connection to activate two-way reconciliation and rating synchronization.</span>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    {f'<button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Set Up Connection</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Set Up Connection</button>'}
-                    <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
-                </div>
-            </div>
-        </div>
-        """
-
-    backup_card_html = f"""
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>💾</span> System Operations & Observability
-            </h3>
-            <div style="display:flex;gap:8px;align-items:center;">
-                {f'<button onclick="openLogsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;">📜 View Logs</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;cursor:pointer;" title="Admin unlock required to view logs">🔒 View Logs</button>'}
-                <a href="/metrics" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
-            </div>
-        </div>
-        <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-            Export or restore your configuration, multi-user Trakt tokens, co-watch whitelist, and inspect live service logs.
-        </p>
-        <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
-            {f'''
-            <a href="/api/backup" download class="btn-sm" style="background:#0284c7;color:#fff;text-decoration:none;padding:8px 16px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
-                💾 Download Backup (.zip)
-            </a>
-            <label class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-                📤 Restore Backup (.zip)
-                <input type="file" id="backup-file-input" accept=".zip" onchange="uploadBackup(this)" style="display:none;" />
-            </label>
-            <button onclick="openTestWebhookModal()" class="btn-sm" style="background:#4338ca;color:#fff;border:1px solid #6366f1;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-                🧪 Test Webhook
-            </button>
-            ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin authorization required to download or restore server backups.</div>'}
-        </div>
-    </div>
-    """
+    backup_card_html = dashboard_renderer.render_backup_card(is_admin=is_admin)
 
     # Multi-Server Ecosystem Health Card
     eco_data = await arr_bridge.get_ecosystem_status(
@@ -3967,361 +3765,37 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         anilist_client=anilist,
         mal_client=mal,
     )
-    eco_servers = eco_data.get("servers", [])
-    eco_healthy = eco_data.get("healthy_count", 0)
-    eco_total = eco_data.get("total_count", len(eco_servers))
+    ecosystem_card_html = dashboard_renderer.render_ecosystem_card(
+        eco_data=eco_data,
+        is_admin=is_admin,
+    )
 
-    eco_cards_html = ""
-    for srv in eco_servers:
-        st = srv.get("status", "unknown")
-        if st == "connected":
-            st_color = "#10b981"
-            st_bg = "#064e3b"
-            st_border = "#059669"
-        elif st == "available":
-            st_color = "#38bdf8"
-            st_bg = "#0c4a6e"
-            st_border = "#0284c7"
-        elif st == "disabled":
-            st_color = "#cbd5e1"
-            st_bg = "#334155"
-            st_border = "#64748b"
-        elif st == "error":
-            st_color = "#f87171"
-            st_bg = "#7f1d1d"
-            st_border = "#dc2626"
-        else:
-            st_color = "#94a3b8"
-            st_bg = "#1e293b"
-            st_border = "#334155"
-
-        srv_icon = "🎬"
-        sid = srv.get("id", "")
-        if sid == "plex":
-            srv_icon = "🔶"
-        elif sid == "jellyfin":
-            srv_icon = "🟣"
-        elif sid == "emby":
-            srv_icon = "🟢"
-        elif sid == "trakt":
-            srv_icon = "🔴"
-        elif sid == "simkl":
-            srv_icon = "✨"
-        elif sid == "anilist":
-            srv_icon = "⚡"
-        elif sid == "myanimelist":
-            srv_icon = "🎌"
-        elif sid == "sonarr":
-            srv_icon = "📺"
-        elif sid == "radarr":
-            srv_icon = "🍿"
-
-        srv_name = html.escape(srv.get('name', ''))
-        is_disabled = (not srv.get("enabled", True)) or st == "disabled" or srv.get("badge") in ("Disabled", "Paused")
-        card_class = "eco-card eco-card-disabled" if is_disabled else "eco-card"
-        card_extra_style = "opacity:0.65;transition:opacity 0.2s ease,border-color 0.2s ease;" if is_disabled else ""
-        card_extra_attrs = 'onmouseenter="this.style.opacity=\'1\'" onmouseleave="this.style.opacity=\'0.65\'"' if is_disabled else ""
-
-        toggle_btn = ""
-        if is_admin and sid in ("plex", "jellyfin", "emby"):
-            cat = "server"
-            key = sid
-            is_en = srv.get("enabled", True)
-            config_gear = f'<button onclick="openReconcileSettingsModal(\'{sid}\')" class="btn-sm" style="display:inline-flex;align-items:center;padding:3px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#38bdf8;cursor:pointer;" title="Configure {srv_name} Direct API">⚙️</button>'
-            if is_en:
-                toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
-            else:
-                toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
-
-        eco_cards_html += f"""
-        <div class="{card_class}" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;{card_extra_style}" {card_extra_attrs}>
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-                    <span style="font-size:18px;flex-shrink:0;">{srv_icon}</span>
-                    <div style="min-width:0;">
-                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{html.escape(srv.get('name', ''))}</div>
-                        <div style="font-size:11px;color:#64748b;">{html.escape(srv.get('category', ''))}</div>
-                    </div>
-                </div>
-                <span style="background:{st_bg};border:1px solid {st_border};color:{st_color};font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">
-                    {html.escape(srv.get('badge', st.capitalize()))}
-                </span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
-                <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="{html.escape(srv.get('details', ''))}">
-                    {html.escape(srv.get('details', ''))}
-                </div>
-                {toggle_btn}
-            </div>
-        </div>
-        """
-
-    ecosystem_card_html = f"""
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>🌐</span> Multi-Server Ecosystem
-            </h3>
-            <div style="display:flex;align-items:center;gap:8px;">
-                <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
-                    <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
-                    {eco_healthy}/{eco_total} Services Healthy
-                </span>
-                <button onclick="openSettingsModal('servers')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:4px 10px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">⚙️ Manage Servers</button>
-            </div>
-        </div>
-        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Unified operational topology across all media servers and automated acquisition engines.
-        </p>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
-            {eco_cards_html}
-        </div>
-    </div>
-    """
-
-    # -------------------------------------------------------------
     # Multi-Tracker Architecture Hub Card & Cloud Diagnostics
-    # -------------------------------------------------------------
     if is_demo:
         trk_status_all = demo_mgr.get_demo_trackers_status()
     else:
         trk_status_all = await multi_tracker.get_status()
 
-    trackers_dict = trk_status_all.get("trackers", {})
-    simkl_status = trackers_dict.get("simkl", {})
-    simkl_cfg = simkl_status.get("configured", False)
-    simkl_auth = simkl_status.get("authenticated", False)
-    simkl_user = simkl_status.get("user")
-    simkl_disp_user = (simkl_user if is_admin else mask_username(simkl_user)) if simkl_user else "Linked"
-
-    quick_scrobble_btn = '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🍿 Quick Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Quick Scrobble</button>'
-
-    simkl_action_btn = ""
-    if is_admin:
-        if simkl_auth:
-            simkl_paused = not settings_mgr.is_tracker_enabled("simkl")
-            simkl_toggle_btn = f'<button onclick="toggleSetting(\'tracker\', \'simkl\', {str(simkl_paused).lower()}, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;background:#1e293b;border:1px solid #475569;color:{"#a7f3d0" if simkl_paused else "#cbd5e1"};padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.2;">{"▶ Resume Simkl" if simkl_paused else "⏸ Pause Simkl"}</button>'
-            simkl_action_btn = f'{simkl_toggle_btn} <button onclick="disconnectSimkl(this)" class="btn-sm" style="background:#7f1d1d;border:1px solid #ef4444;color:#fee2e2;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">Disconnect</button>'
-        else:
-            simkl_action_btn = '<button onclick="openSimklModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔑 Link Simkl Account</button>'
-    else:
-        simkl_action_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Manage Simkl</button>'
-
-    cross_sync_btn = ""
-    if simkl_auth and (is_demo or trakt.is_authenticated()):
-        if is_admin:
-            cross_sync_btn = '<button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt & Simkl</button>'
-        else:
-            cross_sync_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Reconcile</button>'
-
-    # Build 9 tracker items for #hub-trackers-grid
-    trackers_meta = [
-        {"id": "trakt", "cat": "universal", "icon": "🔴", "name": "Trakt.tv", "desc": "Universal &bull; Movies &amp; Shows"},
-        {"id": "simkl", "cat": "universal", "icon": "🔵", "name": "Simkl", "desc": "Universal &bull; Movies, Shows, Anime"},
-        {"id": "tmdb", "cat": "universal", "icon": "🟡", "name": "TMDb", "desc": "Universal &bull; Watchlist &amp; Ratings"},
-        {"id": "anilist", "cat": "anime", "icon": "🔷", "name": "AniList", "desc": "Anime &bull; Episodes &amp; Ratings"},
-        {"id": "myanimelist", "cat": "anime", "icon": "🟦", "name": "MyAnimeList", "desc": "Anime &bull; Episodes &amp; Ratings"},
-        {"id": "kitsu", "cat": "anime", "icon": "🟠", "name": "Kitsu", "desc": "Anime &bull; Progress &amp; Ratings"},
-        {"id": "letterboxd", "cat": "social_diary", "icon": "🟢", "name": "Letterboxd", "desc": "Social Diary &bull; Film Diary &amp; CSV"},
-        {"id": "serializd", "cat": "social_diary", "icon": "🟨", "name": "Serializd", "desc": "Social Diary &bull; TV Episode Diary"},
-        {"id": "mdblist", "cat": "lists_ratings", "icon": "🟣", "name": "MDBList", "desc": "Lists &amp; Ratings &bull; Score Aggregation"},
-    ]
-
-    hub_items_html = ""
-    active_trackers_count = 0
-    for tm in trackers_meta:
-        t_info = trackers_dict.get(tm["id"], {})
-        t_en = t_info.get("enabled", True)
-        t_auth = t_info.get("authenticated", False)
-        t_cfg = t_info.get("configured", False)
-        t_user = t_info.get("user")
-        t_disp_user = (t_user if is_admin else mask_username(t_user)) if t_user else ""
-
-        if not t_en:
-            t_badge = '<span style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸️ Paused</span>'
-        elif t_auth:
-            active_trackers_count += 1
-            u_suffix = f" (@{t_disp_user})" if t_disp_user else ""
-            t_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active{u_suffix}</span>'
-        elif t_cfg:
-            active_trackers_count += 1
-            t_badge = '<span style="background:#1e293b;border:1px solid #eab308;color:#fde047;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Ready</span>'
-        else:
-            t_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Optional</span>'
-
-        # Quick interactive config button for each tracker in the grid
-        tm_id = tm["id"]
-        tm_name = tm["name"]
-        color_map = {
-            "trakt": "#f87171",
-            "simkl": "#38bdf8",
-            "tmdb": "#eab308",
-            "anilist": "#60a5fa",
-            "myanimelist": "#818cf8",
-            "kitsu": "#fb923c",
-            "letterboxd": "#34d399",
-            "serializd": "#facc15",
-            "mdblist": "#c084fc",
-        }
-        accent = color_map.get(tm_id, "#94a3b8")
-        cfg_btn = f'<button onclick="openSettingsModal(\'trackers\', \'{tm_id}\')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{accent};padding:2px 7px;font-size:11px;border-radius:4px;cursor:pointer;" title="{tm_name} Settings">⚙️</button>'
-
-        hub_items_html += f"""
-        <div class="hub-tracker-item" data-cat="{tm['cat']}" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
-            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-                <span style="font-size:18px;flex-shrink:0;">{tm['icon']}</span>
-                <div style="min-width:0;">
-                    <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{tm['name']}</div>
-                    <div style="font-size:11px;color:#64748b;">{tm['desc']}</div>
-                </div>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-                {t_badge}
-                {cfg_btn}
-            </div>
-        </div>
-        """
-
-    simkl_card_html = f"""
-    <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-            <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                <span>🌐</span> Multi-Tracker Hub &bull; Cloud Synchronization
-            </h3>
-            <div style="display:flex;align-items:center;gap:8px;">
-                <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
-                    <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
-                    {active_trackers_count}/9 Trackers Active
-                </span>
-            </div>
-        </div>
-        <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
-            Broadcast playback scrobbles, ratings, and diary entries across universal trackers, dedicated anime services, social diaries, and curated lists in real time.
-        </p>
-        <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
-            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('all', this)" style="background:#0284c7;border:1px solid #0284c7;color:#fff;font-weight:600;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">All Trackers (9)</button>
-            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('universal', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Universal (3)</button>
-            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('anime', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Anime (3)</button>
-            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('social_diary', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Social Diaries (2)</button>
-            <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('lists_ratings', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Lists &amp; Ratings (1)</button>
-        </div>
-        <div id="hub-trackers-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:10px;margin-bottom:14px;">
-            {hub_items_html}
-        </div>
-        <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-            <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <span>Active Trackers: <strong>{active_trackers_count}/9 Connected</strong></span>
-                <span style="color:#64748b;">&bull;</span>
-                <span>Anime Tracking Engine: <strong>{"Auto-Detect Active" if Config.ANIME_AUTO_DETECT else "Explicit Only"}</strong></span>
-                <span style="color:#64748b;">&bull;</span>
-                <span>Cross-Tracker Sync: <strong>{"Ready" if simkl_auth and (is_demo or trakt.is_authenticated()) else "Requires Trakt + Simkl Auth"}</strong></span>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                {quick_scrobble_btn}
-                {cross_sync_btn}
-                <button onclick="openSettingsModal('trackers')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 14px;font-size:12px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;">⚙️ Configure Trackers</button>
-                <a href="/api/letterboxd/export" download="letterboxd_diary.csv" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#34d399;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;" title="Export Letterboxd Watch Diary as CSV">📥 Letterboxd CSV</a>
-                <div style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;">
-                    <a href="/auth" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f87171;text-decoration:none;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;" title="Trakt Auth Portal">Trakt ↗</a>
-                    <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="Simkl Modal">Simkl PIN</button>
-                    <button onclick="openAnilistModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#60a5fa;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="AniList Auth Modal">AniList ↗</button>
-                    <button onclick="openMalModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="MyAnimeList Auth Modal">MAL ↗</button>
-                </div>
-            </div>
-        </div>
-    </div>
-    """
-
+    simkl_card_html = dashboard_renderer.render_multi_tracker_hub_card(
+        trk_status_all=trk_status_all,
+        is_admin=is_admin,
+        is_demo=is_demo,
+        trakt_authenticated=trakt.is_authenticated(),
+        mask_username_fn=mask_username,
+    )
     anime_card_html = ""
 
     # Arr Watchlist Automation Bridge Card
     arr_status = await arr_bridge.get_status(demo=is_demo)
-    arr_cfg = arr_status.get("configured", False)
-    sonarr_cfg = arr_status.get("sonarr_configured", False)
-    sonarr_conn = arr_status.get("sonarr_connected", False)
-    radarr_cfg = arr_status.get("radarr_configured", False)
-    radarr_conn = arr_status.get("radarr_connected", False)
-    auto_add_on = arr_status.get("auto_add_enabled", False)
-    arr_interval = arr_status.get("interval_seconds", 1800)
-    int_mins = max(1, arr_interval // 60) if arr_interval else 0
+    arr_bridge_card_html = dashboard_renderer.render_arr_bridge_card(
+        arr_status=arr_status,
+        is_admin=is_admin,
+        repo_url=REPO_URL,
+    )
 
-    if arr_cfg:
-        auto_badge = (
-            f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">Auto-Add: Every {int_mins}m</span>'
-            if auto_add_on
-            else '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Auto-Add: Manual</span>'
-        )
-
-        sonarr_desc = f"{arr_status.get('sonarr_series_count', 0)} Series" if sonarr_conn else ("Connected" if sonarr_conn else "Offline" if sonarr_cfg else "Disabled")
-        radarr_desc = f"{arr_status.get('radarr_movies_count', 0)} Movies" if radarr_conn else ("Connected" if radarr_conn else "Offline" if radarr_cfg else "Disabled")
-
-        sonarr_pill = (
-            f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#38bdf8;">📺 Sonarr</span><span style="color:#10b981;font-weight:600;">{sonarr_desc}</span></span>'
-            if sonarr_cfg
-            else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">📺 Sonarr: Off</span>'
-        )
-
-        radarr_pill = (
-            f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#f59e0b;">🍿 Radarr</span><span style="color:#10b981;font-weight:600;">{radarr_desc}</span></span>'
-            if radarr_cfg
-            else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">🍿 Radarr: Off</span>'
-        )
-
-        sync_btn_html = (
-            '<button onclick="triggerArrWatchlistSync(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Sync Watchlist Now</button>'
-            if is_admin
-            else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Sync Watchlist</button>'
-        )
-
-        arr_bridge_card_html = f"""
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                    <span>🎬</span> Content Bridge & *Arr Watchlist Automation
-                </h3>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    {auto_badge}
-                </div>
-            </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
-                Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Radarr and Sonarr with automatic search and notification dispatch.
-            </p>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                    {sonarr_pill}
-                    {radarr_pill}
-                    <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>{'Enabled' if arr_status.get('search_on_add') else 'Disabled'}</strong> &bull; Alerts: <strong>{'On' if Config.ARR_NOTIFY_ON_ADD else 'Off'}</strong></span>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    {sync_btn_html}
-                    <button onclick="openArrModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;">📋 View Log</button>
-                    <button onclick="openSettingsModal('automation')" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">⚙️ Configure</button>
-                </div>
-            </div>
-        </div>
-        """
-    else:
-        arr_bridge_card_html = f"""
-        <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
-                    <span>🎬</span> Content Bridge & *Arr Automation
-                </h3>
-                <span style="color:#94a3b8;font-size:12px;">● Not Configured</span>
-            </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;line-height:1.5;">
-                Connect Trakt Watchlists directly to Sonarr and Radarr. When you add movies or shows to your Trakt Watchlist, Omniscrobble automatically looks them up and queues them for acquisition.
-            </p>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-                <span>Configure Sonarr and Radarr connections directly in the Settings Hub or via <code>.env</code>.</span>
-                <div style="display:flex;gap:6px;align-items:center;">
-                    <button onclick="openSettingsModal('automation')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;border:none;cursor:pointer;">⚙️ Setup *Arr Bridge</button>
-                    <a href="{REPO_URL}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
-                </div>
-            </div>
-        </div>
-        """
-
+    trackers_dict = trk_status_all.get("trackers", {})
+    simkl_status = trackers_dict.get("simkl", {})
+    simkl_auth = simkl_status.get("authenticated", False)
     ani_status = trackers_dict.get("anilist", {})
     mal_status = trackers_dict.get("myanimelist", {})
     ani_auth = ani_status.get("authenticated", False)
@@ -4354,7 +3828,6 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     cowatch_disp = (cowatch_user if is_admin else mask_username(cowatch_user)) if cowatch_user else ""
     has_cowatch_partner = bool(cowatch_user and (is_demo or user_mgr.is_user_authenticated(cowatch_user)))
 
-    rendered = DASHBOARD_HTML
     replacements = {
         '{{DEMO_BANNER}}': demo_banner,
         '{{DEMO_HEADER_BTN}}': demo_header_btn,
@@ -4427,8 +3900,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{SCROBBLE_BADGE_MDBLIST}}': ('' if mdblist_configured else ' <span style="font-size:10px;color:#64748b;">(Not Configured)</span>'),
         '{{SCROBBLE_BADGE_COWATCH}}': (f' <span style="font-size:10px;color:#d8b4fe;">(@{cowatch_disp})</span>' if has_cowatch_partner else ' <span style="font-size:10px;color:#64748b;">(No partner linked)</span>'),
     }
-    for k, v in replacements.items():
-        rendered = rendered.replace(k, v)
+    rendered = dashboard_renderer.render_template(DASHBOARD_HTML, replacements)
     return HTMLResponse(
         content=rendered,
         headers={

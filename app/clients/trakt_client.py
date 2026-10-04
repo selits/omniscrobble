@@ -9,8 +9,10 @@ from typing import Any, Optional
 import httpx
 try:
     from app.config import Config
+    from app.services.atomic_writer import atomic_write_json
 except ImportError:
     from config import Config
+    from atomic_writer import atomic_write_json
 
 logger = logging.getLogger("trakt_client")
 
@@ -125,9 +127,7 @@ class TraktClient:
 
     def save_tokens(self, tokens: dict[str, Any]) -> None:
         self._tokens = tokens
-        self.tokens_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.tokens_file, "w", encoding="utf-8") as f:
-            json.dump(tokens, f, indent=2)
+        atomic_write_json(self.tokens_file, tokens)
         logger.info(f"Successfully saved Trakt tokens to {self.tokens_file}")
 
     def is_authenticated(self) -> bool:

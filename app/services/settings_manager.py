@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 try:
@@ -44,6 +45,7 @@ class SettingsManager:
             "credentials": self._detect_default_credentials(),
             "reconciliation": self._detect_default_reconciliation(),
             "arr": self._detect_default_arr(),
+            "rules": self._detect_default_rules(),
             "notifications": {},
         }
         self._custom_notifications: dict[str, Any] = {}
@@ -117,6 +119,18 @@ class SettingsManager:
             "sonarr_root_folder": getattr(self.config, "SONARR_ROOT_FOLDER", None),
             "radarr_quality_profile_id": getattr(self.config, "RADARR_QUALITY_PROFILE_ID", None),
             "radarr_root_folder": getattr(self.config, "RADARR_ROOT_FOLDER", None),
+        }
+
+    def _detect_default_rules(self) -> dict[str, Any]:
+        """Detect initial default scrobble rules and filters configuration from Config."""
+        excluded_libs = list(getattr(self.config, "EXCLUDED_LIBRARIES", []) or [])
+        return {
+            "scrobble_threshold": int(getattr(self.config, "EPISODE_SCROBBLE_THRESHOLD", getattr(self.config, "SCROBBLE_THRESHOLD", 80))),
+            "movie_scrobble_threshold": int(getattr(self.config, "MOVIE_SCROBBLE_THRESHOLD", 90)),
+            "min_duration_seconds": int(getattr(self.config, "MIN_DURATION_SECONDS", 300)),
+            "apply_min_duration_to_episodes": bool(getattr(self.config, "APPLY_MIN_DURATION_TO_EPISODES", False)),
+            "ignore_libraries": excluded_libs,
+            "ignore_path_patterns": list(getattr(self.config, "IGNORED_PATH_PATTERNS", []) or []),
         }
 
     def _detect_default_reconciliation(self) -> dict[str, Any]:
@@ -268,6 +282,13 @@ class SettingsManager:
                                 if ak in current_arr and av is not None:
                                     current_arr[ak] = av
 
+                        rules_data = data.get("rules", {})
+                        if isinstance(rules_data, dict):
+                            current_rules = self._settings.setdefault("rules", self._detect_default_rules())
+                            for rk, rv in rules_data.items():
+                                if rk in current_rules and rv is not None:
+                                    current_rules[rk] = rv
+
                         notif_data = data.get("notifications", {})
                         if isinstance(notif_data, dict):
                             for nk, nv in notif_data.items():
@@ -278,11 +299,10 @@ class SettingsManager:
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
     def _save_settings(self) -> None:
-        """Persists current runtime settings to disk."""
+        """Persists current runtime settings to disk atomically."""
         try:
-            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.settings_file, "w", encoding="utf-8") as f:
-                json.dump(self._settings, f, indent=2)
+            from app.services.atomic_writer import atomic_write_json
+            atomic_write_json(self.settings_file, self._settings)
         except Exception as e:
             logger.error(f"Error saving settings to {self.settings_file}: {e}")
 
@@ -612,6 +632,114 @@ class SettingsManager:
         logger.info("Notification settings saved to disk.")
         return self.get_notifications(mask=True)
 
+    def get_rules_settings(self) -> dict[str, Any]:
+        """Returns the current dynamic scrobble rules and filters configuration."""
+        return dict(self._settings.get("rules", self._detect_default_rules()))
+
+    def update_rules_settings(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Updates dynamic scrobble rules and filters and persists to disk."""
+        rules = self._settings.setdefault("rules", self._detect_default_rules())
+        if "scrobble_threshold" in data and data["scrobble_threshold"] is not None:
+            try:
+                val = int(data["scrobble_threshold"])
+                rules["scrobble_threshold"] = max(50, min(95, val))
+            except (ValueError, TypeError):
+                pass
+        if "movie_scrobble_threshold" in data and data["movie_scrobble_threshold"] is not None:
+            try:
+                val = int(data["movie_scrobble_threshold"])
+                rules["movie_scrobble_threshold"] = max(50, min(95, val))
+            except (ValueError, TypeError):
+                pass
+        if "min_duration_seconds" in data and data["min_duration_seconds"] is not None:
+            try:
+                rules["min_duration_seconds"] = max(0, int(data["min_duration_seconds"]))
+            except (ValueError, TypeError):
+                pass
+        if "apply_min_duration_to_episodes" in data and data["apply_min_duration_to_episodes"] is not None:
+            rules["apply_min_duration_to_episodes"] = bool(data["apply_min_duration_to_episodes"])
+        if "ignore_libraries" in data and isinstance(data["ignore_libraries"], (list, tuple)):
+            clean_libs = []
+            for lib in data["ignore_libraries"]:
+                s = str(lib).strip()
+                if s and s not in clean_libs:
+                    clean_libs.append(s)
+            rules["ignore_libraries"] = clean_libs
+        if "ignore_path_patterns" in data and isinstance(data["ignore_path_patterns"], (list, tuple)):
+            clean_patterns = []
+            for pat in data["ignore_path_patterns"]:
+                s = str(pat).strip()
+                if s:
+                    try:
+                        re.compile(s)
+                        if s not in clean_patterns:
+                            clean_patterns.append(s)
+                    except re.error:
+                        logger.warning(f"Ignoring invalid regex pattern in rules: {s}")
+            rules["ignore_path_patterns"] = clean_patterns
+
+        self._save_settings()
+        logger.info("Rules and filters configuration updated and saved to disk.")
+        return self.get_rules_settings()
+
+    def get_effective_threshold(self, media_type: str) -> float:
+        """Return the effective scrobble threshold percentage for the media type."""
+        rules = self.get_rules_settings()
+        m_type = (media_type or "").lower().strip()
+        if m_type == "movie":
+            if "movie_scrobble_threshold" in rules and rules["movie_scrobble_threshold"] is not None:
+                return float(rules["movie_scrobble_threshold"])
+            return float(getattr(self.config, "MOVIE_SCROBBLE_THRESHOLD", 90.0))
+        if "scrobble_threshold" in rules and rules["scrobble_threshold"] is not None:
+            return float(rules["scrobble_threshold"])
+        return float(self.config.get_threshold(m_type))
+
+    def is_media_allowed(self, media: Any) -> tuple[bool, str]:
+        """Evaluates whether the given media item is allowed to be scrobbled or processed.
+
+        Returns (True, "Allowed") or (False, "reason for bypass").
+        """
+        rules = self.get_rules_settings()
+        min_dur = rules.get("min_duration_seconds", 300)
+        apply_to_eps = rules.get("apply_min_duration_to_episodes", False)
+        ignore_libs = [str(x).strip().lower() for x in rules.get("ignore_libraries", []) if str(x).strip()]
+        ignore_patterns = rules.get("ignore_path_patterns", [])
+
+        # 1. Check Library Name Exclusion
+        lib_title = str(getattr(media, "library_section_title", "") or "").strip().lower()
+        if lib_title and any(lib_title == ex for ex in ignore_libs):
+            return False, f"Library section '{getattr(media, 'library_section_title', '')}' is ignored in rules"
+
+        # 2. Check Minimum Duration
+        media_type = str(getattr(media, "media_type", "") or "").lower().strip()
+        duration_ms = getattr(media, "duration_ms", None)
+        if duration_ms is not None and duration_ms > 0:
+            duration_s = duration_ms / 1000.0
+            should_check_duration = (media_type == "movie") or (apply_to_eps and media_type in ("episode", "show"))
+            if should_check_duration and duration_s < min_dur:
+                return False, f"Duration below minimum threshold ({int(duration_s)}s < {min_dur}s)"
+
+        # 3. Check File Path Regex Exclusion
+        file_path = str(getattr(media, "file_path", "") or "").strip()
+        if not file_path and isinstance(getattr(media, "raw_payload", None), dict):
+            raw = media.raw_payload
+            meta = raw.get("Metadata", {}) if isinstance(raw, dict) else {}
+            media_list = meta.get("Media", [])
+            first_m = media_list[0] if isinstance(media_list, list) and media_list and isinstance(media_list[0], dict) else {}
+            part_list = first_m.get("Part", [])
+            first_p = part_list[0] if isinstance(part_list, list) and part_list and isinstance(part_list[0], dict) else {}
+            file_path = str(first_p.get("file") or raw.get("Item", {}).get("Path") or raw.get("Path") or "")
+
+        if file_path and ignore_patterns:
+            for pat in ignore_patterns:
+                try:
+                    if re.search(pat, file_path, re.IGNORECASE):
+                        return False, f"File path matched ignore pattern '{pat}'"
+                except re.error:
+                    continue
+
+        return True, "Allowed"
+
     def get_all_settings(self, mask_token: bool = True) -> dict[str, Any]:
         """Returns the full runtime settings dictionary."""
         return {
@@ -623,6 +751,7 @@ class SettingsManager:
             },
             "reconciliation": self.get_reconciliation_settings(mask_token=mask_token),
             "arr": self.get_arr_settings(mask=mask_token),
+            "rules": self.get_rules_settings(),
             "notifications": self.get_notifications(mask=mask_token),
         }
 
@@ -649,6 +778,9 @@ class SettingsManager:
 
         if "arr" in data and isinstance(data["arr"], dict):
             self.update_arr_settings(data["arr"])
+
+        if "rules" in data and isinstance(data["rules"], dict):
+            self.update_rules_settings(data["rules"])
 
         if "notifications" in data and isinstance(data["notifications"], dict):
             self.update_notifications(data["notifications"])

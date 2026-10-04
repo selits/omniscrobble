@@ -14,6 +14,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import Config
+from app.services.atomic_writer import atomic_write_json
 
 logger = logging.getLogger("omniscrobble.mal")
 
@@ -78,7 +79,7 @@ class MyAnimeListClient:
                 if not self.access_token:
                     self.access_token = data.get("access_token")
                 self.refresh_token = data.get("refresh_token")
-                self.user_name = data.get("user_name")
+                self.user_name = data.get("user_name") or data.get("user")
                 self.user_avatar = data.get("user_avatar")
                 self.user_id = data.get("user_id")
         except Exception as e:
@@ -87,7 +88,6 @@ class MyAnimeListClient:
     def save_tokens(self, token_data: dict[str, Any]) -> None:
         """Atomically persist token data to disk."""
         try:
-            self.tokens_file.parent.mkdir(parents=True, exist_ok=True)
             if "access_token" in token_data:
                 self.access_token = token_data.get("access_token")
             if "refresh_token" in token_data:
@@ -106,8 +106,7 @@ class MyAnimeListClient:
                 "user_avatar": self.user_avatar,
                 "user_id": self.user_id,
             }
-            with open(self.tokens_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+            atomic_write_json(self.tokens_file, payload)
             logger.info("Saved MyAnimeList token for user: %s", self.user_name or "unknown")
         except Exception as e:
             logger.error("Failed to save MAL tokens: %s", e)

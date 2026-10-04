@@ -160,6 +160,7 @@ def parse_emby_webhook(
         rating = 10
 
     item_id = str(item.get("Id") or payload.get("ItemId") or payload.get("Id") or "").strip() or None
+    file_path = str(item.get("Path") or payload.get("Path") or "").strip() or None
 
     return ParsedMedia(
         event=event,
@@ -180,6 +181,7 @@ def parse_emby_webhook(
         library_section_title=library_name or None,
         server_type="emby",
         rating_key=item_id,
+        file_path=file_path,
         ids=ids,
         raw_payload=payload,
     )

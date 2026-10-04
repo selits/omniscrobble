@@ -115,6 +115,12 @@ class Config:
     EXCLUDED_LIBRARIES: list[str] = [
         s.strip() for s in _excluded_libs_env.split(",") if s.strip()
     ]
+    MIN_DURATION_SECONDS: int = int(os.getenv("MIN_DURATION_SECONDS", "300"))
+    APPLY_MIN_DURATION_TO_EPISODES: bool = os.getenv("APPLY_MIN_DURATION_TO_EPISODES", "false").lower() in ("true", "1", "yes")
+    _ignored_paths_env = os.getenv("IGNORED_PATH_PATTERNS", "")
+    IGNORED_PATH_PATTERNS: list[str] = [
+        s.strip() for s in _ignored_paths_env.split(",") if s.strip()
+    ]
 
     # Homelab Observability & Metrics
     PROMETHEUS_METRICS_ENABLED: bool = os.getenv("PROMETHEUS_METRICS_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -165,6 +171,7 @@ class Config:
     REVERSE_SYNC_INTERVAL: int = int(os.getenv("REVERSE_SYNC_INTERVAL", "0"))
     REVERSE_SYNC_ON_STARTUP: bool = os.getenv("REVERSE_SYNC_ON_STARTUP", "false").lower() in ("true", "1", "yes")
     REVERSE_SYNC_RATINGS: bool = os.getenv("REVERSE_SYNC_RATINGS", "true").lower() in ("true", "1", "yes")
+    BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS: int = int(os.getenv("BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS", "24"))
 
     # Multi-Tracker Integration (Simkl)
     SIMKL_CLIENT_ID: str = os.getenv("SIMKL_CLIENT_ID", "").strip()

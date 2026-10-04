@@ -37,6 +37,12 @@ This document defines the architectural rules, security boundaries, and developm
   - Only merge into `main` after verification is complete.
 - **Static Demo Synchronization (`docs/index.html`):**
   - Whenever modifying `app/templates/dashboard.html` or `app/services/demo_manager.py`, always run `.venv/bin/python scripts/generate_static_demo.py` so the live GitHub Pages preview remains in sync.
+- **Documentation & Architecture Synchronization (MANDATORY BEFORE COMMITS):**
+  - Before proposing any commit or pushing, ALWAYS verify and update project documentation:
+    - Audit `docs/API.md` for any new, modified, or removed REST or webhook endpoints and update high-level endpoint count metrics in `README.md` and `docs/ARCHITECTURE.md`.
+    - Audit `docs/ARCHITECTURE.md` to ensure architectural descriptions, service modules, database pragmas, and the directory tree manifest accurately reflect all codebase changes.
+    - Audit `CONFIGURATION.md` and `.env.example` to ensure new environment variables are documented both in their topical setup section and in the Section 7 reference table.
+    - Run `./scripts/lint_markdown.sh` to guarantee all markdown documents comply with repository standards.
 - **Brand & Social Asset Generation:**
   - When modifying logos, taglines, or platform badges, update `scripts/generate_logo_assets.py` and run `.venv/bin/python scripts/generate_logo_assets.py` to regenerate `banner.*`, `social-preview.*`, and `favicon.*`.
 - **Version Bumping & Release Protocol:**

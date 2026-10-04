@@ -215,6 +215,46 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             </div>
         </div>
 
+        <!-- Partner Connected Trackers -->
+        <div style="margin-top:16px;border-top:1px solid #334155;padding-top:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                    <span>Partner Multi-Tracker Cloud Destinations (@demo_partner)</span>
+                </div>
+                <span style="font-size:11px;color:#94a3b8;">Multi-Tracker Co-Watch</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:8px;">
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;"></span>
+                        <strong style="font-size:12px;color:#f1f5f9;">Trakt</strong>
+                    </div>
+                    <span style="font-size:11px;color:#10b981;">Connected</span>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;"></span>
+                        <strong style="font-size:12px;color:#f1f5f9;">Simkl</strong>
+                    </div>
+                    <span style="font-size:11px;color:#10b981;">Connected</span>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#10b981;"></span>
+                        <strong style="font-size:12px;color:#f1f5f9;">AniList</strong>
+                    </div>
+                    <span style="font-size:11px;color:#10b981;">Connected</span>
+                </div>
+                <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:6px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#64748b;"></span>
+                        <strong style="font-size:12px;color:#f1f5f9;">MyAnimeList</strong>
+                    </div>
+                    <span style="font-size:11px;color:#64748b;">Not Linked</span>
+                </div>
+            </div>
+        </div>
+
         <!-- Bottom Section: Shared Media & Shows Whitelist (Full Width) -->
         <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
@@ -282,6 +322,17 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                 <button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Configure</button>
                 <button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>
                 <button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; Plex)</button>
+            </div>
+        </div>
+        <div style="margin-top:12px;background:#090d16;border:1px solid #1e293b;border-radius:6px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:#94a3b8;">
+                <span>Automated Cloud Sync: <strong style="color:#f1f5f9;">Every 24h</strong></span>
+                <span>Last Run: <strong style="color:#f1f5f9;">Today, 14:30 UTC</strong> (<span style="color:#10b981;">success</span>)</span>
+                <span>Next: <strong style="color:#38bdf8;">Tomorrow, 14:30 UTC</strong></span>
+                <span>Export: <strong style="color:#10b981;">Letterboxd CSV</strong></span>
+            </div>
+            <div>
+                <button onclick="triggerBackgroundCloudSync(this)" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;font-weight:600;padding:4px 10px;">⚡ Run Cloud Sync Now</button>
             </div>
         </div>
     </div>
@@ -940,6 +991,14 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     notify_on_rate: true,
                     notify_on_collection: true,
                     notify_on_failure: true
+                }},
+                rules: {{
+                    scrobble_threshold: 80,
+                    movie_scrobble_threshold: 90,
+                    min_duration_seconds: 300,
+                    apply_min_duration_to_episodes: false,
+                    ignore_libraries: ["Home Videos", "Trailers"],
+                    ignore_path_patterns: ["/extras/", "\\\\.sample\\\\."]
                 }}
             }}
         }};
@@ -1052,6 +1111,21 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     }}
                     return jsonResp({{ status: 'ok', co_watch_movies: clientState.movies_enabled }});
                 }}
+            }}
+
+            // 5b. Co-Watch Partner Trackers
+            if (path.endsWith('/api/cowatch/trackers')) {{
+                return jsonResp({{
+                    configured: true,
+                    user: 'demo_partner',
+                    raw_user: 'demo_partner',
+                    trackers: {{
+                        trakt: {{ authenticated: true, healthy: true, days_remaining: 88, status: 'healthy', username: 'demo_partner' }},
+                        simkl: {{ authenticated: true, user: 'demo_partner', account_id: 654321 }},
+                        anilist: {{ authenticated: true, user: 'demo_partner', avatar: null }},
+                        mal: {{ authenticated: false, user: null }}
+                    }}
+                }});
             }}
 
             // 6. Sonarr Series Search / Autocomplete
@@ -1204,9 +1278,20 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     if (body.reconciliation) Object.assign(clientState.settings.reconciliation, body.reconciliation);
                     if (body.arr) Object.assign(clientState.settings.arr, body.arr);
                     if (body.notifications) Object.assign(clientState.settings.notifications, body.notifications);
+                    if (body.rules) Object.assign(clientState.settings.rules, body.rules);
                     return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
                 }}
                 return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
+            }}
+
+            if (path.endsWith('/api/settings/rules')) {{
+                if (method === 'POST') {{
+                    const body = init.body ? JSON.parse(init.body) : {{}};
+                    if (!clientState.settings.rules) clientState.settings.rules = {{}};
+                    Object.assign(clientState.settings.rules, body);
+                    return jsonResp({{ status: 'success', rules: clientState.settings.rules }});
+                }}
+                return jsonResp({{ status: 'success', rules: clientState.settings.rules || {{}} }});
             }}
 
             if (path.endsWith('/api/notifications/test')) {{
@@ -1311,6 +1396,32 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             }}
             if (path.endsWith('/api/sync/progress')) {{
                 return jsonResp({{ in_progress: false, status: 'idle', total: 0, current: 0, success: 0, failed: 0 }});
+            }}
+            if (path.endsWith('/api/sync/background/status')) {{
+                return jsonResp({{
+                    last_run_timestamp: new Date(Date.now() - 7200000).toISOString(),
+                    last_run_status: 'success',
+                    duration_seconds: 4.12,
+                    items_reconciled: 5,
+                    next_scheduled_run: new Date(Date.now() + 79200000).toISOString(),
+                    trigger: 'scheduled',
+                    errors: [],
+                    is_running: false,
+                    tasks: {{
+                        letterboxd_export: {{ status: 'success', file: 'letterboxd_diary.csv', bytes: 14280 }},
+                        server_reconciliation: {{ status: 'success', server: 'plex', items_reconciled: 3 }},
+                        cross_tracker_sync: {{ status: 'success', items_reconciled: 2 }},
+                        arr_watchlist: {{ status: 'success', result: {{ added: 0, checked: 12 }} }}
+                    }}
+                }});
+            }}
+            if (path.endsWith('/api/sync/background/run')) {{
+                return jsonResp({{
+                    status: 'success',
+                    message: 'Demo background cloud reconciliation completed successfully.',
+                    last_run_timestamp: new Date().toISOString(),
+                    items_reconciled: 3
+                }});
             }}
             if (path.endsWith('/api/sync/settings')) {{
                 if (method === 'POST') {{

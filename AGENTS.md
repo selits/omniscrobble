@@ -21,8 +21,13 @@ All autonomous and pair-programming AI agents (Gemini, Claude, Copilot, Cursor, 
 5. **Quality Gates & Secret Detection:**
    - Always run unit tests with `.venv/bin/pytest`. All tests must pass with 0 failures before proposing any commit.
    - Always verify zero secret leaks using `gitleaks detect` (or `docker run --rm -v $(pwd):/path zricethezav/gitleaks:latest detect --source="/path"`) before proposing any commit.
-6. **Documentation & Demo Synchronization:**
+6. **Documentation & Demo Synchronization (MANDATORY BEFORE COMMITS):**
    - Whenever dashboard templates (`app/templates/dashboard.html`) or mock catalog data change, always regenerate the static demo via `.venv/bin/python scripts/generate_static_demo.py` so GitHub Pages remains in sync.
+   - Always audit and synchronize all project documentation BEFORE proposing any commit:
+     - Verify `docs/API.md` covers all new, updated, or removed endpoints and update high-level endpoint count metrics in `README.md` and `docs/ARCHITECTURE.md`.
+     - Verify `docs/ARCHITECTURE.md` component layers and directory manifest include all new services, clients, and database pragmas.
+     - Verify `CONFIGURATION.md` (both topical sections and Section 7 exhaustive reference table) and `.env.example` include all new or modified environment variables.
+     - Run `./scripts/lint_markdown.sh` to ensure zero markdown formatting violations.
 7. **Server Listener Defaults:**
    - All media server listeners (Plex, Jellyfin, Emby) must remain disabled by default on clean installations. Upgrades must detect and preserve existing active servers without activating unused ones.
 8. **Pull Request Automation (`gh` CLI):**

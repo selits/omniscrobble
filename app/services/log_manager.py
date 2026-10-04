@@ -8,6 +8,10 @@ from typing import Any, Optional
 
 from app.config import Config
 
+_QUERY_TOKEN_RE = re.compile(r"([?&]token=)[^&\s]+")
+_WEBHOOK_HEADER_RE = re.compile(r"(x-webhook-secret:\s*)[^\s,;]+", flags=re.IGNORECASE)
+_BEARER_TOKEN_RE = re.compile(r"(Bearer\s+)[a-zA-Z0-9_\-\.]+", flags=re.IGNORECASE)
+
 
 class RingBufferLogHandler(logging.Handler):
     """Logging handler that retains the latest N log records in an in-memory ring buffer."""
@@ -45,11 +49,11 @@ class LogManager:
         if not line:
             return ""
         # Mask query tokens: ?token=... or &token=...
-        sanitized = re.sub(r"([?&]token=)[^&\s]+", r"\1●●●●●●●●", line)
+        sanitized = _QUERY_TOKEN_RE.sub(r"\1●●●●●●●●", line)
         # Mask webhook secret headers: x-webhook-secret: ...
-        sanitized = re.sub(r"(x-webhook-secret:\s*)[^\s,;]+", r"\1●●●●●●●●", sanitized, flags=re.IGNORECASE)
+        sanitized = _WEBHOOK_HEADER_RE.sub(r"\1●●●●●●●●", sanitized)
         # Mask Bearer tokens: Bearer ...
-        sanitized = re.sub(r"(Bearer\s+)[a-zA-Z0-9_\-\.]+", r"\1●●●●●●●●", sanitized, flags=re.IGNORECASE)
+        sanitized = _BEARER_TOKEN_RE.sub(r"\1●●●●●●●●", sanitized)
         # Mask configured secret if present and non-empty
         if Config.WEBHOOK_SECRET and Config.WEBHOOK_SECRET in sanitized:
             sanitized = sanitized.replace(Config.WEBHOOK_SECRET, "●●●●●●●●")

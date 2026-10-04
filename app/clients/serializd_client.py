@@ -58,7 +58,7 @@ class SerializdClient:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "Omniscrobble/2.5.0",
+            "User-Agent": "Omniscrobble/2.6.0",
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"

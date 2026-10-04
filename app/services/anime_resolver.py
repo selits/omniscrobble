@@ -18,8 +18,13 @@ from app.clients.kitsu_client import KitsuClient
 from app.clients.mal_client import MyAnimeListClient
 from app.config import Config
 from app.plex_parser import ParsedMedia
+from app.services.atomic_writer import atomic_write_json
 
 logger = logging.getLogger("omniscrobble.anime_resolver")
+
+_BRACKET_TAGS_RE = re.compile(r"\[.*?\]")
+_PAREN_TAGS_RE = re.compile(r"\(.*?\)")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
 class AnimeResolver:
@@ -55,9 +60,7 @@ class AnimeResolver:
     def save_cache(self) -> None:
         """Persist anime metadata cache to disk."""
         try:
-            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.cache_file, "w", encoding="utf-8") as f:
-                json.dump(self._cache, f, indent=2)
+            atomic_write_json(self.cache_file, self._cache)
         except Exception as e:
             logger.error("Failed to save anime cache: %s", e)
 
@@ -67,9 +70,9 @@ class AnimeResolver:
         if not title:
             return ""
         # Remove release tags like [1080p], [Dual Audio], (2024), etc.
-        cleaned = re.sub(r"\[.*?\]", "", title)
-        cleaned = re.sub(r"\(.*?\)", "", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        cleaned = _BRACKET_TAGS_RE.sub("", title)
+        cleaned = _PAREN_TAGS_RE.sub("", cleaned)
+        cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
         return cleaned
 
     def is_explicit_anime(self, media: ParsedMedia) -> bool:

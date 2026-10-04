@@ -2315,7 +2315,7 @@ def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v2.5.0" in html
+    assert "v2.6.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -8526,4 +8526,630 @@ def test_https_and_proxy_headers_readiness(monkeypatch):
     assert "https://omniscrobble.securehomelab.net/webhook?token=test_secret_abc" in res_dash.text
 
 
+def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
+    """Verify GET and POST /api/settings/rules, clamping, auth, and persistence."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import app
+    from app.config import Config
 
+    test_settings_file = tmp_path / "settings_rules_test.json"
+    monkeypatch.setattr(settings_mgr, "settings_file", test_settings_file)
+    settings_mgr._load_settings()
+
+    client = TestClient(app)
+
+    # 1. GET /api/settings/rules returns default rules
+    res = client.get("/api/settings/rules")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    rules = data["rules"]
+    assert rules["scrobble_threshold"] == 80
+    assert rules["movie_scrobble_threshold"] == 90
+    assert rules["min_duration_seconds"] == 300
+    assert rules["apply_min_duration_to_episodes"] is False
+    assert isinstance(rules["ignore_libraries"], list)
+
+    # 2. Auth protection for POST /api/settings/rules when secret configured
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "rules_secret_999")
+    unauth_res = client.post("/api/settings/rules", json={"scrobble_threshold": 85})
+    assert unauth_res.status_code == 401
+    assert "Unauthorized" in unauth_res.json()["detail"]
+
+    # 3. Successful update with admin token
+    update_res = client.post(
+        "/api/settings/rules?token=rules_secret_999",
+        json={
+            "scrobble_threshold": 85,
+            "movie_scrobble_threshold": 95,
+            "min_duration_seconds": 450,
+            "apply_min_duration_to_episodes": True,
+            "ignore_libraries": ["Trailers", "Extras"],
+            "ignore_path_patterns": [r"/extras/", r"\.sample\."],
+        },
+    )
+    assert update_res.status_code == 200
+    updated_rules = update_res.json()["rules"]
+    assert updated_rules["scrobble_threshold"] == 85
+    assert updated_rules["movie_scrobble_threshold"] == 95
+    assert updated_rules["min_duration_seconds"] == 450
+    assert updated_rules["apply_min_duration_to_episodes"] is True
+    assert updated_rules["ignore_libraries"] == ["Trailers", "Extras"]
+    assert updated_rules["ignore_path_patterns"] == [r"/extras/", r"\.sample\."]
+
+    # 4. Clamping verification: thresholds clamp to [50, 95], min_duration clamps to >= 0
+    clamp_res = client.post(
+        "/api/settings/rules?token=rules_secret_999",
+        json={
+            "scrobble_threshold": -50,
+            "movie_scrobble_threshold": 200,
+            "min_duration_seconds": -99,
+        },
+    )
+    assert clamp_res.status_code == 200
+    clamped_rules = clamp_res.json()["rules"]
+    assert clamped_rules["scrobble_threshold"] == 50
+    assert clamped_rules["movie_scrobble_threshold"] == 95
+    assert clamped_rules["min_duration_seconds"] == 0
+
+    # 5. Full POST /api/settings updates rules block
+    full_settings_res = client.post(
+        "/api/settings?token=rules_secret_999",
+        json={
+            "rules": {
+                "scrobble_threshold": 82,
+                "movie_scrobble_threshold": 88,
+            }
+        },
+    )
+    assert full_settings_res.status_code == 200
+    final_rules = settings_mgr.get_rules_settings()
+    assert final_rules["scrobble_threshold"] == 82
+    assert final_rules["movie_scrobble_threshold"] == 88
+
+
+def test_rules_duration_filter_bypass():
+    """Verify minimum playback duration filtering and episode exemption toggle."""
+    from app.services.settings_manager import settings_mgr
+    from app.plex_parser import ParsedMedia
+
+    # Configure min duration of 300 seconds, episodes exempted by default
+    settings_mgr.update_rules_settings({
+        "min_duration_seconds": 300,
+        "apply_min_duration_to_episodes": False,
+        "ignore_libraries": [],
+        "ignore_path_patterns": [],
+    })
+
+    # Short movie (180s < 300s): rejected
+    short_movie = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Short Film",
+        duration_ms=180000,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(short_movie)
+    assert allowed is False
+    assert "below minimum threshold" in reason
+
+    # Standard movie (600s >= 300s): allowed
+    std_movie = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Feature Film",
+        duration_ms=600000,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(std_movie)
+    assert allowed is True
+
+    # Short episode (180s): allowed because apply_min_duration_to_episodes is False
+    short_episode = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        show_title="Mini Series",
+        season=1,
+        episode=1,
+        title="Intro Clip",
+        duration_ms=180000,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(short_episode)
+    assert allowed is True
+
+    # Media with no duration specified: allowed
+    no_dur_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Unknown Duration Movie",
+        duration_ms=None,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(no_dur_media)
+    assert allowed is True
+
+    # Enable apply_min_duration_to_episodes -> short episode now rejected
+    settings_mgr.update_rules_settings({"apply_min_duration_to_episodes": True})
+    allowed, reason = settings_mgr.is_media_allowed(short_episode)
+    assert allowed is False
+    assert "below minimum threshold" in reason
+
+
+def test_rules_library_ignore():
+    """Verify library section title filtering against configured ignore list."""
+    from app.services.settings_manager import settings_mgr
+    from app.plex_parser import ParsedMedia
+
+    settings_mgr.update_rules_settings({
+        "ignore_libraries": ["Home Videos", "Trailers", "Fitness"],
+        "min_duration_seconds": 0,
+        "ignore_path_patterns": [],
+    })
+
+    # Ignored library (exact match)
+    trailer_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Official Trailer",
+        library_section_title="Trailers",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(trailer_media)
+    assert allowed is False
+    assert "Trailers" in reason
+    assert "ignored in rules" in reason
+
+    # Ignored library (case-insensitive match)
+    case_trailer = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Home Recording",
+        library_section_title="home videos",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(case_trailer)
+    assert allowed is False
+    assert "ignored in rules" in reason
+
+    # Allowed library
+    movie_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Interstellar",
+        library_section_title="Movies",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(movie_media)
+    assert allowed is True
+
+    # Media with no library title
+    no_lib_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Independent Film",
+        library_section_title=None,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(no_lib_media)
+    assert allowed is True
+
+
+def test_rules_path_regex_ignore():
+    """Verify file path regex pattern matching and error-resilient evaluation."""
+    from app.services.settings_manager import settings_mgr
+    from app.plex_parser import ParsedMedia
+
+    settings_mgr.update_rules_settings({
+        "min_duration_seconds": 0,
+        "ignore_libraries": [],
+        "ignore_path_patterns": [r"/extras/", r"\.sample\.", r"\[invalid_regex"],
+    })
+
+    # File path matches /extras/
+    extra_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Behind the Scenes",
+        file_path="/mnt/storage/movies/Inception (2010)/extras/featurette.mkv",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(extra_media)
+    assert allowed is False
+    assert "matched ignore pattern" in reason
+
+    # File path matches .sample.
+    sample_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Sample Clip",
+        file_path="/mnt/storage/downloads/film.sample.mkv",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(sample_media)
+    assert allowed is False
+    assert "matched ignore pattern" in reason
+
+    # Normal file path
+    main_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        file_path="/mnt/storage/movies/Inception (2010)/Inception (2010).mkv",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(main_media)
+    assert allowed is True
+
+    # Media without file_path
+    no_path_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Streaming Movie",
+        file_path=None,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(no_path_media)
+    assert allowed is True
+
+
+def test_rules_effective_thresholds_and_test_webhook(monkeypatch):
+    """Verify granular thresholds resolution and test webhook filtering."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import app, get_effective_excluded_libraries
+    from app.config import Config
+
+    # Custom thresholds
+    settings_mgr.update_rules_settings({
+        "scrobble_threshold": 75,
+        "movie_scrobble_threshold": 88,
+        "ignore_libraries": ["Trailers"],
+    })
+
+    assert settings_mgr.get_effective_threshold("episode") == 75.0
+    assert settings_mgr.get_effective_threshold("movie") == 88.0
+    assert settings_mgr.get_effective_threshold("show") == 75.0
+
+    # Test effective excluded libraries merging
+    monkeypatch.setattr(Config, "EXCLUDED_LIBRARIES", ["Home Videos"])
+    effective_libs = get_effective_excluded_libraries()
+    assert "Home Videos" in effective_libs
+    assert "Trailers" in effective_libs
+
+    # Test synthetic webhook with ignored library
+    client = TestClient(app)
+    res_test = client.post(
+        "/api/test/webhook",
+        json={
+            "source": "plex",
+            "event_type": "scrobble",
+            "media_type": "movie",
+            "title": "Blocked Trailer",
+            "library_section_title": "Trailers",
+        },
+    )
+    assert res_test.status_code == 200
+    data = res_test.json()
+    assert data["status"] == "ignored"
+    assert "reason" in data
+
+
+def test_user_manager_multi_tracker_tokens_and_clients(tmp_path):
+    """Verify UserClientManager secondary tracker token resolution, caching, and discovery."""
+    from app.services.user_manager import UserClientManager
+
+    mgr = UserClientManager(tokens_dir=tmp_path)
+    # Check token paths
+    assert mgr.get_tokens_file("partner_alice", "trakt") == tmp_path / "partner_alice_tokens.json"
+    assert mgr.get_tokens_file("partner_alice", "simkl") == tmp_path / "partner_alice_simkl_tokens.json"
+    assert mgr.get_tokens_file("partner_alice", "anilist") == tmp_path / "partner_alice_anilist_tokens.json"
+    assert mgr.get_tokens_file("partner_alice", "mal") == tmp_path / "partner_alice_mal_tokens.json"
+
+    # Write dummy tokens for Simkl and AniList
+    simkl_file = mgr.get_tokens_file("partner_alice", "simkl")
+    simkl_file.write_text(json.dumps({"access_token": "simkl_secret_tok", "user": "alice_simkl", "account_id": 999}))
+
+    ani_file = mgr.get_tokens_file("partner_alice", "anilist")
+    ani_file.write_text(json.dumps({"access_token": "ani_secret_tok", "user_name": "alice_ani"}))
+
+    # Verify clients loaded
+    simkl_client = mgr.get_tracker_client("partner_alice", "simkl")
+    assert simkl_client is not None
+    assert simkl_client.is_authenticated() is True
+    assert simkl_client.access_token == "simkl_secret_tok"
+
+    # Check client caching returns the same instance
+    assert mgr.get_tracker_client("partner_alice", "simkl") is simkl_client
+
+    ani_client = mgr.get_tracker_client("partner_alice", "anilist")
+    assert ani_client is not None
+    assert ani_client.is_authenticated() is True
+
+    mal_client = mgr.get_tracker_client("partner_alice", "mal")
+    assert mal_client is not None
+    assert mal_client.is_authenticated() is False
+
+    # Check tracker status matrix
+    status = mgr.get_user_trackers_status("partner_alice")
+    assert status["simkl"]["authenticated"] is True
+    assert status["simkl"]["user"] == "alice_simkl"
+    assert status["anilist"]["authenticated"] is True
+    assert status["anilist"]["user"] == "alice_ani"
+    assert status["mal"]["authenticated"] is False
+
+    # Check discovery in list_configured_users
+    users = mgr.list_configured_users()
+    alice_entry = next((u for u in users if u["username"] == "partner_alice"), None)
+    assert alice_entry is not None
+    assert "trackers" in alice_entry
+    assert alice_entry["trackers"]["simkl"]["authenticated"] is True
+
+    # Test disconnect tracker
+    mgr.disconnect_user_tracker("partner_alice", "simkl")
+    assert not simkl_file.exists()
+    assert mgr.is_tracker_authenticated("partner_alice", "simkl") is False
+
+
+def test_cowatch_trackers_endpoints():
+    """Verify /api/cowatch/trackers status and demo endpoints."""
+    from app.main import app
+    from app.config import Config
+
+    client = TestClient(app)
+
+    # Demo mode
+    res_demo = client.get("/api/cowatch/trackers?demo=true")
+    assert res_demo.status_code == 200
+    demo_data = res_demo.json()
+    assert demo_data["configured"] is True
+    assert demo_data["user"] == "demo_partner"
+    assert "trakt" in demo_data["trackers"]
+    assert "simkl" in demo_data["trackers"]
+
+    # Real mode without partner configured
+    with patch.object(Config, "CO_WATCH_USER", None):
+        res_none = client.get("/api/cowatch/trackers")
+        assert res_none.status_code == 200
+        assert res_none.json()["configured"] is False
+
+    # Real mode with partner configured
+    with patch.object(Config, "CO_WATCH_USER", "partner_bob"):
+        res = client.get("/api/cowatch/trackers")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["configured"] is True
+        assert data["user"] == "partner_bob"
+        assert "trackers" in data
+
+
+def test_partner_secondary_tracker_endpoints(tmp_path, monkeypatch):
+    """Verify partner user authentication endpoints for Simkl, AniList, and MAL."""
+    from app.main import app
+    from app.services.user_manager import user_mgr
+    from app.config import Config
+
+    client = TestClient(app)
+    monkeypatch.setattr(user_mgr, "tokens_dir", tmp_path)
+
+    # 1. Partner Simkl endpoints
+    with patch("app.clients.simkl_client.SimklClient.get_device_pin", new_callable=AsyncMock) as mock_pin:
+        mock_pin.return_value = {"user_code": "ABCD-1234", "verification_url": "https://simkl.com/pin"}
+        res = client.post("/api/simkl/pin?user=partner_test")
+        assert res.status_code == 200
+        assert res.json()["user_code"] == "ABCD-1234"
+
+    with patch("app.clients.simkl_client.SimklClient.poll_device_pin", new_callable=AsyncMock) as mock_poll:
+        mock_poll.return_value = {"result": "OK", "access_token": "simkl_partner_token"}
+        res = client.post("/api/simkl/poll", json={"user_code": "ABCD-1234", "user": "partner_test"})
+        assert res.status_code == 200
+        assert res.json()["result"] == "OK"
+
+    # Status for partner
+    with patch("app.clients.simkl_client.SimklClient.check_connection", new_callable=AsyncMock) as mock_conn:
+        mock_conn.return_value = {"status": "connected", "user": "partner_test"}
+        res = client.get("/api/simkl/status?user=partner_test")
+        assert res.status_code == 200
+        assert res.json()["user"] == "partner_test"
+
+    # Disconnect partner Simkl
+    res = client.post("/api/simkl/disconnect?user=partner_test")
+    assert res.status_code == 200
+    assert "partner_test" in res.json()["message"]
+
+    # 2. Partner AniList endpoints
+    with patch("app.clients.anilist_client.AniListClient.check_connection", new_callable=AsyncMock) as mock_ani_conn:
+        mock_ani_conn.return_value = {"status": "connected", "user": "partner_ani_user", "id": 12345}
+        res = client.post("/api/anilist/token", json={"token": "partner_ani_jwt", "user": "partner_test"})
+        assert res.status_code == 200
+        assert res.json()["status"] == "success"
+        assert res.json()["user"] == "partner_ani_user"
+
+    res = client.post("/api/anilist/disconnect?user=partner_test")
+    assert res.status_code == 200
+
+    # 3. Partner MAL endpoints
+    with patch("app.clients.mal_client.MyAnimeListClient.check_connection", new_callable=AsyncMock) as mock_mal_conn:
+        mock_mal_conn.return_value = {"status": "connected", "user": "partner_mal_user", "id": 67890}
+        res = client.post("/api/mal/token", json={"token": "partner_mal_bearer", "user": "partner_test"})
+        assert res.status_code == 200
+        assert res.json()["status"] == "success"
+        assert res.json()["user"] == "partner_mal_user"
+
+    res = client.post("/api/mal/disconnect?user=partner_test")
+    assert res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_execute_cowatch_sync_multi_tracker_dual_dispatch_and_failure_isolation():
+    """Verify co-watch dual dispatch sends to all authenticated partner trackers and isolates failures."""
+    from app.main import execute_cowatch_sync
+    from app.plex_parser import ParsedMedia
+    from app.services.user_manager import user_mgr
+    from app.config import Config
+
+    parsed = ParsedMedia(
+        username="selits",
+        media_type="episode",
+        action="scrobble",
+        event="media.scrobble",
+        title="Severance S02E01",
+        show_title="Severance",
+        season=2,
+        episode=1,
+        year=2025,
+        progress=100.0,
+    )
+
+    partner_trakt_mock = MagicMock()
+    partner_trakt_mock.is_authenticated.return_value = True
+    partner_trakt_mock.sync_history = AsyncMock(side_effect=Exception("Trakt 500 Server Error"))
+
+    partner_simkl_mock = MagicMock()
+    partner_simkl_mock.is_authenticated.return_value = True
+    partner_simkl_mock.scrobble_stop = AsyncMock(return_value={"action": "scrobble"})
+
+    partner_ani_mock = MagicMock()
+    partner_ani_mock.is_authenticated.return_value = True
+
+    with patch.object(Config, "CO_WATCH_USER", "partner_charlie"), \
+         patch.object(user_mgr, "get_client", return_value=partner_trakt_mock), \
+         patch.object(user_mgr, "get_tracker_client", side_effect=lambda u, t: partner_simkl_mock if t == "simkl" else partner_ani_mock):
+
+        # Even though Trakt raises an Exception, execute_cowatch_sync should not crash and Simkl should still execute!
+        await execute_cowatch_sync(parsed, "scrobble_stop")
+
+        partner_trakt_mock.sync_history.assert_called_once()
+        partner_simkl_mock.scrobble_stop.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cloud_sync_manager_run_cycle_and_letterboxd_export(tmp_path):
+    """Verify CloudSyncManager executes full sync cycle, exports Letterboxd CSV, and records telemetry."""
+    from app.services.cloud_sync_manager import CloudSyncManager
+
+    class DummyConfig:
+        BASE_DIR = tmp_path
+        BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS = 12
+        AUTO_ADD_FROM_WATCHLIST = True
+
+    mgr = CloudSyncManager(config=DummyConfig)
+
+    # Mock clients
+    mock_lb = MagicMock()
+    mock_lb.generate_csv.return_value = "Date,Name,Year,Letterboxd URI,Rating,Rewatch\n2025-01-01,Dune: Part Two,2024,,5,\n"
+
+    mock_reverse = MagicMock()
+    mock_reverse.plex = MagicMock()
+    mock_reverse.plex.is_configured.return_value = True
+    mock_reverse.scan_discrepancies = AsyncMock(return_value={"discrepancies": [{"id": "1", "title": "Dune"}]})
+    mock_reverse.execute_reconciliation = AsyncMock(return_value={"reconciled_count": 1})
+
+    mock_cross = MagicMock()
+    mock_cross.simkl = MagicMock()
+    mock_cross.simkl.is_authenticated.return_value = True
+    mock_cross.scan_discrepancies = AsyncMock(return_value={"discrepancies": [{"id": "2", "title": "Severance"}]})
+    mock_cross.execute_sync = AsyncMock(return_value={"synced_count": 1})
+
+    mock_arr = MagicMock()
+    mock_arr.sonarr = MagicMock()
+    mock_arr.sonarr.is_configured = True
+    mock_arr.radarr = MagicMock()
+    mock_arr.radarr.is_configured = False
+    mock_arr.sync_watchlist = AsyncMock(return_value={"added": 1, "checked": 5})
+
+    with patch("app.services.settings_manager.settings_mgr.get_reconciliation_settings", return_value={"server_type": "plex"}), \
+         patch("app.services.settings_manager.settings_mgr.is_tracker_enabled", return_value=True):
+
+        res = await mgr.run_sync_cycle(
+            trigger="test_runner",
+            letterboxd_client=mock_lb,
+            reverse_sync_mgr=mock_reverse,
+            cross_tracker_sync=mock_cross,
+            arr_bridge=mock_arr,
+        )
+
+        # Verify export file was written
+        export_file = tmp_path / "data" / "exports" / "letterboxd_diary.csv"
+        assert export_file.exists()
+        content = export_file.read_text(encoding="utf-8")
+        assert "Dune: Part Two" in content
+
+        # Verify state
+        assert res["last_run_status"] == "success"
+        assert res["items_reconciled"] == 2
+        assert res["trigger"] == "test_runner"
+        assert "next_scheduled_run" in res
+        assert mgr.state_file.exists()
+
+        status = mgr.get_status()
+        assert status["last_run_status"] == "success"
+        assert status["is_running"] is False
+
+
+@pytest.mark.asyncio
+async def test_cloud_sync_mutex_lock_protection():
+    """Verify concurrency mutex lock returns HTTP 409 Conflict when a sync is active."""
+    from app.main import app
+    from app.services.cloud_sync_manager import cloud_sync_mgr
+
+    client = TestClient(app)
+
+    # Acquire the mutex manually to simulate an active sync
+    await cloud_sync_mgr.sync_mutex.acquire()
+    try:
+        assert cloud_sync_mgr.sync_mutex.locked() is True
+
+        # 1. Trigger background sync returns 409
+        res_bg = client.post("/api/sync/background/run")
+        assert res_bg.status_code == 409
+
+        # 2. Trigger reconciliation returns 409
+        res_recon = client.post("/api/sync/reconcile", json={"direction": "all"})
+        assert res_recon.status_code == 409
+
+        # 3. Trigger cross-sync returns 409
+        res_cross = client.post("/api/cross-sync/execute", json={"direction": "all"})
+        assert res_cross.status_code == 409
+
+        # 4. Direct run_sync_cycle returns conflict
+        direct_res = await cloud_sync_mgr.run_sync_cycle()
+        assert direct_res["status"] == "conflict"
+    finally:
+        cloud_sync_mgr.sync_mutex.release()
+
+
+def test_background_sync_endpoints():
+    """Verify /api/sync/background/status and /api/sync/background/run endpoints."""
+    from app.main import app
+    from app.services.cloud_sync_manager import cloud_sync_mgr
+
+    client = TestClient(app)
+
+    # Demo status
+    res_demo = client.get("/api/sync/background/status?demo=true")
+    assert res_demo.status_code == 200
+    demo_data = res_demo.json()
+    assert demo_data["last_run_status"] == "success"
+    assert "tasks" in demo_data
+
+    # Demo run
+    res_run_demo = client.post("/api/sync/background/run?demo=true")
+    assert res_run_demo.status_code == 200
+    assert res_run_demo.json()["status"] == "success"
+
+    # Real status
+    res_real = client.get("/api/sync/background/status")
+    assert res_real.status_code == 200
+    assert "is_running" in res_real.json()

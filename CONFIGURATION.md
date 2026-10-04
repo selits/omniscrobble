@@ -529,8 +529,18 @@ CO_WATCH_PLAYERS=Living Room Apple TV, Shield TV Pro, Main TV
 CO_WATCH_MOVIES=false
 ```
 
+### Partner Multi-Tracker Cloud Destinations (Simkl, AniList, MAL)
+
+Co-watch partners can also link and synchronize their own secondary cloud trackers alongside Trakt:
+
+- **Simkl**: Authorize via `http://<your-server-ip-or-domain>:8080/auth/simkl?user=partner_username` (credentials saved to `data/tokens/{username}_simkl_tokens.json`).
+- **AniList**: Authorize via `http://<your-server-ip-or-domain>:8080/auth/anilist?user=partner_username` (credentials saved to `data/tokens/{username}_anilist_tokens.json`).
+- **MyAnimeList**: Authorize via `http://<your-server-ip-or-domain>:8080/auth/mal?user=partner_username` (credentials saved to `data/tokens/{username}_mal_tokens.json`).
+
+All partner credentials are fully isolated in `data/tokens/`. During co-watched events, Omniscrobble dispatches to all partner-authenticated platforms concurrently with isolated error catching, ensuring partner network issues or token expirations never interfere with your primary scrobbles. Proactive token refresh runs automatically in the background every 12 hours.
+
 > [!TIP]
-> You can add shows dynamically to your shared co-watch whitelist on your mobile phone or desktop without restarting the service by clicking the **`+ Co-Watch`** button in the Recent Activity table.
+> You can add shows dynamically to your shared co-watch whitelist on your mobile phone or desktop without restarting the service by clicking the **`+ Co-Watch`** button in the Recent Activity table. Connect and disconnect partner trackers anytime from the **Co-Watch & Multi-User** card on the dashboard.
 
 ---
 
@@ -596,6 +606,10 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | --- | --- | --- | :---: | --- |
 | **`SERVER_HOST`** | `0.0.0.0` | String | No | Network interface binding. Must be `0.0.0.0` for Docker, LAN, and remote VPS access. |
 | **`SERVER_PORT`** | `8080` | Integer | No | TCP port Omniscrobble listens on. |
+| **`FORWARDED_ALLOW_IPS`** | `*` | String | No | Permitted reverse proxy IP range for `ProxyHeadersMiddleware`. |
+| **`SSL_CERT_FILE`** | `""` | String | No | Path to TLS certificate for direct HTTPS termination in Uvicorn. |
+| **`SSL_KEY_FILE`** | `""` | String | No | Path to TLS private key for direct HTTPS termination in Uvicorn. |
+| **`EXTERNAL_URL`** | `""` | String | No | Public-facing base URL (e.g. `https://omniscrobble.example.com`) for reverse proxy links. |
 | **`DEBUG`** | `false` | Boolean | No | Enables verbose debug logging and traceback outputs. |
 | **`WEBHOOK_SECRET`** | `""` | String | No | Secret token protecting endpoints (`?token=...`) and locking the admin dashboard. |
 | **`PLEX_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Plex webhooks (`/webhook`). |
@@ -604,6 +618,9 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`PLEX_ALLOWED_USERS`** | `""` | String (CSV) | **Yes** | Comma-separated usernames allowed to scrobble. If empty, all users scrobble. |
 | **`ALLOWED_LIBRARIES`** | `""` | String (CSV) | **Yes** | Whitelist of library section names to track (e.g., `Movies, TV Shows`). |
 | **`EXCLUDED_LIBRARIES`** | `Home Videos...` | String (CSV) | **Yes** | Blacklist of library section names to ignore (e.g., `Fitness, Home Videos`). |
+| **`MIN_DURATION_SECONDS`** | `300` | Integer | **Yes** | Minimum playback duration in seconds required to scrobble (bypasses trailers, short clips). |
+| **`APPLY_MIN_DURATION_TO_EPISODES`** | `false` | Boolean | **Yes** | Whether minimum duration filter applies to TV episodes in addition to movies. |
+| **`IGNORED_PATH_PATTERNS`** | `""` | String (CSV) | **Yes** | Comma-separated regex patterns to ignore based on media file path (e.g., `/extras/, \.sample\.`). |
 | **`SCROBBLE_MODE`** | `scrobble` | String | **Yes** | `scrobble` (real-time play/pause/stop) or `watched_only` (marks watched at threshold). |
 | **`EPISODE_SCROBBLE_THRESHOLD`** | `80.0` | Float (0–100) | **Yes** | Completion percentage required to scrobble TV episodes (enables credit-skipping). |
 | **`MOVIE_SCROBBLE_THRESHOLD`** | `90.0` | Float (0–100) | **Yes** | Completion percentage required to scrobble Movies (prevents premature scrobbling). |
@@ -622,6 +639,7 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`REVERSE_SYNC_INTERVAL`** | `0` | Integer | **Yes** | Periodic reconciliation interval in seconds (`0` = manual via UI only). |
 | **`REVERSE_SYNC_ON_STARTUP`** | `false` | Boolean | **Yes** | Run library reconciliation scan automatically on service startup. |
 | **`REVERSE_SYNC_RATINGS`** | `true` | Boolean | **Yes** | Reconcile numerical and star ratings between media servers and Trakt. |
+| **`BACKGROUND_CLOUD_SYNC_INTERVAL_HOURS`** | `24` | Integer | **Yes** | Frequency of automated background cloud synchronization and Letterboxd diary export in hours (`0` = disabled). |
 | **`SONARR_URL`** | `""` | String | **Yes** | Base URL to Sonarr instance (e.g., `http://192.168.1.50:8989`). |
 | **`SONARR_API_KEY`** | `""` | String | **Yes** | Sonarr 32-character API key. |
 | **`RADARR_URL`** | `""` | String | **Yes** | Base URL to Radarr instance (e.g., `http://192.168.1.50:7878`). |
@@ -639,6 +657,20 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`MAL_ENABLED`** | `false` | Boolean | **Yes** | Enables dispatch to MyAnimeList. |
 | **`MAL_CLIENT_ID`** | `""` | String | **Yes** | MyAnimeList API Client ID. Configurable live in Settings Hub. |
 | **`MAL_CLIENT_SECRET`** | `""` | String | **Yes** | MyAnimeList API Client Secret. Configurable live in Settings Hub. |
+| **`TMDB_ENABLED`** | `true` | Boolean | **Yes** | Enables watch history, watchlist, and rating dispatch to TMDb. |
+| **`TMDB_API_KEY`** | `""` | String | **Yes** | The Movie Database (TMDb) v3 API key. |
+| **`TMDB_SESSION_ID`** | `""` | String | **Yes** | TMDb authenticated user session ID for ratings and scrobbles. |
+| **`TMDB_READ_ACCESS_TOKEN`** | `""` | String | **Yes** | TMDb v4 API Read Access Token (Bearer). |
+| **`KITSU_ENABLED`** | `true` | Boolean | **Yes** | Enables anime progress and rating dispatch to Kitsu. |
+| **`KITSU_API_KEY`** | `""` | String | **Yes** | Kitsu user API / Bearer token. |
+| **`KITSU_USER_ID`** | `""` | String | **Yes** | Kitsu account user ID. |
+| **`LETTERBOXD_ENABLED`** | `true` | Boolean | **Yes** | Enables automated Letterboxd diary accumulation and RFC-4180 CSV exports. |
+| **`LETTERBOXD_USERNAME`** | `""` | String | **Yes** | Letterboxd account username. |
+| **`SERIALIZD_ENABLED`** | `true` | Boolean | **Yes** | Enables episode logging and season rating dispatch to Serializd. |
+| **`SERIALIZD_USERNAME`** | `""` | String | **Yes** | Serializd account username. |
+| **`SERIALIZD_TOKEN`** | `""` | String | **Yes** | Serializd session or API token. |
+| **`MDBLIST_ENABLED`** | `true` | Boolean | **Yes** | Enables aggregated critic/audience rating queries and list sync. |
+| **`MDBLIST_API_KEY`** | `""` | String | **Yes** | MDBList API key. |
 | **`CO_WATCH_USER`** | `""` | String | **Yes** | Target partner Trakt username for dual-syncing watched media. |
 | **`CO_WATCH_SHOWS`** | `""` | String (CSV) | **Yes** | Whitelist of TV show titles eligible for dual-sync. |
 | **`CO_WATCH_PLAYERS`** | `""` | String (CSV) | **Yes** | Whitelist of player/device names eligible for dual-sync. |
