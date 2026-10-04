@@ -940,6 +940,14 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     notify_on_rate: true,
                     notify_on_collection: true,
                     notify_on_failure: true
+                }},
+                rules: {{
+                    scrobble_threshold: 80,
+                    movie_scrobble_threshold: 90,
+                    min_duration_seconds: 300,
+                    apply_min_duration_to_episodes: false,
+                    ignore_libraries: ["Home Videos", "Trailers"],
+                    ignore_path_patterns: ["/extras/", "\\\\.sample\\\\."]
                 }}
             }}
         }};
@@ -1204,9 +1212,20 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     if (body.reconciliation) Object.assign(clientState.settings.reconciliation, body.reconciliation);
                     if (body.arr) Object.assign(clientState.settings.arr, body.arr);
                     if (body.notifications) Object.assign(clientState.settings.notifications, body.notifications);
+                    if (body.rules) Object.assign(clientState.settings.rules, body.rules);
                     return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
                 }}
                 return jsonResp({{ status: 'success', settings: clientState.settings, ...clientState.settings }});
+            }}
+
+            if (path.endsWith('/api/settings/rules')) {{
+                if (method === 'POST') {{
+                    const body = init.body ? JSON.parse(init.body) : {{}};
+                    if (!clientState.settings.rules) clientState.settings.rules = {{}};
+                    Object.assign(clientState.settings.rules, body);
+                    return jsonResp({{ status: 'success', rules: clientState.settings.rules }});
+                }}
+                return jsonResp({{ status: 'success', rules: clientState.settings.rules || {{}} }});
             }}
 
             if (path.endsWith('/api/notifications/test')) {{

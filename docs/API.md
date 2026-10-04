@@ -24,7 +24,7 @@ This document provides the complete API reference for **Omniscrobble**, includin
 8. [Watch Together & Multi-User Accounts](#8-watch-together--multi-user-accounts)
 9. [Two-Way Media Server Reconciliation](#9-two-way-media-server-reconciliation)
 10. [Content Bridge (*Arr Automation)](#10-content-bridge-arr-automation)
-11. [Multi-Tracker Engines (Trakt, Simkl, AniList, MAL)](#11-multi-tracker-engines-trakt-simkl-anilist-mal)
+11. [Multi-Tracker Hub (9 Trackers & Relays)](#11-multi-tracker-hub-9-trackers--relays)
 12. [Cross-Tracker Reconciliation (Trakt ⇄ Simkl)](#12-cross-tracker-reconciliation-trakt--simkl)
 13. [Runtime Settings Hub](#13-runtime-settings-hub)
 14. [Synthetic Webhook Testing](#14-synthetic-webhook-testing)
@@ -137,6 +137,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
 | **`/api/sync/status`** | `GET` | Public | **Reconciliation Telemetry**: Connection state, active media server, and last sync timestamp. |
+| **`/api/sync/settings`** | `GET` | Public | **Reconciliation Settings**: Retrieves current reconciliation server configuration, masked tokens, sync interval, and ratings sync toggles. |
+| **`/api/sync/settings`** | `POST` | Admin | **Update Reconciliation Settings**: Updates media server URLs, tokens, user IDs, sync interval, and trigger startup flags with immediate background engine reload. |
 | **`/api/sync/diff`** | `GET` | Admin | **Scan Discrepancies**: Compares Trakt watched history against media server library sections. |
 | **`/api/sync/reconcile`** | `POST` | Admin | **Execute Reconciliation**: Triggers background batch reconciliation for selected or all items. |
 | **`/api/sync/progress`** | `GET` | Public | **Sync Progress**: Returns live percentage and progress counts for active sync batches. |
@@ -155,10 +157,11 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 ---
 
-## 11. Multi-Tracker Engines (Trakt, Simkl, AniList, MAL)
+## 11. Multi-Tracker Hub (9 Trackers & Relays)
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
+| **`/api/trackers/status`** | `GET` | Public | **9-Tracker Status Matrix**: Aggregated connection, token, and health telemetry across all connected trackers (Trakt, Simkl, AniList, MAL, TMDb, Letterboxd, Kitsu, BetaSeries, Serializd, MDBList). |
 | **`/api/trakt/status`** | `GET` | Public | **Trakt Status**: Connection status, token health, and authenticated username. |
 | **`/api/trakt/disconnect`** | `POST` | Admin | **Disconnect Trakt**: Purges local Trakt OAuth tokens (`?user=username` for partner). |
 | **`/api/simkl/status`** | `GET` | Public | **Simkl Status**: Connection health and authenticated username. |
@@ -171,6 +174,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/mal/status`** | `GET` | Public | **MyAnimeList Status**: Connection status and user profile. |
 | **`/api/mal/token`** | `POST` | Admin | **Save MAL Token**: Saves access token for MyAnimeList REST v2 API. |
 | **`/api/mal/disconnect`** | `POST` | Admin | **Disconnect MAL**: Deletes local MyAnimeList token. |
+| **`/api/letterboxd/export`** | `GET` | Admin | **Letterboxd Diary CSV Export**: Generates and downloads a Letterboxd-compliant CSV diary export of watched movies. |
+| **`/api/relay/status`** | `GET` | Public | **Mobile Relay Status**: Connection health for mobile Trakt relays (SeriesGuide, Showly). |
 | **`/api/anime/resolve`** | `GET` | Public | **Anime Resolver**: Resolves AniList GraphQL / MAL ID mapping for an anime title. |
 
 ---
@@ -191,9 +196,12 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/settings`** | `GET` | Public | **Get Runtime Settings**: Retrieves current media server listener toggles, tracker active states, and masked notification channel configuration. |
+| **`/api/settings`** | `GET` | Public | **Get Runtime Settings**: Retrieves current media server listener toggles, tracker active states, masked credentials, rules, and notifications configuration. |
+| **`/api/settings`** | `POST` | Admin | **Update Runtime Settings**: Updates media server listeners, tracker states, credentials, reconciliation, arr, notifications, and rules. |
+| **`/api/settings/rules`** | `GET` | Public | **Get Scrobble Rules**: Retrieves current scrobble rules (granular episode & movie thresholds, min duration, episode duration toggle, ignored libraries, path regex patterns). |
+| **`/api/settings/rules`** | `POST` | Admin | **Update Scrobble Rules**: Updates scrobble thresholds, minimum playback duration, ignored libraries, and regex patterns with automatic clamping and validation. |
 | **`/api/settings/toggle`** | `POST` | Admin | **Toggle Service**: Enables/disables media server listeners or pauses/resumes trackers. |
-| **`/api/settings/save-all`** | `POST` | Admin | **Save Settings Hub**: Atomically saves all Settings Hub tabs (servers, trackers, notifications) to `data/settings.json` without server restarts. |
+| **`/api/settings/save-all`** | `POST` | Admin | **Save Settings Hub**: Atomically saves all Settings Hub tabs (servers, trackers, rules, notifications) to `data/settings.json` without server restarts. |
 | **`/api/notifications/test`** | `POST` | Admin | **Test Notification Channel**: Dispatches a test message to a specified channel (`discord`, `telegram`, `ntfy`, `pushover`). Body: `{"channel": "discord"}`. Returns `{"ok": true}` on success. |
 
 ---

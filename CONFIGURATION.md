@@ -604,6 +604,9 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
 | **`PLEX_ALLOWED_USERS`** | `""` | String (CSV) | **Yes** | Comma-separated usernames allowed to scrobble. If empty, all users scrobble. |
 | **`ALLOWED_LIBRARIES`** | `""` | String (CSV) | **Yes** | Whitelist of library section names to track (e.g., `Movies, TV Shows`). |
 | **`EXCLUDED_LIBRARIES`** | `Home Videos...` | String (CSV) | **Yes** | Blacklist of library section names to ignore (e.g., `Fitness, Home Videos`). |
+| **`MIN_DURATION_SECONDS`** | `300` | Integer | **Yes** | Minimum playback duration in seconds required to scrobble (bypasses trailers, short clips). |
+| **`APPLY_MIN_DURATION_TO_EPISODES`** | `false` | Boolean | **Yes** | Whether minimum duration filter applies to TV episodes in addition to movies. |
+| **`IGNORED_PATH_PATTERNS`** | `""` | String (CSV) | **Yes** | Comma-separated regex patterns to ignore based on media file path (e.g., `/extras/, \.sample\.`). |
 | **`SCROBBLE_MODE`** | `scrobble` | String | **Yes** | `scrobble` (real-time play/pause/stop) or `watched_only` (marks watched at threshold). |
 | **`EPISODE_SCROBBLE_THRESHOLD`** | `80.0` | Float (0–100) | **Yes** | Completion percentage required to scrobble TV episodes (enables credit-skipping). |
 | **`MOVIE_SCROBBLE_THRESHOLD`** | `90.0` | Float (0–100) | **Yes** | Completion percentage required to scrobble Movies (prevents premature scrobbling). |

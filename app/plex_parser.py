@@ -86,8 +86,15 @@ class ParsedMedia(BaseModel):
     library_section_title: Optional[str] = None
     server_type: str = "plex"
     rating_key: Optional[str] = None
+    file_path: Optional[str] = None
     ids: dict[str, Any] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def duration_seconds(self) -> float:
+        if self.duration_ms:
+            return self.duration_ms / 1000.0
+        return 0.0
 
     @model_validator(mode="before")
     @classmethod
@@ -521,6 +528,10 @@ def parse_plex_webhook(
     audio_channels_val = first_media.get("audioChannels")
     audio_channels = map_plex_audio_channels(audio_channels_val) if audio_channels_val else None
 
+    part_list = first_media.get("Part", [])
+    first_part = part_list[0] if (isinstance(part_list, list) and part_list and isinstance(part_list[0], dict)) else {}
+    file_path = str(first_part.get("file", "")).strip() or None
+
     rating_key = str(metadata.get("ratingKey", "")) if metadata.get("ratingKey") is not None else None
 
     if media_type == "episode":
@@ -547,6 +558,7 @@ def parse_plex_webhook(
             audio_channels=audio_channels,
             library_section_title=library_section_title,
             rating_key=rating_key,
+            file_path=file_path,
             ids=ids,
             raw_payload=payload,
         )
@@ -568,6 +580,7 @@ def parse_plex_webhook(
             audio_channels=audio_channels,
             library_section_title=library_section_title,
             rating_key=rating_key,
+            file_path=file_path,
             ids=ids,
             raw_payload=payload,
         )
@@ -589,6 +602,7 @@ def parse_plex_webhook(
             audio_channels=audio_channels,
             library_section_title=library_section_title,
             rating_key=rating_key,
+            file_path=file_path,
             ids=ids,
             raw_payload=payload,
         )

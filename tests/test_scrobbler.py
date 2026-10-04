@@ -8526,4 +8526,321 @@ def test_https_and_proxy_headers_readiness(monkeypatch):
     assert "https://omniscrobble.securehomelab.net/webhook?token=test_secret_abc" in res_dash.text
 
 
+def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
+    """Verify GET and POST /api/settings/rules, clamping, auth, and persistence."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import app
+    from app.config import Config
 
+    test_settings_file = tmp_path / "settings_rules_test.json"
+    monkeypatch.setattr(settings_mgr, "settings_file", test_settings_file)
+    settings_mgr._load_settings()
+
+    client = TestClient(app)
+
+    # 1. GET /api/settings/rules returns default rules
+    res = client.get("/api/settings/rules")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    rules = data["rules"]
+    assert rules["scrobble_threshold"] == 80
+    assert rules["movie_scrobble_threshold"] == 90
+    assert rules["min_duration_seconds"] == 300
+    assert rules["apply_min_duration_to_episodes"] is False
+    assert isinstance(rules["ignore_libraries"], list)
+
+    # 2. Auth protection for POST /api/settings/rules when secret configured
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "rules_secret_999")
+    unauth_res = client.post("/api/settings/rules", json={"scrobble_threshold": 85})
+    assert unauth_res.status_code == 401
+    assert "Unauthorized" in unauth_res.json()["detail"]
+
+    # 3. Successful update with admin token
+    update_res = client.post(
+        "/api/settings/rules?token=rules_secret_999",
+        json={
+            "scrobble_threshold": 85,
+            "movie_scrobble_threshold": 95,
+            "min_duration_seconds": 450,
+            "apply_min_duration_to_episodes": True,
+            "ignore_libraries": ["Trailers", "Extras"],
+            "ignore_path_patterns": [r"/extras/", r"\.sample\."],
+        },
+    )
+    assert update_res.status_code == 200
+    updated_rules = update_res.json()["rules"]
+    assert updated_rules["scrobble_threshold"] == 85
+    assert updated_rules["movie_scrobble_threshold"] == 95
+    assert updated_rules["min_duration_seconds"] == 450
+    assert updated_rules["apply_min_duration_to_episodes"] is True
+    assert updated_rules["ignore_libraries"] == ["Trailers", "Extras"]
+    assert updated_rules["ignore_path_patterns"] == [r"/extras/", r"\.sample\."]
+
+    # 4. Clamping verification: thresholds clamp to [50, 95], min_duration clamps to >= 0
+    clamp_res = client.post(
+        "/api/settings/rules?token=rules_secret_999",
+        json={
+            "scrobble_threshold": -50,
+            "movie_scrobble_threshold": 200,
+            "min_duration_seconds": -99,
+        },
+    )
+    assert clamp_res.status_code == 200
+    clamped_rules = clamp_res.json()["rules"]
+    assert clamped_rules["scrobble_threshold"] == 50
+    assert clamped_rules["movie_scrobble_threshold"] == 95
+    assert clamped_rules["min_duration_seconds"] == 0
+
+    # 5. Full POST /api/settings updates rules block
+    full_settings_res = client.post(
+        "/api/settings?token=rules_secret_999",
+        json={
+            "rules": {
+                "scrobble_threshold": 82,
+                "movie_scrobble_threshold": 88,
+            }
+        },
+    )
+    assert full_settings_res.status_code == 200
+    final_rules = settings_mgr.get_rules_settings()
+    assert final_rules["scrobble_threshold"] == 82
+    assert final_rules["movie_scrobble_threshold"] == 88
+
+
+def test_rules_duration_filter_bypass():
+    """Verify minimum playback duration filtering and episode exemption toggle."""
+    from app.services.settings_manager import settings_mgr
+    from app.plex_parser import ParsedMedia
+
+    # Configure min duration of 300 seconds, episodes exempted by default
+    settings_mgr.update_rules_settings({
+        "min_duration_seconds": 300,
+        "apply_min_duration_to_episodes": False,
+        "ignore_libraries": [],
+        "ignore_path_patterns": [],
+    })
+
+    # Short movie (180s < 300s): rejected
+    short_movie = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Short Film",
+        duration_ms=180000,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(short_movie)
+    assert allowed is False
+    assert "below minimum threshold" in reason
+
+    # Standard movie (600s >= 300s): allowed
+    std_movie = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Feature Film",
+        duration_ms=600000,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(std_movie)
+    assert allowed is True
+
+    # Short episode (180s): allowed because apply_min_duration_to_episodes is False
+    short_episode = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="episode",
+        show_title="Mini Series",
+        season=1,
+        episode=1,
+        title="Intro Clip",
+        duration_ms=180000,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(short_episode)
+    assert allowed is True
+
+    # Media with no duration specified: allowed
+    no_dur_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Unknown Duration Movie",
+        duration_ms=None,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(no_dur_media)
+    assert allowed is True
+
+    # Enable apply_min_duration_to_episodes -> short episode now rejected
+    settings_mgr.update_rules_settings({"apply_min_duration_to_episodes": True})
+    allowed, reason = settings_mgr.is_media_allowed(short_episode)
+    assert allowed is False
+    assert "below minimum threshold" in reason
+
+
+def test_rules_library_ignore():
+    """Verify library section title filtering against configured ignore list."""
+    from app.services.settings_manager import settings_mgr
+    from app.plex_parser import ParsedMedia
+
+    settings_mgr.update_rules_settings({
+        "ignore_libraries": ["Home Videos", "Trailers", "Fitness"],
+        "min_duration_seconds": 0,
+        "ignore_path_patterns": [],
+    })
+
+    # Ignored library (exact match)
+    trailer_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Official Trailer",
+        library_section_title="Trailers",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(trailer_media)
+    assert allowed is False
+    assert "Trailers" in reason
+    assert "ignored in rules" in reason
+
+    # Ignored library (case-insensitive match)
+    case_trailer = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Home Recording",
+        library_section_title="home videos",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(case_trailer)
+    assert allowed is False
+    assert "ignored in rules" in reason
+
+    # Allowed library
+    movie_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Interstellar",
+        library_section_title="Movies",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(movie_media)
+    assert allowed is True
+
+    # Media with no library title
+    no_lib_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Independent Film",
+        library_section_title=None,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(no_lib_media)
+    assert allowed is True
+
+
+def test_rules_path_regex_ignore():
+    """Verify file path regex pattern matching and error-resilient evaluation."""
+    from app.services.settings_manager import settings_mgr
+    from app.plex_parser import ParsedMedia
+
+    settings_mgr.update_rules_settings({
+        "min_duration_seconds": 0,
+        "ignore_libraries": [],
+        "ignore_path_patterns": [r"/extras/", r"\.sample\.", r"\[invalid_regex"],
+    })
+
+    # File path matches /extras/
+    extra_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Behind the Scenes",
+        file_path="/mnt/storage/movies/Inception (2010)/extras/featurette.mkv",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(extra_media)
+    assert allowed is False
+    assert "matched ignore pattern" in reason
+
+    # File path matches .sample.
+    sample_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Sample Clip",
+        file_path="/mnt/storage/downloads/film.sample.mkv",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(sample_media)
+    assert allowed is False
+    assert "matched ignore pattern" in reason
+
+    # Normal file path
+    main_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Inception",
+        file_path="/mnt/storage/movies/Inception (2010)/Inception (2010).mkv",
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(main_media)
+    assert allowed is True
+
+    # Media without file_path
+    no_path_media = ParsedMedia(
+        event="media.scrobble",
+        username="selits",
+        media_type="movie",
+        title="Streaming Movie",
+        file_path=None,
+        progress=100.0,
+    )
+    allowed, reason = settings_mgr.is_media_allowed(no_path_media)
+    assert allowed is True
+
+
+def test_rules_effective_thresholds_and_test_webhook(monkeypatch):
+    """Verify granular thresholds resolution and test webhook filtering."""
+    from app.services.settings_manager import settings_mgr
+    from app.main import app, get_effective_excluded_libraries
+    from app.config import Config
+
+    # Custom thresholds
+    settings_mgr.update_rules_settings({
+        "scrobble_threshold": 75,
+        "movie_scrobble_threshold": 88,
+        "ignore_libraries": ["Trailers"],
+    })
+
+    assert settings_mgr.get_effective_threshold("episode") == 75.0
+    assert settings_mgr.get_effective_threshold("movie") == 88.0
+    assert settings_mgr.get_effective_threshold("show") == 75.0
+
+    # Test effective excluded libraries merging
+    monkeypatch.setattr(Config, "EXCLUDED_LIBRARIES", ["Home Videos"])
+    effective_libs = get_effective_excluded_libraries()
+    assert "Home Videos" in effective_libs
+    assert "Trailers" in effective_libs
+
+    # Test synthetic webhook with ignored library
+    client = TestClient(app)
+    res_test = client.post(
+        "/api/test/webhook",
+        json={
+            "source": "plex",
+            "event_type": "scrobble",
+            "media_type": "movie",
+            "title": "Blocked Trailer",
+            "library_section_title": "Trailers",
+        },
+    )
+    assert res_test.status_code == 200
+    data = res_test.json()
+    assert data["status"] == "ignored"
+    assert "reason" in data

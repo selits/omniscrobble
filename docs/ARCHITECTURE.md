@@ -30,9 +30,12 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 └──────────────────────────────────────────┬──────────────────────────────────┘
                                            ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Business Rules & Filters                                                    │
+│ Business Rules & Filters Engine (app/services/settings_manager.py)          │
 │ ├── User Whitelist (Config.PLEX_ALLOWED_USERS)                              │
-│ ├── Library Section Filter (ALLOWED_LIBRARIES / EXCLUDED_LIBRARIES)         │
+│ ├── Dynamic Library Filter (Config.EXCLUDED_LIBRARIES + ignore_libraries)   │
+│ ├── Granular Scrobble Thresholds (Movie: 90%, Episode: 80% dynamic slider) │
+│ ├── Minimum Duration Filter (bypass short clips, trailers & sample clips)   │
+│ ├── Path Regex Ignore Patterns (filter /extras/, .sample., etc.)            │
 │ └── Watch Together Engine (app/services/cowatch_manager.py)                 │
 │     - Show Whitelist (data/cowatch_shows.json)                              │
 │     - Device Filter (CO_WATCH_PLAYERS)                                      │
@@ -40,10 +43,11 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 └──────────────────────────────────────────┬──────────────────────────────────┘
                                            ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ Multi-Tracker Coordinator (app/services/multi_tracker.py)                   │
-│ ├── Primary Tracker: Trakt.tv (app/clients/trakt_client.py)                  │
-│ ├── Multi-Tracker: Simkl (app/clients/simkl_client.py)                      │
-│ └── Anime Engine: AniList & MyAnimeList (via anime_resolver.py)             │
+│ 9-Tracker Hub Coordinator (app/services/multi_tracker.py)                   │
+│ ├── Primary Trackers: Trakt.tv & Simkl                                      │
+│ ├── Anime Engines: AniList, MyAnimeList & Kitsu                             │
+│ ├── Social Diaries & Ratings: TMDb, Letterboxd, BetaSeries & Serializd      │
+│ └── Aggregated Scores: MDBList                                              │
 │                                                                             │
 │ Transient Error Fallback:                                                   │
 │ └── Persistent Offline Queue (SQLite: data/queue.db via queue_manager.py)    │
@@ -67,7 +71,8 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 ### 3. Business Logic & Dispatch Layer
 
-- **`app/services/multi_tracker.py`**: Coordinates simultaneous multi-tracker dispatch. Determines which trackers receive scrobbles, pause signals, or ratings based on media type (e.g. anime detection) and runtime pause states.
+- **`app/services/multi_tracker.py`**: Coordinates simultaneous multi-tracker dispatch across 9 cloud platforms (Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, BetaSeries, Serializd, MDBList). Determines which trackers receive scrobbles, pause signals, or ratings based on media type and runtime enablement states.
+- **`app/services/settings_manager.py`**: Houses the **Dynamic Rules & Filters Engine**. Evaluates granular episode (default: 80%) and movie (default: 90%) scrobble thresholds, minimum playback duration (with episode exemption toggle), dynamic library ignore lists, and error-tolerant regex file path exclusions (`is_media_allowed()`, `get_effective_threshold()`).
 - **`app/services/cowatch_manager.py`**: Evaluates watch-together eligibility. Checks whether an episode or movie matches configured show whitelists, allowed players, and user profiles. Returns structured `(eligible, reason)` tuples for transparent telemetry.
 - **`app/services/loop_prevention.py`**: Thread-safe in-memory cache tracking recently synced rating keys and GUIDs with automated TTL cleanup to prevent infinite ping-pong loops between media servers and trackers.
 - **`app/services/anime_resolver.py`**: Intelligent anime detection using title heuristic scoring, regex normalization, and cached AniList/MAL mappings (`data/anime_cache.json`).
@@ -78,13 +83,19 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 - **`app/clients/simkl_client.py`**: Simkl REST API client for OAuth Device PIN authorization, dual-scrobbling, and ratings synchronization.
 - **`app/clients/anilist_client.py`**: AniList GraphQL API client for scrobbling anime episode progress and synchronizing user lists.
 - **`app/clients/mal_client.py`**: MyAnimeList REST API v2 client with PKCE OAuth flow for scrobbling anime and rating synchronization.
+- **`app/clients/kitsu_client.py`**: Kitsu JSON:API v1 client for anime episode progress, ratings, and library updates.
+- **`app/clients/tmdb_client.py`**: The Movie Database (TMDb) API v3/v4 client for watchlist synchronization, movie/TV ratings, and metadata enrichment.
+- **`app/clients/letterboxd_client.py`**: Letterboxd client and CSV diary exporter for watched history, ratings, and list synchronization.
+- **`app/clients/betaseries_client.py`**: BetaSeries / TV Time REST API client for TV episode scrobbles, movie logs, and user ratings.
+- **`app/clients/serializd_client.py`**: Serializd client for episode logging and TV diary management.
+- **`app/clients/mdblist_client.py`**: MDBList client for aggregated scores and rating synchronization.
 - **`app/clients/plex_api_client.py`**, **`jellyfin_api_client.py`**, **`emby_api_client.py`**: Direct REST clients for media servers supporting library section discovery, watch status toggling, and rating management.
 - **`app/clients/sonarr_client.py`**, **`radarr_client.py`**: Direct REST clients for *Arr acquisition automation, library duplicate checks, and live show autocomplete.
 
 ### 5. Offline Queue & Persistence Layer
 
 - **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. A background worker drains the queue with exponential backoff.
-- **`app/services/settings_manager.py`**: Thread-safe runtime settings manager (`data/settings.json`). Preserves media server listener states, tracker pause states, and active servers across reboots without modifying `.env`.
+- **`app/services/settings_manager.py`**: Thread-safe runtime settings manager (`data/settings.json`). Preserves media server listener states, tracker pause states, dynamic rules & filters, and active servers across reboots without modifying `.env`.
 - **`app/services/user_manager.py`**: Manages isolated multi-user tokens in `data/tokens/{username}_tokens.json`.
 
 ### 6. Background Workers & Automation Engines
@@ -112,6 +123,12 @@ omniscrobble/
 │   │   ├── simkl_client.py          # Simkl REST API client for OAuth Device PIN flow & dual-scrobbling
 │   │   ├── anilist_client.py        # AniList GraphQL API client for anime tracking & user lists
 │   │   ├── mal_client.py            # MyAnimeList REST API v2 client for anime progress & rating sync
+│   │   ├── kitsu_client.py          # Kitsu JSON:API v1 client for anime progress & rating sync
+│   │   ├── tmdb_client.py           # TMDb API v3/v4 client for watchlist & rating synchronization
+│   │   ├── letterboxd_client.py     # Letterboxd CSV diary exporter & history synchronization
+│   │   ├── betaseries_client.py     # BetaSeries / TV Time client for episode scrobbles & ratings
+│   │   ├── serializd_client.py      # Serializd diary & episode scrobbling client
+│   │   ├── mdblist_client.py        # MDBList aggregated score & rating synchronization
 │   │   ├── plex_api_client.py       # Direct Plex Media Server REST API client
 │   │   ├── mediabrowser_api_client.py # Base client for MediaBrowser-compatible REST APIs
 │   │   ├── jellyfin_api_client.py   # Direct Jellyfin Media Server REST API client
@@ -131,7 +148,7 @@ omniscrobble/
 │   │   ├── playback_manager.py      # Active streaming sessions & dashboard cards
 │   │   ├── queue_manager.py         # Persistent SQLite offline retry queue & background worker
 │   │   ├── reverse_sync_manager.py  # Bi-directional library reconciliation & reverse sync engine
-│   │   ├── settings_manager.py      # Persistent runtime media server listeners & tracker pause toggles
+│   │   ├── settings_manager.py      # Persistent runtime media server listeners, tracker pause toggles & rules engine
 │   │   └── user_manager.py          # Multi-user account client cache & token persistence
 │   ├── templates/                   # Externalized dashboard and authorization views
 │   │   ├── dashboard.html           # Main real-time status dashboard view
@@ -148,7 +165,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (28 endpoints)
+│   ├── API.md                       # Full REST API specification (34 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
@@ -156,7 +173,7 @@ omniscrobble/
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
-├── tests/                           # Comprehensive test suite (171 tests, 0 external calls)
+├── tests/                           # Comprehensive test suite (199 tests, 0 external calls)
 │   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool

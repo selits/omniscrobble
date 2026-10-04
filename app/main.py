@@ -641,6 +641,16 @@ async def extract_webhook_payload(request: Request, endpoint_name: str = "webhoo
     return None
 
 
+def get_effective_excluded_libraries() -> list[str]:
+    """Combines static Config.EXCLUDED_LIBRARIES with dynamic rules ignore_libraries."""
+    base = list(Config.EXCLUDED_LIBRARIES or [])
+    rules_libs = settings_mgr.get_rules_settings().get("ignore_libraries", [])
+    for lib in rules_libs:
+        if lib and lib not in base:
+            base.append(lib)
+    return base
+
+
 async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook") -> dict[str, Any]:
     # Loop Prevention: suppress bounce-back echo webhooks from media servers
     if parsed.rating_key and loop_prevention.is_ignored(parsed.rating_key):
@@ -652,6 +662,14 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             logger.info(f"Loop prevention: suppressing echo event '{parsed.event}' for ID {id_val} ({parsed.title})")
             metrics_registry.record_request(endpoint_name, 200)
             return {"status": "ignored", "reason": "loop_prevention", "key": str(id_val)}
+
+    # Dynamic Rules & Filters: check duration, library exclusions, and file path patterns
+    allowed, bypass_reason = settings_mgr.is_media_allowed(parsed)
+    if not allowed:
+        logger.info(f"Rules filter: bypassing event '{parsed.event}' for '{parsed.title}' ({bypass_reason})")
+        metrics_registry.record_request(endpoint_name, 200)
+        log_event(parsed, "bypassed", {"reason": bypass_reason})
+        return {"status": "ignored", "reason": bypass_reason}
 
     active_client = user_mgr.get_client(parsed.username)
     if not active_client.is_authenticated():
@@ -668,7 +686,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
     scrobble_payload = parsed.to_trakt_scrobble_payload()
     result: dict[str, Any] = {}
     action_taken = "none"
-    threshold = Config.get_threshold(parsed.media_type)
+    threshold = settings_mgr.get_effective_threshold(parsed.media_type)
 
     try:
         if event == "library.new":
@@ -851,7 +869,7 @@ async def plex_webhook(request: Request):
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         metrics_registry.record_request("webhook", 200)
@@ -891,7 +909,7 @@ async def jellyfin_webhook(request: Request):
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         metrics_registry.record_request("webhook_jellyfin", 200)
@@ -931,7 +949,7 @@ async def emby_webhook(request: Request):
         raw_data,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         metrics_registry.record_request("webhook_emby", 200)
@@ -1573,6 +1591,7 @@ class SettingsUpdateRequest(BaseModel):
     credentials: Optional[dict[str, dict[str, Any]]] = None
     reconciliation: Optional[dict[str, Any]] = None
     arr: Optional[dict[str, Any]] = None
+    rules: Optional[dict[str, Any]] = None
     notifications: Optional[dict[str, Any]] = None
 
     model_config = {"extra": "ignore"}
@@ -1679,6 +1698,32 @@ async def test_notification_endpoint(payload: NotificationTestRequest, request: 
     if not success:
         return JSONResponse(status_code=400, content={"status": "error", "success": False, "message": msg})
     return {"status": "success", "success": True, "message": msg}
+
+
+@app.post("/api/settings/save-all")
+def save_all_settings_alias(payload: SettingsUpdateRequest, request: Request):
+    """Atomically save all Settings Hub configurations to data/settings.json."""
+    return update_settings_endpoint(payload, request)
+
+
+@app.get("/api/settings/rules")
+def get_rules_endpoint(request: Request):
+    """Retrieve current dynamic scrobble rules and filters configuration."""
+    return {
+        "status": "success",
+        "rules": settings_mgr.get_rules_settings(),
+    }
+
+
+@app.post("/api/settings/rules")
+def update_rules_endpoint(payload: dict[str, Any], request: Request):
+    """Update dynamic scrobble rules and filters configuration."""
+    if request and request.query_params.get("demo") == "true":
+        return {"status": "success", "rules": settings_mgr.get_rules_settings()}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    updated = settings_mgr.update_rules_settings(payload)
+    return {"status": "success", "rules": updated}
 
 
 @app.post("/api/settings/toggle")
@@ -2525,6 +2570,8 @@ class TestWebhookRequest(BaseModel):
     year: Optional[int] = 2025
     progress: float = 100.0
     execute_trakt: bool = False
+    library_section_title: Optional[str] = None
+    file_path: Optional[str] = None
 
 
 @app.post("/api/test/webhook")
@@ -2541,6 +2588,7 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
         "Player": {"title": Config.CO_WATCH_PLAYERS[0] if Config.CO_WATCH_PLAYERS else "Living Room TV", "local": True},
         "Metadata": {
             "librarySectionType": "show" if payload.media_type == "episode" else "movie",
+            "librarySectionTitle": payload.library_section_title or ("TV Shows" if payload.media_type == "episode" else "Movies"),
             "type": payload.media_type,
             "title": payload.title,
             "year": payload.year,
@@ -2550,6 +2598,7 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
             "parentIndex": payload.season if payload.media_type == "episode" else None,
             "index": payload.episode if payload.media_type == "episode" else None,
             "Guid": [{"id": "imdb://tt0000001"}],
+            "Media": [{"Part": [{"file": payload.file_path}]}] if payload.file_path else [],
         }
     }
 
@@ -2557,10 +2606,14 @@ async def trigger_test_webhook(payload: TestWebhookRequest, request: Request):
         mock_payload,
         allowed_users=Config.PLEX_ALLOWED_USERS,
         allowed_libraries=Config.ALLOWED_LIBRARIES,
-        excluded_libraries=Config.EXCLUDED_LIBRARIES,
+        excluded_libraries=get_effective_excluded_libraries(),
     )
     if not parsed:
         return {"status": "ignored", "reason": "Filtered or invalid media payload"}
+
+    allowed, bypass_reason = settings_mgr.is_media_allowed(parsed)
+    if not allowed:
+        return {"status": "ignored", "reason": bypass_reason}
 
     eligible, reason = cowatch_mgr.check_cowatch_eligibility(parsed)
     simulated_result: dict[str, Any] = {"status": "ok", "mode": "simulated"}
