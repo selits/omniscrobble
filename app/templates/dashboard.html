@@ -2135,8 +2135,9 @@
                     <div id="omniwrapped-watchtime" style="font-size:22px;font-weight:800;color:#38bdf8;margin-top:2px;">146h 30m</div>
                 </div>
                 <div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;text-align:center;">
-                    <div style="font-size:11px;color:#94a3b8;">Titles Watched</div>
+                    <div style="font-size:11px;color:#94a3b8;">Completed Scrobbles</div>
                     <div id="omniwrapped-titles" style="font-size:22px;font-weight:800;color:#f8fafc;margin-top:2px;">182</div>
+                    <div id="omniwrapped-titles-sub" style="font-size:10px;color:#64748b;">46 unique titles</div>
                 </div>
                 <div style="background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px;text-align:center;">
                     <div style="font-size:11px;color:#94a3b8;">Top Binge Series</div>
@@ -7651,6 +7652,8 @@ SIMKL_ENABLED=true</pre>
 
             const titlesEl = document.getElementById('omniwrapped-titles');
             if (titlesEl) titlesEl.innerText = data.total_scrobbles || 0;
+            const titlesSubEl = document.getElementById('omniwrapped-titles-sub');
+            if (titlesSubEl) titlesSubEl.innerText = `${data.unique_titles || 0} unique titles`;
 
             const topShowEl = document.getElementById('omniwrapped-top-show');
             const topShowSubEl = document.getElementById('omniwrapped-top-show-sub');

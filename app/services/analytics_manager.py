@@ -22,6 +22,9 @@ logger = logging.getLogger("omniscrobble.analytics_manager")
 class AnalyticsManager:
     """Computes personal viewing telemetry, platform distributions, and OmniWrapped retrospectives."""
 
+    # Event actions that represent a completed watch (legacy "scrobble" variants included)
+    COMPLETED_WATCH_ACTIONS = frozenset({"mark_watched", "scrobble_stop", "manual_scrobble", "scrobble", "watched"})
+
     def __init__(self, events_file: Optional[Path] = None, stats_file: Optional[Path] = None):
         self.events_file = events_file or (Config.BASE_DIR / "data" / "events.json")
         self.stats_file = stats_file or (Config.BASE_DIR / "data" / "stats.json")
@@ -40,16 +43,52 @@ class AnalyticsManager:
 
     def _load_stats(self) -> dict[str, int]:
         """Load cumulative lifetime scrobble counters."""
+        keys = ["total", "movies", "episodes", "ratings", "collections", "watch_minutes"]
         if not self.stats_file or not self.stats_file.exists():
-            return {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0}
+            return {k: 0 for k in keys}
         try:
             with open(self.stats_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    return {k: int(data.get(k, 0)) for k in ["total", "movies", "episodes", "ratings", "collections"]}
+                    return {k: int(data.get(k, 0)) for k in keys}
         except Exception:
             pass
-        return {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0}
+        return {k: 0 for k in keys}
+
+    @staticmethod
+    def _extract_item_minutes(ev: dict[str, Any], media_type: str) -> int:
+        """Extract actual watch minutes from event metadata or fall back to sensible averages."""
+        # 1. Direct duration_ms
+        dur_ms = ev.get("duration_ms")
+        if not dur_ms and isinstance(ev.get("media_payload"), dict):
+            dur_ms = ev["media_payload"].get("duration_ms")
+
+        if dur_ms is not None:
+            try:
+                val_ms = float(dur_ms)
+                if val_ms > 0:
+                    return max(1, round(val_ms / 60000.0))
+            except (ValueError, TypeError):
+                pass
+
+        # 3. Generic 'duration' field (may be in ms, seconds, or minutes)
+        dur = ev.get("duration")
+        if not dur and isinstance(ev.get("media_payload"), dict):
+            dur = ev["media_payload"].get("duration")
+        if dur is not None:
+            try:
+                val = float(dur)
+                if val > 0:
+                    if val >= 60000:
+                        return max(1, round(val / 60000.0))
+                    if val >= 1000:
+                        return max(1, round(val / 60.0))
+                    return max(1, round(val))
+            except (ValueError, TypeError):
+                pass
+
+        # 4. Fallback defaults for legacy items lacking runtime metadata
+        return 90 if media_type == "movie" else 35
 
     def get_summary(
         self,
@@ -72,6 +111,7 @@ class AnalyticsManager:
                 "total_watch_hours": 146.5,
                 "total_watch_formatted": "146h 30m",
                 "total_scrobbles": 182,
+                "unique_titles": 46,
                 "movies_watched": 42,
                 "episodes_watched": 140,
                 "ratings_submitted": 28,
@@ -113,6 +153,7 @@ class AnalyticsManager:
                 start_cutoff = now - datetime.timedelta(days=365)
 
         total_scrobbles = 0
+        unique_titles_set: set[str] = set()
         movies_watched = 0
         episodes_watched = 0
         ratings_count = 0
@@ -124,6 +165,7 @@ class AnalyticsManager:
         shows: collections.Counter[str] = collections.Counter()
         show_mins: collections.Counter[str] = collections.Counter()
         genres_counter: collections.Counter[str] = collections.Counter()
+        pending_unscrobbles: collections.Counter[str] = collections.Counter()
 
         for ev in events:
             if not isinstance(ev, dict):
@@ -162,14 +204,32 @@ class AnalyticsManager:
                 ratings_count += 1
                 continue
 
+            action_base = action.split(" (")[0].strip()
+
+            # events.json is stored newest-first, so an unscrobble is seen before the older watch it undoes
+            if action_base == "unscrobble":
+                pending_unscrobbles[title.strip().lower()] += 1
+                continue
+
+            # Only completed watches count; start/pause/bypassed/collection events do not
+            if action_base not in self.COMPLETED_WATCH_ACTIONS:
+                continue
+
+            if pending_unscrobbles[title.strip().lower()] > 0:
+                pending_unscrobbles[title.strip().lower()] -= 1
+                continue
+
             # Scrobbles / watch events
             total_scrobbles += 1
             if m_type == "movie":
                 movies_watched += 1
-                item_mins = 110
+                m_title = (ev.get("media_payload") or {}).get("title") or title
+                clean_m_title = re.sub(r"\s*\(\d{4}\)$", "", m_title).strip()
+                unique_titles_set.add(f"movie:{clean_m_title.lower()}")
             else:
                 episodes_watched += 1
-                item_mins = 45
+
+            item_mins = self._extract_item_minutes(ev, m_type)
 
             # Extract show title if episode using explicit field, metadata payload, or robust regex
             if m_type == "episode":
@@ -188,6 +248,7 @@ class AnalyticsManager:
                 if show_name:
                     shows[show_name] += 1
                     show_mins[show_name] += item_mins
+                    unique_titles_set.add(f"show:{show_name.lower().strip()}")
 
             # Co-watch classification (check for synced or affirmative eligibility, avoiding 'ineligible' false-positives)
             cw = ev.get("cowatch_status")
@@ -250,7 +311,10 @@ class AnalyticsManager:
             movies_watched = stats.get("movies", 0)
             episodes_watched = stats.get("episodes", 0)
             total_scrobbles = movies_watched + episodes_watched
-            solo_mins = (movies_watched * 110) + (episodes_watched * 45)
+            if stats.get("watch_minutes", 0) > 0:
+                solo_mins = stats["watch_minutes"]
+            else:
+                solo_mins = (movies_watched * 90) + (episodes_watched * 35)
             ratings_count = stats.get("ratings", 0)
             servers["Plex"] = total_scrobbles
 
@@ -275,6 +339,7 @@ class AnalyticsManager:
             "total_watch_hours": total_hours,
             "total_watch_formatted": f"{h}h {m}m",
             "total_scrobbles": total_scrobbles,
+            "unique_titles": len(unique_titles_set) if total_scrobbles > 0 else 0,
             "movies_watched": movies_watched,
             "episodes_watched": episodes_watched,
             "ratings_submitted": ratings_count,
@@ -339,6 +404,7 @@ class AnalyticsManager:
             "total_watch_time": summary["total_watch_formatted"],
             "total_watch_hours": summary["total_watch_hours"],
             "total_scrobbles": summary["total_scrobbles"],
+            "unique_titles": summary.get("unique_titles", 0),
             "movies_watched": summary["movies_watched"],
             "episodes_watched": summary["episodes_watched"],
             "ratings_submitted": summary["ratings_submitted"],

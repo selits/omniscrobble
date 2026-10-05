@@ -1179,6 +1179,7 @@ class DashboardRenderer:
         """Render the Personal Analytics, Viewing Habits & OmniWrapped card."""
         watch_time = analytics.get("total_watch_formatted", "0h 0m")
         total_scrobbles = analytics.get("total_scrobbles", 0)
+        unique_titles = analytics.get("unique_titles", 0)
         movies = analytics.get("movies_watched", 0)
         episodes = analytics.get("episodes_watched", 0)
         ratings = analytics.get("ratings_submitted", 0)
@@ -1211,6 +1212,11 @@ class DashboardRenderer:
             </button>
             """
 
+        if unique_titles > 0 and unique_titles != total_scrobbles:
+            scrobbles_sub = f"{movies} movies &bull; {episodes} eps ({unique_titles} unique)"
+        else:
+            scrobbles_sub = f"{movies} movies &bull; {episodes} eps"
+
         return f"""
         <div class="card" style="margin-bottom:20px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
@@ -1235,9 +1241,9 @@ class DashboardRenderer:
                     <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Across all devices</div>
                 </div>
                 <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
-                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Completed Titles</div>
+                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Completed Scrobbles</div>
                     <div style="font-size:18px;font-weight:700;color:#f8fafc;">{total_scrobbles}</div>
-                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{movies} movies &bull; {episodes} eps</div>
+                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{scrobbles_sub}</div>
                 </div>
                 <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
                     <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Co-Watch Ratio</div>
