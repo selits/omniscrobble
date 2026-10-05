@@ -128,7 +128,7 @@ EVENTS_FILE = Config.BASE_DIR / "data" / "events.json"
 
 def load_scrobble_stats() -> dict[str, int]:
     """Load persistent scrobble counters from data/stats.json."""
-    stats = {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0}
+    stats = {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0, "watch_minutes": 0}
     if STATS_FILE.exists():
         try:
             with open(STATS_FILE, "r", encoding="utf-8") as f:
@@ -136,6 +136,9 @@ def load_scrobble_stats() -> dict[str, int]:
                 if isinstance(data, dict):
                     for k in stats:
                         stats[k] = int(data.get(k, 0))
+                    # Upgrade path: stats.json predates watch_minutes, so estimate it from lifetime counts
+                    if "watch_minutes" not in data and stats["total"] > 0:
+                        stats["watch_minutes"] = stats["movies"] * 90 + stats["episodes"] * 35
         except Exception as e:
             logger.warning(f"Could not load stats from {STATS_FILE}: {e}")
     return stats
@@ -150,8 +153,25 @@ def save_scrobble_stats() -> None:
 
 
 # Persistent scrobble counter across restarts and upgrades
-scrobble_stats: dict[str, int] = {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0}
+scrobble_stats: dict[str, int] = {"total": 0, "movies": 0, "episodes": 0, "ratings": 0, "collections": 0, "watch_minutes": 0}
 scrobble_stats.update(load_scrobble_stats())
+
+
+def record_watch_stat(media: ParsedMedia) -> None:
+    """Increment scrobble counters and accumulate exact or estimated watch minutes."""
+    scrobble_stats["total"] = scrobble_stats.get("total", 0) + 1
+    if media.media_type == "movie":
+        scrobble_stats["movies"] = scrobble_stats.get("movies", 0) + 1
+        default_mins = 90
+    else:
+        scrobble_stats["episodes"] = scrobble_stats.get("episodes", 0) + 1
+        default_mins = 35
+
+    item_mins = default_mins
+    if media.duration_ms and media.duration_ms > 0:
+        item_mins = max(1, round(media.duration_ms / 60000.0))
+
+    scrobble_stats["watch_minutes"] = scrobble_stats.get("watch_minutes", 0) + item_mins
 
 
 def is_temporary_error(res: dict[str, Any]) -> bool:
@@ -792,6 +812,8 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
         "title": title_str,
         "type": media.media_type,
         "show_title": media.show_title if media.media_type == "episode" else (media.title or media.show_title if media.media_type == "show" else None),
+        "duration_ms": media.duration_ms,
+        "view_offset_ms": media.view_offset_ms,
         "media_payload": {
             "media_type": media.media_type,
             "title": media.title,
@@ -799,6 +821,7 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
             "season": media.season,
             "episode": media.episode,
             "ids": media.ids,
+            "duration_ms": media.duration_ms,
         },
         "progress": progress_str,
         "result_status": result.get("status") or ("ok" if not result.get("error") else "error"),
@@ -1056,11 +1079,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             if is_temporary_error(history_res):
                 queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(history_res.get("error", "")), username=parsed.username)
 
-            scrobble_stats["total"] += 1
-            if parsed.media_type == "movie":
-                scrobble_stats["movies"] += 1
-            elif parsed.media_type == "episode":
-                scrobble_stats["episodes"] += 1
+            record_watch_stat(parsed)
 
         elif event == "media.rate":
             action_taken = "rate"
@@ -1092,11 +1111,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                         metrics_registry.record_scrobble(parsed.media_type, "queued")
                     else:
                         metrics_registry.record_scrobble(parsed.media_type, "success")
-                    scrobble_stats["total"] += 1
-                    if parsed.media_type == "movie":
-                        scrobble_stats["movies"] += 1
-                    elif parsed.media_type == "episode":
-                        scrobble_stats["episodes"] += 1
+                    record_watch_stat(parsed)
                 else:
                     action_taken = "scrobble_pause"
                     logger.info(f"Scrobble pause: {parsed.title} ({parsed.progress:.1f}%)")
@@ -1112,11 +1127,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                         metrics_registry.record_scrobble(parsed.media_type, "queued")
                     else:
                         metrics_registry.record_scrobble(parsed.media_type, "success")
-                    scrobble_stats["total"] += 1
-                    if parsed.media_type == "movie":
-                        scrobble_stats["movies"] += 1
-                    elif parsed.media_type == "episode":
-                        scrobble_stats["episodes"] += 1
+                    record_watch_stat(parsed)
                 else:
                     action_taken = "playback_stopped"
                     logger.info(f"Playback stopped below threshold {threshold}%: {parsed.title} ({parsed.progress:.1f}%)")
@@ -2153,6 +2164,7 @@ class ManualScrobbleRequest(BaseModel):
     season: Optional[int] = None
     episode: Optional[int] = None
     ids: dict[str, Any] = {}
+    duration_ms: Optional[int] = None
     trackers: Optional[list[str]] = None
     cowatch: Optional[bool] = False
     media: Optional[dict[str, Any]] = None
@@ -2407,6 +2419,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
     m_season = payload.season if payload.season is not None else m_dict.get("season")
     m_episode = payload.episode if payload.episode is not None else m_dict.get("episode")
     m_ids = payload.ids or m_dict.get("ids") or {}
+    m_duration_ms = payload.duration_ms if payload.duration_ms is not None else m_dict.get("duration_ms")
 
     if is_start:
         prog = 1.0
@@ -2419,6 +2432,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
             year=m_year,
             season=m_season,
             episode=m_episode,
+            duration_ms=m_duration_ms,
             progress=prog,
             ids=m_ids,
             player="Web Dashboard",
@@ -2449,6 +2463,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
                         year=m_year,
                         season=m_season,
                         episode=m_episode,
+                        duration_ms=m_duration_ms,
                         progress=prog,
                         ids=m_ids,
                         player="Web Dashboard (Co-Watch)",
@@ -2489,6 +2504,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
             year=m_year,
             season=m_season,
             episode=m_episode,
+            duration_ms=m_duration_ms,
             progress=100.0,
             ids=m_ids,
             player="Web Dashboard",
@@ -2502,11 +2518,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
             selected_trackers=payload.trackers,
         )
 
-        scrobble_stats["total"] += 1
-        if m_type == "movie":
-            scrobble_stats["movies"] += 1
-        elif m_type == "episode":
-            scrobble_stats["episodes"] += 1
+        record_watch_stat(media_obj)
 
         cowatch_synced = False
         partner_user = Config.CO_WATCH_USER
@@ -2523,6 +2535,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
                         year=m_year,
                         season=m_season,
                         episode=m_episode,
+                        duration_ms=m_duration_ms,
                         progress=100.0,
                         ids=m_ids,
                     )

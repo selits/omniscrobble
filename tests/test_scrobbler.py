@@ -11608,6 +11608,187 @@ def test_csrf_cross_site_protection():
         assert res_del_ok.status_code == 200
 
 
+def test_accurate_watch_time_and_exact_duration_telemetry(tmp_path, monkeypatch):
+    """Verify high-precision watch time calculation from duration_ms, unique titles deduplication, and stats persistence."""
+    from app.services.analytics_manager import AnalyticsManager
+    from app.plex_parser import ParsedMedia
+    import app.main as main_mod
+
+    # Isolate the module-level counters so this test cannot leak state into others
+    monkeypatch.setattr(main_mod, "scrobble_stats", dict(main_mod.scrobble_stats))
+
+    events_file = tmp_path / "test_events_duration.json"
+    stats_file = tmp_path / "test_stats_duration.json"
+
+    mgr = AnalyticsManager(events_file=events_file, stats_file=stats_file)
+
+    # 1. Unit verification of _extract_item_minutes
+    # Milliseconds duration
+    assert mgr._extract_item_minutes({"duration_ms": 1440000}, "episode") == 24
+    # Media payload duration_ms
+    assert mgr._extract_item_minutes({"media_payload": {"duration_ms": 5520000}}, "movie") == 92
+    # view_offset_ms is a playback position, never a runtime
+    assert mgr._extract_item_minutes({"view_offset_ms": 1200000}, "episode") == 35
+    # Generic duration in minutes
+    assert mgr._extract_item_minutes({"duration": 48}, "episode") == 48
+    # Generic duration in seconds
+    assert mgr._extract_item_minutes({"duration": 3600}, "movie") == 60
+    # Generic duration in milliseconds
+    assert mgr._extract_item_minutes({"duration": 7200000}, "movie") == 120
+    # Fallback when duration is missing
+    assert mgr._extract_item_minutes({}, "movie") == 90
+    assert mgr._extract_item_minutes({}, "episode") == 35
+
+    # 2. Aggregation with real events containing exact durations
+    test_events = [
+        {
+            "timestamp": "2026-10-04 12:00:00",
+            "action": "scrobble (100.0%)",
+            "type": "movie",
+            "title": "Short Film (2024)",
+            "duration_ms": 5520000,  # 92 minutes
+            "player": "Living Room TV",
+        },
+        {
+            "timestamp": "2026-10-04 14:00:00",
+            "action": "scrobble (100.0%)",
+            "type": "episode",
+            "show_title": "Anime Series",
+            "title": "Anime Series S01E01 - Pilot",
+            "duration_ms": 1320000,  # 22 minutes
+            "player": "Living Room TV",
+        },
+        {
+            "timestamp": "2026-10-04 14:30:00",
+            "action": "scrobble (100.0%)",
+            "type": "episode",
+            "show_title": "Anime Series",
+            "title": "Anime Series S01E02 - Episode 2",
+            "duration_ms": 1440000,  # 24 minutes
+            "player": "Living Room TV",
+        },
+        {
+            "timestamp": "2026-10-04 16:00:00",
+            "action": "scrobble (100.0%)",
+            "type": "episode",
+            "show_title": "Drama Series",
+            "title": "Drama Series S01E01 - Intro",
+            "duration_ms": 3600000,  # 60 minutes
+            "player": "Bedroom Chromecast",
+        },
+    ]
+    with open(events_file, "w", encoding="utf-8") as f:
+        json.dump(test_events, f)
+
+    summary = mgr.get_summary(period="all")
+    # Total watch minutes: 92 + 22 + 24 + 60 = 198 minutes = 3h 18m
+    assert summary["total_watch_formatted"] == "3h 18m"
+    assert summary["total_watch_hours"] == 3.3
+    assert summary["total_scrobbles"] == 4
+    # 1 movie + 2 distinct TV series = 3 unique titles
+    assert summary["unique_titles"] == 3
+    assert summary["movies_watched"] == 1
+    assert summary["episodes_watched"] == 3
+
+    # 3. Test record_watch_stat accumulation in stats
+    test_media = ParsedMedia(
+        event="media.scrobble",
+        username="test_user",
+        media_type="movie",
+        title="Sample Movie",
+        duration_ms=6000000,  # 100 minutes
+    )
+    initial_mins = main_mod.scrobble_stats.get("watch_minutes", 0)
+    main_mod.record_watch_stat(test_media)
+    assert main_mod.scrobble_stats["watch_minutes"] == initial_mins + 100
+
+    # 4. Fallback when events is empty but stats has watch_minutes
+    with open(stats_file, "w", encoding="utf-8") as f:
+        json.dump({"total": 10, "movies": 5, "episodes": 5, "ratings": 2, "collections": 0, "watch_minutes": 500}, f)
+    empty_events_file = tmp_path / "empty_events.json"
+    with open(empty_events_file, "w", encoding="utf-8") as f:
+        json.dump([], f)
+    fallback_mgr = AnalyticsManager(events_file=empty_events_file, stats_file=stats_file)
+    fallback_sum = fallback_mgr.get_summary(period="all")
+    assert fallback_sum["total_scrobbles"] == 10
+    # 500 minutes = 8h 20m
+    assert fallback_sum["total_watch_formatted"] == "8h 20m"
+
+
+def test_analytics_ignores_non_watch_events(tmp_path):
+    """Start/pause/bypassed/unscrobble/collection events must not count as completed watches."""
+    import datetime
+    from app.services.analytics_manager import AnalyticsManager
+
+    events_file = tmp_path / "events.json"
+    stats_file = tmp_path / "stats.json"
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def ev(action, **extra):
+        base = {"timestamp": now_str, "action": action, "type": "movie", "title": "Film (2024)", "duration_ms": 6000000}
+        base.update(extra)
+        return base
+
+    # events.json is newest-first; the unscrobble is the oldest event so it has no earlier watch to cancel
+    events_file.write_text(json.dumps([
+        ev("scrobble_start"),
+        ev("scrobble_pause"),
+        ev("playback_stopped"),
+        ev("bypassed"),
+        ev("manual_start"),
+        ev("collection"),
+        ev("skipped_media.play"),
+        ev("scrobble_stop"),
+        ev("mark_watched"),
+        ev("manual_scrobble"),
+        ev("unscrobble"),
+    ]), encoding="utf-8")
+
+    summary = AnalyticsManager(events_file=events_file, stats_file=stats_file).get_summary(period="all")
+    assert summary["total_scrobbles"] == 3
+    assert summary["total_watch_formatted"] == "5h 0m"  # 3 x 100 min
+
+
+def test_analytics_unscrobble_cancels_matching_watch(tmp_path):
+    """An unscrobble cancels the older matching watch; a newer rewatch and other titles are kept."""
+    import datetime
+    from app.services.analytics_manager import AnalyticsManager
+
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def ev(action, title):
+        return {"timestamp": now_str, "action": action, "type": "movie", "title": title, "duration_ms": 6000000}
+
+    # events.json is stored newest-first
+    events_file = tmp_path / "events.json"
+    events_file.write_text(json.dumps([
+        ev("mark_watched", "Film A (2024)"),   # newest: rewatch, kept
+        ev("unscrobble", "Film A (2024)"),     # undoes the older watch below
+        ev("mark_watched", "Film A (2024)"),   # cancelled
+        ev("mark_watched", "Film B (2023)"),   # unrelated, kept
+    ]), encoding="utf-8")
+
+    summary = AnalyticsManager(events_file=events_file, stats_file=tmp_path / "stats.json").get_summary(period="all")
+    assert summary["total_scrobbles"] == 2
+    assert summary["unique_titles"] == 2
+    assert summary["total_watch_formatted"] == "3h 20m"  # 2 x 100 min
+
+
+def test_load_scrobble_stats_backfills_watch_minutes(tmp_path, monkeypatch):
+    """Legacy stats.json without watch_minutes is backfilled from lifetime counts on upgrade."""
+    import app.main as main_mod
+
+    legacy = tmp_path / "stats.json"
+    legacy.write_text(json.dumps({"total": 10, "movies": 4, "episodes": 6, "ratings": 1, "collections": 0}), encoding="utf-8")
+    monkeypatch.setattr(main_mod, "STATS_FILE", legacy)
+    assert main_mod.load_scrobble_stats()["watch_minutes"] == 4 * 90 + 6 * 35
+
+    legacy.write_text(json.dumps({"total": 10, "movies": 4, "episodes": 6, "watch_minutes": 123}), encoding="utf-8")
+    assert main_mod.load_scrobble_stats()["watch_minutes"] == 123
+
+
+
+
 
 
 
