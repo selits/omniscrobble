@@ -221,7 +221,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/settings`** | `GET` | Public | **Get Runtime Settings**: Retrieves current media server listener toggles, tracker active states, masked credentials, rules, and notifications configuration. |
+| **`/api/settings`** | `GET` | Public / Admin | **Get Runtime Settings**: Public callers receive server/tracker enablement flags only. Admin callers receive the full settings object with credentials masked. |
 | **`/api/settings`** | `POST` | Admin | **Update Runtime Settings**: Updates media server listeners, tracker states, credentials, reconciliation, arr, notifications, and rules. |
 | **`/api/settings/rules`** | `GET` | Public | **Get Scrobble Rules**: Retrieves current scrobble rules (granular episode & movie thresholds, min duration, episode duration toggle, ignored libraries, path regex patterns). |
 | **`/api/settings/rules`** | `POST` | Admin | **Update Scrobble Rules**: Updates scrobble thresholds, minimum playback duration, ignored libraries, and regex patterns with automatic clamping and validation. |

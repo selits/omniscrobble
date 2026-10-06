@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from app.config import Config
 from app.main import app, get_uptime_str, mask_username, queue_mgr, recent_events, scrobble_stats, trakt, sonarr
@@ -20,12 +19,45 @@ from app.services.log_manager import log_mgr
 from app.services.demo_manager import demo_mgr
 
 
+def make_async_test_client(app, **kwargs):
+    """Build an HTTPX async client for an ASGI app in API tests."""
+    raise_server_exceptions = kwargs.pop("raise_server_exceptions", True)
+    transport = httpx.ASGITransport(
+        app=app,
+        raise_app_exceptions=raise_server_exceptions,
+        client=("testclient", 50000),
+    )
+    return AsyncASGITestClient(
+        transport=transport, base_url="http://testserver", **kwargs
+    )
+
+
+class AsyncASGITestClient(httpx.AsyncClient):
+    """Keep test requests separate from mocks of outbound HTTPX methods."""
+
+    async def get(self, url, **kwargs):
+        return await super().request("GET", url, **kwargs)
+
+    async def post(self, url, **kwargs):
+        return await super().request("POST", url, **kwargs)
+
+    async def put(self, url, **kwargs):
+        return await super().request("PUT", url, **kwargs)
+
+    async def delete(self, url, **kwargs):
+        return await super().request("DELETE", url, **kwargs)
+
+    async def patch(self, url, **kwargs):
+        return await super().request("PATCH", url, **kwargs)
+
+
 @pytest.fixture(autouse=True)
 def _ensure_servers_enabled_for_tests():
     """Ensure server ingestion is enabled during webhook pipeline tests and isolate settings."""
     import copy
     from app.services.settings_manager import settings_mgr
     from app.main import reverse_sync_mgr
+    playback_mgr.clear()
     orig_settings = copy.deepcopy(settings_mgr._settings)
     orig_custom_notif = copy.deepcopy(settings_mgr._custom_notifications)
     settings_mgr.set_server_enabled("plex", True)
@@ -44,6 +76,7 @@ def _ensure_servers_enabled_for_tests():
         emby_url=orig_recon.get("emby_url", ""),
         emby_token=orig_recon.get("emby_token", ""),
     )
+    playback_mgr.clear()
 
 
 def test_parse_plex_ids():
@@ -152,16 +185,44 @@ def test_user_filtering():
     assert parsed is None
 
 
-def test_webhook_endpoint_full_flow():
-    client = TestClient(app)
+def test_public_settings_endpoint_omits_private_configuration():
+    from starlette.requests import Request
+    import app.main as main_mod
+
+    request = Request({
+        "type": "http", "method": "GET", "path": "/api/settings", "headers": [],
+        "query_string": b"", "scheme": "http", "server": ("testserver", 80),
+        "client": ("127.0.0.1", 12345), "root_path": "",
+    })
+    with patch.object(Config, "WEBHOOK_SECRET", "settings-secret"):
+        response = main_mod.get_settings_endpoint(request)
+    settings = response["settings"]
+    assert set(settings) == {"servers", "trackers", "multi_server_mirroring"}
+
+
+def test_emby_parser_handles_null_premiere_date():
+    from app.emby_parser import parse_emby_webhook
+
+    media = parse_emby_webhook({
+        "Event": "playback.start",
+        "Item": {"Type": "Movie", "Name": "Unknown Year", "ProductionYear": None, "PremiereDate": None},
+    })
+    assert media is not None
+    assert media.year is None
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_endpoint_full_flow():
+    client = make_async_test_client(app)
 
     # 1. Health check
-    res = client.get("/health")
+    res = await client.get("/health")
     assert res.status_code == 200
     assert res.json()["status"] == "healthy"
 
     # 2. Dashboard
-    res_dash = client.get("/")
+    # Demo rendering avoids real-time media-server probes in this UI smoke check.
+    res_dash = await client.get("/?demo=true")
     assert res_dash.status_code == 200
     assert "Omniscrobble" in res_dash.text
 
@@ -188,7 +249,7 @@ def test_webhook_endpoint_full_flow():
         mock_stop.return_value = {"action": "scrobble", "progress": 100}
         mock_sync.return_value = {"added": {"episodes": 1}}
 
-        response = client.post(
+        response = await client.post(
             "/webhook",
             data={"payload": json.dumps(plex_sample)},
         )
@@ -200,8 +261,9 @@ def test_webhook_endpoint_full_flow():
         assert "history" in data["result"]
 
 
-def test_webhook_secret_authentication():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_secret_authentication():
+    client = make_async_test_client(app)
     plex_sample = {
         "event": "media.play",
         "Account": {"title": "selits"},
@@ -222,20 +284,20 @@ def test_webhook_secret_authentication():
         mock_start.return_value = {"action": "start"}
 
         # 1. Reject without token
-        res_no_token = client.post("/webhook", data={"payload": json.dumps(plex_sample)})
+        res_no_token = await client.post("/webhook", data={"payload": json.dumps(plex_sample)})
         assert res_no_token.status_code == 401
 
         # 2. Reject with wrong token
-        res_wrong_token = client.post("/webhook?token=wrong", data={"payload": json.dumps(plex_sample)})
+        res_wrong_token = await client.post("/webhook?token=wrong", data={"payload": json.dumps(plex_sample)})
         assert res_wrong_token.status_code == 401
 
         # 3. Allow with correct query token
-        res_valid_query = client.post("/webhook?token=super_secret_token", data={"payload": json.dumps(plex_sample)})
+        res_valid_query = await client.post("/webhook?token=super_secret_token", data={"payload": json.dumps(plex_sample)})
         assert res_valid_query.status_code == 200
         assert res_valid_query.json()["status"] == "success"
 
         # 4. Allow with correct header token
-        res_valid_header = client.post(
+        res_valid_header = await client.post(
             "/webhook",
             headers={"X-Webhook-Secret": "super_secret_token"},
             data={"payload": json.dumps(plex_sample)},
@@ -244,10 +306,11 @@ def test_webhook_secret_authentication():
         assert res_valid_header.json()["status"] == "success"
 
 
-def test_webhook_get_info():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_get_info():
     """Verify that visiting /webhook via browser GET returns a friendly status message."""
-    client = TestClient(app)
-    res = client.get("/webhook")
+    client = make_async_test_client(app)
+    res = await client.get("/webhook")
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "online"
@@ -280,7 +343,7 @@ def test_tv_show_year_extraction():
     assert history_data["shows"][0]["year"] == 2005
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_client_401_retry(tmp_path):
     class FakeConfig:
         TRAKT_CLIENT_ID = "cid"
@@ -315,7 +378,7 @@ async def test_trakt_client_401_retry(tmp_path):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_client_429_backoff(tmp_path):
     class FakeConfig:
         TRAKT_CLIENT_ID = "cid"
@@ -346,27 +409,37 @@ async def test_trakt_client_429_backoff(tmp_path):
     await client.close()
 
 
-def test_api_events_and_clear():
-    client = TestClient(app)
+def test_trakt_retry_after_and_exponential_fallback():
+    from app.clients.trakt_client import _retry_delay
+
+    assert _retry_delay("45", 0) == 45.0
+    assert _retry_delay(None, 0) == 1.0
+    assert _retry_delay(None, 2) == 4.0
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_events_and_clear():
+    client = make_async_test_client(app)
     # Get events
-    res = client.get("/api/events")
+    res = await client.get("/api/events")
     assert res.status_code == 200
     assert "events" in res.json()
 
     # Clear events
-    clear_res = client.post("/api/events/clear")
+    clear_res = await client.post("/api/events/clear")
     assert clear_res.status_code == 200
     assert clear_res.json()["status"] == "cleared"
 
-    res_after = client.get("/api/events")
+    res_after = await client.get("/api/events")
     assert res_after.json()["events"] == []
 
 
-def test_auth_endpoints_and_page():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_auth_endpoints_and_page():
+    client = make_async_test_client(app)
 
     # 1. GET /auth page
-    res_page = client.get("/auth")
+    res_page = await client.get("/auth")
     assert res_page.status_code == 200
     assert "Link Trakt Account" in res_page.text
 
@@ -379,21 +452,21 @@ def test_auth_endpoints_and_page():
             "expires_in": 600,
             "interval": 5,
         }
-        res_start = client.post("/api/auth/start")
+        res_start = await client.post("/api/auth/start")
         assert res_start.status_code == 200
         assert res_start.json()["user_code"] == "ABCD1234"
 
     # 3. POST /api/auth/poll pending
     with patch.object(trakt, "poll_for_token", new_callable=AsyncMock) as mock_poll:
         mock_poll.return_value = {"status": "pending"}
-        res_poll = client.post("/api/auth/poll", json={"device_code": "dev123"})
+        res_poll = await client.post("/api/auth/poll", json={"device_code": "dev123"})
         assert res_poll.status_code == 200
         assert res_poll.json()["status"] == "pending"
 
     # 4. POST /api/auth/poll success
     with patch.object(trakt, "poll_for_token", new_callable=AsyncMock) as mock_poll:
         mock_poll.return_value = {"access_token": "valid_token"}
-        res_poll_ok = client.post("/api/auth/poll", json={"device_code": "dev123"})
+        res_poll_ok = await client.post("/api/auth/poll", json={"device_code": "dev123"})
         assert res_poll_ok.status_code == 200
         assert res_poll_ok.json()["status"] == "success"
 
@@ -445,50 +518,52 @@ def test_token_info(tmp_path):
     assert info_expired["days_remaining"] == 0
 
 
-def test_admin_authorization_gate():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_admin_authorization_gate():
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "secret123"):
         # 1. Clear events without admin rights -> 401
-        res_clear_denied = client.post("/api/events/clear")
+        res_clear_denied = await client.post("/api/events/clear")
         assert res_clear_denied.status_code == 401
 
         # 2. Clear events with valid header -> 200
-        res_clear_header = client.post("/api/events/clear", headers={"x-webhook-secret": "secret123"})
+        res_clear_header = await client.post("/api/events/clear", headers={"x-webhook-secret": "secret123"})
         assert res_clear_header.status_code == 200
 
         # 3. Clear events with cookie -> 200
         client.cookies.set("admin_token", "secret123")
-        res_clear_cookie = client.post("/api/events/clear")
+        res_clear_cookie = await client.post("/api/events/clear")
         assert res_clear_cookie.status_code == 200
         client.cookies.clear()
 
         # 4. Auth endpoints without admin rights -> 401
-        res_auth_denied = client.get("/auth")
+        res_auth_denied = await client.get("/auth")
         assert res_auth_denied.status_code == 401
         assert "Admin Authorization Required" in res_auth_denied.text
 
-        res_start_denied = client.post("/api/auth/start")
+        res_start_denied = await client.post("/api/auth/start")
         assert res_start_denied.status_code == 401
 
-        res_poll_denied = client.post("/api/auth/poll", json={"device_code": "dev123"})
+        res_poll_denied = await client.post("/api/auth/poll", json={"device_code": "dev123"})
         assert res_poll_denied.status_code == 401
 
         # 5. Admin unlock endpoint
-        res_unlock_bad = client.post("/api/admin/unlock", json={"token": "wrong"})
+        res_unlock_bad = await client.post("/api/admin/unlock", json={"token": "wrong"})
         assert res_unlock_bad.status_code == 401
 
-        res_unlock_ok = client.post("/api/admin/unlock", json={"token": "secret123"})
+        res_unlock_ok = await client.post("/api/admin/unlock", json={"token": "secret123"})
         assert res_unlock_ok.status_code == 200
         assert "admin_token" in res_unlock_ok.cookies
 
         # 6. Admin lock endpoint
-        res_lock = client.post("/api/admin/lock")
+        res_lock = await client.post("/api/admin/lock")
         assert res_lock.status_code == 200
 
 
-def test_dashboard_privacy_masking():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_privacy_masking():
+    client = make_async_test_client(app)
 
     recent_events.appendleft({
         "timestamp": "2026-09-26 12:00:00",
@@ -506,7 +581,7 @@ def test_dashboard_privacy_masking():
          patch.object(Config, "PLEX_ALLOWED_USERS", ["selits"]):
 
         # 1. Unauthenticated request: masked usernames & secret
-        res_locked = client.get("/")
+        res_locked = await client.get("/")
         assert res_locked.status_code == 200
         assert "se****" in res_locked.text
         assert "my_super_secret" not in res_locked.text
@@ -515,26 +590,27 @@ def test_dashboard_privacy_masking():
         assert "🔓 Unlock Admin" in res_locked.text
 
         # 2. Events API masked
-        res_events = client.get("/api/events")
+        res_events = await client.get("/api/events")
         assert res_events.status_code == 200
         assert res_events.json()["events"][0]["user"] == "se****"
 
         # 3. Authenticated request via cookie: reveals unmasked data
         client.cookies.set("admin_token", "my_super_secret")
-        res_unlocked = client.get("/")
+        res_unlocked = await client.get("/")
         assert res_unlocked.status_code == 200
         assert "my_super_secret" in res_unlocked.text
         assert "🔒 Lock Admin" in res_unlocked.text
         assert "📋 Copy URL" in res_unlocked.text
 
-        res_events_unlocked = client.get("/api/events")
+        res_events_unlocked = await client.get("/api/events")
         assert res_events_unlocked.json()["events"][0]["user"] == "selits"
         client.cookies.clear()
 
 
-def test_health_and_stats():
-    client = TestClient(app)
-    res = client.get("/health")
+@pytest.mark.asyncio(loop_scope="module")
+async def test_health_and_stats():
+    client = make_async_test_client(app)
+    res = await client.get("/health")
     assert res.status_code == 200
     data = res.json()
     assert "uptime" in data
@@ -620,7 +696,7 @@ def test_parse_show_rating():
     assert rating_payload["shows"][0]["ids"]["imdb"] == "tt7660850"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_sync_ratings(tmp_path):
     class FakeConfig:
         TRAKT_CLIENT_ID = "cid"
@@ -644,8 +720,9 @@ async def test_trakt_sync_ratings(tmp_path):
     await client.close()
 
 
-def test_webhook_rating_flow():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_rating_flow():
+    client = make_async_test_client(app)
     plex_rating_payload = {
         "event": "media.rate",
         "Account": {"title": "selits"},
@@ -665,7 +742,7 @@ def test_webhook_rating_flow():
 
         mock_sync.return_value = {"added": {"movies": 1}}
 
-        res = client.post("/webhook", data={"payload": json.dumps(plex_rating_payload)})
+        res = await client.post("/webhook", data={"payload": json.dumps(plex_rating_payload)})
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "success"
@@ -723,7 +800,7 @@ def test_queue_manager_crud(tmp_path):
     assert qm.get_pending_count() == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_process_queue_success(tmp_path):
     db_file = tmp_path / "process_queue.db"
     qm = QueueManager(db_file)
@@ -741,7 +818,7 @@ async def test_process_queue_success(tmp_path):
     assert qm.get_pending_count() == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_process_queue_transient_failure(tmp_path):
     db_file = tmp_path / "process_queue_fail.db"
     qm = QueueManager(db_file)
@@ -759,8 +836,9 @@ async def test_process_queue_transient_failure(tmp_path):
     assert qm.get_pending_count() == 2
 
 
-def test_webhook_automatic_enqueue_on_failure():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_automatic_enqueue_on_failure():
+    client = make_async_test_client(app)
     plex_sample = {
         "event": "media.scrobble",
         "Account": {"title": "selits"},
@@ -784,33 +862,34 @@ def test_webhook_automatic_enqueue_on_failure():
         mock_stop.return_value = {"status": 503, "error": "Trakt API Unavailable"}
         mock_sync.return_value = {"status": 503, "error": "Trakt API Unavailable"}
 
-        res = client.post("/webhook", data={"payload": json.dumps(plex_sample)})
+        res = await client.post("/webhook", data={"payload": json.dumps(plex_sample)})
         assert res.status_code == 200
         # Check that both stop and history events were enqueued
         assert queue_mgr.get_pending_count() >= initial_pending + 2
 
 
-def test_queue_endpoints():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_queue_endpoints():
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
         # 1. POST /api/queue/retry without auth -> 401
-        res_retry_denied = client.post("/api/queue/retry")
+        res_retry_denied = await client.post("/api/queue/retry")
         assert res_retry_denied.status_code == 401
 
         # 2. POST /api/queue/clear without auth -> 401
-        res_clear_denied = client.post("/api/queue/clear")
+        res_clear_denied = await client.post("/api/queue/clear")
         assert res_clear_denied.status_code == 401
 
         # 3. With admin cookie -> 200
         client.cookies.set("admin_token", "super_secret")
         with patch("app.main.process_queue", new_callable=AsyncMock) as mock_proc:
             mock_proc.return_value = {"processed": 0, "succeeded": 0, "failed": 0}
-            res_retry_ok = client.post("/api/queue/retry")
+            res_retry_ok = await client.post("/api/queue/retry")
             assert res_retry_ok.status_code == 200
             assert "pending_count" in res_retry_ok.json()
 
-        res_clear_ok = client.post("/api/queue/clear")
+        res_clear_ok = await client.post("/api/queue/clear")
         assert res_clear_ok.status_code == 200
         assert res_clear_ok.json()["pending_count"] == 0
         client.cookies.clear()
@@ -933,7 +1012,7 @@ def test_notifier_build_payloads():
         assert "10/10" in tg_rate["text"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_notifier_send_discord_and_telegram():
     media = ParsedMedia(
         event="media.scrobble",
@@ -991,7 +1070,7 @@ async def test_notifier_send_discord_and_telegram():
         assert await notifier_inst.send_telegram(media, "mark_watched", client=mock_tg_client) is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_notifier_dispatch_toggles():
     media_scrobble = ParsedMedia(
         event="media.scrobble",
@@ -1040,8 +1119,9 @@ async def test_notifier_dispatch_toggles():
             mock_t.assert_called_once()
 
 
-def test_webhook_triggers_notification_dispatch():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_triggers_notification_dispatch():
+    client = make_async_test_client(app)
 
     plex_sample = {
         "event": "media.scrobble",
@@ -1066,7 +1146,7 @@ def test_webhook_triggers_notification_dispatch():
         mock_stop.return_value = {"action": "scrobble"}
         mock_sync.return_value = {"added": {"movies": 1}}
 
-        res = client.post("/webhook", data={"payload": json.dumps(plex_sample)})
+        res = await client.post("/webhook", data={"payload": json.dumps(plex_sample)})
         assert res.status_code == 200
         # Check that dispatch was called with parsed media and action
         assert mock_dispatch.called
@@ -1075,15 +1155,16 @@ def test_webhook_triggers_notification_dispatch():
         assert args[1] == "mark_watched"
 
 
-def test_health_and_dashboard_notification_status():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_health_and_dashboard_notification_status():
+    client = make_async_test_client(app)
 
     with patch.object(Config, "DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test"), \
          patch.object(Config, "TELEGRAM_BOT_TOKEN", ""), \
          patch.object(Config, "TELEGRAM_CHAT_ID", ""):
 
         # 1. Check /health
-        res_health = client.get("/health")
+        res_health = await client.get("/health")
         assert res_health.status_code == 200
         data = res_health.json()
         assert "notifications" in data
@@ -1091,7 +1172,7 @@ def test_health_and_dashboard_notification_status():
         assert data["notifications"]["telegram"] is False
 
         # 2. Check dashboard
-        res_dash = client.get("/")
+        res_dash = await client.get("/")
         assert res_dash.status_code == 200
         assert "Alerts: Discord" in res_dash.text
 
@@ -1178,12 +1259,13 @@ def test_playback_manager_lifecycle():
     assert pm.get_recently_finished() is None
 
 
-def test_api_playback_endpoint():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_playback_endpoint():
+    client = make_async_test_client(app)
     playback_mgr.clear()
 
     # Empty
-    res = client.get("/api/playback")
+    res = await client.get("/api/playback")
     assert res.status_code == 200
     data = res.json()
     assert "active_sessions" in data
@@ -1201,7 +1283,7 @@ def test_api_playback_endpoint():
     )
     playback_mgr.update_playback(media, state="playing")
 
-    res2 = client.get("/api/playback")
+    res2 = await client.get("/api/playback")
     assert res2.status_code == 200
     data2 = res2.json()
     assert len(data2["active_sessions"]) == 1
@@ -1209,7 +1291,7 @@ def test_api_playback_endpoint():
     playback_mgr.clear()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_search_media():
     mock_client = AsyncMock()
     mock_client.get.return_value = httpx.Response(
@@ -1234,25 +1316,26 @@ async def test_trakt_search_media():
         assert results[0]["movie"]["title"] == "Inception"
 
 
-def test_api_search_and_manual_scrobble():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_search_and_manual_scrobble():
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
         # 1. Unauthenticated search -> 401
-        res_denied = client.get("/api/search?query=Inception")
+        res_denied = await client.get("/api/search?query=Inception")
         assert res_denied.status_code == 401
 
         # 2. Authenticated search -> 200
         client.cookies.set("admin_token", "test_secret")
         with patch.object(trakt, "search_media", new_callable=AsyncMock) as mock_search:
             mock_search.return_value = [{"type": "movie", "movie": {"title": "Inception", "year": 2010}}]
-            res_ok = client.get("/api/search?query=Inception")
+            res_ok = await client.get("/api/search?query=Inception")
             assert res_ok.status_code == 200
             assert len(res_ok.json()["results"]) == 1
 
         # 3. Unauthenticated manual scrobble -> 401
         client.cookies.clear()
-        res_scrobble_denied = client.post("/api/scrobble/manual", json={"media_type": "movie", "title": "Inception"})
+        res_scrobble_denied = await client.post("/api/scrobble/manual", json={"media_type": "movie", "title": "Inception"})
         assert res_scrobble_denied.status_code == 401
 
         # 4. Authenticated manual scrobble movie -> 200
@@ -1267,7 +1350,7 @@ def test_api_search_and_manual_scrobble():
                 "year": 2014,
                 "ids": {"imdb": "tt0816692"},
             }
-            res_scrobble_ok = client.post("/api/scrobble/manual", json=payload)
+            res_scrobble_ok = await client.post("/api/scrobble/manual", json=payload)
             assert res_scrobble_ok.status_code == 200
             assert mock_sync.called
             sync_payload = mock_sync.call_args[0][0]
@@ -1287,7 +1370,7 @@ def test_api_search_and_manual_scrobble():
                 "episode": 3,
                 "ids": {"tmdb": 76331},
             }
-            res_ep_ok = client.post("/api/scrobble/manual", json=ep_payload)
+            res_ep_ok = await client.post("/api/scrobble/manual", json=ep_payload)
             assert res_ep_ok.status_code == 200
             assert mock_sync.called
             sync_ep_payload = mock_sync.call_args[0][0]
@@ -1298,8 +1381,9 @@ def test_api_search_and_manual_scrobble():
         client.cookies.clear()
 
 
-def test_webhook_tracks_playback():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_tracks_playback():
+    client = make_async_test_client(app)
     playback_mgr.clear()
 
     play_payload = {
@@ -1321,7 +1405,7 @@ def test_webhook_tracks_playback():
          patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
         mock_start.return_value = {"action": "start"}
 
-        res = client.post("/webhook", data={"payload": json.dumps(play_payload)})
+        res = await client.post("/webhook", data={"payload": json.dumps(play_payload)})
         assert res.status_code == 200
 
         sessions = playback_mgr.get_active_sessions()
@@ -1349,7 +1433,7 @@ def test_webhook_tracks_playback():
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop:
         mock_stop.return_value = {"action": "scrobble"}
 
-        res2 = client.post("/webhook", data={"payload": json.dumps(stop_payload)})
+        res2 = await client.post("/webhook", data={"payload": json.dumps(stop_payload)})
         assert res2.status_code == 200
 
         assert len(playback_mgr.get_active_sessions()) == 0
@@ -1516,15 +1600,16 @@ def test_cowatch_should_cowatch_rules():
         assert mgr.should_cowatch(m_phone) is False
 
 
-def test_cowatch_api_endpoints():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_api_endpoints():
+    client = make_async_test_client(app)
 
     # 1. GET /api/cowatch (public / masked vs admin)
     with patch.object(Config, "WEBHOOK_SECRET", "testsecret"), \
          patch.object(Config, "CO_WATCH_USER", "partner"), \
          patch.object(Config, "CO_WATCH_PLAYERS", ["selits's Fire TV", "Shield TV"]):
         cowatch_mgr._shows = ["Severance", "The Bear"]
-        res_pub = client.get("/api/cowatch")
+        res_pub = await client.get("/api/cowatch")
         assert res_pub.status_code == 200
         pub_data = res_pub.json()
         assert pub_data["status"]["shows"] == []
@@ -1534,7 +1619,7 @@ def test_cowatch_api_endpoints():
 
         # Admin access reveals shows and actual device names
         client.cookies.set("admin_token", "testsecret")
-        res_admin = client.get("/api/cowatch")
+        res_admin = await client.get("/api/cowatch")
         assert res_admin.status_code == 200
         admin_data = res_admin.json()
         assert admin_data["status"]["shows"] == ["Severance", "The Bear"]
@@ -1544,44 +1629,44 @@ def test_cowatch_api_endpoints():
     # 2. POST /api/cowatch/shows (auth check)
     with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
         # Unauthorized without token
-        res_unauth = client.post("/api/cowatch/shows", json={"show": "The Bear"})
+        res_unauth = await client.post("/api/cowatch/shows", json={"show": "The Bear"})
         assert res_unauth.status_code == 401
 
         # Authorized with token
-        res_auth = client.post("/api/cowatch/shows?token=testsecret", json={"show": "The Bear"})
+        res_auth = await client.post("/api/cowatch/shows?token=testsecret", json={"show": "The Bear"})
         assert res_auth.status_code == 200
         assert "The Bear" in res_auth.json()["shows"]
 
         # 3. DELETE /api/cowatch/shows
-        res_del = client.delete("/api/cowatch/shows?token=testsecret&show=The+Bear")
+        res_del = await client.delete("/api/cowatch/shows?token=testsecret&show=The+Bear")
         assert res_del.status_code == 200
         assert "The Bear" not in res_del.json()["shows"]
 
         # 4. POST /api/cowatch/devices (auth check & empty validation)
-        res_dev_unauth = client.post("/api/cowatch/devices", json={"device": "Apple TV 4K"})
+        res_dev_unauth = await client.post("/api/cowatch/devices", json={"device": "Apple TV 4K"})
         assert res_dev_unauth.status_code == 401
 
-        res_dev_empty = client.post("/api/cowatch/devices?token=testsecret", json={"device": "   "})
+        res_dev_empty = await client.post("/api/cowatch/devices?token=testsecret", json={"device": "   "})
         assert res_dev_empty.status_code == 400
 
-        res_dev_auth = client.post("/api/cowatch/devices?token=testsecret", json={"device": "Apple TV 4K"})
+        res_dev_auth = await client.post("/api/cowatch/devices?token=testsecret", json={"device": "Apple TV 4K"})
         assert res_dev_auth.status_code == 200
         assert "Apple TV 4K" in res_dev_auth.json()["devices"]
 
         # 5. DELETE /api/cowatch/devices
-        res_del_dev_unauth = client.delete("/api/cowatch/devices?device=Apple+TV+4K")
+        res_del_dev_unauth = await client.delete("/api/cowatch/devices?device=Apple+TV+4K")
         assert res_del_dev_unauth.status_code == 401
 
-        res_del_dev = client.delete("/api/cowatch/devices?token=testsecret&device=Apple+TV+4K")
+        res_del_dev = await client.delete("/api/cowatch/devices?token=testsecret&device=Apple+TV+4K")
         assert res_del_dev.status_code == 200
         assert "Apple TV 4K" not in res_del_dev.json()["devices"]
 
         # 6. Demo mode for /api/cowatch/devices
-        res_demo_add = client.post("/api/cowatch/devices?demo=true", json={"device": "Demo Shield"})
+        res_demo_add = await client.post("/api/cowatch/devices?demo=true", json={"device": "Demo Shield"})
         assert res_demo_add.status_code == 200
         assert "Demo Shield" in res_demo_add.json()["devices"]
 
-        res_demo_del = client.delete("/api/cowatch/devices?demo=true&device=Demo+Shield")
+        res_demo_del = await client.delete("/api/cowatch/devices?demo=true&device=Demo+Shield")
         assert res_demo_del.status_code == 200
         assert "Demo Shield" not in res_demo_del.json()["devices"]
 
@@ -1591,8 +1676,9 @@ def test_cowatch_api_endpoints():
         cowatch_mgr._devices.clear()
 
 
-def test_cowatch_manual_sync_endpoint():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_manual_sync_endpoint():
+    client = make_async_test_client(app)
 
     # Mock partner client
     mock_partner_client = MagicMock()
@@ -1608,7 +1694,7 @@ def test_cowatch_manual_sync_endpoint():
             "year": 2024,
             "ids": {"imdb": "tt15239678"},
         }
-        res = client.post("/api/cowatch/sync", json=payload)
+        res = await client.post("/api/cowatch/sync", json=payload)
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "success"
@@ -1616,8 +1702,9 @@ def test_cowatch_manual_sync_endpoint():
         mock_partner_client.sync_history.assert_called_once()
 
 
-def test_multi_user_auth_flow():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_multi_user_auth_flow():
+    client = make_async_test_client(app)
 
     mock_alice_client = MagicMock()
     mock_alice_client.generate_device_code = AsyncMock(return_value={
@@ -1631,25 +1718,25 @@ def test_multi_user_auth_flow():
 
     with patch.object(user_mgr, "get_client", return_value=mock_alice_client):
         # 1. Start auth for alice
-        res_start = client.post("/api/auth/start?user=alice")
+        res_start = await client.post("/api/auth/start?user=alice")
         assert res_start.status_code == 200
         assert res_start.json()["user_code"] == "ALICE123"
 
         # 2. Poll for alice
-        res_poll = client.post("/api/auth/poll", json={"device_code": "alice_dev", "user": "alice"})
+        res_poll = await client.post("/api/auth/poll", json={"device_code": "alice_dev", "user": "alice"})
         assert res_poll.status_code == 200
         assert res_poll.json()["status"] == "success"
         assert res_poll.json()["user"] == "alice"
 
         # 3. GET /auth?user=alice
-        res_page = client.get("/auth?user=alice")
+        res_page = await client.get("/auth?user=alice")
         assert res_page.status_code == 200
         assert "@alice" in res_page.text
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_webhook_triggers_cowatch_sync():
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     mock_partner_client = MagicMock()
     mock_partner_client.is_authenticated.return_value = True
@@ -1688,7 +1775,7 @@ async def test_webhook_triggers_cowatch_sync():
         mock_stop.return_value = {"action": "scrobble"}
         mock_hist.return_value = {"added": {"episodes": 1}}
 
-        res = client.post("/webhook", data={"payload": json.dumps(payload)})
+        res = await client.post("/webhook", data={"payload": json.dumps(payload)})
         assert res.status_code == 200
 
         # Allow background create_task(execute_cowatch_sync) to execute
@@ -1783,7 +1870,7 @@ def test_parse_collection_media_specs():
     assert movie["ids"]["imdb"] == "tt15398776"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_client_sync_collection():
     """Verify TraktClient.sync_collection delegates to POST /sync/collection."""
     with patch.object(trakt, "_post_authenticated", new_callable=AsyncMock) as mock_post:
@@ -1795,10 +1882,10 @@ async def test_trakt_client_sync_collection():
         assert "/sync/collection" in mock_post.call_args[0][0]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_webhook_library_new_collection_flow():
     """Verify that library.new webhooks trigger Trakt collection synchronization."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     payload = {
         "event": "library.new",
         "Account": {"title": "selits"},
@@ -1818,7 +1905,7 @@ async def test_webhook_library_new_collection_flow():
 
         mock_sync.return_value = {"added": {"movies": 1}}
 
-        res = client.post("/webhook", data={"payload": json.dumps(payload)})
+        res = await client.post("/webhook", data={"payload": json.dumps(payload)})
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "success"
@@ -1832,12 +1919,12 @@ async def test_webhook_library_new_collection_flow():
     # Verify when SYNC_COLLECTION=False, event is ignored
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(Config, "SYNC_COLLECTION", False):
-        res_disabled = client.post("/webhook", data={"payload": json.dumps(payload)})
+        res_disabled = await client.post("/webhook", data={"payload": json.dumps(payload)})
         assert res_disabled.status_code == 200
         assert res_disabled.json()["status"] == "ignored"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_queue_collection_retry():
     """Verify that queued sync_collection events are successfully processed by background worker."""
     col_payload = {"movies": [{"title": "Gladiator II", "year": 2024}]}
@@ -1852,10 +1939,11 @@ async def test_queue_collection_retry():
         assert queue_mgr.get_pending_count() == 0
 
 
-def test_prometheus_metrics_endpoint():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_prometheus_metrics_endpoint():
     """Verify that /metrics exports valid Prometheus text exposition format."""
-    client = TestClient(app)
-    res = client.get("/metrics")
+    client = make_async_test_client(app)
+    res = await client.get("/metrics")
     assert res.status_code == 200
     assert "text/plain" in res.headers["content-type"]
     body = res.text
@@ -1870,7 +1958,7 @@ def test_prometheus_metrics_endpoint():
     assert "plex_trakt_uptime_seconds" in body
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_ntfy_and_pushover_notifications():
     """Verify Ntfy and Pushover notification builders and dispatch."""
     media = ParsedMedia(
@@ -1910,18 +1998,19 @@ async def test_ntfy_and_pushover_notifications():
         assert "Dune: Part Two" in post_data["title"]
 
 
-def test_backup_and_restore_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_backup_and_restore_endpoints():
     """Verify zip backup export, safe restoration, and security controls."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     # 1. Unauthenticated backup request -> 401
     client.cookies.clear()
     with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
-        res_unauth = client.get("/api/backup")
+        res_unauth = await client.get("/api/backup")
         assert res_unauth.status_code == 401
 
         # 2. Authenticated backup request -> 200 with zip content
         client.cookies.set("admin_token", "test_secret")
-        res_backup = client.get("/api/backup")
+        res_backup = await client.get("/api/backup")
         assert res_backup.status_code == 200
         assert "application/zip" in res_backup.headers["content-type"]
         assert "attachment; filename=" in res_backup.headers["content-disposition"]
@@ -1943,7 +2032,7 @@ def test_backup_and_restore_endpoints():
 
         test_zip_buf.seek(0)
         files = {"backup_file": ("backup.zip", test_zip_buf.getvalue(), "application/zip")}
-        res_restore = client.post("/api/restore", files=files)
+        res_restore = await client.post("/api/restore", files=files)
         assert res_restore.status_code == 200
         restore_data = res_restore.json()
         assert restore_data["status"] == "success"
@@ -1954,7 +2043,7 @@ def test_backup_and_restore_endpoints():
 
         # 4. Unauthenticated restore request -> 401
         client.cookies.clear()
-        res_restore_denied = client.post("/api/restore", files=files)
+        res_restore_denied = await client.post("/api/restore", files=files)
         assert res_restore_denied.status_code == 401
 
         # Cleanup restored test devices
@@ -1963,9 +2052,10 @@ def test_backup_and_restore_endpoints():
         cowatch_mgr._devices.clear()
 
 
-def test_dashboard_privacy_shield_and_script_syntax():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_privacy_shield_and_script_syntax():
     """Verify that HTML dashboards have balanced scripts and robust non-admin privacy shielding."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     playback_mgr.clear()
     recent_events.clear()
 
@@ -1978,7 +2068,7 @@ def test_dashboard_privacy_shield_and_script_syntax():
         try:
             # 1. Unauthenticated / Non-Admin Dashboard Request
             client.cookies.clear()
-            res = client.get("/")
+            res = await client.get("/")
             assert res.status_code == 200
             html = res.text
 
@@ -2013,7 +2103,7 @@ def test_dashboard_privacy_shield_and_script_syntax():
 
             # 2. Authenticated Admin Dashboard Request
             client.cookies.set("admin_token", "testsecret")
-            res_admin = client.get("/")
+            res_admin = await client.get("/")
             assert res_admin.status_code == 200
             html_admin = res_admin.text
 
@@ -2030,13 +2120,14 @@ def test_dashboard_privacy_shield_and_script_syntax():
             cowatch_mgr._devices.clear()
 
 
-def test_auth_page_script_syntax():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_auth_page_script_syntax():
     """Verify that /auth page scripts (both locked and unlocked) have balanced braces."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
         # 1. Unauthenticated locked /auth
         client.cookies.clear()
-        res_locked = client.get("/auth")
+        res_locked = await client.get("/auth")
         assert res_locked.status_code == 401
         import re
         scripts_locked = re.findall(r'<script>(.*?)</script>', res_locked.text, re.DOTALL)
@@ -2046,7 +2137,7 @@ def test_auth_page_script_syntax():
 
         # 2. Authenticated /auth
         client.cookies.set("admin_token", "testsecret")
-        res = client.get("/auth")
+        res = await client.get("/auth")
         assert res.status_code == 200
         scripts = re.findall(r'<script>(.*?)</script>', res.text, re.DOTALL)
         assert len(scripts) >= 1
@@ -2055,7 +2146,7 @@ def test_auth_page_script_syntax():
         client.cookies.clear()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_sonarr_client_search_and_cache():
     from app.clients.sonarr_client import SonarrClient
     sc = SonarrClient(base_url="http://sonarr.local:8989", api_key="secretkey")
@@ -2158,17 +2249,18 @@ def test_radarr_webhook_parsing():
     assert parsed.title == "Dune: Part Two"
 
 
-def test_sonarr_api_routes():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_sonarr_api_routes():
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
         # 1. /api/sonarr/shows requires admin
         client.cookies.clear()
-        res_unauth = client.get("/api/sonarr/shows")
+        res_unauth = await client.get("/api/sonarr/shows")
         assert res_unauth.status_code == 401
 
         # 2. /api/sonarr/shows with admin
         client.cookies.set("admin_token", "testsecret")
-        res_auth = client.get("/api/sonarr/shows")
+        res_auth = await client.get("/api/sonarr/shows")
         assert res_auth.status_code == 200
         data = res_auth.json()
         assert "configured" in data
@@ -2180,37 +2272,38 @@ def test_sonarr_api_routes():
              patch.object(sonarr, "search_series", new_callable=AsyncMock) as mock_search, \
              patch.object(cowatch_mgr, "get_shows", return_value=["The Bear"]):
             mock_search.return_value = [{"title": "Severance"}]
-            res_filtered = client.get("/api/sonarr/shows?q=sev")
+            res_filtered = await client.get("/api/sonarr/shows?q=sev")
             assert res_filtered.status_code == 200
             mock_search.assert_called_once_with(query="sev", limit=15, exclude=["The Bear"])
 
         # 3. GET /sonarr and GET /radarr info
-        assert client.get("/sonarr").status_code == 200
-        assert client.get("/radarr").status_code == 200
+        assert (await client.get("/sonarr")).status_code == 200
+        assert (await client.get("/radarr")).status_code == 200
 
         # 4. POST /sonarr unauthorized
-        res_sonarr_unauth = client.post("/sonarr", json={"eventType": "Test"})
+        res_sonarr_unauth = await client.post("/sonarr", json={"eventType": "Test"})
         assert res_sonarr_unauth.status_code == 401
 
         # 5. POST /sonarr authorized test event
-        res_sonarr_test = client.post("/sonarr?token=testsecret", json={"eventType": "Test"})
+        res_sonarr_test = await client.post("/sonarr?token=testsecret", json={"eventType": "Test"})
         assert res_sonarr_test.status_code == 200
         assert res_sonarr_test.json()["status"] == "success"
 
         # 6. POST /radarr authorized test event
-        res_radarr_test = client.post("/radarr?token=testsecret", json={"eventType": "Test"})
+        res_radarr_test = await client.post("/radarr?token=testsecret", json={"eventType": "Test"})
         assert res_radarr_test.status_code == 200
         assert res_radarr_test.json()["status"] == "success"
 
         # 7. Health check includes sonarr
-        res_health = client.get("/health")
+        res_health = await client.get("/health")
         assert res_health.status_code == 200
         assert "sonarr" in res_health.json()
 
         client.cookies.clear()
 
 
-def test_sonarr_webhook_collection_sync():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_sonarr_webhook_collection_sync():
     dl_payload = {
         "eventType": "Download",
         "series": {
@@ -2229,14 +2322,14 @@ def test_sonarr_webhook_collection_sync():
             "quality": "WEBDL-1080p",
         },
     }
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", ""):
         with patch("app.main.user_mgr.get_client") as mock_get_client:
             mock_trakt = AsyncMock()
             mock_trakt.sync_collection.return_value = {"added": {"episodes": 1}}
             mock_get_client.return_value = mock_trakt
 
-            res = client.post("/sonarr", json=dl_payload)
+            res = await client.post("/sonarr", json=dl_payload)
             assert res.status_code == 200
             assert res.json()["status"] == "success"
             assert mock_trakt.sync_collection.called
@@ -2309,10 +2402,11 @@ def test_modular_package_structure():
         assert deprecated not in root_files, f"{deprecated} should no longer exist in root directory"
 
 
-def test_dashboard_footer_and_repo_link():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_footer_and_repo_link():
     """Verify that the dashboard renders the version badge and GitHub repository links."""
-    client = TestClient(app)
-    resp = client.get("/")
+    client = make_async_test_client(app)
+    resp = await client.get("/")
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
@@ -2323,8 +2417,9 @@ def test_dashboard_footer_and_repo_link():
     assert '<input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh(this)">' in html
 
 
-def test_media_stop_below_threshold():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_media_stop_below_threshold():
+    client = make_async_test_client(app)
     stop_payload = {
         "event": "media.stop",
         "user": True,
@@ -2350,7 +2445,7 @@ def test_media_stop_below_threshold():
          patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_dispatch:
         mock_stop.return_value = {"action": "pause"}
 
-        res = client.post("/webhook", data={"payload": json.dumps(stop_payload)})
+        res = await client.post("/webhook", data={"payload": json.dumps(stop_payload)})
         assert res.status_code == 200
         data = res.json()
         assert data["action"] == "playback_stopped"
@@ -2359,8 +2454,9 @@ def test_media_stop_below_threshold():
         mock_dispatch.assert_not_called()
 
 
-def test_media_stop_below_one_percent():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_media_stop_below_one_percent():
+    client = make_async_test_client(app)
     stop_payload = {
         "event": "media.stop",
         "user": True,
@@ -2385,7 +2481,7 @@ def test_media_stop_below_one_percent():
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
          patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_dispatch:
 
-        res = client.post("/webhook", data={"payload": json.dumps(stop_payload)})
+        res = await client.post("/webhook", data={"payload": json.dumps(stop_payload)})
         assert res.status_code == 200
         data = res.json()
         assert data["action"] == "playback_stopped"
@@ -2428,9 +2524,10 @@ def test_notifier_zero_and_custom_progress():
     assert "85.5% watched" in embed_partial["description"]
 
 
-def test_demo_dashboard_page():
-    client = TestClient(app)
-    res = client.get("/demo")
+@pytest.mark.asyncio(loop_scope="module")
+async def test_demo_dashboard_page():
+    client = make_async_test_client(app)
+    res = await client.get("/demo")
     assert res.status_code == 200
     html = res.text
     assert "Demo Mode Active" in html
@@ -2443,26 +2540,28 @@ def test_demo_dashboard_page():
     assert "1,428" in html or "1428" in html
 
 
-def test_demo_query_param_on_root():
-    client = TestClient(app)
-    res_demo = client.get("/?demo=true")
+@pytest.mark.asyncio(loop_scope="module")
+async def test_demo_query_param_on_root():
+    client = make_async_test_client(app)
+    res_demo = await client.get("/?demo=true")
     assert res_demo.status_code == 200
     assert "Demo Mode Active" in res_demo.text
     assert "✕ Exit Demo" in res_demo.text
 
     # Without ?demo=true, demo banner should not be present, but header button and modal link are
-    res_normal = client.get("/")
+    res_normal = await client.get("/")
     assert res_normal.status_code == 200
     assert "Demo Mode Active" not in res_normal.text
     assert "🎭 Demo" in res_normal.text
     assert "Try Demo Mode" in res_normal.text
 
 
-def test_demo_api_endpoints():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_demo_api_endpoints():
+    client = make_async_test_client(app)
 
     # 1. Playback
-    res = client.get("/api/playback?demo=true")
+    res = await client.get("/api/playback?demo=true")
     assert res.status_code == 200
     data = res.json()
     assert len(data["active_sessions"]) == 1
@@ -2470,74 +2569,75 @@ def test_demo_api_endpoints():
     assert data["recently_finished"] is None
 
     # 2. Events
-    res = client.get("/api/events?demo=true")
+    res = await client.get("/api/events?demo=true")
     assert res.status_code == 200
     events = res.json()["events"]
     assert len(events) >= 5
     assert any("Severance" in e["title"] for e in events)
 
     # 3. Clear events
-    res = client.post("/api/events/clear?demo=true")
+    res = await client.post("/api/events/clear?demo=true")
     assert res.status_code == 200
     assert res.json()["status"] == "cleared"
 
     # 4. Queue retry & clear
-    res = client.post("/api/queue/retry?demo=true")
+    res = await client.post("/api/queue/retry?demo=true")
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
 
-    res = client.post("/api/queue/clear?demo=true")
+    res = await client.post("/api/queue/clear?demo=true")
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
 
     # 5. Search
-    res = client.get("/api/search?demo=true&query=Severance")
+    res = await client.get("/api/search?demo=true&query=Severance")
     assert res.status_code == 200
     results = res.json()["results"]
     assert any("Severance" in r.get("show", {}).get("title", "") for r in results)
 
     # 6. Manual scrobble
-    res = client.post("/api/scrobble/manual?demo=true", json={"media_type": "movie", "title": "Inception"})
+    res = await client.post("/api/scrobble/manual?demo=true", json={"media_type": "movie", "title": "Inception"})
     assert res.status_code == 200
     assert res.json()["status"] == "success"
 
     # 7. Cowatch shows
-    res = client.post("/api/cowatch/shows?demo=true", json={"show": "Ted Lasso"})
+    res = await client.post("/api/cowatch/shows?demo=true", json={"show": "Ted Lasso"})
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
 
-    res = client.delete("/api/cowatch/shows?show=Ted%20Lasso&demo=true")
+    res = await client.delete("/api/cowatch/shows?show=Ted%20Lasso&demo=true")
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
 
     # 8. Sonarr shows
-    res = client.get("/api/sonarr/shows?demo=true")
+    res = await client.get("/api/sonarr/shows?demo=true")
     assert res.status_code == 200
     shows = res.json()["shows"]
     assert len(shows) >= 5
 
-    res_q = client.get("/api/sonarr/shows?demo=true&q=Severance")
+    res_q = await client.get("/api/sonarr/shows?demo=true&q=Severance")
     assert res_q.status_code == 200
     assert any(s["title"] == "Severance" for s in res_q.json()["shows"])
 
     # 9. Cowatch sync
-    res = client.post("/api/cowatch/sync?demo=true", json={"media_type": "episode", "title": "Severance"})
+    res = await client.post("/api/cowatch/sync?demo=true", json={"media_type": "episode", "title": "Severance"})
     assert res.status_code == 200
     assert res.json()["status"] == "success"
 
 
-def test_api_logs_access_control():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_logs_access_control():
     orig_secret = Config.WEBHOOK_SECRET
     try:
         Config.WEBHOOK_SECRET = "supersecret_test_token"
-        client = TestClient(app)
+        client = make_async_test_client(app)
 
         # Non-admin request should receive 401
-        res = client.get("/api/logs")
+        res = await client.get("/api/logs")
         assert res.status_code == 401
 
         # Demo mode allows log viewing without admin auth
-        res_demo = client.get("/api/logs?demo=true")
+        res_demo = await client.get("/api/logs?demo=true")
         assert res_demo.status_code == 200
         demo_data = res_demo.json()
         assert "simulated journal" in demo_data["source"]
@@ -2545,7 +2645,7 @@ def test_api_logs_access_control():
 
         # Admin unlocked request succeeds
         client.cookies.set("admin_token", "supersecret_test_token")
-        res_admin = client.get("/api/logs?lines=20")
+        res_admin = await client.get("/api/logs?lines=20")
         assert res_admin.status_code == 200
         admin_data = res_admin.json()
         assert "source" in admin_data
@@ -2590,12 +2690,13 @@ def test_log_sanitization_and_buffer():
         Config.WEBHOOK_SECRET = orig_secret
 
 
-def test_dashboard_mobile_responsiveness():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_mobile_responsiveness():
     """Verify that the dashboard and demo pages contain mobile responsive viewport and CSS structures."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     for path in ["/", "/demo"]:
-        resp = client.get(path)
+        resp = await client.get(path)
         assert resp.status_code == 200
         html = resp.text
 
@@ -2631,7 +2732,7 @@ def test_dashboard_mobile_responsiveness():
         assert 'scrobble-trk-kitsu' in html
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_sync_watchlist():
     """Verify TraktClient.sync_watchlist posts payload to /sync/watchlist."""
     with patch.object(trakt, "_post_authenticated", new_callable=AsyncMock) as mock_post:
@@ -2641,21 +2742,22 @@ async def test_trakt_sync_watchlist():
         assert res["added"]["movies"] == 1
 
 
-def test_watchlist_api_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_watchlist_api_endpoints():
     """Test POST /api/watchlist for adding movies and shows to Trakt watchlist."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "sync_watchlist", new_callable=AsyncMock) as mock_sync:
         mock_sync.return_value = {"added": {"shows": 1, "movies": 1}}
 
         # 1. Demo mode
-        resp_demo = client.post("/api/watchlist?demo=true", json={"media_type": "movie", "title": "Inception"})
+        resp_demo = await client.post("/api/watchlist?demo=true", json={"media_type": "movie", "title": "Inception"})
         assert resp_demo.status_code == 200
         assert resp_demo.json()["status"] == "success"
 
         # 2. Authenticated admin request
-        resp = client.post("/api/watchlist", json={"media_type": "show", "title": "Severance", "year": 2022})
+        resp = await client.post("/api/watchlist", json={"media_type": "show", "title": "Severance", "year": 2022})
         assert resp.status_code == 200
         assert resp.json()["status"] == "success"
         mock_sync.assert_awaited_once()
@@ -2664,28 +2766,29 @@ def test_watchlist_api_endpoints():
         orig_secret = Config.WEBHOOK_SECRET
         try:
             Config.WEBHOOK_SECRET = "secret_pass_123"
-            resp_unauth = client.post("/api/watchlist", json={"media_type": "movie", "title": "Dune"})
+            resp_unauth = await client.post("/api/watchlist", json={"media_type": "movie", "title": "Dune"})
             assert resp_unauth.status_code == 401
 
-            resp_auth = client.post("/api/watchlist?token=secret_pass_123", json={"media_type": "movie", "title": "Dune"})
+            resp_auth = await client.post("/api/watchlist?token=secret_pass_123", json={"media_type": "movie", "title": "Dune"})
             assert resp_auth.status_code == 200
         finally:
             Config.WEBHOOK_SECRET = orig_secret
 
 
-def test_cowatch_settings_and_movie_toggle():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_settings_and_movie_toggle():
     """Test POST /api/cowatch/settings to dynamically toggle movie co-watching."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     orig_movies = cowatch_mgr.config.CO_WATCH_MOVIES
     try:
         # Enable movies
-        resp_enable = client.post("/api/cowatch/settings", json={"co_watch_movies": True})
+        resp_enable = await client.post("/api/cowatch/settings", json={"co_watch_movies": True})
         assert resp_enable.status_code == 200
         assert resp_enable.json()["co_watch_movies"] is True
         assert cowatch_mgr.config.CO_WATCH_MOVIES is True
 
         # Disable movies
-        resp_disable = client.post("/api/cowatch/settings", json={"co_watch_movies": False})
+        resp_disable = await client.post("/api/cowatch/settings", json={"co_watch_movies": False})
         assert resp_disable.status_code == 200
         assert resp_disable.json()["co_watch_movies"] is False
         assert cowatch_mgr.config.CO_WATCH_MOVIES is False
@@ -2848,6 +2951,58 @@ def test_playback_interpolation_and_remaining():
     assert recent["remaining_str"] == "Finished"
 
 
+def test_playback_completion_marker_survives_pause_resume():
+    pm = PlaybackManager()
+    media = ParsedMedia(event="media.play", username="viewer", media_type="movie", title="Example")
+    pm.update_playback(media, state="playing")
+    pm.mark_scrobbled(media)
+    assert pm.is_scrobbled(media)
+
+    resumed = media.model_copy(update={"event": "media.resume"})
+    pm.update_playback(resumed, state="playing")
+    assert pm.is_scrobbled(resumed)
+    finished = pm.stop_playback(resumed)
+    assert finished["scrobbled"] is True
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_pause_then_stop_counts_a_playback_once(monkeypatch):
+    import copy
+    import app.main as main_mod
+
+    original_stats = dict(main_mod.scrobble_stats)
+    original_events = list(main_mod.recent_events)
+    original_sessions = copy.deepcopy(main_mod.playback_mgr.sessions)
+    original_finished = copy.deepcopy(main_mod.playback_mgr.recently_finished)
+    main_mod.playback_mgr.clear()
+    monkeypatch.setattr(main_mod, "save_recent_events", lambda: None)
+    monkeypatch.setattr(main_mod, "save_scrobble_stats", lambda: None)
+    media = ParsedMedia(
+        event="media.play", username="review-test", media_type="movie", title="Single Count",
+        progress=10, duration_ms=7_200_000, view_offset_ms=720_000, player="Review Player",
+    )
+    try:
+        with patch.object(main_mod.trakt, "is_authenticated", return_value=True), \
+             patch.object(main_mod.trakt, "scrobble_start", new_callable=AsyncMock, return_value={"status": "ok"}), \
+             patch.object(main_mod.trakt, "scrobble_stop", new_callable=AsyncMock, return_value={"status": "ok"}) as stop, \
+             patch("app.main.execute_multi_tracker_dispatch", new_callable=AsyncMock):
+            await main_mod.process_media_event(media)
+            paused = media.model_copy(update={"event": "media.pause", "progress": 95, "view_offset_ms": 6_840_000})
+            await main_mod.process_media_event(paused)
+            stopped = paused.model_copy(update={"event": "media.stop"})
+            result = await main_mod.process_media_event(stopped)
+            assert result["status"] == "ignored"
+            assert stop.await_count == 1
+    finally:
+        main_mod.playback_mgr.sessions.clear()
+        main_mod.playback_mgr.sessions.update(original_sessions)
+        main_mod.playback_mgr.recently_finished = original_finished
+        main_mod.scrobble_stats.clear()
+        main_mod.scrobble_stats.update(original_stats)
+        main_mod.recent_events.clear()
+        main_mod.recent_events.extend(original_events)
+
+
 def test_playback_manager_zero_offset_progress_estimation():
     """Verify that when playback starts at 0 offset (or view_offset_ms is None/0),
     real-time progress estimation advances as time elapses rather than staying stalled at 0%."""
@@ -2914,9 +3069,10 @@ def test_plex_parser_omitted_view_offset_defaults_to_zero():
     assert parsed.progress == 0.0
 
 
-def test_synthetic_test_webhook():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_synthetic_test_webhook():
     """Test POST /api/test/webhook for dry-run simulation and recent event generation."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     payload = {
         "event": "media.scrobble",
@@ -2928,7 +3084,7 @@ def test_synthetic_test_webhook():
         "progress": 100.0,
         "execute_trakt": False,
     }
-    resp = client.post("/api/test/webhook", json=payload)
+    resp = await client.post("/api/test/webhook", json=payload)
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "success"
@@ -2937,16 +3093,17 @@ def test_synthetic_test_webhook():
     assert "eligible" in data["cowatch"]
 
     # Verify event was recorded in recent_events
-    events_resp = client.get("/api/events")
+    events_resp = await client.get("/api/events")
     assert events_resp.status_code == 200
     events = events_resp.json()["events"]
     assert any("Lanterns S01E07" in e["title"] for e in events)
 
 
-def test_health_includes_radarr():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_health_includes_radarr():
     """Verify /health reports Radarr integration info alongside Sonarr."""
-    client = TestClient(app)
-    resp = client.get("/health")
+    client = make_async_test_client(app)
+    resp = await client.get("/health")
     assert resp.status_code == 200
     data = resp.json()
     assert "radarr" in data
@@ -2954,7 +3111,7 @@ def test_health_includes_radarr():
     assert "sonarr" in data
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_process_queue_sync_watchlist():
     """Verify that queued sync_watchlist events are properly dequeued and sent to Trakt."""
     queue_mgr.clear_queue()
@@ -2972,16 +3129,17 @@ async def test_process_queue_sync_watchlist():
         mock_sync.assert_awaited_once_with(watchlist_payload)
 
 
-def test_watchlist_transient_error_enqueues():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_watchlist_transient_error_enqueues():
     """Verify POST /api/watchlist enqueues the payload if Trakt returns a transient HTTP error."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     queue_mgr.clear_queue()
 
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "sync_watchlist", new_callable=AsyncMock) as mock_sync:
         mock_sync.return_value = {"error": "Service Unavailable", "status_code": 503}
 
-        res = client.post("/api/watchlist", json={"media_type": "movie", "title": "Interstellar", "year": 2014})
+        res = await client.post("/api/watchlist", json={"media_type": "movie", "title": "Interstellar", "year": 2014})
         assert res.status_code == 200
         assert queue_mgr.get_pending_count() == 1
         pending = queue_mgr.get_pending()
@@ -2991,10 +3149,10 @@ def test_watchlist_transient_error_enqueues():
     queue_mgr.clear_queue()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_synthetic_test_webhook_execute_trakt():
     """Verify POST /api/test/webhook with execute_trakt=True syncs history and triggers co-watch."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     payload = {
         "event": "media.scrobble",
@@ -3023,7 +3181,7 @@ async def test_synthetic_test_webhook_execute_trakt():
          patch.object(user_mgr, "get_client", side_effect=fake_get_client):
         mock_sync.return_value = {"added": {"episodes": 1}}
 
-        resp = client.post("/api/test/webhook", json=payload)
+        resp = await client.post("/api/test/webhook", json=payload)
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
@@ -3032,30 +3190,32 @@ async def test_synthetic_test_webhook_execute_trakt():
         assert mock_partner_client.sync_history.called
 
 
-def test_synthetic_test_webhook_unauthorized():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_synthetic_test_webhook_unauthorized():
     """Verify POST /api/test/webhook requires admin authentication when WEBHOOK_SECRET is set."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     payload = {"event": "media.scrobble", "media_type": "movie", "title": "Test Movie"}
 
     with patch.object(Config, "WEBHOOK_SECRET", "secret_admin_key"):
         # Unauthenticated -> 401
-        res_unauth = client.post("/api/test/webhook", json=payload)
+        res_unauth = await client.post("/api/test/webhook", json=payload)
         assert res_unauth.status_code == 401
 
         # Query param ?token= -> 200
-        res_token = client.post("/api/test/webhook?token=secret_admin_key", json=payload)
+        res_token = await client.post("/api/test/webhook?token=secret_admin_key", json=payload)
         assert res_token.status_code == 200
 
         # Admin cookie -> 200
         client.cookies.set("admin_token", "secret_admin_key")
-        res_cookie = client.post("/api/test/webhook", json=payload)
+        res_cookie = await client.post("/api/test/webhook", json=payload)
         assert res_cookie.status_code == 200
         client.cookies.clear()
 
 
-def test_radarr_webhook_collection_sync():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_radarr_webhook_collection_sync():
     """Verify Radarr download webhooks sync movie to Trakt collection and increment stats."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     dl_payload = {
         "eventType": "Download",
         "movie": {
@@ -3079,7 +3239,7 @@ def test_radarr_webhook_collection_sync():
 
         mock_sync.return_value = {"added": {"movies": 1}}
 
-        res = client.post("/radarr", json=dl_payload)
+        res = await client.post("/radarr", json=dl_payload)
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "success"
@@ -3091,9 +3251,10 @@ def test_radarr_webhook_collection_sync():
         assert scrobble_stats["collections"] == initial_collections + 1
 
 
-def test_webhook_records_cowatch_status_and_privacy():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_records_cowatch_status_and_privacy():
     """Verify live webhooks record cowatch_status in events and respect privacy masking."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     recent_events.clear()
 
     payload = {
@@ -3120,7 +3281,7 @@ def test_webhook_records_cowatch_status_and_privacy():
 
         mock_stop.return_value = {"action": "scrobble"}
 
-        res = client.post("/webhook?token=privacy_token", data={"payload": json.dumps(payload)})
+        res = await client.post("/webhook?token=privacy_token", data={"payload": json.dumps(payload)})
         assert res.status_code == 200
         assert len(recent_events) >= 1
         ev = recent_events[0]
@@ -3130,7 +3291,7 @@ def test_webhook_records_cowatch_status_and_privacy():
 
         # 1. Non-admin request to /api/events should have cowatch_status masked (None)
         client.cookies.clear()
-        res_unauth_events = client.get("/api/events")
+        res_unauth_events = await client.get("/api/events")
         assert res_unauth_events.status_code == 200
         unauth_ev = res_unauth_events.json()["events"][0]
         assert unauth_ev["cowatch_status"] is None
@@ -3139,7 +3300,7 @@ def test_webhook_records_cowatch_status_and_privacy():
 
         # 2. Admin request to /api/events reveals cowatch_status and show_title
         client.cookies.set("admin_token", "privacy_token")
-        res_admin_events = client.get("/api/events")
+        res_admin_events = await client.get("/api/events")
         assert res_admin_events.status_code == 200
         admin_ev = res_admin_events.json()["events"][0]
         assert admin_ev["cowatch_status"] is not None
@@ -3148,16 +3309,17 @@ def test_webhook_records_cowatch_status_and_privacy():
         client.cookies.clear()
 
 
-def test_cowatch_settings_unauthorized():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_settings_unauthorized():
     """Verify POST /api/cowatch/settings enforces admin authorization when WEBHOOK_SECRET is active."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
         # Without credentials -> 401
-        res_denied = client.post("/api/cowatch/settings", json={"co_watch_movies": True})
+        res_denied = await client.post("/api/cowatch/settings", json={"co_watch_movies": True})
         assert res_denied.status_code == 401
 
         # With credentials -> 200
-        res_ok = client.post("/api/cowatch/settings?token=admin_secret", json={"co_watch_movies": True})
+        res_ok = await client.post("/api/cowatch/settings?token=admin_secret", json={"co_watch_movies": True})
         assert res_ok.status_code == 200
         assert res_ok.json()["status"] == "ok"
 
@@ -3223,7 +3385,8 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert 'href="/static/icons/icon-192.svg"' not in repo_content
 
 
-def test_granular_scrobble_thresholds_logic():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_granular_scrobble_thresholds_logic():
     """Verify separate episode vs movie scrobble thresholds and Config.get_threshold fallback."""
     # Defaults
     assert Config.EPISODE_SCROBBLE_THRESHOLD == 80.0
@@ -3232,7 +3395,7 @@ def test_granular_scrobble_thresholds_logic():
     assert Config.get_threshold("movie") == 90.0
     assert Config.get_threshold("other") == Config.SCROBBLE_THRESHOLD
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Episode stopped at 82% -> progress >= 80% -> should scrobble
     ep_stop_82 = {
@@ -3261,7 +3424,7 @@ def test_granular_scrobble_thresholds_logic():
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
 
-        res = client.post("/webhook", data={"payload": json.dumps(ep_stop_82)})
+        res = await client.post("/webhook", data={"payload": json.dumps(ep_stop_82)})
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_stop"
         assert scrobble_stats["total"] == initial_total + 1
@@ -3291,7 +3454,7 @@ def test_granular_scrobble_thresholds_logic():
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "pause"}
 
-        res = client.post("/webhook", data={"payload": json.dumps(movie_stop_82)})
+        res = await client.post("/webhook", data={"payload": json.dumps(movie_stop_82)})
         assert res.status_code == 200
         assert res.json()["action"] == "playback_stopped"
         assert scrobble_stats["total"] == initial_total
@@ -3318,19 +3481,20 @@ def test_granular_scrobble_thresholds_logic():
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
 
-        res = client.post("/webhook", data={"payload": json.dumps(movie_stop_92)})
+        res = await client.post("/webhook", data={"payload": json.dumps(movie_stop_92)})
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_stop"
         assert scrobble_stats["total"] == initial_total + 1
         assert scrobble_stats["movies"] == initial_movies + 1
 
 
-def test_jellyfin_parser_and_webhook():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_jellyfin_parser_and_webhook():
     from app.jellyfin_parser import parse_jellyfin_webhook
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # Info GET endpoint
-    info_res = client.get("/webhook/jellyfin")
+    info_res = await client.get("/webhook/jellyfin")
     assert info_res.status_code == 200
     assert "Jellyfin" in info_res.json()["instructions"]
 
@@ -3363,7 +3527,7 @@ def test_jellyfin_parser_and_webhook():
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
         mock_start.return_value = {"action": "start"}
-        res = client.post("/webhook/jellyfin", json=jf_movie_payload)
+        res = await client.post("/webhook/jellyfin", json=jf_movie_payload)
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_start"
 
@@ -3397,7 +3561,7 @@ def test_jellyfin_parser_and_webhook():
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
-        res = client.post("/webhook/jellyfin", json=jf_ep_payload)
+        res = await client.post("/webhook/jellyfin", json=jf_ep_payload)
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_stop"
 
@@ -3421,12 +3585,13 @@ def test_jellyfin_parser_and_webhook():
     assert parsed_ignored is None
 
 
-def test_emby_parser_and_webhook():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_emby_parser_and_webhook():
     from app.emby_parser import parse_emby_webhook
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # Info GET endpoint
-    info_res = client.get("/webhook/emby")
+    info_res = await client.get("/webhook/emby")
     assert info_res.status_code == 200
     assert "Emby" in info_res.json()["instructions"]
 
@@ -3458,10 +3623,17 @@ def test_emby_parser_and_webhook():
     assert parsed.ids["tmdb"] == 157336
     assert abs(parsed.progress - 20.0) < 0.1
 
+    # Null PremiereDate is valid when ProductionYear is absent.
+    null_premiere = {
+        "Event": "playback.start",
+        "Item": {"Type": "Movie", "Name": "Unknown Year", "ProductionYear": None, "PremiereDate": None},
+    }
+    assert parse_emby_webhook(null_premiere).year is None
+
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "scrobble_pause", new_callable=AsyncMock) as mock_pause:
         mock_pause.return_value = {"action": "pause"}
-        res = client.post("/webhook/emby", json=emby_payload)
+        res = await client.post("/webhook/emby", json=emby_payload)
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_pause"
 
@@ -3497,7 +3669,7 @@ def test_emby_parser_and_webhook():
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
-        res = client.post("/webhook/emby", json=emby_ep_payload)
+        res = await client.post("/webhook/emby", json=emby_ep_payload)
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_stop"
 
@@ -3519,11 +3691,12 @@ def test_emby_parser_and_webhook():
     assert parsed_rate.rating == 9
 
 
-def test_pwa_and_static_assets():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_pwa_and_static_assets():
+    client = make_async_test_client(app)
 
     # Manifest
-    res_manifest = client.get("/manifest.json")
+    res_manifest = await client.get("/manifest.json")
     assert res_manifest.status_code == 200
     assert "application/manifest+json" in res_manifest.headers.get("content-type", "")
     data = res_manifest.json()
@@ -3533,26 +3706,27 @@ def test_pwa_and_static_assets():
     assert len(data["icons"]) >= 2
 
     # Service Worker
-    res_sw = client.get("/sw.js")
+    res_sw = await client.get("/sw.js")
     assert res_sw.status_code == 200
     assert "javascript" in res_sw.headers.get("content-type", "")
     assert "omniscrobble" in res_sw.text
 
     # Icons
-    res_icon192 = client.get("/static/icons/icon-192.svg")
+    res_icon192 = await client.get("/static/icons/icon-192.svg")
     assert res_icon192.status_code == 200
     assert "image/svg+xml" in res_icon192.headers.get("content-type", "")
     assert "<svg" in res_icon192.text
 
-    res_icon512 = client.get("/static/icons/icon-512.svg")
+    res_icon512 = await client.get("/static/icons/icon-512.svg")
     assert res_icon512.status_code == 200
     assert "image/svg+xml" in res_icon512.headers.get("content-type", "")
     assert "<svg" in res_icon512.text
 
 
-def test_dashboard_multi_server_tabs_and_oled_theme():
-    client = TestClient(app)
-    res = client.get("/")
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_multi_server_tabs_and_oled_theme():
+    client = make_async_test_client(app)
+    res = await client.get("/")
     assert res.status_code == 200
     html = res.text
 
@@ -3569,9 +3743,10 @@ def test_dashboard_multi_server_tabs_and_oled_theme():
     assert "theme-oled" in html or "omniscrobble_theme" in html
 
 
-def test_jellyfin_and_emby_webhook_security():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_jellyfin_and_emby_webhook_security():
     """Verify webhook token enforcement on Jellyfin and Emby endpoints."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     sample_payload = {
         "NotificationType": "PlaybackStart",
         "ItemType": "Movie",
@@ -3581,50 +3756,51 @@ def test_jellyfin_and_emby_webhook_security():
 
     with patch.object(Config, "WEBHOOK_SECRET", "super_secret_token_123"):
         # 1. Jellyfin without token -> 401
-        res = client.post("/webhook/jellyfin", json=sample_payload)
+        res = await client.post("/webhook/jellyfin", json=sample_payload)
         assert res.status_code == 401
 
         # 2. Jellyfin with wrong token -> 401
-        res = client.post("/webhook/jellyfin?token=wrong_token", json=sample_payload)
+        res = await client.post("/webhook/jellyfin?token=wrong_token", json=sample_payload)
         assert res.status_code == 401
 
         # 3. Jellyfin with valid query token -> 200
         with patch.object(trakt, "is_authenticated", return_value=True), \
              patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
             mock_start.return_value = {"action": "start"}
-            res = client.post("/webhook/jellyfin?token=super_secret_token_123", json=sample_payload)
+            res = await client.post("/webhook/jellyfin?token=super_secret_token_123", json=sample_payload)
             assert res.status_code == 200
 
         # 4. Jellyfin alias route /jellyfin with valid header -> 200
         with patch.object(trakt, "is_authenticated", return_value=True), \
              patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
             mock_start.return_value = {"action": "start"}
-            res = client.post("/jellyfin", json=sample_payload, headers={"x-webhook-secret": "super_secret_token_123"})
+            res = await client.post("/jellyfin", json=sample_payload, headers={"x-webhook-secret": "super_secret_token_123"})
             assert res.status_code == 200
 
         # 5. Emby without token -> 401
         emby_sample = {"Event": "playback.start", "Item": {"Type": "Movie", "Name": "Inception"}}
-        res = client.post("/webhook/emby", json=emby_sample)
+        res = await client.post("/webhook/emby", json=emby_sample)
         assert res.status_code == 401
 
         # 6. Emby with valid query token -> 200
         with patch.object(trakt, "is_authenticated", return_value=True), \
              patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
             mock_start.return_value = {"action": "start"}
-            res = client.post("/webhook/emby?token=super_secret_token_123", json=emby_sample)
+            res = await client.post("/webhook/emby?token=super_secret_token_123", json=emby_sample)
             assert res.status_code == 200
 
         # 7. Emby alias route /emby with valid header -> 200
         with patch.object(trakt, "is_authenticated", return_value=True), \
              patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
             mock_start.return_value = {"action": "start"}
-            res = client.post("/emby", json=emby_sample, headers={"x-webhook-secret": "super_secret_token_123"})
+            res = await client.post("/emby", json=emby_sample, headers={"x-webhook-secret": "super_secret_token_123"})
             assert res.status_code == 200
 
 
-def test_granular_thresholds_pause_behavior():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_granular_thresholds_pause_behavior():
     """Verify smart pause past threshold respects granular episode (80%) vs movie (90%) thresholds."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Episode paused at 82% (>= 80%) -> triggers scrobble_stop
     ep_pause_82 = {
@@ -3646,7 +3822,7 @@ def test_granular_thresholds_pause_behavior():
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
-        res = client.post("/webhook", data={"payload": json.dumps(ep_pause_82)})
+        res = await client.post("/webhook", data={"payload": json.dumps(ep_pause_82)})
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_stop"
 
@@ -3669,7 +3845,7 @@ def test_granular_thresholds_pause_behavior():
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "scrobble_pause", new_callable=AsyncMock) as mock_pause:
         mock_pause.return_value = {"action": "pause"}
-        res = client.post("/webhook", data={"payload": json.dumps(ep_pause_75)})
+        res = await client.post("/webhook", data={"payload": json.dumps(ep_pause_75)})
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_pause"
 
@@ -3689,7 +3865,7 @@ def test_granular_thresholds_pause_behavior():
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "scrobble_pause", new_callable=AsyncMock) as mock_pause:
         mock_pause.return_value = {"action": "pause"}
-        res = client.post("/webhook", data={"payload": json.dumps(movie_pause_85)})
+        res = await client.post("/webhook", data={"payload": json.dumps(movie_pause_85)})
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_pause"
 
@@ -3710,7 +3886,7 @@ def test_granular_thresholds_pause_behavior():
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
-        res = client.post("/webhook", data={"payload": json.dumps(movie_pause_92)})
+        res = await client.post("/webhook", data={"payload": json.dumps(movie_pause_92)})
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_stop"
 
@@ -3761,9 +3937,10 @@ def test_jellyfin_and_emby_filtering_and_edge_cases():
     assert parse_emby_webhook({"Event": "system.restart"}) is None
 
 
-def test_jellyfin_and_emby_offline_queue_on_trakt_temporary_error():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_jellyfin_and_emby_offline_queue_on_trakt_temporary_error():
     """Verify offline retry queue persists failed Jellyfin/Emby scrobbles during Trakt outages."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     jf_payload = {
         "NotificationType": "PlaybackStop",
         "NotificationUsername": "selits",
@@ -3782,7 +3959,7 @@ def test_jellyfin_and_emby_offline_queue_on_trakt_temporary_error():
         # Simulate Trakt 503 outage
         mock_stop.return_value = {"error": "503 Service Unavailable: Trakt maintenance"}
 
-        res = client.post("/webhook/jellyfin", json=jf_payload)
+        res = await client.post("/webhook/jellyfin", json=jf_payload)
         assert res.status_code == 200
         data = res.json()
         assert data["status"] == "success"
@@ -3794,9 +3971,10 @@ def test_jellyfin_and_emby_offline_queue_on_trakt_temporary_error():
         assert any(item["event_type"] == "scrobble_stop" and item.get("username") == "selits" for item in pending)
 
 
-def test_jellyfin_and_emby_cowatch_integration():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_jellyfin_and_emby_cowatch_integration():
     """Verify Watch Together co-watch dual-sync evaluates properly for Jellyfin & Emby events."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     jf_cowatch_payload = {
         "NotificationType": "PlaybackStop",
         "NotificationUsername": "selits",
@@ -3818,16 +3996,17 @@ def test_jellyfin_and_emby_cowatch_integration():
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
 
-        res = client.post("/webhook/jellyfin", json=jf_cowatch_payload)
+        res = await client.post("/webhook/jellyfin", json=jf_cowatch_payload)
         assert res.status_code == 200
         assert res.json()["action"] == "scrobble_stop"
         mock_cowatch_sync.assert_called_once()
 
 
-def test_opengraph_and_social_metadata():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_opengraph_and_social_metadata():
     """Verify that the dashboard serves complete OpenGraph and Twitter card social preview meta tags."""
-    client = TestClient(app)
-    resp = client.get("/")
+    client = make_async_test_client(app)
+    resp = await client.get("/")
     assert resp.status_code == 200
     html = resp.text
     assert '<meta property="og:title" content="Omniscrobble' in html
@@ -3875,7 +4054,7 @@ def test_systemd_service_file_consistency():
     assert "ExecStart=%h/plex-trakt-webhook/.venv/bin/python main.py" in content
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_plex_api_client_operations():
     """Verify PlexApiClient configuration, connection checks, library parsing, and scrobbling."""
     from app.clients.plex_api_client import PlexApiClient
@@ -3994,7 +4173,7 @@ async def test_plex_api_client_operations():
     assert await plex.set_user_rating("1001", 9.5)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_reverse_sync_fetch_methods():
     """Verify TraktClient reverse sync methods (watched movies, watched shows, ratings)."""
     from app.clients.trakt_client import TraktClient
@@ -4076,7 +4255,7 @@ def test_loop_prevention_manager():
     assert not lp.is_ignored("5678")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_webhook_echo_loop_suppression():
     """Verify that incoming webhooks containing suppressed keys or GUIDs are ignored by loop prevention."""
     from app.services.loop_prevention import loop_prevention
@@ -4114,7 +4293,7 @@ async def test_webhook_echo_loop_suppression():
     loop_prevention.clear()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_reverse_sync_manager_scan_and_reconciliation():
     """Verify ReverseSyncManager discrepancy detection and selective sync execution."""
     from app.services.reverse_sync_manager import ReverseSyncManager
@@ -4244,24 +4423,25 @@ async def test_reverse_sync_manager_scan_and_reconciliation():
     assert history_synced[0]["movies"][0]["title"] == "Blade Runner 2049"
 
 
-def test_sync_api_endpoints_and_admin_security():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_sync_api_endpoints_and_admin_security():
     """Verify /api/sync/* endpoints with admin authentication gating and demo mode simulation."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Unauthenticated diff request is rejected
-    res = client.get("/api/sync/diff")
+    res = await client.get("/api/sync/diff")
     if Config.WEBHOOK_SECRET:
         assert res.status_code == 401
 
     # 2. Authenticated status endpoint
-    res_status = client.get("/api/sync/status")
+    res_status = await client.get("/api/sync/status")
     assert res_status.status_code == 200
     data = res_status.json()
     assert "configured" in data
     assert "interval_minutes" in data
 
     # 3. Demo mode diff returns simulated discrepancies without admin token
-    res_demo = client.get("/api/sync/diff?demo=true")
+    res_demo = await client.get("/api/sync/diff?demo=true")
     assert res_demo.status_code == 200
     demo_diff = res_demo.json()
     assert demo_diff["status"] == "ok"
@@ -4269,26 +4449,27 @@ def test_sync_api_endpoints_and_admin_security():
 
     # 4. Admin authenticated diff request
     headers = {"x-webhook-secret": Config.WEBHOOK_SECRET} if Config.WEBHOOK_SECRET else {}
-    res_diff = client.get("/api/sync/diff", headers=headers)
+    res_diff = await client.get("/api/sync/diff", headers=headers)
     assert res_diff.status_code == 200
     assert "diff" in res_diff.json()
 
     # 5. Demo reconcile execution
-    res_rec = client.post("/api/sync/reconcile?demo=true", json={"direction": "all"})
+    res_rec = await client.post("/api/sync/reconcile?demo=true", json={"direction": "all"})
     assert res_rec.status_code == 200
     assert res_rec.json()["status"] == "success"
 
     # 6. Progress endpoint
-    res_prog = client.get("/api/sync/progress")
+    res_prog = await client.get("/api/sync/progress")
     assert res_prog.status_code == 200
     assert "in_progress" in res_prog.json()
 
 
-def test_dashboard_reconciliation_elements():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_reconciliation_elements():
     """Verify dashboard HTML includes Two-Way Reconciliation card and modal dialogs."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
-    res = client.get("/")
+    res = await client.get("/")
     assert res.status_code == 200
     html_content = res.text
     assert "Two-Way Library Reconciliation" in html_content
@@ -4306,7 +4487,7 @@ def test_dashboard_reconciliation_elements():
     assert "reconcile-diff-badge" in html_content
 
     # In demo mode
-    res_demo = client.get("/demo")
+    res_demo = await client.get("/demo")
     assert res_demo.status_code == 200
     assert "Two-Way Library Reconciliation" in res_demo.text
     assert 'id="reconcile-settings-modal"' in res_demo.text
@@ -4367,42 +4548,42 @@ def test_settings_manager_reconciliation(tmp_path):
     assert sm.get_reconciliation_settings(mask_token=True)["has_token"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_sync_settings_api_and_connection_test():
     """Verify /api/sync/settings and /api/sync/test-connection endpoints."""
     from app.services.settings_manager import settings_mgr
     from app.main import reverse_sync_mgr
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     orig_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
     try:
         with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
             # 1. Unauthenticated -> 401
-            res = client.get("/api/sync/settings")
+            res = await client.get("/api/sync/settings")
             assert res.status_code == 401
 
-            res_post = client.post("/api/sync/settings", json={"interval_minutes": 45})
+            res_post = await client.post("/api/sync/settings", json={"interval_minutes": 45})
             assert res_post.status_code == 401
 
-            res_test = client.post("/api/sync/test-connection", json={"plex_url": "http://mock-plex:32400"})
+            res_test = await client.post("/api/sync/test-connection", json={"plex_url": "http://mock-plex:32400"})
             assert res_test.status_code == 401
 
             headers = {"x-webhook-secret": "test_secret"}
 
             # 2. Connection test missing params when unconfigured -> status unconfigured
-            res_bad_test = client.post("/api/sync/test-connection", headers=headers, json={"url": "", "token": ""})
+            res_bad_test = await client.post("/api/sync/test-connection", headers=headers, json={"url": "", "token": ""})
             assert res_bad_test.status_code == 200
             assert res_bad_test.json().get("status") in ("unconfigured", "error", "unreachable")
 
             # 3. Authenticated GET /api/sync/settings
-            res_get = client.get("/api/sync/settings", headers=headers)
+            res_get = await client.get("/api/sync/settings", headers=headers)
             assert res_get.status_code == 200
             data = res_get.json()
             assert "interval_minutes" in data
             assert "plex_url" in data
 
             # 4. Authenticated POST /api/sync/settings
-            res_update = client.post("/api/sync/settings", headers=headers, json={
+            res_update = await client.post("/api/sync/settings", headers=headers, json={
                 "plex_url": "http://plex.local:32400",
                 "plex_token": "test-new-token-9999",
                 "interval_minutes": 45,
@@ -4423,7 +4604,7 @@ async def test_sync_settings_api_and_connection_test():
                     "version": "1.41.0.8992",
                     "message": "Successfully connected to Living Room Plex (v1.41.0.8992)",
                 }
-                res_conn = client.post("/api/sync/test-connection", headers=headers, json={
+                res_conn = await client.post("/api/sync/test-connection", headers=headers, json={
                     "plex_url": "http://plex.local:32400",
                     "plex_token": "••••••••9999"
                 })
@@ -4446,7 +4627,7 @@ async def test_sync_settings_api_and_connection_test():
         )
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_mediabrowser_api_client_operations():
     """Verify JellyfinApiClient and EmbyApiClient connection checks, user resolution, library views, and played status."""
     from app.clients.jellyfin_api_client import JellyfinApiClient
@@ -4583,7 +4764,7 @@ async def test_mediabrowser_api_client_operations():
     assert await emby.mark_as_watched("m-102")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_server_reverse_sync_manager():
     """Verify ReverseSyncManager multi-server dispatch, scanning, and reconciliation against Jellyfin."""
     from app.services.reverse_sync_manager import ReverseSyncManager
@@ -4651,12 +4832,12 @@ async def test_multi_server_reverse_sync_manager():
     assert loop_prev.is_ignored("jf-m-1")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_server_sync_settings_and_test_connection_api():
     """Verify settings persistence and test connection for Jellyfin and Emby."""
     from app.services.settings_manager import settings_mgr
     from app.main import reverse_sync_mgr
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     orig_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
     try:
@@ -4664,7 +4845,7 @@ async def test_multi_server_sync_settings_and_test_connection_api():
             headers = {"x-webhook-secret": "test_secret"}
 
             # 1. Update Jellyfin & Emby settings
-            res = client.post("/api/sync/settings", headers=headers, json={
+            res = await client.post("/api/sync/settings", headers=headers, json={
                 "server_type": "jellyfin",
                 "jellyfin_url": "http://jellyfin.local:8096",
                 "jellyfin_token": "jf-secret-token-5555",
@@ -4690,7 +4871,7 @@ async def test_multi_server_sync_settings_and_test_connection_api():
                     "server_name": "Living Room Jellyfin",
                     "version": "10.9.11",
                 }
-                res_jf_test = client.post("/api/sync/test-connection", headers=headers, json={
+                res_jf_test = await client.post("/api/sync/test-connection", headers=headers, json={
                     "server": "jellyfin",
                     "url": "http://jellyfin.local:8096",
                     "token": "••••••••5555"
@@ -4709,7 +4890,7 @@ async def test_multi_server_sync_settings_and_test_connection_api():
                     "server_name": "Living Room Emby",
                     "version": "4.8.8",
                 }
-                res_emby_test = client.post("/api/sync/test-connection", headers=headers, json={
+                res_emby_test = await client.post("/api/sync/test-connection", headers=headers, json={
                     "server": "emby",
                     "url": "http://emby.local:8096",
                     "token": "••••••••7777"
@@ -4721,7 +4902,7 @@ async def test_multi_server_sync_settings_and_test_connection_api():
                 assert mock_test_emby.call_args.kwargs.get("token") == "emby-secret-token-7777"
 
             # 4. Clear tokens and restore server_type to plex
-            res_clear = client.post("/api/sync/settings", headers=headers, json={
+            res_clear = await client.post("/api/sync/settings", headers=headers, json={
                 "server_type": "plex",
                 "jellyfin_url": "",
                 "jellyfin_user_id": "",
@@ -4749,9 +4930,10 @@ async def test_multi_server_sync_settings_and_test_connection_api():
         )
 
 
-def test_manual_scrobble_action_start_and_playback():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_manual_scrobble_action_start_and_playback():
     """Verify manual scrobble supports action='start' (Now Playing session & playback start scrobble) and action='watched'."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     playback_mgr.clear()
 
     with patch.object(Config, "WEBHOOK_SECRET", "test_secret"):
@@ -4773,7 +4955,7 @@ def test_manual_scrobble_action_start_and_playback():
                 },
                 "action": "start",
             }
-            res_start = client.post("/api/scrobble/manual", json=payload_start)
+            res_start = await client.post("/api/scrobble/manual", json=payload_start)
             assert res_start.status_code == 200
             data_start = res_start.json()
             assert data_start["status"] == "success"
@@ -4813,7 +4995,7 @@ def test_manual_scrobble_action_start_and_playback():
                     },
                     "action": "watched",
                 }
-                res_watched = client.post("/api/scrobble/manual", json=payload_watched)
+                res_watched = await client.post("/api/scrobble/manual", json=payload_watched)
                 assert res_watched.status_code == 200
                 data_watched = res_watched.json()
                 assert data_watched["status"] == "success"
@@ -4823,7 +5005,7 @@ def test_manual_scrobble_action_start_and_playback():
         client.cookies.clear()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_manual_scrobble_simkl_override_when_auto_sync_paused():
     """Verify that when Simkl is paused in settings (stopping automatic media server webhook sync),
     explicit manual scrobble to Simkl via selected_trackers still succeeds without double-scrobbling incoming webhooks."""
@@ -4883,7 +5065,7 @@ async def test_manual_scrobble_simkl_override_when_auto_sync_paused():
         settings_mgr.set_tracker_enabled("simkl", orig_simkl_setting)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_sonarr_client_unit():
     """Unit test SonarrClient methods with MockTransport."""
     from app.clients.sonarr_client import SonarrClient
@@ -4946,7 +5128,7 @@ async def test_sonarr_client_unit():
     await sc.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_radarr_client_unit():
     """Unit test RadarrClient methods with MockTransport."""
     from app.clients.radarr_client import RadarrClient
@@ -5014,7 +5196,7 @@ async def test_radarr_client_unit():
     await rc.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_arr_bridge_watchlist_sync_full():
     """Unit test ArrBridgeManager.sync_watchlist() with mocked Trakt, Sonarr, and Radarr clients."""
     from app.services.arr_bridge import ArrBridgeManager
@@ -5110,7 +5292,7 @@ async def test_arr_bridge_watchlist_sync_full():
     assert demo_res["added"]["shows"] >= 1
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_arr_bridge_ecosystem_and_status():
     """Verify get_status and get_ecosystem_status reporting."""
     from app.services.arr_bridge import arr_bridge
@@ -5146,7 +5328,7 @@ async def test_arr_bridge_ecosystem_and_status():
             assert not disabled_seen, f"Active server {s['id']} appeared after disabled servers"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_ecosystem_reordering_and_disabled_sorting():
     """Verify ecosystem reordering (Servers -> Arr) and disabled items moving to end."""
     from app.services.arr_bridge import arr_bridge
@@ -5193,25 +5375,26 @@ async def test_ecosystem_reordering_and_disabled_sorting():
         settings_mgr.set_server_enabled("jellyfin", orig_jellyfin)
 
 
-def test_arr_api_endpoints_and_auth():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_arr_api_endpoints_and_auth():
     """Test /api/arr/status, /api/arr/sync, and /api/ecosystem routes."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. /api/arr/status
-    res = client.get("/api/arr/status")
+    res = await client.get("/api/arr/status")
     assert res.status_code == 200
     assert "configured" in res.json()
 
-    res_demo = client.get("/api/arr/status?demo=true")
+    res_demo = await client.get("/api/arr/status?demo=true")
     assert res_demo.status_code == 200
     assert res_demo.json()["sonarr_series_count"] == 48
 
     # 2. /api/ecosystem
-    res_eco = client.get("/api/ecosystem")
+    res_eco = await client.get("/api/ecosystem")
     assert res_eco.status_code == 200
     assert "servers" in res_eco.json()
 
-    res_eco_demo = client.get("/api/ecosystem?demo=true")
+    res_eco_demo = await client.get("/api/ecosystem?demo=true")
     assert res_eco_demo.status_code == 200
     assert res_eco_demo.json()["healthy_count"] == 6
     demo_api_ids = [s["id"] for s in res_eco_demo.json()["servers"]]
@@ -5219,26 +5402,27 @@ def test_arr_api_endpoints_and_auth():
 
     # 3. /api/arr/sync
     # Demo execution allowed without auth
-    res_sync_demo = client.post("/api/arr/sync?demo=true")
+    res_sync_demo = await client.post("/api/arr/sync?demo=true")
     assert res_sync_demo.status_code == 200
     assert "added" in res_sync_demo.json()
 
     # Non-demo requires admin
     if Config.WEBHOOK_SECRET:
-        res_sync_unauth = client.post("/api/arr/sync")
+        res_sync_unauth = await client.post("/api/arr/sync")
         assert res_sync_unauth.status_code == 401
 
         # Admin authorized
         headers = {"x-webhook-secret": Config.WEBHOOK_SECRET}
-        res_sync_auth = client.post("/api/arr/sync", headers=headers)
+        res_sync_auth = await client.post("/api/arr/sync", headers=headers)
         assert res_sync_auth.status_code == 200
 
 
-def test_dashboard_arr_and_ecosystem_cards():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_arr_and_ecosystem_cards():
     """Verify Multi-Server Ecosystem and Arr Bridge cards appear on dashboard."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
-    res = client.get("/")
+    res = await client.get("/")
     assert res.status_code == 200
     html = res.text
     assert "Multi-Server Ecosystem" in html
@@ -5246,7 +5430,7 @@ def test_dashboard_arr_and_ecosystem_cards():
     assert 'id="arr-modal"' in html
     assert "eco-card" in html
 
-    res_demo = client.get("/demo")
+    res_demo = await client.get("/demo")
     assert res_demo.status_code == 200
     assert "Multi-Server Ecosystem" in res_demo.text
     assert "Content Bridge" in res_demo.text
@@ -5293,7 +5477,7 @@ def test_notifier_arr_add_action():
 # SIMKL & MULTI-TRACKER ARCHITECTURE TESTS (v1.7.0)
 # =====================================================================
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_simkl_client_token_lifecycle(tmp_path):
     """Verify Simkl token file persistence, loading, and deletion."""
     from app.clients.simkl_client import SimklClient
@@ -5378,7 +5562,7 @@ def test_simkl_client_payload_builder():
     assert e_payload["episode"]["number"] == 9
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_simkl_client_device_pin_and_poll(tmp_path):
     """Verify Simkl OAuth Device PIN flow request and polling."""
     from app.clients.simkl_client import SimklClient
@@ -5415,7 +5599,7 @@ async def test_simkl_client_device_pin_and_poll(tmp_path):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_simkl_client_scrobble_actions(tmp_path):
     """Verify Simkl scrobble_start, scrobble_pause, and scrobble_stop."""
     from app.clients.simkl_client import SimklClient
@@ -5470,7 +5654,7 @@ async def test_simkl_client_scrobble_actions(tmp_path):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_simkl_client_sync_history_and_ratings(tmp_path):
     """Verify Simkl sync_history and sync_ratings with ParsedMedia objects."""
     from app.clients.simkl_client import SimklClient
@@ -5606,7 +5790,7 @@ def test_parsed_media_legacy_attributes_and_properties():
     assert media.episode == 10
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_tracker_manual_scrobble_simkl_live_dispatch(tmp_path):
     """Verify dispatch_manual_scrobble works end-to-end with Simkl without AttributeError."""
     from app.services.multi_tracker import MultiTrackerManager
@@ -5663,7 +5847,7 @@ async def test_multi_tracker_manual_scrobble_simkl_live_dispatch(tmp_path):
     await simkl.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_tracker_manager_dispatch():
     """Verify MultiTrackerManager dual dispatch to Trakt and Simkl."""
     from app.services.multi_tracker import MultiTrackerManager
@@ -5718,12 +5902,13 @@ async def test_multi_tracker_manager_dispatch():
     mock_simkl.sync_ratings.assert_awaited_once_with(media, rating=10)
 
 
-def test_simkl_api_endpoints_and_views():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_simkl_api_endpoints_and_views():
     """Verify /api/simkl/status, /api/simkl/pin, /api/simkl/poll, and /auth/simkl routes."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Demo Status
-    demo_resp = client.get("/api/simkl/status?demo=true")
+    demo_resp = await client.get("/api/simkl/status?demo=true")
     assert demo_resp.status_code == 200
     d_data = demo_resp.json()
     assert d_data["enabled"] is True
@@ -5732,61 +5917,61 @@ def test_simkl_api_endpoints_and_views():
     assert d_data["user"] == "demo_viewer"
 
     # 2. Live Status (public read)
-    live_resp = client.get("/api/simkl/status")
+    live_resp = await client.get("/api/simkl/status")
     assert live_resp.status_code == 200
 
     # 3. Auth Simkl page (Admin protected)
     if Config.WEBHOOK_SECRET:
-        unauth_page = client.get("/auth/simkl")
+        unauth_page = await client.get("/auth/simkl")
         assert unauth_page.status_code == 401
 
-        auth_page = client.get(f"/auth/simkl?token={Config.WEBHOOK_SECRET}")
+        auth_page = await client.get(f"/auth/simkl?token={Config.WEBHOOK_SECRET}")
         assert auth_page.status_code == 200
         assert "Simkl" in auth_page.text
         assert "Device PIN Authorization" in auth_page.text
     else:
-        auth_page = client.get("/auth/simkl")
+        auth_page = await client.get("/auth/simkl")
         assert auth_page.status_code == 200
         assert "Simkl" in auth_page.text
 
     # 4. Disconnect Simkl route
     if Config.WEBHOOK_SECRET:
-        unauth_disc = client.post("/api/simkl/disconnect")
+        unauth_disc = await client.post("/api/simkl/disconnect")
         assert unauth_disc.status_code == 401
 
-        auth_disc = client.post(f"/api/simkl/disconnect?token={Config.WEBHOOK_SECRET}")
+        auth_disc = await client.post(f"/api/simkl/disconnect?token={Config.WEBHOOK_SECRET}")
         assert auth_disc.status_code == 200
         assert auth_disc.json()["status"] == "ok"
     else:
-        auth_disc = client.post("/api/simkl/disconnect")
+        auth_disc = await client.post("/api/simkl/disconnect")
         assert auth_disc.status_code == 200
         assert auth_disc.json()["status"] == "ok"
 
     # 5. Simkl PIN endpoint
     from app.main import simkl
     with patch.object(Config, "WEBHOOK_SECRET", "testsecret"):
-        unauth_pin = client.post("/api/simkl/pin")
+        unauth_pin = await client.post("/api/simkl/pin")
         assert unauth_pin.status_code == 401
 
         with patch.object(simkl, "get_device_pin", return_value={"error": "SIMKL_CLIENT_ID not configured"}):
-            err_pin = client.post("/api/simkl/pin?token=testsecret")
+            err_pin = await client.post("/api/simkl/pin?token=testsecret")
             assert err_pin.status_code == 400
             assert "SIMKL_CLIENT_ID not configured" in err_pin.json()["detail"]
 
         with patch.object(simkl, "get_device_pin", return_value={"user_code": "ABCD-1234", "device_code": "dev_123", "verification_url": "https://simkl.com/pin?user_code=ABCD-1234"}):
-            ok_pin = client.post("/api/simkl/pin?token=testsecret")
+            ok_pin = await client.post("/api/simkl/pin?token=testsecret")
             assert ok_pin.status_code == 200
             assert ok_pin.json()["user_code"] == "ABCD-1234"
             assert ok_pin.json()["device_code"] == "dev_123"
 
         with patch.object(simkl, "poll_device_pin", return_value={"status": "success", "result": "OK", "access_token": "tok123"}) as mock_poll:
-            poll_resp = client.post("/api/simkl/poll?token=testsecret", json={"user_code": "ABCD-1234", "device_code": "dev_123"})
+            poll_resp = await client.post("/api/simkl/poll?token=testsecret", json={"user_code": "ABCD-1234", "device_code": "dev_123"})
             assert poll_resp.status_code == 200
             assert poll_resp.json()["status"] == "success"
             mock_poll.assert_called_once_with("ABCD-1234", device_code="dev_123")
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_simkl_client_auth_v2_device_flow(tmp_path):
     """Verify Simkl AUTH V2 Device PIN request, polling, and token refresh."""
     from app.clients.simkl_client import SimklClient
@@ -5883,10 +6068,11 @@ async def test_simkl_client_auth_v2_device_flow(tmp_path):
     await client_no_secret.close()
 
 
-def test_dashboard_renders_simkl_card():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_renders_simkl_card():
     """Verify that the dashboard template renders the Simkl Multi-Tracker card and modal."""
-    client = TestClient(app)
-    resp = client.get("/")
+    client = make_async_test_client(app)
+    resp = await client.get("/")
     assert resp.status_code == 200
     html = resp.text
 
@@ -5897,7 +6083,7 @@ def test_dashboard_renders_simkl_card():
     assert "disconnectSimkl" in html
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_simkl_client_all_items_and_bulk_sync(tmp_path):
     """Verify SimklClient get_all_items, get_activities, bulk_sync_history, and bulk_sync_ratings."""
     from app.clients.simkl_client import SimklClient
@@ -5938,7 +6124,7 @@ async def test_simkl_client_all_items_and_bulk_sync(tmp_path):
         assert rate_res.get("status") == "success"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_cross_tracker_sync_manager_scan_and_execution():
     """Verify CrossTrackerSyncManager discrepancy detection and bi-directional reconciliation."""
     import asyncio
@@ -6014,52 +6200,54 @@ async def test_cross_tracker_sync_manager_scan_and_execution():
     assert mock_trakt.sync_history.called
 
 
-def test_cross_sync_api_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cross_sync_api_endpoints():
     """Verify FastAPI route handlers for cross-tracker synchronization."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. GET /api/cross-sync/status
-    res = client.get("/api/cross-sync/status?demo=true")
+    res = await client.get("/api/cross-sync/status?demo=true")
     assert res.status_code == 200
     data = res.json()
     assert data["configured"] is True
     assert "diff_count" in data
 
     # 2. GET /api/cross-sync/diff
-    demo_diff_res = client.get("/api/cross-sync/diff?demo=true")
+    demo_diff_res = await client.get("/api/cross-sync/diff?demo=true")
     assert demo_diff_res.status_code == 200
     assert len(demo_diff_res.json()["diff"]) > 0
 
     if Config.WEBHOOK_SECRET:
-        unauth_diff = client.get("/api/cross-sync/diff")
+        unauth_diff = await client.get("/api/cross-sync/diff")
         assert unauth_diff.status_code == 401
 
-        auth_diff = client.get(f"/api/cross-sync/diff?token={Config.WEBHOOK_SECRET}")
+        auth_diff = await client.get(f"/api/cross-sync/diff?token={Config.WEBHOOK_SECRET}")
         assert auth_diff.status_code == 200
     else:
-        auth_diff = client.get("/api/cross-sync/diff")
+        auth_diff = await client.get("/api/cross-sync/diff")
         assert auth_diff.status_code == 200
 
     # 3. POST /api/cross-sync/scan
-    demo_scan = client.post("/api/cross-sync/scan?demo=true")
+    demo_scan = await client.post("/api/cross-sync/scan?demo=true")
     assert demo_scan.status_code == 200
     assert "diff" in demo_scan.json()
 
     # 4. POST /api/cross-sync/execute
-    demo_exec = client.post("/api/cross-sync/execute?demo=true", json={"direction": "both"})
+    demo_exec = await client.post("/api/cross-sync/execute?demo=true", json={"direction": "both"})
     assert demo_exec.status_code == 200
     assert demo_exec.json()["status"] == "completed"
 
     # 5. GET /api/cross-sync/progress
-    prog = client.get("/api/cross-sync/progress")
+    prog = await client.get("/api/cross-sync/progress")
     assert prog.status_code == 200
     assert "status" in prog.json()
 
 
-def test_dashboard_renders_cross_sync_modal():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_renders_cross_sync_modal():
     """Verify that the dashboard renders the Cross-Tracker Reconciliation modal and trigger buttons."""
-    client = TestClient(app)
-    resp = client.get("/")
+    client = make_async_test_client(app)
+    resp = await client.get("/")
     assert resp.status_code == 200
     html = resp.text
 
@@ -6100,7 +6288,7 @@ def test_anilist_client_auth_and_persistence(tmp_path):
     assert not token_file.exists()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_anilist_client_check_connection():
     client = AniListClient(access_token="test_token")
 
@@ -6123,7 +6311,7 @@ async def test_anilist_client_check_connection():
         assert status["id"] == 12345
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_anilist_client_search_anime():
     client = AniListClient()
     mock_data = {
@@ -6155,7 +6343,7 @@ async def test_anilist_client_search_anime():
         assert res["title_preferred"] == "Attack on Titan"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_anilist_client_update_progress_and_rating():
     client = AniListClient(access_token="valid_token")
 
@@ -6212,7 +6400,7 @@ def test_mal_client_auth_and_persistence(tmp_path):
     assert not token_file.exists()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_mal_client_check_connection_and_search():
     client = MyAnimeListClient(access_token="test_mal_tok")
 
@@ -6253,7 +6441,7 @@ async def test_mal_client_check_connection_and_search():
         assert results["title"] == "Shingeki no Kyojin"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_mal_client_update_progress_and_rating():
     client = MyAnimeListClient(access_token="valid_mal_tok")
 
@@ -6294,7 +6482,7 @@ def test_anime_resolver_title_normalization():
     assert clean3 == "Jujutsu Kaisen"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_anime_resolver_direct_ids(tmp_path):
     mock_ani = MagicMock()
     mock_ani.get_media_by_id = AsyncMock(return_value={
@@ -6325,7 +6513,7 @@ async def test_anime_resolver_direct_ids(tmp_path):
     assert info["source"] == "direct_id"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_anime_resolver_caching_and_negative_cache(tmp_path):
     cache_file = tmp_path / "anime_cache.json"
     mock_anilist = MagicMock()
@@ -6390,7 +6578,7 @@ async def test_anime_resolver_caching_and_negative_cache(tmp_path):
     assert mock_anilist.search_anime.call_count == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_tracker_4way_dispatch():
     mock_trakt = MagicMock()
     mock_trakt.is_authenticated.return_value = True
@@ -6491,7 +6679,7 @@ async def test_multi_tracker_4way_dispatch():
     assert mock_mal.update_rating.called
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_tracker_non_anime_skips_anime_trackers():
     mock_trakt = MagicMock()
     mock_trakt.is_authenticated.return_value = True
@@ -6545,23 +6733,24 @@ async def test_multi_tracker_non_anime_skips_anime_trackers():
     assert not mock_mal.update_progress.called
 
 
-def test_anime_fastapi_endpoints():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_anime_fastapi_endpoints():
+    client = make_async_test_client(app)
 
     # 1. AniList Status Demo
-    res_ani_demo = client.get("/api/anilist/status?demo=true")
+    res_ani_demo = await client.get("/api/anilist/status?demo=true")
     assert res_ani_demo.status_code == 200
     assert res_ani_demo.json()["authenticated"] is True
     assert res_ani_demo.json()["user"] == "demo_otaku"
 
     # 2. MAL Status Demo
-    res_mal_demo = client.get("/api/mal/status?demo=true")
+    res_mal_demo = await client.get("/api/mal/status?demo=true")
     assert res_mal_demo.status_code == 200
     assert res_mal_demo.json()["authenticated"] is True
     assert res_mal_demo.json()["user"] == "demo_otaku"
 
     # 3. /api/anime/resolve diagnostic endpoint
-    res_resolve = client.get("/api/anime/resolve?title=Sousou%20no%20Frieren&year=2023")
+    res_resolve = await client.get("/api/anime/resolve?title=Sousou%20no%20Frieren&year=2023")
     assert res_resolve.status_code == 200
     data = res_resolve.json()
     assert "is_anime" in data
@@ -6575,55 +6764,55 @@ def test_anime_fastapi_endpoints():
 
         # Unauthorized
         client.cookies.clear()
-        res_unauth = client.post("/api/anilist/token", json={"token": "some_token"})
+        res_unauth = await client.post("/api/anilist/token", json={"token": "some_token"})
         assert res_unauth.status_code == 401
 
-        res_mal_unauth = client.post("/api/mal/token", json={"token": "some_token"})
+        res_mal_unauth = await client.post("/api/mal/token", json={"token": "some_token"})
         assert res_mal_unauth.status_code == 401
 
         # Authorized with invalid token should fail connection
         client.cookies.set("admin_token", "admintoken123")
         with patch.object(anilist, "check_connection", new_callable=AsyncMock) as mock_conn:
             mock_conn.return_value = {"status": "error", "error": "Invalid token"}
-            res_bad = client.post("/api/anilist/token", json={"token": "invalid_tok"})
+            res_bad = await client.post("/api/anilist/token", json={"token": "invalid_tok"})
             assert res_bad.status_code == 400
 
         with patch.object(mal, "check_connection", new_callable=AsyncMock) as mock_conn:
             mock_conn.return_value = {"status": "error", "error": "Invalid token"}
-            res_bad_mal = client.post("/api/mal/token", json={"token": "invalid_tok"})
+            res_bad_mal = await client.post("/api/mal/token", json={"token": "invalid_tok"})
             assert res_bad_mal.status_code == 400
 
         # Authorized with valid token
         with patch.object(anilist, "check_connection", new_callable=AsyncMock) as mock_conn, \
              patch.object(anilist, "save_tokens") as mock_save:
             mock_conn.return_value = {"status": "connected", "user": "ShinjiIkari", "id": 1}
-            res_good = client.post("/api/anilist/token", json={"token": "good_token"})
+            res_good = await client.post("/api/anilist/token", json={"token": "good_token"})
             assert res_good.status_code == 200
             assert res_good.json()["user"] == "ShinjiIkari"
             assert mock_save.called
 
         # Disconnect endpoints
         with patch.object(anilist, "delete_tokens") as mock_del:
-            res_disc = client.post("/api/anilist/disconnect")
+            res_disc = await client.post("/api/anilist/disconnect")
             assert res_disc.status_code == 200
             assert mock_del.called
 
         with patch.object(mal, "delete_tokens") as mock_del:
-            res_disc_mal = client.post("/api/mal/disconnect")
+            res_disc_mal = await client.post("/api/mal/disconnect")
             assert res_disc_mal.status_code == 200
             assert mock_del.called
 
         # Auth portal pages
         client.cookies.clear()
-        assert client.get("/auth/anilist").status_code == 401
-        assert client.get("/auth/mal").status_code == 401
+        assert (await client.get("/auth/anilist")).status_code == 401
+        assert (await client.get("/auth/mal")).status_code == 401
 
         client.cookies.set("admin_token", "admintoken123")
-        res_page_ani = client.get("/auth/anilist")
+        res_page_ani = await client.get("/auth/anilist")
         assert res_page_ani.status_code == 200
         assert "AniList Anime Tracker" in res_page_ani.text
 
-        res_page_mal = client.get("/auth/mal")
+        res_page_mal = await client.get("/auth/mal")
         assert res_page_mal.status_code == 200
         assert "MyAnimeList (MAL) Integration" in res_page_mal.text
 
@@ -6638,10 +6827,11 @@ def test_anime_fastapi_endpoints():
         client.cookies.clear()
 
 
-def test_dashboard_renders_anime_tracking_card_and_modals():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_renders_anime_tracking_card_and_modals():
     """Verify that the dashboard template renders the Anime card, modal dialogs, and triggers."""
-    client = TestClient(app)
-    resp = client.get("/")
+    client = make_async_test_client(app)
+    resp = await client.get("/")
     assert resp.status_code == 200
     html = resp.text
 
@@ -6700,17 +6890,18 @@ def test_settings_manager_lifecycle(tmp_path):
     assert mgr2.is_tracker_enabled("trakt") is True
 
 
-def test_settings_api_and_toggle_endpoint():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_settings_api_and_toggle_endpoint():
     """Verify GET /api/settings and POST /api/settings/toggle endpoints."""
     from app.services.settings_manager import settings_mgr
 
     orig_secret = Config.WEBHOOK_SECRET
     try:
         Config.WEBHOOK_SECRET = "secret123"
-        client = TestClient(app)
+        client = make_async_test_client(app)
 
         # GET is public status (returns 200)
-        res_get = client.get("/api/settings")
+        res_get = await client.get("/api/settings")
         assert res_get.status_code == 200
         data = res_get.json()
         assert "settings" in data
@@ -6718,7 +6909,7 @@ def test_settings_api_and_toggle_endpoint():
         assert "trackers" in data["settings"]
 
         # POST /api/settings/toggle unauthorized -> 401
-        res_unauth = client.post("/api/settings/toggle", json={
+        res_unauth = await client.post("/api/settings/toggle", json={
             "category": "server",
             "key": "jellyfin",
             "enabled": False
@@ -6726,7 +6917,7 @@ def test_settings_api_and_toggle_endpoint():
         assert res_unauth.status_code == 401
 
         # Toggle via POST authorized
-        res_toggle = client.post("/api/settings/toggle?token=secret123", json={
+        res_toggle = await client.post("/api/settings/toggle?token=secret123", json={
             "category": "server",
             "key": "jellyfin",
             "enabled": False
@@ -6736,7 +6927,7 @@ def test_settings_api_and_toggle_endpoint():
         assert settings_mgr.is_server_enabled("jellyfin") is False
 
         # Reset back
-        res_reset = client.post("/api/settings/toggle?token=secret123", json={
+        res_reset = await client.post("/api/settings/toggle?token=secret123", json={
             "category": "server",
             "key": "jellyfin",
             "enabled": True
@@ -6747,30 +6938,31 @@ def test_settings_api_and_toggle_endpoint():
         Config.WEBHOOK_SECRET = orig_secret
 
 
-def test_webhook_ingestion_paused_bypass():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_ingestion_paused_bypass():
     """Verify incoming webhooks are paused/bypassed when server ingestion is disabled in settings."""
     from app.services.settings_manager import settings_mgr
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
     try:
         settings_mgr.set_server_enabled("plex", False)
         settings_mgr.set_server_enabled("jellyfin", False)
         settings_mgr.set_server_enabled("emby", False)
 
         # Plex webhook
-        res_plex = client.post("/webhook", data={"payload": "{}"})
+        res_plex = await client.post("/webhook", data={"payload": "{}"})
         assert res_plex.status_code == 200
         assert res_plex.json()["status"] == "ignored"
         assert "Plex ingestion is paused" in res_plex.json()["reason"]
 
         # Jellyfin webhook
-        res_jf = client.post("/webhook/jellyfin", json={"NotificationType": "PlaybackStart"})
+        res_jf = await client.post("/webhook/jellyfin", json={"NotificationType": "PlaybackStart"})
         assert res_jf.status_code == 200
         assert res_jf.json()["status"] == "ignored"
         assert "Jellyfin ingestion is paused" in res_jf.json()["reason"]
 
         # Emby webhook
-        res_emby = client.post("/webhook/emby", data={"data": "{}"})
+        res_emby = await client.post("/webhook/emby", data={"data": "{}"})
         assert res_emby.status_code == 200
         assert res_emby.json()["status"] == "ignored"
         assert "Emby ingestion is paused" in res_emby.json()["reason"]
@@ -6780,15 +6972,16 @@ def test_webhook_ingestion_paused_bypass():
         settings_mgr.set_server_enabled("emby", True)
 
 
-def test_api_history_remove_endpoint():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_history_remove_endpoint():
     """Verify POST /api/history/remove unscrobbles items across trackers."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     orig_secret = Config.WEBHOOK_SECRET
     try:
         Config.WEBHOOK_SECRET = "admintoken"
 
         # Unauthorized
-        res_unauth = client.post("/api/history/remove", json={
+        res_unauth = await client.post("/api/history/remove", json={
             "media_type": "movie", "title": "Dune", "year": 2021
         })
         assert res_unauth.status_code == 401
@@ -6800,7 +6993,7 @@ def test_api_history_remove_endpoint():
                 "simkl": {"status": "removed"}
             }
 
-            res_ok = client.post("/api/history/remove?token=admintoken", json={
+            res_ok = await client.post("/api/history/remove?token=admintoken", json={
                 "media_type": "movie", "title": "Dune", "year": 2021,
                 "trackers": ["trakt", "simkl"],
                 "cowatch": True
@@ -6813,7 +7006,7 @@ def test_api_history_remove_endpoint():
         Config.WEBHOOK_SECRET = orig_secret
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_notifier_failure_alert_deduplication():
     """Verify Notifier sends failure alert and deduplicates subsequent identical alerts within TTL."""
     from app.services.notifier import Notifier
@@ -6888,7 +7081,8 @@ def test_notifier_discord_payload_includes_cowatch_partner_and_trackers():
     assert "Trakt, Simkl" in field_vals[idx_trk]
 
 
-def test_playback_activity_and_events_persistence(tmp_path, monkeypatch):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_playback_activity_and_events_persistence(tmp_path, monkeypatch):
     """Verify Playback Activity stats and Recent Activity logs persist across server restarts."""
     from collections import deque
     import app.main as main_mod
@@ -6934,17 +7128,17 @@ def test_playback_activity_and_events_persistence(tmp_path, monkeypatch):
     assert main_mod.recent_events[0]["title"] == "Severance S02E01"
 
     # Test clear_events empties disk persistence
-    client = TestClient(main_mod.app)
+    client = make_async_test_client(main_mod.app)
     orig_secret = Config.WEBHOOK_SECRET
     try:
         Config.WEBHOOK_SECRET = "secret123"
-        res = client.post("/api/events/clear?token=secret123")
+        res = await client.post("/api/events/clear?token=secret123")
         assert res.status_code == 200
         main_mod.reload_recent_events_in_place()
         assert len(main_mod.recent_events) == 0
 
         # Test stats reset endpoint
-        res_reset = client.post("/api/stats/reset?token=secret123")
+        res_reset = await client.post("/api/stats/reset?token=secret123")
         assert res_reset.status_code == 200
         assert res_reset.json()["stats"]["total"] == 0
         cleared_stats = main_mod.load_scrobble_stats()
@@ -6953,12 +7147,13 @@ def test_playback_activity_and_events_persistence(tmp_path, monkeypatch):
         Config.WEBHOOK_SECRET = orig_secret
 
 
-def test_quick_scrobble_modal_defaults_and_simkl_button():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_quick_scrobble_modal_defaults_and_simkl_button():
     """Verify that the quick scrobble modal only defaults to configured trackers and co-watch is unchecked."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Test live dashboard (unauthenticated trackers by default in mock env)
-    resp = client.get("/")
+    resp = await client.get("/")
     assert resp.status_code == 200
     html = resp.text
 
@@ -6971,7 +7166,7 @@ def test_quick_scrobble_modal_defaults_and_simkl_button():
     assert "'scrobble-trk-trakt':" in html
 
     # 2. Test demo dashboard (all trackers active in demo)
-    resp_demo = client.get("/demo")
+    resp_demo = await client.get("/demo")
     assert resp_demo.status_code == 200
     demo_html = resp_demo.text
 
@@ -6990,7 +7185,8 @@ def test_quick_scrobble_modal_defaults_and_simkl_button():
     assert 'onclick="openManualScrobbleModal()"' in demo_html
 
 
-def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
     """Verify GET and POST /api/settings with credential masking, auth protection, and live reload."""
     from app.services.settings_manager import settings_mgr
     from app.main import simkl, arr_bridge
@@ -7005,10 +7201,17 @@ def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
     }
     settings_mgr._save_settings()
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
-    # 1. GET /api/settings returns masked settings
-    res = client.get("/api/settings")
+    # Anonymous callers get only public enablement flags, not private config.
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "supersecret123")
+    public_res = await client.get("/api/settings")
+    assert public_res.status_code == 200
+    public_settings = public_res.json()["settings"]
+    assert set(public_settings) == {"servers", "trackers", "multi_server_mirroring"}
+
+    # Admin GET returns full settings with credentials masked.
+    res = await client.get("/api/settings", headers={"x-webhook-secret": "supersecret123"})
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "success"
@@ -7019,8 +7222,7 @@ def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
     assert "arr" in data
 
     # 2. Auth Protection: Require admin when secret configured
-    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "supersecret123")
-    unauth_res = client.post("/api/settings", json={"servers": {"jellyfin": True}})
+    unauth_res = await client.post("/api/settings", json={"servers": {"jellyfin": True}})
     assert unauth_res.status_code == 401
     assert "Unauthorized" in unauth_res.json()["detail"]
 
@@ -7050,7 +7252,7 @@ def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
             "search_on_add": True,
         },
     }
-    update_res = client.post("/api/settings", json=payload)
+    update_res = await client.post("/api/settings", json=payload)
     assert update_res.status_code == 200
     up_data = update_res.json()
     assert up_data["status"] == "success"
@@ -7076,7 +7278,7 @@ def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
             "sonarr_api_key": "••••••••2222",
         },
     }
-    mask_res = client.post("/api/settings", json=mask_payload)
+    mask_res = await client.post("/api/settings", json=mask_payload)
     assert mask_res.status_code == 200
 
     # Unmasked check in settings manager
@@ -7087,26 +7289,27 @@ def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
     assert unmasked_arr["sonarr_api_key"] == "sonarr_key_raw_2222"
 
 
-def test_arr_test_connection_endpoint(monkeypatch):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_arr_test_connection_endpoint(monkeypatch):
     """Verify POST /api/arr/test-connection for Sonarr and Radarr with demo and mocked connectivity."""
     from app.clients.sonarr_client import SonarrClient
     from app.clients.radarr_client import RadarrClient
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Demo mode returns simulated success
-    demo_res = client.post("/api/arr/test-connection?demo=true", json={"app": "sonarr"})
+    demo_res = await client.post("/api/arr/test-connection?demo=true", json={"app": "sonarr"})
     assert demo_res.status_code == 200
     assert demo_res.json()["status"] == "connected"
     assert demo_res.json()["app"] == "sonarr"
 
-    demo_radarr = client.post("/api/arr/test-connection?demo=true", json={"app": "radarr"})
+    demo_radarr = await client.post("/api/arr/test-connection?demo=true", json={"app": "radarr"})
     assert demo_radarr.status_code == 200
     assert demo_radarr.json()["status"] == "connected"
     assert demo_radarr.json()["app"] == "radarr"
 
     # 2. Auth protection
     monkeypatch.setattr(Config, "WEBHOOK_SECRET", "pwd12345")
-    unauth_res = client.post("/api/arr/test-connection", json={"app": "sonarr"})
+    unauth_res = await client.post("/api/arr/test-connection", json={"app": "sonarr"})
     assert unauth_res.status_code == 401
 
     # 3. As admin with mock
@@ -7114,28 +7317,29 @@ def test_arr_test_connection_endpoint(monkeypatch):
 
     with patch.object(SonarrClient, "check_connection", new_callable=AsyncMock) as mock_sonarr:
         mock_sonarr.return_value = {"status": "connected", "version": "4.0.9"}
-        s_res = client.post("/api/arr/test-connection", json={"app": "sonarr", "url": "http://127.0.0.1:8989", "api_key": "testkey"})
+        s_res = await client.post("/api/arr/test-connection", json={"app": "sonarr", "url": "http://127.0.0.1:8989", "api_key": "testkey"})
         assert s_res.status_code == 200
         assert s_res.json()["status"] == "connected"
 
     with patch.object(RadarrClient, "check_connection", new_callable=AsyncMock) as mock_radarr:
         mock_radarr.return_value = {"status": "connected", "version": "5.9.1"}
-        r_res = client.post("/api/arr/test-connection", json={"app": "radarr", "url": "http://127.0.0.1:7878", "api_key": "testkey"})
+        r_res = await client.post("/api/arr/test-connection", json={"app": "radarr", "url": "http://127.0.0.1:7878", "api_key": "testkey"})
         assert r_res.status_code == 200
         assert r_res.json()["status"] == "connected"
 
     # 4. Invalid app type returns 400
-    bad_res = client.post("/api/arr/test-connection", json={"app": "lidarr"})
+    bad_res = await client.post("/api/arr/test-connection", json={"app": "lidarr"})
     assert bad_res.status_code == 400
     assert "Invalid app" in bad_res.json()["detail"]
 
 
-def test_settings_modal_dashboard_rendering():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_settings_modal_dashboard_rendering():
     """Verify that #settings-modal, header button, and contextual deep links render on dashboard."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Main dashboard renders #settings-modal and Settings Hub header button
-    res = client.get("/")
+    res = await client.get("/")
     assert res.status_code == 200
     html_content = res.text
 
@@ -7155,7 +7359,7 @@ def test_settings_modal_dashboard_rendering():
     assert "openSettingsModal('automation')" in html_content
 
     # 2. Demo dashboard also includes Settings Hub
-    demo_res = client.get("/demo")
+    demo_res = await client.get("/demo")
     assert demo_res.status_code == 200
     assert 'id="settings-modal"' in demo_res.text
     assert "Settings Hub" in demo_res.text
@@ -7163,7 +7367,8 @@ def test_settings_modal_dashboard_rendering():
     assert '<button onclick="openSettingsModal()"' in demo_res.text
 
 
-def test_all_dashboard_modals_have_overlay_styling_and_hidden_by_default():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_all_dashboard_modals_have_overlay_styling_and_hidden_by_default():
     """Every element wrapping a .modal-dialog must be class="modal" with a unique "*-modal" id,
     and the stylesheet must hide it by default as a fixed overlay.
 
@@ -7194,9 +7399,9 @@ def test_all_dashboard_modals_have_overlay_styling_and_hidden_by_default():
             if tag not in self.VOID and self.stack:
                 self.stack.pop()
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
     for path in ("/", "/demo"):
-        res = client.get(path)
+        res = await client.get(path)
         assert res.status_code == 200
         html_content = res.text
 
@@ -7225,7 +7430,8 @@ def test_all_dashboard_modals_have_overlay_styling_and_hidden_by_default():
         assert "z-index: 9999;" in modal_css
 
 
-def test_activity_table_show_cowatch_alignment():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_activity_table_show_cowatch_alignment():
     """Verify that events with media_type=='show' resolve show_title, detect co-watching, and render aligned action buttons."""
     from app.services.cowatch_manager import cowatch_mgr
     from app.main import recent_events, log_event
@@ -7251,10 +7457,10 @@ def test_activity_table_show_cowatch_alignment():
     assert latest["type"] == "show"
     assert latest["show_title"] in ("Ted Lasso (2020)", "Ted Lasso")
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 3. Test /api/events endpoint calculates is_cowatch_show=True
-    res = client.get("/api/events")
+    res = await client.get("/api/events")
     assert res.status_code == 200
     events = res.json()["events"]
     show_ev = next((e for e in events if e.get("type") == "show"), None)
@@ -7263,7 +7469,7 @@ def test_activity_table_show_cowatch_alignment():
 
     # 4. Test SSR dashboard renders clean flex layout without inert badge or redundant + Co-Watch button for whitelisted show
     client.cookies.set("admin_token", "unlocked")
-    dash_res = client.get("/")
+    dash_res = await client.get("/")
     assert dash_res.status_code == 200
     html = dash_res.text
     assert "✓ Co-Watching" not in html
@@ -7271,20 +7477,21 @@ def test_activity_table_show_cowatch_alignment():
     assert '<div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">' in html
 
 
-def test_cache_control_headers_and_sw_invalidation():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cache_control_headers_and_sw_invalidation():
     """Verify that dashboard, API endpoints, and sw.js have no-cache headers and sw.js is dynamically versioned."""
     from app.main import APP_VERSION
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Root dashboard returns no-cache headers
-    dash_res = client.get("/")
+    dash_res = await client.get("/")
     assert dash_res.status_code == 200
     cache_ctrl = dash_res.headers.get("cache-control", "")
     assert "no-cache" in cache_ctrl
     assert "no-store" in cache_ctrl
 
     # 2. Service worker script returns no-cache headers and dynamic versioning
-    sw_res = client.get("/sw.js")
+    sw_res = await client.get("/sw.js")
     assert sw_res.status_code == 200
     sw_cache = sw_res.headers.get("cache-control", "")
     assert "no-cache" in sw_cache
@@ -7294,36 +7501,38 @@ def test_cache_control_headers_and_sw_invalidation():
     assert "'/'" not in static_assets_block and '"/"' not in static_assets_block
 
     # 3. Dynamic API endpoint returns no-cache headers
-    api_res = client.get("/api/events")
+    api_res = await client.get("/api/events")
     assert api_res.status_code == 200
     assert "no-cache" in api_res.headers.get("cache-control", "")
 
 
-def test_http_security_headers():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_http_security_headers():
     """Verify security headers are present on dashboard and API responses."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     for path in ["/", "/api/events", "/sw.js"]:
-        res = client.get(path)
+        res = await client.get(path)
         assert res.headers.get("x-frame-options") == "SAMEORIGIN"
         assert res.headers.get("x-content-type-options") == "nosniff"
         assert res.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
 
 
-def test_admin_unlock_rate_limiting():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_admin_unlock_rate_limiting():
     """Verify admin unlock enforces rate limiting (429) after multiple failed attempts."""
     from app.main import _failed_unlock_attempts
     _failed_unlock_attempts.clear()
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "correct_secret_phrase"):
         # First 5 failed attempts return 401
         for i in range(5):
-            res = client.post("/api/admin/unlock", json={"token": f"wrong_{i}"})
+            res = await client.post("/api/admin/unlock", json={"token": f"wrong_{i}"})
             assert res.status_code == 401
             assert "Invalid admin secret" in res.json().get("detail", "")
 
         # 6th attempt triggers 429 rate limit
-        res_blocked = client.post("/api/admin/unlock", json={"token": "wrong_6"})
+        res_blocked = await client.post("/api/admin/unlock", json={"token": "wrong_6"})
         assert res_blocked.status_code == 429
         assert "Too many failed unlock attempts" in res_blocked.json().get("detail", "")
         assert "Retry-After" in res_blocked.headers
@@ -7331,10 +7540,11 @@ def test_admin_unlock_rate_limiting():
     _failed_unlock_attempts.clear()
 
 
-def test_ssr_html_escaping():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_ssr_html_escaping():
     """Verify stored strings in SSR events table are safely HTML-escaped to prevent Stored XSS."""
     from app.main import log_event, ParsedMedia
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     malicious_title = "<script>alert('xss_title')</script>"
     malicious_user = "<img src=x onerror=alert('xss_user')>"
@@ -7353,40 +7563,42 @@ def test_ssr_html_escaping():
         result={"status": "ok"},
     )
 
-    res = client.get("/")
+    res = await client.get("/")
     assert res.status_code == 200
     assert "<script>alert('xss_title')</script>" not in res.text
     assert "<img src=x onerror=alert('xss_user')>" not in res.text
     assert "&lt;script&gt;alert(&#x27;xss_title&#x27;)&lt;/script&gt;" in res.text or "&lt;script&gt;alert('xss_title')&lt;/script&gt;" in res.text
 
 
-def test_connection_endpoint_url_validation():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_connection_endpoint_url_validation():
     """Verify test-connection endpoints reject non-http/https URL schemes."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "super_admin_pass"):
         client.cookies.set("admin_token", "super_admin_pass")
 
         # Test sync connection with invalid scheme
-        res_sync = client.post("/api/sync/test-connection", json={"server": "plex", "url": "file:///etc/passwd", "token": "tok"})
+        res_sync = await client.post("/api/sync/test-connection", json={"server": "plex", "url": "file:///etc/passwd", "token": "tok"})
         assert res_sync.status_code == 400
         assert "must start with http:// or https://" in res_sync.json().get("detail", "")
 
-        res_jf = client.post("/api/sync/test-connection", json={"server": "jellyfin", "url": "gopher://127.0.0.1", "token": "tok"})
+        res_jf = await client.post("/api/sync/test-connection", json={"server": "jellyfin", "url": "gopher://127.0.0.1", "token": "tok"})
         assert res_jf.status_code == 400
         assert "must start with http:// or https://" in res_jf.json().get("detail", "")
 
         # Test Arr connection with invalid scheme
-        res_sonarr = client.post("/api/arr/test-connection", json={"app": "sonarr", "url": "ftp://malicious.host", "api_key": "key"})
+        res_sonarr = await client.post("/api/arr/test-connection", json={"app": "sonarr", "url": "ftp://malicious.host", "api_key": "key"})
         assert res_sonarr.status_code == 400
         assert "must start with http:// or https://" in res_sonarr.json().get("detail", "")
 
-        res_radarr = client.post("/api/arr/test-connection", json={"app": "radarr", "url": "data:text/html,boom", "api_key": "key"})
+        res_radarr = await client.post("/api/arr/test-connection", json={"app": "radarr", "url": "data:text/html,boom", "api_key": "key"})
         assert res_radarr.status_code == 400
         assert "must start with http:// or https://" in res_radarr.json().get("detail", "")
 
 
-def test_api_events_pagination_and_dashboard_controls():
-    client = TestClient(app)
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_events_pagination_and_dashboard_controls():
+    client = make_async_test_client(app)
     recent_events.clear()
 
     # Seed 25 test events
@@ -7409,39 +7621,39 @@ def test_api_events_pagination_and_dashboard_controls():
 
     try:
         # 1. /api/events returns all 25 items and total
-        res = client.get("/api/events")
+        res = await client.get("/api/events")
         assert res.status_code == 200
         data = res.json()
         assert len(data["events"]) == 25
         assert data["total"] == 25
 
         # 2. /api/events with limit & offset
-        res_page1 = client.get("/api/events?limit=10&offset=0")
+        res_page1 = await client.get("/api/events?limit=10&offset=0")
         assert res_page1.status_code == 200
         data1 = res_page1.json()
         assert len(data1["events"]) == 10
         assert data1["total"] == 25
         assert data1["events"][0]["title"] == "Show S01E25"
 
-        res_page2 = client.get("/api/events?limit=10&offset=10")
+        res_page2 = await client.get("/api/events?limit=10&offset=10")
         assert res_page2.status_code == 200
         data2 = res_page2.json()
         assert len(data2["events"]) == 10
         assert data2["events"][0]["title"] == "Show S01E15"
 
-        res_page3 = client.get("/api/events?limit=10&offset=20")
+        res_page3 = await client.get("/api/events?limit=10&offset=20")
         assert res_page3.status_code == 200
         data3 = res_page3.json()
         assert len(data3["events"]) == 5
 
         # 3. /api/events in demo mode
-        res_demo = client.get("/api/events?demo=true&limit=2&offset=0")
+        res_demo = await client.get("/api/events?demo=true&limit=2&offset=0")
         assert res_demo.status_code == 200
         assert len(res_demo.json()["events"]) == 2
         assert res_demo.json()["total"] > 2
 
         # 4. Dashboard HTML includes pagination controls and info
-        dash_res = client.get("/")
+        dash_res = await client.get("/")
         assert dash_res.status_code == 200
         assert "events-pagination" in dash_res.text
         assert "events-page-info" in dash_res.text
@@ -7457,7 +7669,7 @@ def test_api_events_pagination_and_dashboard_controls():
         recent_events.clear()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_activity_table_ui_polish():
     """Verify action label formatting, co-watch badge filtering, unhandled webhook skipping, and SSR styling."""
     from app.main import (
@@ -7530,7 +7742,7 @@ async def test_activity_table_ui_polish():
     assert len([e for e in recent_events if e.get("action") == "none"]) == 0
 
     # 5. SSR Dashboard Table Verification
-    client = TestClient(app)
+    client = make_async_test_client(app)
     client.cookies.set("admin_token", "unlocked")
 
     # Log a 0% stopped event (should have clean ✓ OK badge, NOT Solo or raw ok)
@@ -7578,7 +7790,7 @@ async def test_activity_table_ui_polish():
         cowatch_status={"synced": False, "reason": "Not in shared co-watch list"},
     )
 
-    dash_res = client.get("/")
+    dash_res = await client.get("/")
     assert dash_res.status_code == 200
     html_text = dash_res.text
 
@@ -7605,16 +7817,17 @@ async def test_activity_table_ui_polish():
     assert 'display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;' in html_text
 
 
-def test_settings_api_notifications():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_settings_api_notifications():
     """Verify GET and POST /api/settings handles notifications configuration and masking."""
     from app.services.settings_manager import settings_mgr
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "supersecret"):
         headers = {"x-webhook-secret": "supersecret"}
 
         # 1. GET settings includes notifications
-        res = client.get("/api/settings", headers=headers)
+        res = await client.get("/api/settings", headers=headers)
         assert res.status_code == 200
         data = res.json()
         assert "notifications" in data
@@ -7642,7 +7855,7 @@ def test_settings_api_notifications():
                 "notify_on_failure": True,
             }
         }
-        res_post = client.post("/api/settings", headers=headers, json=new_payload)
+        res_post = await client.post("/api/settings", headers=headers, json=new_payload)
         assert res_post.status_code == 200
         saved = res_post.json()["settings"]["notifications"]
 
@@ -7664,7 +7877,7 @@ def test_settings_api_notifications():
         assert raw["ntfy_auth_token"] == "secret_ntfy_tk_9999"
 
         # Submitting masked value should preserve existing secret
-        res_masked = client.post(
+        res_masked = await client.post(
             "/api/settings",
             headers=headers,
             json={"notifications": {"discord_webhook_url": saved["discord_webhook_url"]}}
@@ -7684,18 +7897,19 @@ def test_settings_api_notifications():
         })
 
 
-def test_notifications_test_endpoint_auth():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_notifications_test_endpoint_auth():
     """Verify authentication and validation on POST /api/notifications/test."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "supersecret"):
         # 1. Unauthorized request
-        res_unauth = client.post("/api/notifications/test", json={"channel": "discord"})
+        res_unauth = await client.post("/api/notifications/test", json={"channel": "discord"})
         assert res_unauth.status_code == 401
 
         # 2. Authorized but invalid channel
         headers = {"x-webhook-secret": "supersecret"}
-        res_invalid = client.post(
+        res_invalid = await client.post(
             "/api/notifications/test",
             headers=headers,
             json={"channel": "unsupported_channel"}
@@ -7704,11 +7918,11 @@ def test_notifications_test_endpoint_auth():
         assert "Unknown notification channel" in res_invalid.json()["message"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_notifications_test_endpoint_channels():
     """Verify test notification dispatch across all supported channels."""
     from app.services.settings_manager import settings_mgr
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     settings_mgr.update_notifications({
         "discord_webhook_url": "",
@@ -7729,7 +7943,7 @@ async def test_notifications_test_endpoint_channels():
         headers = {"x-webhook-secret": "supersecret"}
 
         # 1. Discord unconfigured
-        res_disc_none = client.post("/api/notifications/test", headers=headers, json={"channel": "discord"})
+        res_disc_none = await client.post("/api/notifications/test", headers=headers, json={"channel": "discord"})
         assert res_disc_none.status_code == 400
         assert res_disc_none.json()["status"] == "error"
         assert "not configured" in res_disc_none.json()["message"]
@@ -7737,7 +7951,7 @@ async def test_notifications_test_endpoint_channels():
         # Discord success
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=204, text="")
-            res_disc = client.post(
+            res_disc = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "discord", "discord_webhook_url": "https://discord.com/api/webhooks/test/123"}
@@ -7748,7 +7962,7 @@ async def test_notifications_test_endpoint_channels():
         # Discord failure
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=400, text="Bad Request")
-            res_disc_fail = client.post(
+            res_disc_fail = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "discord", "discord_webhook_url": "https://discord.com/api/webhooks/test/123"}
@@ -7758,14 +7972,14 @@ async def test_notifications_test_endpoint_channels():
             assert "HTTP 400" in res_disc_fail.json()["message"]
 
         # 2. Telegram unconfigured
-        res_tg_none = client.post("/api/notifications/test", headers=headers, json={"channel": "telegram"})
+        res_tg_none = await client.post("/api/notifications/test", headers=headers, json={"channel": "telegram"})
         assert res_tg_none.status_code == 400
         assert res_tg_none.json()["status"] == "error"
 
         # Telegram success
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, text="{}")
-            res_tg = client.post(
+            res_tg = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "telegram", "telegram_bot_token": "bot123", "telegram_chat_id": "chat123"}
@@ -7776,7 +7990,7 @@ async def test_notifications_test_endpoint_channels():
         # 3. Ntfy success (without auth and with auth token)
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, text="ok")
-            res_ntfy = client.post(
+            res_ntfy = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "ntfy", "ntfy_url": "https://ntfy.sh/my-topic"}
@@ -7787,7 +8001,7 @@ async def test_notifications_test_endpoint_channels():
 
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, text="ok")
-            res_ntfy_auth = client.post(
+            res_ntfy_auth = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "ntfy", "ntfy_url": "https://ntfy.sh/my-topic", "ntfy_auth_token": "secret_token_123"}
@@ -7799,7 +8013,7 @@ async def test_notifications_test_endpoint_channels():
         # 4. Pushover success
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, text='{"status": 1}')
-            res_push = client.post(
+            res_push = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "pushover", "pushover_user_key": "ukey", "pushover_api_token": "atoken"}
@@ -7815,7 +8029,7 @@ async def test_notifications_test_endpoint_channels():
         })
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=204, text="")
-            res_masked = client.post(
+            res_masked = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "discord", "discord_webhook_url": "••••••••dcrd"}
@@ -7826,7 +8040,7 @@ async def test_notifications_test_endpoint_channels():
 
         with patch.object(httpx.AsyncClient, "post") as mock_post:
             mock_post.return_value = MagicMock(status_code=200, text="{}")
-            res_masked_tg = client.post(
+            res_masked_tg = await client.post(
                 "/api/notifications/test",
                 headers=headers,
                 json={"channel": "telegram", "telegram_bot_token": "••••••••tele", "telegram_chat_id": "chat_12345"}
@@ -7871,7 +8085,7 @@ def test_notifier_dynamic_settings_resolution():
     settings_mgr.update_notifications({"notify_on_rate": True, "ntfy_auth_token": ""})
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_dynamic_credentials_and_token_management(tmp_path):
     """Verify TraktClient dynamic credential resolution, update_credentials, is_enabled, and delete_tokens."""
     from app.clients.trakt_client import TraktClient
@@ -7901,7 +8115,7 @@ async def test_trakt_dynamic_credentials_and_token_management(tmp_path):
     assert not tokens_file.exists()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_poll_for_token_client_credentials_and_errors(tmp_path):
     """Verify TraktClient.poll_for_token forwards client_secret and raises friendly error on 401."""
     from app.clients.trakt_client import TraktClient
@@ -7924,15 +8138,15 @@ async def test_trakt_poll_for_token_client_credentials_and_errors(tmp_path):
     assert "Settings Hub" in str(exc_info.value)
 
 
-def test_trakt_api_status_and_disconnect_endpoints(tmp_path):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_trakt_api_status_and_disconnect_endpoints(tmp_path):
     """Verify /api/trakt/status and /api/trakt/disconnect API endpoints."""
-    from starlette.testclient import TestClient
     from app.main import app, user_mgr, trakt
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Demo mode status
-    resp = client.get("/api/trakt/status?demo=true")
+    resp = await client.get("/api/trakt/status?demo=true")
     assert resp.status_code == 200
     data = resp.json()
     assert data["enabled"] is True
@@ -7941,7 +8155,7 @@ def test_trakt_api_status_and_disconnect_endpoints(tmp_path):
     assert data["user"] == "demo_viewer"
 
     # 2. Live status
-    resp = client.get("/api/trakt/status")
+    resp = await client.get("/api/trakt/status")
     assert resp.status_code == 200
     live_data = resp.json()
     assert "enabled" in live_data
@@ -7950,21 +8164,21 @@ def test_trakt_api_status_and_disconnect_endpoints(tmp_path):
 
     # 3. Disconnect requires admin (or open mode if WEBHOOK_SECRET is empty)
     with patch.object(Config, "WEBHOOK_SECRET", "supersecret"):
-        unauth = client.post("/api/trakt/disconnect")
+        unauth = await client.post("/api/trakt/disconnect")
         assert unauth.status_code == 401
 
-        auth = client.post("/api/trakt/disconnect", headers={"x-webhook-secret": "supersecret"})
+        auth = await client.post("/api/trakt/disconnect", headers={"x-webhook-secret": "supersecret"})
         assert auth.status_code == 200
         assert auth.json()["status"] == "ok"
 
 
-def test_settings_hub_trakt_credential_sync_and_tracker_statuses():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_settings_hub_trakt_credential_sync_and_tracker_statuses():
     """Verify PUT /api/settings syncs Trakt credentials to both trakt and user_mgr dynamically."""
-    from starlette.testclient import TestClient
     from app.main import app, trakt, user_mgr, anilist, mal
     from app.services.settings_manager import settings_mgr
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "adminkey"):
         payload = {
@@ -7983,7 +8197,7 @@ def test_settings_hub_trakt_credential_sync_and_tracker_statuses():
                 },
             }
         }
-        res = client.put("/api/settings", json=payload, headers={"x-webhook-secret": "adminkey"})
+        res = await client.put("/api/settings", json=payload, headers={"x-webhook-secret": "adminkey"})
         assert res.status_code == 200
 
         # Verify trakt and user_mgr dynamically updated
@@ -7995,22 +8209,22 @@ def test_settings_hub_trakt_credential_sync_and_tracker_statuses():
 
         # Verify /api/anilist/status and /api/mal/status respect dynamic is_enabled
         settings_mgr.set_tracker_enabled("anilist", False)
-        ani_res = client.get("/api/anilist/status")
+        ani_res = await client.get("/api/anilist/status")
         assert ani_res.status_code == 200
         assert ani_res.json()["enabled"] is False
 
         settings_mgr.set_tracker_enabled("anilist", True)
-        ani_res2 = client.get("/api/anilist/status")
+        ani_res2 = await client.get("/api/anilist/status")
         assert ani_res2.status_code == 200
         assert ani_res2.json()["enabled"] is True
 
         settings_mgr.set_tracker_enabled("mal", False)
-        mal_res = client.get("/api/mal/status")
+        mal_res = await client.get("/api/mal/status")
         assert mal_res.status_code == 200
         assert mal_res.json()["enabled"] is False
 
         settings_mgr.set_tracker_enabled("mal", True)
-        mal_res2 = client.get("/api/mal/status")
+        mal_res2 = await client.get("/api/mal/status")
         assert mal_res2.status_code == 200
         assert mal_res2.json()["enabled"] is True
 
@@ -8115,7 +8329,7 @@ def test_webhook_simulator_payload_generation_and_parsing():
 # Pillar 3 & 4: Cloud Trackers, Categorization & Endpoints Unit Tests
 # =====================================================================
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_tmdb_client_operations(monkeypatch):
     """Verify TMDbClient watchlist sync, ratings, and connection check."""
     from app.clients.tmdb_client import TMDbClient
@@ -8164,7 +8378,7 @@ async def test_tmdb_client_operations(monkeypatch):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_kitsu_client_operations(monkeypatch):
     """Verify KitsuClient anime search, progress updates, ratings, and delete progress."""
     from app.clients.kitsu_client import KitsuClient
@@ -8229,7 +8443,7 @@ async def test_kitsu_client_operations(monkeypatch):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_letterboxd_client_diary_and_csv(tmp_path, monkeypatch):
     """Verify LetterboxdClient persistent diary store and RFC-4180 CSV export."""
     from app.clients.letterboxd_client import LetterboxdClient
@@ -8284,7 +8498,7 @@ async def test_letterboxd_client_diary_and_csv(tmp_path, monkeypatch):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_serializd_client_operations(monkeypatch):
     """Verify SerializdClient TV episode diary logging and ratings."""
     from app.clients.serializd_client import SerializdClient
@@ -8331,7 +8545,7 @@ async def test_serializd_client_operations(monkeypatch):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_mdblist_client_operations(monkeypatch):
     """Verify MDBListClient external score enrichment and watchlist ingestion."""
     from app.clients.mdblist_client import MDBListClient
@@ -8381,7 +8595,7 @@ async def test_mdblist_client_operations(monkeypatch):
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_tracker_categorized_status_and_capabilities(tmp_path):
     """Verify MultiTrackerManager 4-category taxonomy and registry."""
     from app.services.multi_tracker import MultiTrackerManager
@@ -8424,12 +8638,13 @@ async def test_multi_tracker_categorized_status_and_capabilities(tmp_path):
     await mt.close()
 
 
-def test_cloud_tracker_api_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cloud_tracker_api_endpoints():
     """Verify HTTP API endpoints for all cloud trackers, Letterboxd CSV export, and relay."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Structured Multi-Tracker status
-    res = client.get("/api/trackers/status")
+    res = await client.get("/api/trackers/status")
     assert res.status_code == 200
     data = res.json()
     assert "categories" in data
@@ -8440,77 +8655,77 @@ def test_cloud_tracker_api_endpoints():
     assert "trackers" in data
 
     # 2. TMDb status
-    res_tmdb = client.get("/api/tmdb/status")
+    res_tmdb = await client.get("/api/tmdb/status")
     assert res_tmdb.status_code == 200
     assert "status" in res_tmdb.json()
 
     # 3. Kitsu status
-    res_kitsu = client.get("/api/kitsu/status")
+    res_kitsu = await client.get("/api/kitsu/status")
     assert res_kitsu.status_code == 200
     assert "status" in res_kitsu.json()
 
     # 4. Letterboxd status & diary
-    res_lb = client.get("/api/letterboxd/status")
+    res_lb = await client.get("/api/letterboxd/status")
     assert res_lb.status_code == 200
 
-    res_diary = client.get("/api/letterboxd/diary")
+    res_diary = await client.get("/api/letterboxd/diary")
     assert res_diary.status_code == 200
     assert isinstance(res_diary.json(), list)
 
-    res_export = client.get("/api/letterboxd/export")
+    res_export = await client.get("/api/letterboxd/export")
     assert res_export.status_code == 200
     assert "text/csv" in res_export.headers.get("content-type", "")
     assert "Title,Year,WatchedDate" in res_export.text
 
     # 5. Serializd status
-    res_ser = client.get("/api/serializd/status")
+    res_ser = await client.get("/api/serializd/status")
     assert res_ser.status_code == 200
 
     # 6. MDBList status & ratings endpoint (demo and unconfigured behaviors)
-    res_mdb = client.get("/api/mdblist/status")
+    res_mdb = await client.get("/api/mdblist/status")
     assert res_mdb.status_code == 200
 
-    res_mdb_r = client.get("/api/mdblist/ratings?demo=true")
+    res_mdb_r = await client.get("/api/mdblist/ratings?demo=true")
     assert res_mdb_r.status_code == 200
     assert res_mdb_r.json().get("title") == "Dune: Part Two"
 
     # 7. Relay status
-    res_relay = client.get("/api/relay/status")
+    res_relay = await client.get("/api/relay/status")
     assert res_relay.status_code == 200
     relay_data = res_relay.json()
     assert "SeriesGuide" in relay_data.get("supported_apps", [])
     assert "Showly" in relay_data.get("supported_apps", [])
 
 
-def test_cloud_tracker_security_and_privacy(monkeypatch, tmp_path):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cloud_tracker_security_and_privacy(monkeypatch, tmp_path):
     """Verify admin authorization, privacy masking, and backup inclusion for cloud trackers."""
-    from fastapi.testclient import TestClient
     from app.main import app
     from app.config import Config
     import app.main as main_mod
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. When WEBHOOK_SECRET is set, non-admin requests to /api/letterboxd/export and /api/letterboxd/diary return 401
     monkeypatch.setattr(Config, "WEBHOOK_SECRET", "super_secret_webhook_key_123")
 
     # Unauthenticated export & diary
-    res_export_unauth = client.get("/api/letterboxd/export")
+    res_export_unauth = await client.get("/api/letterboxd/export")
     assert res_export_unauth.status_code == 401
 
-    res_diary_unauth = client.get("/api/letterboxd/diary")
+    res_diary_unauth = await client.get("/api/letterboxd/diary")
     assert res_diary_unauth.status_code == 401
 
     # Authenticated export & diary with ?token=
-    res_export_auth = client.get("/api/letterboxd/export?token=super_secret_webhook_key_123")
+    res_export_auth = await client.get("/api/letterboxd/export?token=super_secret_webhook_key_123")
     assert res_export_auth.status_code == 200
     assert "text/csv" in res_export_auth.headers.get("content-type", "")
 
-    res_diary_auth = client.get("/api/letterboxd/diary?token=super_secret_webhook_key_123")
+    res_diary_auth = await client.get("/api/letterboxd/diary?token=super_secret_webhook_key_123")
     assert res_diary_auth.status_code == 200
 
     # Demo bypass for diary
-    res_diary_demo = client.get("/api/letterboxd/diary?demo=true")
+    res_diary_demo = await client.get("/api/letterboxd/diary?demo=true")
     assert res_diary_demo.status_code == 200
     assert len(res_diary_demo.json()) >= 1
 
@@ -8533,26 +8748,26 @@ def test_cloud_tracker_security_and_privacy(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod.kitsu, "check_connection", mock_kitsu_check)
 
     # Non-admin status view masks usernames
-    res_kitsu_masked = client.get("/api/kitsu/status")
+    res_kitsu_masked = await client.get("/api/kitsu/status")
     assert res_kitsu_masked.status_code == 200
     assert res_kitsu_masked.json().get("user") != "kitsu_otaku_master"
 
-    res_lb_masked = client.get("/api/letterboxd/status")
+    res_lb_masked = await client.get("/api/letterboxd/status")
     assert res_lb_masked.status_code == 200
     assert res_lb_masked.json().get("user") != "letterboxd_cinephile"
 
-    res_ser_masked = client.get("/api/serializd/status")
+    res_ser_masked = await client.get("/api/serializd/status")
     assert res_ser_masked.status_code == 200
     assert res_ser_masked.json().get("user") != "serializd_binger"
 
     # Admin view with header x-webhook-secret reveals full username
-    res_kitsu_admin = client.get("/api/kitsu/status", headers={"x-webhook-secret": "super_secret_webhook_key_123"})
+    res_kitsu_admin = await client.get("/api/kitsu/status", headers={"x-webhook-secret": "super_secret_webhook_key_123"})
     assert res_kitsu_admin.status_code == 200
     assert res_kitsu_admin.json().get("user") == "kitsu_otaku_master"
 
     # 3. Parameter validation on /api/mdblist/ratings: 400 when missing both ids
     monkeypatch.setattr(main_mod.mdblist, "is_configured", lambda: True)
-    res_mdb_bad = client.get("/api/mdblist/ratings?token=super_secret_webhook_key_123")
+    res_mdb_bad = await client.get("/api/mdblist/ratings?token=super_secret_webhook_key_123")
     assert res_mdb_bad.status_code == 400
     assert "Either imdb_id or tmdb_id" in res_mdb_bad.json().get("detail", "")
 
@@ -8562,7 +8777,7 @@ def test_cloud_tracker_security_and_privacy(monkeypatch, tmp_path):
     monkeypatch.setattr(Config, "LETTERBOXD_DIARY_FILE", diary_file)
     monkeypatch.setattr(Config, "LETTERBOXD_DATA_FILE", diary_file)
 
-    res_backup = client.get("/api/backup?token=super_secret_webhook_key_123")
+    res_backup = await client.get("/api/backup?token=super_secret_webhook_key_123")
     assert res_backup.status_code == 200
     import io, zipfile
     with zipfile.ZipFile(io.BytesIO(res_backup.content), "r") as zf:
@@ -8570,7 +8785,7 @@ def test_cloud_tracker_security_and_privacy(monkeypatch, tmp_path):
         assert "data/letterboxd_diary.json" in names
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_cloud_tracker_resilience_and_errors(monkeypatch):
     """Verify error handling, HTTP error tolerances, and non-blocking resilience across trackers."""
     from app.clients.tmdb_client import TMDbClient
@@ -8628,21 +8843,21 @@ async def test_cloud_tracker_resilience_and_errors(monkeypatch):
     await mdb_c.close()
 
 
-def test_https_and_proxy_headers_readiness(monkeypatch):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_https_and_proxy_headers_readiness(monkeypatch):
     """Verify proxy-headers middleware, conditional HSTS header, and EXTERNAL_URL support."""
-    from fastapi.testclient import TestClient
     from app.main import app
     from app.config import Config
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Plain HTTP request: no HSTS header emitted
-    res_http = client.get("/")
+    res_http = await client.get("/")
     assert res_http.status_code == 200
     assert "Strict-Transport-Security" not in res_http.headers
 
     # 2. HTTPS request via X-Forwarded-Proto header: HSTS header emitted
-    res_https = client.get("/", headers={"x-forwarded-proto": "https"})
+    res_https = await client.get("/", headers={"x-forwarded-proto": "https"})
     assert res_https.status_code == 200
     assert "Strict-Transport-Security" in res_https.headers
     assert "max-age=31536000" in res_https.headers["Strict-Transport-Security"]
@@ -8650,12 +8865,13 @@ def test_https_and_proxy_headers_readiness(monkeypatch):
     # 3. EXTERNAL_URL overrides dashboard webhook URLs
     monkeypatch.setattr(Config, "EXTERNAL_URL", "https://omniscrobble.securehomelab.net")
     monkeypatch.setattr(Config, "WEBHOOK_SECRET", "test_secret_abc")
-    res_dash = client.get("/?token=test_secret_abc")
+    res_dash = await client.get("/?token=test_secret_abc")
     assert res_dash.status_code == 200
     assert "https://omniscrobble.securehomelab.net/webhook?token=test_secret_abc" in res_dash.text
 
 
-def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
     """Verify GET and POST /api/settings/rules, clamping, auth, and persistence."""
     from app.services.settings_manager import settings_mgr
     from app.main import app
@@ -8665,10 +8881,10 @@ def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
     monkeypatch.setattr(settings_mgr, "settings_file", test_settings_file)
     settings_mgr._load_settings()
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. GET /api/settings/rules returns default rules
-    res = client.get("/api/settings/rules")
+    res = await client.get("/api/settings/rules")
     assert res.status_code == 200
     data = res.json()
     assert data["status"] == "success"
@@ -8681,12 +8897,12 @@ def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
 
     # 2. Auth protection for POST /api/settings/rules when secret configured
     monkeypatch.setattr(Config, "WEBHOOK_SECRET", "rules_secret_999")
-    unauth_res = client.post("/api/settings/rules", json={"scrobble_threshold": 85})
+    unauth_res = await client.post("/api/settings/rules", json={"scrobble_threshold": 85})
     assert unauth_res.status_code == 401
     assert "Unauthorized" in unauth_res.json()["detail"]
 
     # 3. Successful update with admin token
-    update_res = client.post(
+    update_res = await client.post(
         "/api/settings/rules?token=rules_secret_999",
         json={
             "scrobble_threshold": 85,
@@ -8707,7 +8923,7 @@ def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
     assert updated_rules["ignore_path_patterns"] == [r"/extras/", r"\.sample\."]
 
     # 4. Clamping verification: thresholds clamp to [50, 95], min_duration clamps to >= 0
-    clamp_res = client.post(
+    clamp_res = await client.post(
         "/api/settings/rules?token=rules_secret_999",
         json={
             "scrobble_threshold": -50,
@@ -8722,7 +8938,7 @@ def test_rules_settings_api_and_persistence(tmp_path, monkeypatch):
     assert clamped_rules["min_duration_seconds"] == 0
 
     # 5. Full POST /api/settings updates rules block
-    full_settings_res = client.post(
+    full_settings_res = await client.post(
         "/api/settings?token=rules_secret_999",
         json={
             "rules": {
@@ -8934,7 +9150,8 @@ def test_rules_path_regex_ignore():
     assert allowed is True
 
 
-def test_rules_effective_thresholds_and_test_webhook(monkeypatch):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_rules_effective_thresholds_and_test_webhook(monkeypatch):
     """Verify granular thresholds resolution and test webhook filtering."""
     from app.services.settings_manager import settings_mgr
     from app.main import app, get_effective_excluded_libraries
@@ -8958,8 +9175,8 @@ def test_rules_effective_thresholds_and_test_webhook(monkeypatch):
     assert "Trailers" in effective_libs
 
     # Test synthetic webhook with ignored library
-    client = TestClient(app)
-    res_test = client.post(
+    client = make_async_test_client(app)
+    res_test = await client.post(
         "/api/test/webhook",
         json={
             "source": "plex",
@@ -9031,15 +9248,16 @@ def test_user_manager_multi_tracker_tokens_and_clients(tmp_path):
     assert mgr.is_tracker_authenticated("partner_alice", "simkl") is False
 
 
-def test_cowatch_trackers_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_trackers_endpoints():
     """Verify /api/cowatch/trackers status and demo endpoints."""
     from app.main import app
     from app.config import Config
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # Demo mode
-    res_demo = client.get("/api/cowatch/trackers?demo=true")
+    res_demo = await client.get("/api/cowatch/trackers?demo=true")
     assert res_demo.status_code == 200
     demo_data = res_demo.json()
     assert demo_data["configured"] is True
@@ -9049,13 +9267,13 @@ def test_cowatch_trackers_endpoints():
 
     # Real mode without partner configured
     with patch.object(Config, "CO_WATCH_USER", None):
-        res_none = client.get("/api/cowatch/trackers")
+        res_none = await client.get("/api/cowatch/trackers")
         assert res_none.status_code == 200
         assert res_none.json()["configured"] is False
 
     # Real mode with partner configured
     with patch.object(Config, "CO_WATCH_USER", "partner_bob"):
-        res = client.get("/api/cowatch/trackers")
+        res = await client.get("/api/cowatch/trackers")
         assert res.status_code == 200
         data = res.json()
         assert data["configured"] is True
@@ -9063,64 +9281,65 @@ def test_cowatch_trackers_endpoints():
         assert "trackers" in data
 
 
-def test_partner_secondary_tracker_endpoints(tmp_path, monkeypatch):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_partner_secondary_tracker_endpoints(tmp_path, monkeypatch):
     """Verify partner user authentication endpoints for Simkl, AniList, and MAL."""
     from app.main import app
     from app.services.user_manager import user_mgr
     from app.config import Config
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
     monkeypatch.setattr(user_mgr, "tokens_dir", tmp_path)
 
     # 1. Partner Simkl endpoints
     with patch("app.clients.simkl_client.SimklClient.get_device_pin", new_callable=AsyncMock) as mock_pin:
         mock_pin.return_value = {"user_code": "ABCD-1234", "verification_url": "https://simkl.com/pin"}
-        res = client.post("/api/simkl/pin?user=partner_test")
+        res = await client.post("/api/simkl/pin?user=partner_test")
         assert res.status_code == 200
         assert res.json()["user_code"] == "ABCD-1234"
 
     with patch("app.clients.simkl_client.SimklClient.poll_device_pin", new_callable=AsyncMock) as mock_poll:
         mock_poll.return_value = {"result": "OK", "access_token": "simkl_partner_token"}
-        res = client.post("/api/simkl/poll", json={"user_code": "ABCD-1234", "user": "partner_test"})
+        res = await client.post("/api/simkl/poll", json={"user_code": "ABCD-1234", "user": "partner_test"})
         assert res.status_code == 200
         assert res.json()["result"] == "OK"
 
     # Status for partner
     with patch("app.clients.simkl_client.SimklClient.check_connection", new_callable=AsyncMock) as mock_conn:
         mock_conn.return_value = {"status": "connected", "user": "partner_test"}
-        res = client.get("/api/simkl/status?user=partner_test")
+        res = await client.get("/api/simkl/status?user=partner_test")
         assert res.status_code == 200
         assert res.json()["user"] == "partner_test"
 
     # Disconnect partner Simkl
-    res = client.post("/api/simkl/disconnect?user=partner_test")
+    res = await client.post("/api/simkl/disconnect?user=partner_test")
     assert res.status_code == 200
     assert "partner_test" in res.json()["message"]
 
     # 2. Partner AniList endpoints
     with patch("app.clients.anilist_client.AniListClient.check_connection", new_callable=AsyncMock) as mock_ani_conn:
         mock_ani_conn.return_value = {"status": "connected", "user": "partner_ani_user", "id": 12345}
-        res = client.post("/api/anilist/token", json={"token": "partner_ani_jwt", "user": "partner_test"})
+        res = await client.post("/api/anilist/token", json={"token": "partner_ani_jwt", "user": "partner_test"})
         assert res.status_code == 200
         assert res.json()["status"] == "success"
         assert res.json()["user"] == "partner_ani_user"
 
-    res = client.post("/api/anilist/disconnect?user=partner_test")
+    res = await client.post("/api/anilist/disconnect?user=partner_test")
     assert res.status_code == 200
 
     # 3. Partner MAL endpoints
     with patch("app.clients.mal_client.MyAnimeListClient.check_connection", new_callable=AsyncMock) as mock_mal_conn:
         mock_mal_conn.return_value = {"status": "connected", "user": "partner_mal_user", "id": 67890}
-        res = client.post("/api/mal/token", json={"token": "partner_mal_bearer", "user": "partner_test"})
+        res = await client.post("/api/mal/token", json={"token": "partner_mal_bearer", "user": "partner_test"})
         assert res.status_code == 200
         assert res.json()["status"] == "success"
         assert res.json()["user"] == "partner_mal_user"
 
-    res = client.post("/api/mal/disconnect?user=partner_test")
+    res = await client.post("/api/mal/disconnect?user=partner_test")
     assert res.status_code == 200
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_execute_cowatch_sync_multi_tracker_dual_dispatch_and_failure_isolation():
     """Verify co-watch dual dispatch sends to all authenticated partner trackers and isolates failures."""
     from app.main import execute_cowatch_sync
@@ -9163,7 +9382,7 @@ async def test_execute_cowatch_sync_multi_tracker_dual_dispatch_and_failure_isol
         partner_simkl_mock.scrobble_stop.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_cloud_sync_manager_run_cycle_and_letterboxd_export(tmp_path):
     """Verify CloudSyncManager executes full sync cycle, exports Letterboxd CSV, and records telemetry."""
     from app.services.cloud_sync_manager import CloudSyncManager
@@ -9227,13 +9446,13 @@ async def test_cloud_sync_manager_run_cycle_and_letterboxd_export(tmp_path):
         assert status["is_running"] is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_cloud_sync_mutex_lock_protection():
     """Verify concurrency mutex lock returns HTTP 409 Conflict when a sync is active."""
     from app.main import app
     from app.services.cloud_sync_manager import cloud_sync_mgr
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # Acquire the mutex manually to simulate an active sync
     await cloud_sync_mgr.sync_mutex.acquire()
@@ -9241,15 +9460,15 @@ async def test_cloud_sync_mutex_lock_protection():
         assert cloud_sync_mgr.sync_mutex.locked() is True
 
         # 1. Trigger background sync returns 409
-        res_bg = client.post("/api/sync/background/run")
+        res_bg = await client.post("/api/sync/background/run")
         assert res_bg.status_code == 409
 
         # 2. Trigger reconciliation returns 409
-        res_recon = client.post("/api/sync/reconcile", json={"direction": "all"})
+        res_recon = await client.post("/api/sync/reconcile", json={"direction": "all"})
         assert res_recon.status_code == 409
 
         # 3. Trigger cross-sync returns 409
-        res_cross = client.post("/api/cross-sync/execute", json={"direction": "all"})
+        res_cross = await client.post("/api/cross-sync/execute", json={"direction": "all"})
         assert res_cross.status_code == 409
 
         # 4. Direct run_sync_cycle returns conflict
@@ -9259,37 +9478,39 @@ async def test_cloud_sync_mutex_lock_protection():
         cloud_sync_mgr.sync_mutex.release()
 
 
-def test_background_sync_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_background_sync_endpoints():
     """Verify /api/sync/background/status and /api/sync/background/run endpoints."""
     from app.main import app
     from app.services.cloud_sync_manager import cloud_sync_mgr
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # Demo status
-    res_demo = client.get("/api/sync/background/status?demo=true")
+    res_demo = await client.get("/api/sync/background/status?demo=true")
     assert res_demo.status_code == 200
     demo_data = res_demo.json()
     assert demo_data["last_run_status"] == "success"
     assert "tasks" in demo_data
 
     # Demo run
-    res_run_demo = client.post("/api/sync/background/run?demo=true")
+    res_run_demo = await client.post("/api/sync/background/run?demo=true")
     assert res_run_demo.status_code == 200
     assert res_run_demo.json()["status"] == "success"
 
     # Real status
-    res_real = client.get("/api/sync/background/status")
+    res_real = await client.get("/api/sync/background/status")
     assert res_real.status_code == 200
     assert "is_running" in res_real.json()
 
 
-def test_multi_theme_palette_engine_and_accents():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_multi_theme_palette_engine_and_accents():
     """Verify that all 8 theme palettes, 9 accent highlights, modals, and keyboard shortcuts render on the dashboard."""
     from app.main import app
 
-    client = TestClient(app)
-    res = client.get("/")
+    client = make_async_test_client(app)
+    res = await client.get("/")
     assert res.status_code == 200
     html = res.text
 
@@ -9365,7 +9586,8 @@ def test_multi_theme_palette_engine_and_accents():
     assert "root.classList.add('accent-' + accentId);" in html
 
 
-def test_ambient_visuals_compact_mode_and_card_visibility():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_ambient_visuals_compact_mode_and_card_visibility():
     """Verify ambient stream poster & backdrop blur, compact density mode, and card visibility controls."""
     from app.plex_parser import parse_plex_webhook
     from app.jellyfin_parser import parse_jellyfin_webhook
@@ -9487,8 +9709,8 @@ def test_ambient_visuals_compact_mode_and_card_visibility():
     assert "radial-gradient" in fallback_html
 
     # 3. Client Dashboard HTML & UI Components
-    client = TestClient(app)
-    res = client.get("/")
+    client = make_async_test_client(app)
+    res = await client.get("/")
     assert res.status_code == 200
     html = res.text
 
@@ -9535,28 +9757,29 @@ def test_ambient_visuals_compact_mode_and_card_visibility():
     assert "function initAppearance()" in html
 
 
-def test_admin_unlock_rate_limiting_and_sanitized_logs():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_admin_unlock_rate_limiting_and_sanitized_logs():
     """Verify admin unlock rate limiter logs sanitized warnings and blocks repeated attacks."""
     from app.main import _failed_unlock_attempts
     _failed_unlock_attempts.clear()
 
     try:
-        client = TestClient(app)
+        client = make_async_test_client(app)
         with patch.object(Config, "WEBHOOK_SECRET", "super_secret_webhook_pass"):
             with patch("app.main.logger.warning") as mock_warn:
                 for i in range(5):
-                    res = client.post("/api/admin/unlock", json={"token": f"bad_token_{i}"})
+                    res = await client.post("/api/admin/unlock", json={"token": f"bad_token_{i}"})
                     assert res.status_code == 401
                 assert mock_warn.call_count >= 5
 
-                res_429 = client.post("/api/admin/unlock", json={"token": "bad_token_6"})
+                res_429 = await client.post("/api/admin/unlock", json={"token": "bad_token_6"})
                 assert res_429.status_code == 429
                 assert "Retry-After" in res_429.headers
                 assert any("Admin unlock rate limit exceeded" in str(c) for c in mock_warn.call_args_list)
 
             # Successful unlock clears rate limiter for IP
             _failed_unlock_attempts["testclient"] = []
-            res_ok = client.post("/api/admin/unlock", json={"token": "super_secret_webhook_pass"})
+            res_ok = await client.post("/api/admin/unlock", json={"token": "super_secret_webhook_pass"})
             assert res_ok.status_code == 200
             assert "csrf_token" in res_ok.cookies
             assert "admin_token" in res_ok.cookies
@@ -9564,15 +9787,16 @@ def test_admin_unlock_rate_limiting_and_sanitized_logs():
         _failed_unlock_attempts.clear()
 
 
-def test_csrf_double_submit_protection():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_csrf_double_submit_protection():
     """Verify double-submit CSRF cookie protection for state-mutating admin requests."""
     from app.main import _failed_unlock_attempts
     _failed_unlock_attempts.clear()
-    client = TestClient(app)
+    client = make_async_test_client(app)
     try:
         with patch.object(Config, "WEBHOOK_SECRET", "my_secure_secret"):
             # 1. Unlock admin to obtain cookies
-            unlock_res = client.post("/api/admin/unlock", json={"token": "my_secure_secret"})
+            unlock_res = await client.post("/api/admin/unlock", json={"token": "my_secure_secret"})
             assert unlock_res.status_code == 200
             admin_cookie = unlock_res.cookies.get("admin_token")
             csrf_cookie = unlock_res.cookies.get("csrf_token")
@@ -9583,12 +9807,12 @@ def test_csrf_double_submit_protection():
             client.cookies.clear()
             client.cookies.set("admin_token", admin_cookie)
             client.cookies.set("csrf_token", csrf_cookie)
-            bad_req = client.post("/api/settings", json={"plex_enabled": True})
+            bad_req = await client.post("/api/settings", json={"plex_enabled": True})
             assert bad_req.status_code == 401
 
             # 3. Mutating request with admin cookie and mismatched x-csrf-token header -> 401
             client.cookies.set("csrf_token", csrf_cookie)
-            bad_csrf = client.post(
+            bad_csrf = await client.post(
                 "/api/settings",
                 json={"plex_enabled": True},
                 headers={"x-csrf-token": "wrong_csrf_token"},
@@ -9596,7 +9820,7 @@ def test_csrf_double_submit_protection():
             assert bad_csrf.status_code == 401
 
             # 4. Mutating request with admin cookie and valid matching x-csrf-token header -> 200
-            good_req = client.post(
+            good_req = await client.post(
                 "/api/settings",
                 json={"plex_enabled": True},
                 headers={"x-csrf-token": csrf_cookie},
@@ -9604,23 +9828,23 @@ def test_csrf_double_submit_protection():
             assert good_req.status_code == 200
 
             # 5. Non-mutating request (GET /api/logs) with admin cookie does NOT require CSRF header
-            get_logs = client.get("/api/logs")
+            get_logs = await client.get("/api/logs")
             assert get_logs.status_code == 200
 
             # 6. Webhook / direct API key auth via header or query param does NOT require CSRF header
             client.cookies.clear()
-            token_req = client.post("/api/settings?token=my_secure_secret", json={"plex_enabled": True})
+            token_req = await client.post("/api/settings?token=my_secure_secret", json={"plex_enabled": True})
             assert token_req.status_code == 200
 
             # 7. Visiting GET / with admin_token but missing csrf_token issues csrf_token cookie
             client.cookies.set("admin_token", admin_cookie)
-            visit_res = client.get("/")
+            visit_res = await client.get("/")
             assert visit_res.status_code == 200
             assert "csrf_token" in visit_res.cookies
 
             # 8. Admin lock deletes both cookies
             client.cookies.set("csrf_token", csrf_cookie)
-            lock_res = client.post(
+            lock_res = await client.post(
                 "/api/admin/lock",
                 headers={"x-csrf-token": csrf_cookie},
             )
@@ -9682,14 +9906,15 @@ def test_crypto_manager_at_rest_encryption(tmp_path):
         assert "encrypted at rest" in str(exc.value)
 
 
-def test_encrypted_backup_and_restore_workflow(tmp_path):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_encrypted_backup_and_restore_workflow(tmp_path):
     """Verify passphrase-protected encrypted backup archive generation and restore."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     passphrase = "archive_super_secret_123"
 
     with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
         # 1. Create encrypted backup via passphrase query param
-        res = client.get(f"/api/backup?token=admin_secret&passphrase={passphrase}")
+        res = await client.get(f"/api/backup?token=admin_secret&passphrase={passphrase}")
         assert res.status_code == 200
         assert res.headers.get("content-type") == "application/json"
         assert "omniscrobble-backup-encrypted-" in res.headers.get("content-disposition", "")
@@ -9712,7 +9937,7 @@ def test_encrypted_backup_and_restore_workflow(tmp_path):
 
         files = {"backup_file": ("backup.enc.json", enc_payload_bytes, "application/json")}
         data = {"passphrase": passphrase}
-        restore_res = client.post("/api/restore?token=admin_secret", files=files, data=data)
+        restore_res = await client.post("/api/restore?token=admin_secret", files=files, data=data)
         assert restore_res.status_code == 200
         assert restore_res.json().get("status") == "success"
         assert "data/cowatch_devices.json" in restore_res.json().get("restored", [])
@@ -9720,13 +9945,13 @@ def test_encrypted_backup_and_restore_workflow(tmp_path):
         # 3. Restore with incorrect passphrase returns 400
         files_bad = {"backup_file": ("backup.enc.json", enc_payload_bytes, "application/json")}
         data_bad = {"passphrase": "wrong_archive_passphrase"}
-        restore_bad = client.post("/api/restore?token=admin_secret", files=files_bad, data=data_bad)
+        restore_bad = await client.post("/api/restore?token=admin_secret", files=files_bad, data=data_bad)
         assert restore_bad.status_code == 400
         assert "Decryption failed" in restore_bad.json().get("detail", "")
 
         # 4. Standard unencrypted backup when no passphrase is given
         with patch.object(Config, "CONFIG_ENCRYPTION_KEY", ""):
-            res_plain = client.get("/api/backup?token=admin_secret")
+            res_plain = await client.get("/api/backup?token=admin_secret")
             assert res_plain.status_code == 200
             assert res_plain.headers.get("content-type") == "application/zip"
             assert res_plain.content.startswith(b"PK")
@@ -9737,7 +9962,7 @@ def test_encrypted_backup_and_restore_workflow(tmp_path):
     cowatch_mgr._devices.clear()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_token_health_monitor_and_alerts():
     """Verify TokenHealthMonitor proactive refresh, alert dispatching, and /api/health/tokens endpoint."""
     from app.services.token_health_monitor import TokenHealthMonitor, token_health_mgr
@@ -9785,14 +10010,14 @@ async def test_token_health_monitor_and_alerts():
         mock_alert.assert_awaited_once()
 
     # 5. GET /api/health/tokens endpoint
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
         # Unauthenticated returns 401
-        res_unauth = client.get("/api/health/tokens")
+        res_unauth = await client.get("/api/health/tokens")
         assert res_unauth.status_code == 401
 
         # Authenticated returns structured health dictionary
-        res_auth = client.get("/api/health/tokens?token=admin_secret")
+        res_auth = await client.get("/api/health/tokens?token=admin_secret")
         assert res_auth.status_code == 200
         data = res_auth.json()
         assert "trakt" in data
@@ -9805,7 +10030,7 @@ async def test_token_health_monitor_and_alerts():
 # ==============================================================================
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_rewatch_and_play_count_fidelity(tmp_path):
     """Verify explicit watched_at timestamps for Trakt/Simkl and automated rewatch diary detection on Letterboxd."""
     from app.clients.letterboxd_client import LetterboxdClient
@@ -9929,7 +10154,7 @@ def test_playback_manager_heartbeat_tracking():
     assert len(pm.get_heartbeat_candidates(interval_seconds=600)) == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_scrobble_heartbeat_worker_dispatch(tmp_path):
     """Verify background scrobble heartbeat loop sends keep-alive to Trakt and Simkl."""
     from app.main import scrobble_heartbeat_worker_loop, trakt, simkl, user_mgr
@@ -9981,7 +10206,7 @@ async def test_scrobble_heartbeat_worker_dispatch(tmp_path):
     playback_mgr.clear()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_multi_server_mirroring_and_loop_prevention(tmp_path):
     """Verify multi-server watched status mirroring and loop suppression."""
     from app.clients.plex_api_client import PlexApiClient
@@ -10055,7 +10280,7 @@ async def test_multi_server_mirroring_and_loop_prevention(tmp_path):
         mock_plex.mark_as_watched.assert_not_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_find_item_plex_and_mediabrowser():
     """Verify find_item API searches across Plex and Jellyfin/Emby clients."""
     from app.clients.plex_api_client import PlexApiClient
@@ -10123,13 +10348,14 @@ async def test_find_item_plex_and_mediabrowser():
         assert found_jf["title"] == "The Dark Knight"
 
 
-def test_standalone_scrobble_rest_bridge():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_standalone_scrobble_rest_bridge():
     """Verify Standalone Player Direct Webhook / REST Bridge (POST /api/scrobble)."""
     from app.main import app, trakt
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Info endpoint (GET /api/scrobble)
-    res_info = client.get("/api/scrobble")
+    res_info = await client.get("/api/scrobble")
     assert res_info.status_code == 200
     assert res_info.json()["service"] == "Omniscrobble Standalone Player REST Bridge"
     assert "payload_schema" in res_info.json()
@@ -10137,7 +10363,7 @@ def test_standalone_scrobble_rest_bridge():
     # 2. POST /api/scrobble with webhook secret protection
     with patch.object(Config, "WEBHOOK_SECRET", "super_secret_token"):
         # Without token -> 401
-        res_unauth = client.post(
+        res_unauth = await client.post(
             "/api/scrobble",
             json={"title": "Spirited Away", "media_type": "movie", "action": "play"},
         )
@@ -10148,7 +10374,7 @@ def test_standalone_scrobble_rest_bridge():
              patch.object(trakt, "scrobble_start", new_callable=AsyncMock) as mock_start:
             mock_start.return_value = {"action": "start"}
 
-            res_play = client.post(
+            res_play = await client.post(
                 "/api/scrobble?token=super_secret_token",
                 json={
                     "title": "Spirited Away",
@@ -10171,7 +10397,7 @@ def test_standalone_scrobble_rest_bridge():
             mock_stop.return_value = {"action": "stop"}
             mock_hist.return_value = {"added": {"movies": 1}}
 
-            res_scrobble = client.post(
+            res_scrobble = await client.post(
                 "/api/scrobble",
                 headers={"x-webhook-secret": "super_secret_token"},
                 json={
@@ -10200,7 +10426,7 @@ def test_standalone_scrobble_rest_bridge():
             mock_stop.return_value = {"action": "stop"}
             mock_hist.return_value = {"added": {"episodes": 1}}
 
-            res_ep = client.post(
+            res_ep = await client.post(
                 "/api/scrobble?token=super_secret_token",
                 json={
                     "title": "Severance",
@@ -10224,7 +10450,7 @@ def test_standalone_scrobble_rest_bridge():
 # Phase 5: Homelab Automation & Ecosystem Bridges Tests
 # =====================================================================
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_overseerr_client_full():
     """Verify OverseerrClient methods: check_connection, get_request_counts, search, has_media, request_media."""
     from app.clients.overseerr_client import OverseerrClient
@@ -10317,7 +10543,7 @@ async def test_overseerr_client_full():
     await client.close()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_arr_bridge_watchlist_sync_with_overseerr():
     """Verify that when Overseerr is enabled in ArrBridgeManager, Watchlist items route to Overseerr."""
     from app.services.arr_bridge import ArrBridgeManager
@@ -10393,14 +10619,15 @@ async def test_arr_bridge_watchlist_sync_with_overseerr():
     await overseerr_c.close()
 
 
-def test_arr_test_connection_endpoint_overseerr():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_arr_test_connection_endpoint_overseerr():
     """Verify POST /api/arr/test-connection supports 'overseerr'."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "test_admin_secret"):
         client.cookies.set("admin_token", "test_admin_secret")
 
         # Demo mode
-        res_demo = client.post(
+        res_demo = await client.post(
             "/api/arr/test-connection?demo=true",
             json={"app": "overseerr", "url": "http://mock-overseerr:5055", "api_key": "any_key"}
         )
@@ -10412,7 +10639,7 @@ def test_arr_test_connection_endpoint_overseerr():
         # Live mode with mock
         with patch("app.clients.overseerr_client.OverseerrClient.check_connection", new_callable=AsyncMock) as mock_check:
             mock_check.return_value = {"status": "connected", "version": "1.33.2", "app_name": "Overseerr"}
-            res_live = client.post(
+            res_live = await client.post(
                 "/api/arr/test-connection",
                 json={"app": "overseerr", "url": "http://127.0.0.1:5055", "api_key": "valid_key"}
             )
@@ -10421,7 +10648,7 @@ def test_arr_test_connection_endpoint_overseerr():
             assert res_live.json()["version"] == "1.33.2"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_media_server_webhook_auto_registration():
     """Verify 1-click webhook registration for Plex, Jellyfin, and Emby."""
     from app.clients.plex_api_client import PlexApiClient
@@ -10484,17 +10711,18 @@ async def test_media_server_webhook_auto_registration():
         assert res.get("message") == "Plex success"
 
 
-def test_api_sync_register_webhook_endpoint():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_sync_register_webhook_endpoint():
     """Verify POST /api/sync/register-webhook endpoint security, demo, and execution."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Unauthenticated -> 401
     with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
-        res_unauth = client.post("/api/sync/register-webhook", json={"server": "plex"})
+        res_unauth = await client.post("/api/sync/register-webhook", json={"server": "plex"})
         assert res_unauth.status_code == 401
 
         # 2. Demo mode -> 200 simulation
-        res_demo = client.post("/api/sync/register-webhook?demo=true", json={"server": "jellyfin"})
+        res_demo = await client.post("/api/sync/register-webhook?demo=true", json={"server": "jellyfin"})
         assert res_demo.status_code == 200
         assert res_demo.json()["status"] == "success"
         assert "Demo Mode" in res_demo.json()["message"]
@@ -10503,13 +10731,13 @@ def test_api_sync_register_webhook_endpoint():
         client.cookies.set("admin_token", "super_secret")
         with patch("app.services.reverse_sync_manager.reverse_sync_mgr.register_webhook", new_callable=AsyncMock) as mock_reg:
             mock_reg.return_value = {"success": True, "message": "Webhook configured in Emby"}
-            res_live = client.post("/api/sync/register-webhook", json={"server": "emby"})
+            res_live = await client.post("/api/sync/register-webhook", json={"server": "emby"})
             assert res_live.status_code == 200
             assert res_live.json()["success"] is True
             assert res_live.json()["message"] == "Webhook configured in Emby"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_notification_channels_gotify_and_matrix():
     """Verify Discord action buttons, Gotify dispatch, and Matrix dispatch."""
     from app.services.notifier import notifier
@@ -10576,26 +10804,27 @@ async def test_notification_channels_gotify_and_matrix():
     assert "weekly_digest_enabled" in status
 
 
-def test_api_notification_test_endpoint_gotify_and_matrix():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_notification_test_endpoint_gotify_and_matrix():
     """Verify POST /api/notifications/test with Gotify and Matrix channels."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
         client.cookies.set("admin_token", "super_secret")
 
         # Demo Gotify
-        res_demo_gotify = client.post("/api/notifications/test?demo=true", json={"channel": "gotify"})
+        res_demo_gotify = await client.post("/api/notifications/test?demo=true", json={"channel": "gotify"})
         assert res_demo_gotify.status_code == 200
         assert res_demo_gotify.json()["success"] is True
 
         # Demo Matrix
-        res_demo_matrix = client.post("/api/notifications/test?demo=true", json={"channel": "matrix"})
+        res_demo_matrix = await client.post("/api/notifications/test?demo=true", json={"channel": "matrix"})
         assert res_demo_matrix.status_code == 200
         assert res_demo_matrix.json()["success"] is True
 
         # Live Gotify mock
         with patch("app.services.notifier.notifier.send_test_notification", new_callable=AsyncMock) as mock_send:
             mock_send.return_value = (True, "Test alert sent to Gotify")
-            res_live = client.post(
+            res_live = await client.post(
                 "/api/notifications/test",
                 json={"channel": "gotify", "gotify_url": "http://127.0.0.1:8080", "gotify_token": "tok"}
             )
@@ -10604,7 +10833,7 @@ def test_api_notification_test_endpoint_gotify_and_matrix():
             assert res_live.json()["message"] == "Test alert sent to Gotify"
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_weekly_activity_digest_full(tmp_path):
     """Verify DigestManager statistics, formatting, and dispatch."""
     import datetime
@@ -10701,16 +10930,17 @@ async def test_weekly_activity_digest_full(tmp_path):
     assert "Weekly activity digest dispatched successfully" in res_demo["message"]
 
 
-def test_api_weekly_digest_endpoint():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_api_weekly_digest_endpoint():
     """Verify POST /api/notifications/digest endpoint security and demo handling."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "super_secret"):
         # 1. Unauthenticated -> 401
-        res_unauth = client.post("/api/notifications/digest")
+        res_unauth = await client.post("/api/notifications/digest")
         assert res_unauth.status_code == 401
 
         # 2. Demo mode -> 200
-        res_demo = client.post("/api/notifications/digest?demo=true")
+        res_demo = await client.post("/api/notifications/digest?demo=true")
         assert res_demo.status_code == 200
         assert res_demo.json()["status"] == "success"
 
@@ -10718,7 +10948,7 @@ def test_api_weekly_digest_endpoint():
         client.cookies.set("admin_token", "super_secret")
         with patch("app.services.digest_manager.digest_mgr.send_digest", new_callable=AsyncMock) as mock_send:
             mock_send.return_value = {"status": "success", "success": True, "message": "Digest sent"}
-            res_live = client.post("/api/notifications/digest")
+            res_live = await client.post("/api/notifications/digest")
             assert res_live.status_code == 200
             assert res_live.json()["success"] is True
             assert res_live.json()["message"] == "Digest sent"
@@ -10870,25 +11100,26 @@ def test_household_manager_resolve_targets(tmp_path):
     assert "partner_jane" not in targets3
 
 
-def test_household_rules_api_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_household_rules_api_endpoints():
     """Verify REST API endpoints for household multi-tenant rules management."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "admin_pass"):
         # 1. GET /api/household/rules unauthenticated -> masks targets
-        res_unauth = client.get("/api/household/rules")
+        res_unauth = await client.get("/api/household/rules")
         assert res_unauth.status_code == 200
         data_unauth = res_unauth.json()
         assert data_unauth["status"] == "ok"
         assert isinstance(data_unauth["rules"], list)
 
         # 2. POST /api/household/rules without auth -> 401
-        res_fail = client.post("/api/household/rules", json={"name": "Test", "targets": ["alice"]})
+        res_fail = await client.post("/api/household/rules", json={"name": "Test", "targets": ["alice"]})
         assert res_fail.status_code == 401
 
         # 3. POST /api/household/rules with auth but empty targets -> 400
         client.cookies.set("admin_token", "admin_pass")
-        res_empty = client.post("/api/household/rules", json={"name": "Test", "targets": []})
+        res_empty = await client.post("/api/household/rules", json={"name": "Test", "targets": []})
         assert res_empty.status_code == 400
 
         # 4. POST /api/household/rules with auth -> creates rule
@@ -10900,7 +11131,7 @@ def test_household_rules_api_endpoints():
             "media_types": ["movie", "episode"],
             "enabled": True,
         }
-        res_create = client.post("/api/household/rules", json=rule_payload)
+        res_create = await client.post("/api/household/rules", json=rule_payload)
         assert res_create.status_code == 200
         created_rule = res_create.json()["rule"]
         assert created_rule["name"] == "Basement Shield"
@@ -10911,41 +11142,41 @@ def test_household_rules_api_endpoints():
         update_payload = dict(rule_payload)
         update_payload["id"] = rule_id
         update_payload["name"] = "Basement Shield Pro"
-        res_update = client.post("/api/household/rules", json=update_payload)
+        res_update = await client.post("/api/household/rules", json=update_payload)
         assert res_update.status_code == 200
         assert res_update.json()["rule"]["name"] == "Basement Shield Pro"
 
         # 6. POST /api/household/rules/{id}/toggle -> toggles enabled
-        res_toggle = client.post(f"/api/household/rules/{rule_id}/toggle")
+        res_toggle = await client.post(f"/api/household/rules/{rule_id}/toggle")
         assert res_toggle.status_code == 200
         assert res_toggle.json()["enabled"] is False
 
         # 7. DELETE /api/household/rules/{id} -> deletes rule
-        res_del = client.delete(f"/api/household/rules/{rule_id}")
+        res_del = await client.delete(f"/api/household/rules/{rule_id}")
         assert res_del.status_code == 200
         assert res_del.json()["deleted"] is True
 
         # 8. DELETE non-existent rule -> 404
-        res_del_404 = client.delete("/api/household/rules/non_existent_123")
+        res_del_404 = await client.delete("/api/household/rules/non_existent_123")
         assert res_del_404.status_code == 404
 
         # 9. Demo mode for all endpoints
-        res_demo_get = client.get("/api/household/rules?demo=true")
+        res_demo_get = await client.get("/api/household/rules?demo=true")
         assert res_demo_get.status_code == 200
         assert len(res_demo_get.json()["rules"]) >= 1
 
-        res_demo_post = client.post("/api/household/rules?demo=true", json={"name": "Demo Rule", "targets": ["demo_partner"]})
+        res_demo_post = await client.post("/api/household/rules?demo=true", json={"name": "Demo Rule", "targets": ["demo_partner"]})
         assert res_demo_post.status_code == 200
 
-        res_demo_toggle = client.post("/api/household/rules/rule_living_room/toggle?demo=true")
+        res_demo_toggle = await client.post("/api/household/rules/rule_living_room/toggle?demo=true")
         assert res_demo_toggle.status_code == 200
 
-        res_demo_del = client.delete("/api/household/rules/rule_living_room?demo=true")
+        res_demo_del = await client.delete("/api/household/rules/rule_living_room?demo=true")
         assert res_demo_del.status_code == 200
         assert res_demo_del.json()["deleted"] is True
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="module")
 async def test_household_multi_tenant_webhook_dual_sync():
     """Verify live webhook dispatches dual-sync across multiple resolved household target profiles."""
     import asyncio
@@ -10954,7 +11185,7 @@ async def test_household_multi_tenant_webhook_dual_sync():
     from app.main import recent_events
     from app.config import Config
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # Add a household rule targeting 'kids_user' and 'partner_user' on Living Room TV
     rule = household_mgr.add_rule(
@@ -11014,7 +11245,7 @@ async def test_household_multi_tenant_webhook_dual_sync():
             mock_trakt_stop.return_value = {"action": "scrobble"}
             mock_trakt_hist.return_value = {"added": {"episodes": 1}}
 
-            res = client.post("/webhook", json=webhook_payload)
+            res = await client.post("/webhook", json=webhook_payload)
             assert res.status_code == 200
 
             # Yield control to event loop to allow asyncio.create_task(execute_cowatch_sync(...)) to complete
@@ -11035,7 +11266,8 @@ async def test_household_multi_tenant_webhook_dual_sync():
         household_mgr.delete_rule(rule["id"])
 
 
-def test_queue_prune_and_completed_status(tmp_path):
+@pytest.mark.asyncio(loop_scope="module")
+async def test_queue_prune_and_completed_status(tmp_path):
     """Verify QueueManager transitions items to status 'completed' and prunes records older than retention threshold."""
     from app.services.queue_manager import QueueManager
     import time
@@ -11087,30 +11319,31 @@ def test_queue_prune_and_completed_status(tmp_path):
         assert id_pending in remaining_ids
 
     # Test POST /api/queue/prune endpoint
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
         # Unauthenticated -> 401
-        res_unauth = client.post("/api/queue/prune")
+        res_unauth = await client.post("/api/queue/prune")
         assert res_unauth.status_code == 401
 
         # Demo mode -> 200
-        res_demo = client.post("/api/queue/prune?demo=true")
+        res_demo = await client.post("/api/queue/prune?demo=true")
         assert res_demo.status_code == 200
         assert res_demo.json()["pruned"] == 0
 
         # Admin authorized
         client.cookies.set("admin_token", "admin_secret")
-        res_admin = client.post("/api/queue/prune", json={"days": 90})
+        res_admin = await client.post("/api/queue/prune", json={"days": 90})
         assert res_admin.status_code == 200
         assert "pruned" in res_admin.json()
         assert res_admin.json()["retention_days"] == 90
 
 
-def test_chunked_discrepancy_streamer():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_chunked_discrepancy_streamer():
     """Verify cursor-based discrepancy pagination on reverse_sync_mgr and /api/sync/diff endpoint."""
     from app.services.reverse_sync_manager import reverse_sync_mgr
 
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. ReverseSyncManager.get_chunked_diff
     mock_diff = [
@@ -11138,7 +11371,7 @@ def test_chunked_discrepancy_streamer():
         assert chunk3["has_more"] is False
 
     # 2. GET /api/sync/diff with cursor and limit (Demo mode)
-    res_demo = client.get("/api/sync/diff?demo=true&cursor=0&limit=2")
+    res_demo = await client.get("/api/sync/diff?demo=true&cursor=0&limit=2")
     assert res_demo.status_code == 200
     d_data = res_demo.json()
     assert d_data["status"] == "ok"
@@ -11153,13 +11386,13 @@ def test_chunked_discrepancy_streamer():
         client.cookies.set("admin_token", "admin_secret")
 
         # Full diff when cursor/limit omitted
-        res_full = client.get("/api/sync/diff")
+        res_full = await client.get("/api/sync/diff")
         assert res_full.status_code == 200
         assert res_full.json()["count"] == 10
         assert "cursor" not in res_full.json()
 
         # Chunked diff when cursor/limit provided
-        res_chunked = client.get("/api/sync/diff?cursor=2&limit=3")
+        res_chunked = await client.get("/api/sync/diff?cursor=2&limit=3")
         assert res_chunked.status_code == 200
         c_data = res_chunked.json()
         assert c_data["count"] == 3
@@ -11234,6 +11467,20 @@ def test_webhook_debugger_unit():
     # Clear
     debugger.clear()
     assert len(debugger.get_history()) == 0
+
+
+def test_analytics_threshold_stop_uses_played_duration():
+    from app.services.analytics_manager import AnalyticsManager
+
+    event = {
+        "duration_ms": 120 * 60 * 1000,
+        "view_offset_ms": 90 * 60 * 1000,
+        "progress": "75.0%",
+    }
+    assert AnalyticsManager._extract_item_minutes(event, "movie", "scrobble_stop") == 90
+    event["view_offset_ms"] = 0
+    assert AnalyticsManager._extract_item_minutes(event, "movie", "scrobble_stop") == 90
+    assert AnalyticsManager._extract_item_minutes(event, "movie", "manual_scrobble") == 120
 
 
 def test_analytics_manager_unit(tmp_path):
@@ -11312,35 +11559,36 @@ def test_analytics_manager_unit(tmp_path):
     assert wrapped["cowatch_breakdown"]["shared_hours"] > 0
 
 
-def test_webhook_debugger_and_replay_endpoints():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_debugger_and_replay_endpoints():
     """Verify REST API endpoints for /api/debug/webhooks and /api/debug/replay."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. Access control when WEBHOOK_SECRET is active
     with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
         # Unauthorized without admin token
-        res_unauth = client.get("/api/debug/webhooks")
+        res_unauth = await client.get("/api/debug/webhooks")
         assert res_unauth.status_code == 403
 
-        res_del_unauth = client.delete("/api/debug/webhooks")
+        res_del_unauth = await client.delete("/api/debug/webhooks")
         assert res_del_unauth.status_code == 403
 
-        res_rep_unauth = client.post("/api/debug/replay", json={"source": "plex", "payload": {}})
+        res_rep_unauth = await client.post("/api/debug/replay", json={"source": "plex", "payload": {}})
         assert res_rep_unauth.status_code == 403
 
         # Demo mode bypasses authorization
-        res_demo = client.get("/api/debug/webhooks?demo=true")
+        res_demo = await client.get("/api/debug/webhooks?demo=true")
         assert res_demo.status_code == 200
         assert "webhooks" in res_demo.json()
         assert len(res_demo.json()["webhooks"]) > 0
 
         # Authorized with admin cookie
         client.cookies.set("admin_token", "admin_secret")
-        res_auth = client.get("/api/debug/webhooks")
+        res_auth = await client.get("/api/debug/webhooks")
         assert res_auth.status_code == 200
 
         # Delete / clear buffer
-        res_del = client.delete("/api/debug/webhooks")
+        res_del = await client.delete("/api/debug/webhooks")
         assert res_del.status_code == 200
         assert res_del.json()["status"] == "ok"
 
@@ -11360,14 +11608,14 @@ def test_webhook_debugger_and_replay_endpoints():
                 "Player": {"title": "Living Room TV"},
             },
         }
-        res_rep_sim = client.post("/api/debug/replay", json=replay_plex)
+        res_rep_sim = await client.post("/api/debug/replay", json=replay_plex)
         assert res_rep_sim.status_code == 200
         data_sim = res_rep_sim.json()
         assert data_sim["status"] == "simulated"
         assert data_sim["parsed"]["title"] == "Replay Sci-Fi Movie"
 
         # Replay with unsupported source
-        res_rep_bad = client.post("/api/debug/replay", json={"source": "unknown_app", "payload": {}})
+        res_rep_bad = await client.post("/api/debug/replay", json={"source": "unknown_app", "payload": {}})
         assert res_rep_bad.status_code == 200
         assert res_rep_bad.json()["status"] == "error"
 
@@ -11382,18 +11630,19 @@ def test_webhook_debugger_and_replay_endpoints():
                 "player": "Infuse",
             },
         }
-        res_rep_st = client.post("/api/debug/replay", json=replay_standalone)
+        res_rep_st = await client.post("/api/debug/replay", json=replay_standalone)
         assert res_rep_st.status_code == 200
         assert res_rep_st.json()["status"] == "simulated"
         assert res_rep_st.json()["parsed"]["title"] == "Standalone Stream"
 
 
-def test_analytics_endpoints_and_dashboard_integration():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_analytics_endpoints_and_dashboard_integration():
     """Verify /api/analytics/summary, /api/analytics/wrapped, and dashboard rendering."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     # 1. GET /api/analytics/summary
-    res_sum = client.get("/api/analytics/summary?period=all&demo=true")
+    res_sum = await client.get("/api/analytics/summary?period=all&demo=true")
     assert res_sum.status_code == 200
     sum_data = res_sum.json()
     assert "total_watch_hours" in sum_data
@@ -11401,7 +11650,7 @@ def test_analytics_endpoints_and_dashboard_integration():
     assert "top_shows" in sum_data
 
     # 2. GET /api/analytics/wrapped
-    res_wrp = client.get("/api/analytics/wrapped?year=2026&demo=true")
+    res_wrp = await client.get("/api/analytics/wrapped?year=2026&demo=true")
     assert res_wrp.status_code == 200
     wrp_data = res_wrp.json()
     assert wrp_data["year"] == 2026
@@ -11409,7 +11658,7 @@ def test_analytics_endpoints_and_dashboard_integration():
     assert "cowatch_breakdown" in wrp_data
 
     # 3. Dashboard rendering includes Analytics Card and Inspector Modal
-    res_dash = client.get("/")
+    res_dash = await client.get("/")
     assert res_dash.status_code == 200
     html = res_dash.text
     assert "Personal Analytics & Viewing Habits" in html
@@ -11461,9 +11710,10 @@ def test_webhook_debugger_redaction_comprehensive():
     assert cleaned_p["title"] == "Inception"
 
 
-def test_replay_dispatch_security_gate():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_replay_dispatch_security_gate():
     """Verify that dispatching replayed webhooks requires strict admin authorization."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
     with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
         body = {
             "source": "standalone",
@@ -11476,13 +11726,13 @@ def test_replay_dispatch_security_gate():
         }
 
         # 1. Non-admin with ?demo=true attempting dispatch should get 403 Forbidden
-        res_demo_dispatch = client.post("/api/debug/replay?demo=true", json=body)
+        res_demo_dispatch = await client.post("/api/debug/replay?demo=true", json=body)
         assert res_demo_dispatch.status_code == 403
         assert "Admin authorization required" in res_demo_dispatch.json()["detail"]
 
         # 2. Non-admin with ?demo=true with dispatch=False (dry-run simulation) is allowed
         body_sim = dict(body, dispatch=False)
-        res_demo_sim = client.post("/api/debug/replay?demo=true", json=body_sim)
+        res_demo_sim = await client.post("/api/debug/replay?demo=true", json=body_sim)
         assert res_demo_sim.status_code == 200
         assert res_demo_sim.json()["status"] == "simulated"
 
@@ -11490,7 +11740,7 @@ def test_replay_dispatch_security_gate():
         client.cookies.set("admin_token", "admin_secret")
         with patch("app.main.process_media_event", new_callable=AsyncMock) as mock_pme:
             mock_pme.return_value = {"status": "scrobbled"}
-            res_admin_dispatch = client.post("/api/debug/replay", json=body)
+            res_admin_dispatch = await client.post("/api/debug/replay", json=body)
             assert res_admin_dispatch.status_code == 200
             assert res_admin_dispatch.json()["status"] == "dispatched"
             assert mock_pme.await_count == 1
@@ -11556,10 +11806,11 @@ def test_analytics_privacy_masking_and_calendar_filtering():
         assert wrapped_admin["cowatch_breakdown"]["partner_user"] == "jane_doe"
 
 
-def test_webhook_error_marks_debugger_entry():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_error_marks_debugger_entry():
     """Verify that an exception in process_media_event updates webhook_debugger status to 'error'."""
     from app.services.webhook_debugger import webhook_debugger
-    client = TestClient(app, raise_server_exceptions=False)
+    client = make_async_test_client(app, raise_server_exceptions=False)
 
     webhook_debugger.clear()
 
@@ -11578,7 +11829,7 @@ def test_webhook_error_marks_debugger_entry():
     with patch.object(Config, "PLEX_ALLOWED_USERS", ["selits"]), \
          patch("app.main.settings_mgr.is_server_enabled", return_value=True), \
          patch("app.main.process_media_event", side_effect=RuntimeError("Simulated pipeline crash")):
-        res = client.post("/webhook", data={"payload": json.dumps(payload)})
+        res = await client.post("/webhook", data={"payload": json.dumps(payload)})
         assert res.status_code == 500
 
     history = webhook_debugger.get_history()
@@ -11588,23 +11839,24 @@ def test_webhook_error_marks_debugger_entry():
     assert "Simulated pipeline crash" in latest["reason"]
 
 
-def test_csrf_cross_site_protection():
+@pytest.mark.asyncio(loop_scope="module")
+async def test_csrf_cross_site_protection():
     """Verify Sec-Fetch-Site: cross-site is rejected for cookie-authenticated admin mutating requests."""
-    client = TestClient(app)
+    client = make_async_test_client(app)
 
     with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
         client.cookies.set("admin_token", "admin_secret")
 
         # GET request with cross-site is allowed
-        res_get = client.get("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
+        res_get = await client.get("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
         assert res_get.status_code == 200
 
         # Mutating DELETE request with cross-site is blocked
-        res_del = client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
+        res_del = await client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "cross-site"})
         assert res_del.status_code == 403
 
         # Mutating DELETE request with same-origin is allowed
-        res_del_ok = client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "same-origin"})
+        res_del_ok = await client.delete("/api/debug/webhooks", headers={"sec-fetch-site": "same-origin"})
         assert res_del_ok.status_code == 200
 
 
@@ -11785,11 +12037,3 @@ def test_load_scrobble_stats_backfills_watch_minutes(tmp_path, monkeypatch):
 
     legacy.write_text(json.dumps({"total": 10, "movies": 4, "episodes": 6, "watch_minutes": 123}), encoding="utf-8")
     assert main_mod.load_scrobble_stats()["watch_minutes"] == 123
-
-
-
-
-
-
-
-

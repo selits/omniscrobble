@@ -1060,9 +1060,12 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             return {"status": "success", "event": "library.new", "action": "collection", "result": result}
 
         elif event == "media.scrobble":
+            finished = playback_mgr.stop_playback(parsed)
+            if finished and finished.get("scrobbled"):
+                metrics_registry.record_request(endpoint_name, 200)
+                return {"status": "ignored", "reason": "Watch already recorded for this playback session"}
             action_taken = "mark_watched"
             logger.info(f"Marking as watched in Trakt: {parsed.title} for user {parsed.username}")
-            playback_mgr.stop_playback(parsed)
 
             scrobble_payload["progress"] = 100.0
             scrobble_res = await active_client.scrobble_stop(scrobble_payload)
@@ -1103,6 +1106,9 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             elif event == "media.pause":
                 playback_mgr.update_playback(parsed, state="paused")
                 if parsed.progress >= threshold:
+                    if playback_mgr.is_scrobbled(parsed):
+                        metrics_registry.record_request(endpoint_name, 200)
+                        return {"status": "ignored", "reason": "Watch already recorded for this playback session"}
                     action_taken = "scrobble_stop"
                     logger.info(f"Scrobble stop (paused past threshold {threshold}%): {parsed.title} ({parsed.progress:.1f}%)")
                     result = await active_client.scrobble_stop(scrobble_payload)
@@ -1112,12 +1118,16 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                     else:
                         metrics_registry.record_scrobble(parsed.media_type, "success")
                     record_watch_stat(parsed)
+                    playback_mgr.mark_scrobbled(parsed)
                 else:
                     action_taken = "scrobble_pause"
                     logger.info(f"Scrobble pause: {parsed.title} ({parsed.progress:.1f}%)")
                     result = await active_client.scrobble_pause(scrobble_payload)
             elif event == "media.stop":
-                playback_mgr.stop_playback(parsed)
+                finished = playback_mgr.stop_playback(parsed)
+                if finished and finished.get("scrobbled"):
+                    metrics_registry.record_request(endpoint_name, 200)
+                    return {"status": "ignored", "reason": "Watch already recorded for this playback session"}
                 if parsed.progress >= threshold:
                     action_taken = "scrobble_stop"
                     logger.info(f"Scrobble stop (watched past threshold {threshold}%): {parsed.title} ({parsed.progress:.1f}%)")
@@ -2229,6 +2239,14 @@ class NotificationTestRequest(BaseModel):
 def get_settings_endpoint(request: Request):
     """Retrieve current runtime enablement settings for servers and trackers."""
     all_s = settings_mgr.get_all_settings()
+    if not is_admin_request(request):
+        # Public dashboard views only need feature enablement flags. Keep private
+        # server URLs, usernames, routing rules, and credential metadata private.
+        all_s = {
+            "servers": all_s.get("servers", {}),
+            "trackers": all_s.get("trackers", {}),
+            "multi_server_mirroring": all_s.get("multi_server_mirroring", False),
+        }
     return {
         "status": "success",
         "settings": all_s,

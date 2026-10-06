@@ -8,7 +8,7 @@ This guide details how to set up a local development environment for **Omniscrob
 
 ### 1.1 Python Virtual Environment
 
-Omniscrobble requires Python 3.10+. Create and activate a local virtual environment:
+Omniscrobble requires Python 3.10+. The CI test suite runs on Python 3.12; use that version for the same verified test environment. Create and activate a local virtual environment:
 
 ```bash
 # Clone the repository
@@ -16,7 +16,7 @@ git clone https://github.com/selits/omniscrobble.git
 cd omniscrobble
 
 # Create virtual environment
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies

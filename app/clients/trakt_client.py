@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import json
 import logging
 from pathlib import Path
@@ -15,6 +17,22 @@ except ImportError:
     from atomic_writer import atomic_write_json
 
 logger = logging.getLogger("trakt_client")
+
+
+def _retry_delay(retry_after: Optional[str], attempt: int) -> float:
+    """Honor Trakt's Retry-After value; otherwise use bounded exponential backoff."""
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except (TypeError, ValueError):
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return float(min(30, 2 ** attempt))
 
 
 class TraktClient:
@@ -477,12 +495,7 @@ class TraktClient:
                 else:
                     return {"error": "Authentication failed (token refresh failed)", "status": 401}
             elif res.status_code == 429:
-                retry_after_raw = res.headers.get("Retry-After", "1")
-                try:
-                    retry_after = int(retry_after_raw)
-                except ValueError:
-                    retry_after = 1
-                wait_time = min(max(retry_after, 1), 5)
+                wait_time = _retry_delay(res.headers.get("Retry-After"), attempt)
                 logger.warning(
                     f"Trakt rate limit (429) on {url}. Waiting {wait_time}s (attempt {attempt + 1}/3)..."
                 )
@@ -517,12 +530,7 @@ class TraktClient:
                 else:
                     return {"error": "Authentication failed (token refresh failed)", "status": 401}
             elif res.status_code == 429:
-                retry_after_raw = res.headers.get("Retry-After", "1")
-                try:
-                    retry_after = int(retry_after_raw)
-                except ValueError:
-                    retry_after = 1
-                wait_time = min(max(retry_after, 1), 5)
+                wait_time = _retry_delay(res.headers.get("Retry-After"), attempt)
                 logger.warning(
                     f"Trakt rate limit (429) on {url}. Waiting {wait_time}s (attempt {attempt + 1}/3)..."
                 )
@@ -533,4 +541,3 @@ class TraktClient:
                 return {"error": res.text, "status": res.status_code}
 
         return {"error": "Trakt rate limit exceeded after retries", "status": 429}
-

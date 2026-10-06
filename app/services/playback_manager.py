@@ -60,6 +60,11 @@ class PlaybackManager:
         now = time.time()
         existing_session = self.sessions.get(key)
         last_hb = existing_session.get("last_heartbeat_at", now) if existing_session else now
+        same_media = bool(
+            existing_session
+            and existing_session.get("title") == title_str
+            and existing_session.get("media_type") == media.media_type
+        )
 
         session = {
             "key": key,
@@ -83,23 +88,37 @@ class PlaybackManager:
             "backdrop_url": media.backdrop_url,
             "ids": media.ids,
             "parsed_media": media,
+            # Preserve completion across pause/resume updates so a later stop or
+            # server scrobble notification cannot count the same session twice.
+            "scrobbled": bool(same_media and existing_session.get("scrobbled")),
         }
         self.sessions[key] = session
         return session
 
+    def is_scrobbled(self, media: ParsedMedia) -> bool:
+        """Return whether the active player session already recorded completion."""
+        session = self.sessions.get(self._get_key(media))
+        return bool(session and session.get("scrobbled"))
+
+    def mark_scrobbled(self, media: ParsedMedia) -> None:
+        """Mark an active playback session as completed for duplicate suppression."""
+        session = self.sessions.get(self._get_key(media))
+        if session:
+            session["scrobbled"] = True
+
     def stop_playback(self, media: ParsedMedia) -> Optional[dict[str, Any]]:
         """Remove session when playback stops or scrobbles, saving to recently finished."""
         key = self._get_key(media)
+        title_str = format_media_title(media)
         existing = self.sessions.pop(key, None)
 
         # Fallback search if player wasn't specified accurately
         if not existing:
             for k, s in list(self.sessions.items()):
-                if s.get("username") == media.username:
+                if s.get("username") == media.username and s.get("title") == title_str:
                     existing = self.sessions.pop(k, None)
                     break
 
-        title_str = format_media_title(media)
         trakt_url = get_trakt_url(media)
         finished_entry = {
             "title": title_str,
@@ -113,6 +132,7 @@ class PlaybackManager:
             "poster_url": media.poster_url or (existing.get("poster_url") if existing else None),
             "backdrop_url": media.backdrop_url or (existing.get("backdrop_url") if existing else None),
             "remaining_str": "Finished",
+            "scrobbled": bool(existing and existing.get("scrobbled")),
         }
         self.recently_finished = finished_entry
         return finished_entry

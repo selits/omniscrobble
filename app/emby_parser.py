@@ -89,7 +89,9 @@ def parse_emby_webhook(
     episode: Optional[int] = None
     year: Optional[int] = None
 
-    year_val = item.get("ProductionYear") or item.get("PremiereDate", "")[:4]
+    premiere_date = item.get("PremiereDate")
+    premiere_year = premiere_date[:4] if isinstance(premiere_date, str) else ""
+    year_val = item.get("ProductionYear") or premiere_year
     if year_val:
         try:
             year = int(year_val)

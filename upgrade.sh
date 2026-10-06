@@ -6,7 +6,9 @@ cd "$DIR"
 
 echo "==> Fetching latest changes from GitHub..."
 git fetch origin
-git reset --hard origin/main
+# Only fast-forward. If this checkout has local commits or edits, stop without
+# discarding them so the operator can preserve or resolve that work first.
+git merge --ff-only origin/main
 chmod +x start.sh upgrade.sh
 
 echo "==> Updating Python dependencies..."
