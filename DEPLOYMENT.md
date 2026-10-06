@@ -376,7 +376,7 @@ A healthy response will return `HTTP/200 OK` with JSON health telemetry.
 
 ## 7. Automated Upgrades & Maintenance
 
-Omniscrobble includes a built-in automated upgrade script (`upgrade.sh`) that pulls the latest release from GitHub, updates dependencies in your virtual environment, verifies linger settings, and restarts the systemd user service with zero downtime.
+Omniscrobble includes a built-in automated upgrade script (`upgrade.sh`) that fast-forwards the checkout to the latest `main`, updates dependencies in your virtual environment, verifies linger settings, and restarts the systemd user service. The script stops if local changes or commits prevent a fast-forward, preserving that work for you to resolve before upgrading.
 
 To upgrade anytime:
 

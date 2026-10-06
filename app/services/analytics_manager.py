@@ -56,12 +56,29 @@ class AnalyticsManager:
         return {k: 0 for k in keys}
 
     @staticmethod
-    def _extract_item_minutes(ev: dict[str, Any], media_type: str) -> int:
+    def _extract_item_minutes(ev: dict[str, Any], media_type: str, action: str = "") -> int:
         """Extract actual watch minutes from event metadata or fall back to sensible averages."""
+        media_payload = ev.get("media_payload") if isinstance(ev.get("media_payload"), dict) else {}
+
+        # A threshold stop may be recorded before the item's runtime is complete.
+        # Prefer the media server's playhead; if it is missing, use logged progress.
+        if action == "scrobble_stop":
+            try:
+                duration = float(ev.get("duration_ms") or media_payload.get("duration_ms") or 0)
+                offset = ev.get("view_offset_ms")
+                if duration > 0 and offset is not None and float(offset) > 0:
+                    return max(1, round(min(float(offset), duration) / 60000.0))
+                progress_raw = str(ev.get("progress", "")).rstrip("%")
+                progress = float(progress_raw)
+                if duration > 0 and 0 < progress < 100:
+                    return max(1, round(duration * progress / 100.0 / 60000.0))
+            except (ValueError, TypeError):
+                pass
+
         # 1. Direct duration_ms
         dur_ms = ev.get("duration_ms")
-        if not dur_ms and isinstance(ev.get("media_payload"), dict):
-            dur_ms = ev["media_payload"].get("duration_ms")
+        if not dur_ms:
+            dur_ms = media_payload.get("duration_ms")
 
         if dur_ms is not None:
             try:
@@ -73,8 +90,8 @@ class AnalyticsManager:
 
         # 3. Generic 'duration' field (may be in ms, seconds, or minutes)
         dur = ev.get("duration")
-        if not dur and isinstance(ev.get("media_payload"), dict):
-            dur = ev["media_payload"].get("duration")
+        if not dur:
+            dur = media_payload.get("duration")
         if dur is not None:
             try:
                 val = float(dur)
@@ -229,7 +246,7 @@ class AnalyticsManager:
             else:
                 episodes_watched += 1
 
-            item_mins = self._extract_item_minutes(ev, m_type)
+            item_mins = self._extract_item_minutes(ev, m_type, action_base)
 
             # Extract show title if episode using explicit field, metadata payload, or robust regex
             if m_type == "episode":
