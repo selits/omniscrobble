@@ -25,13 +25,16 @@ from app.main import (
     render_status_badge,
 )
 from app.services.demo_manager import demo_mgr
-from app.services.dashboard_renderer import dashboard_renderer
+from app.services.dashboard_renderer import dashboard_renderer, render_tracker_delivery_badges
+from scripts.build_dashboard_bundle import OUTPUT as DASHBOARD_BUNDLE_PATH, build_bundle
 
 
 def generate_static_demo(output_dir: Path = None) -> Path:
     if output_dir is None:
         output_dir = Path(__file__).resolve().parent.parent / "docs"
     output_dir.mkdir(parents=True, exist_ok=True)
+    dashboard_bundle = build_bundle()
+    DASHBOARD_BUNDLE_PATH.write_text(dashboard_bundle, encoding="utf-8")
 
     # 1. Prepare demo datasets from DemoManager
     demo_playback = demo_mgr.get_demo_playback()
@@ -735,6 +738,7 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             ev.get("progress", ""),
             ev.get("cowatch_status"),
         )
+        tracker_badges_html = render_tracker_delivery_badges(ev.get("tracker_delivery"))
 
         server_raw = ev.get("server", "plex").lower()
         if server_raw == "jellyfin":
@@ -761,10 +765,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{ev['type']}</span></td>
             <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{ev['user']}</span></div></td>
             <td style="padding:10px 12px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">{action_text}</span></td>
-            <td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">{status_badge_html}</div></td>
+            <td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">{status_badge_html}{tracker_badges_html}</div></td>
             {action_col}
         </tr>
-        """
+        """.strip() + "\n"
 
     # 3. Base Template Replacements
     rendered = DASHBOARD_HTML
@@ -777,13 +781,13 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{ADMIN_BTN}}': admin_btn,
         '{{ACTIVE_PLAYBACK_CARD}}': active_playback_card_html,
         '{{ACCOUNT_DISPLAY}}': '@demo_viewer',
-        '{{TOKEN_HEALTH_COLOR}}': '#10b981',
+        '{{TOKEN_HEALTH_CLASS}}': 'healthy',
         '{{TOKEN_HEALTH_STR}}': 'Healthy • Auto-renews in 84d',
         '{{ALLOWED_USERS_DISPLAY}}': 'demo_viewer, demo_partner',
         '{{ALLOWED_LIBS_DISPLAY}}': 'Movies, TV Shows, Anime',
         '{{SYNC_COLLECTION_DISPLAY}}': 'On',
         '{{UPTIME_STR}}': '14d 8h 22m',
-        '{{QUEUE_COLOR}}': '#94a3b8',
+        '{{QUEUE_CLASS}}': 'clear',
         '{{PENDING_QUEUE}}': '0',
         '{{NOTIF_SUMMARY}}': 'Discord, Telegram',
         '{{STAT_TOTAL}}': str(demo_stats['total']),
@@ -849,6 +853,18 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     rendered = rendered.replace(
         '<link rel="manifest" href="/manifest.json">',
         '<link rel="manifest" href="manifest.json">'
+    )
+    rendered = rendered.replace(
+        '<link rel="stylesheet" href="/static/dashboard.css">',
+        '<link rel="stylesheet" href="assets/dashboard.css">'
+    )
+    rendered = rendered.replace(
+        '<link rel="stylesheet" href="/static/dashboard-theme.css">',
+        '<link rel="stylesheet" href="assets/dashboard-theme.css">'
+    )
+    rendered = rendered.replace(
+        '<script src="/static/dashboard.js"></script>',
+        '<script src="assets/dashboard.js"></script>'
     )
     rendered = rendered.replace(
         '<link rel="apple-touch-icon" href="/static/icons/icon-192.svg">',
@@ -1778,6 +1794,20 @@ def generate_static_demo(output_dir: Path = None) -> Path:
     manifest_file.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
 
     # Ensure root favicon.ico exists in output_dir
+    assets_dir = output_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    (assets_dir / "dashboard.css").write_text(
+        (PROJECT_ROOT / "app" / "static" / "dashboard.css").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (assets_dir / "dashboard-theme.css").write_text(
+        (PROJECT_ROOT / "app" / "static" / "dashboard-theme.css").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (assets_dir / "dashboard.js").write_text(
+        dashboard_bundle,
+        encoding="utf-8",
+    )
     assets_favicon = output_dir / "assets" / "favicon.ico"
     if not assets_favicon.is_file():
         assets_favicon = PROJECT_ROOT / "docs" / "assets" / "favicon.ico"

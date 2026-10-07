@@ -1,0 +1,80 @@
+                <!-- Tab 5: Rules & Filters -->
+                <div id="settings-panel-rules" class="settings-content-panel u-display-none u-flex-direction-column u-gap-14px">
+                    <!-- Scrobble Thresholds -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                            <span>⚖️</span> Scrobble Completion Thresholds
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-12px u-line-height-1-4">
+                            Define the minimum playback percentage required before an item is marked as fully watched and submitted to Trakt and connected trackers.
+                        </p>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-240px-1fr u-gap-12px">
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px">
+                                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-6px">
+                                    <label class="u-font-size-12px u-font-weight-600 u-color-text-main">TV Episode Threshold</label>
+                                    <span id="settings-rules-threshold-val" class="u-font-size-12px u-font-weight-700 u-color-accent-color">80%</span>
+                                </div>
+                                <input type="range" id="settings-rules-threshold" min="50" max="95" step="1" value="80" oninput="document.getElementById('settings-rules-threshold-val').textContent=this.value+'%'" class="u-width-100 u-accent-color-0284c7 u-cursor-pointer" />
+                                <div class="u-display-flex u-justify-content-space-between u-font-size-10px u-color-text-muted u-margin-top-2px">
+                                    <span>50%</span>
+                                    <span>Default: 80%</span>
+                                    <span>95%</span>
+                                </div>
+                            </div>
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px">
+                                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-6px">
+                                    <label class="u-font-size-12px u-font-weight-600 u-color-text-main">Movie Threshold</label>
+                                    <span id="settings-rules-movie-threshold-val" class="u-font-size-12px u-font-weight-700 u-color-accent-color">90%</span>
+                                </div>
+                                <input type="range" id="settings-rules-movie-threshold" min="50" max="95" step="1" value="90" oninput="document.getElementById('settings-rules-movie-threshold-val').textContent=this.value+'%'" class="u-width-100 u-accent-color-0284c7 u-cursor-pointer" />
+                                <div class="u-display-flex u-justify-content-space-between u-font-size-10px u-color-text-muted u-margin-top-2px">
+                                    <span>50%</span>
+                                    <span>Default: 90%</span>
+                                    <span>95%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Minimum Playback Duration Filter -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                            <span>⏱️</span> Minimum Playback Duration Filter
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px u-line-height-1-4">
+                            Bypass scrobbling for short clips, sample files, or trailers with duration below this limit.
+                        </p>
+                        <div class="u-display-flex u-gap-10px u-align-items-center u-flex-wrap-wrap">
+                            <div class="u-flex-1 u-min-width-180px">
+                                <label class="u-font-size-11px u-color-text-muted u-display-block u-margin-bottom-4px">Minimum Duration (seconds)</label>
+                                <input type="number" id="settings-rules-min-duration" min="0" step="10" placeholder="300" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px" />
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-gap-8px u-margin-top-16px">
+                                <input type="checkbox" id="settings-rules-apply-episodes" class="u-accent-color-0284c7" />
+                                <label for="settings-rules-apply-episodes" class="u-font-size-12px u-color-text-heading u-cursor-pointer">Apply to TV Episodes (Uncheck to allow anime shorts)</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Library Name Exclusions -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                            <span>📁</span> Ignored Library Sections
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px u-line-height-1-4">
+                            Comma-separated list of media server library names to completely bypass (e.g. <code>Home Videos, Fitness, Trailers</code>).
+                        </p>
+                        <input type="text" id="settings-rules-ignore-libraries" placeholder="Home Videos, Fitness, Trailers, Personal" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px" />
+                    </div>
+
+                    <!-- File Path Regex Patterns -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                            <span>🚫</span> Ignored File Path Regex Patterns
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px u-line-height-1-4">
+                            One regular expression per line. Media files matching any pattern will be automatically bypassed from scrobbling and history tracking.
+                        </p>
+                        <textarea id="settings-rules-ignore-paths" rows="3" placeholder="/extras/&#10;/behind the scenes/&#10;\\.sample\\." class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-font-family-monospace u-resize-vertical"></textarea>
+                    </div>
+                </div>

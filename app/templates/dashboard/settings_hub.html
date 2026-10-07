@@ -1,0 +1,59 @@
+    <!-- Unified Settings Hub Modal -->
+    <div id="settings-modal" class="modal" onclick="if(event.target===this)closeSettingsModal()">
+        <div class="modal-dialog modal-dialog-lg u-max-height-90vh u-display-flex u-flex-direction-column">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>⚙️</span> Omniscrobble Settings Hub
+                </h3>
+                <button onclick="closeSettingsModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Manage server ingestion listeners, tracker API credentials, and background automation without editing <code>.env</code> or restarting.
+            </p>
+
+            <!-- Navigation Tabs -->
+            <div class="u-display-flex u-gap-6px u-border-bottom-1px-solid-334155 u-padding-bottom-10px u-margin-bottom-14px u-flex-wrap-wrap">
+                <button type="button" id="settings-tab-btn-servers" onclick="switchSettingsTab('servers')" class="btn-sm settings-nav-tab u-background-accent-color u-color-fff u-font-weight-600 u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🖥️</span> Media Servers
+                </button>
+                <button type="button" id="settings-tab-btn-trackers" onclick="switchSettingsTab('trackers')" class="btn-sm settings-nav-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🎯</span> Trackers &amp; Scrobblers
+                </button>
+                <button type="button" id="settings-tab-btn-automation" onclick="switchSettingsTab('automation')" class="btn-sm settings-nav-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🎬</span> Automation &amp; Arrs
+                </button>
+                <button type="button" id="settings-tab-btn-notifications" onclick="switchSettingsTab('notifications')" class="btn-sm settings-nav-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🔔</span> Notifications
+                </button>
+                <button type="button" id="settings-tab-btn-rules" onclick="switchSettingsTab('rules')" class="btn-sm settings-nav-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🛡️</span> Rules &amp; Filters
+                </button>
+                <button type="button" id="settings-tab-btn-appearance" onclick="switchSettingsTab('appearance')" class="btn-sm settings-nav-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🎨</span> Appearance
+                </button>
+            </div>
+
+            <!-- Scrollable Tab Content Container -->
+            <div class="custom-scroll u-flex-1 u-overflow-y-auto u-padding-right-4px">
+                <!-- COMPONENT:settings_servers -->
+
+                <!-- COMPONENT:settings_trackers -->
+
+                <!-- COMPONENT:settings_automation -->
+
+                <!-- COMPONENT:settings_notifications -->
+
+                <!-- COMPONENT:settings_rules -->
+
+                <!-- COMPONENT:settings_appearance -->
+
+            <!-- Footer Feedback & Save Button -->
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-14px u-padding-top-10px u-border-top-1px-solid-334155 u-flex-wrap-wrap u-gap-8px">
+                <div id="settings-modal-status-msg" class="u-font-size-12px u-color-10b981 u-min-height-16px"></div>
+                <div class="u-display-flex u-gap-8px">
+                    <button type="button" onclick="closeSettingsModal()" class="btn-sm u-background-334155 u-color-text-heading u-padding-8px-16px">Cancel</button>
+                    <button type="button" id="settings-save-all-btn" onclick="saveAllSettingsFromModal()" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-8px-18px">💾 Save Settings</button>
+                </div>
+            </div>
+        </div>
+    </div>

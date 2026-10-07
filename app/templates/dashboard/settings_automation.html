@@ -1,0 +1,107 @@
+                <!-- Tab 3: Automation & Arrs -->
+                <div id="settings-panel-automation" class="settings-content-panel u-display-none u-flex-direction-column u-gap-14px">
+                    <!-- Two-Way Library Reconciliation Schedule & Options -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-10px u-display-flex u-align-items-center u-gap-6px">
+                            <span>🔄</span> Two-Way Library Reconciliation Schedule
+                        </div>
+                        <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-10px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Primary Server</label>
+                                <select id="settings-recon-server-type" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none">
+                                    <option value="plex">Plex Media Server</option>
+                                    <option value="jellyfin">Jellyfin Media Server</option>
+                                    <option value="emby">Emby Media Server</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Sync Interval</label>
+                                <select id="settings-recon-interval" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none">
+                                    <option value="0">Manual Only (0m)</option>
+                                    <option value="15">Every 15 minutes</option>
+                                    <option value="30">Every 30 minutes</option>
+                                    <option value="60">Every 1 hour (60m)</option>
+                                    <option value="180">Every 3 hours (180m)</option>
+                                    <option value="360">Every 6 hours (360m)</option>
+                                    <option value="720">Every 12 hours (720m)</option>
+                                    <option value="1440">Every 24 hours (1440m)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-8px">
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-recon-ratings-check" checked /> Sync User Ratings (1-10)
+                            </label>
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-recon-startup-check" /> Scan &amp; Sync on Startup
+                            </label>
+                        </div>
+                        <div class="u-padding-top-8px u-border-top-1px-solid-1e293b">
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-multi-server-mirroring-check" />
+                                <span><strong>Multi-Server Real-Time Mirroring</strong> (Plex ⇄ Jellyfin ⇄ Emby auto-mirror watched state on scrobble)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Arr Acquisition Bridge -->
+                    <div id="settings-section-arr" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-10px u-display-flex u-align-items-center u-gap-6px">
+                            <span>🎬</span> Content Bridge &amp; *Arr Acquisition (Overseerr, Sonarr &amp; Radarr)
+                        </div>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-260px-1fr u-gap-10px u-margin-bottom-10px">
+                            <!-- Overseerr / Jellyseerr -->
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                                <div class="u-display-flex u-justify-content-space-between u-align-items-center">
+                                    <div class="u-font-size-12px u-font-weight-600 u-color-c084fc">Overseerr / Jellyseerr (Requests)</div>
+                                    <label class="u-display-flex u-align-items-center u-gap-4px u-font-size-11px u-color-text-muted u-cursor-pointer">
+                                        <input type="checkbox" id="settings-arr-overseerr-enabled" /> Enabled
+                                    </label>
+                                </div>
+                                <input type="text" id="settings-arr-overseerr-url" placeholder="http://<your-server-ip-or-domain>:5055" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <div class="u-display-flex u-gap-4px">
+                                    <input type="password" id="settings-arr-overseerr-key" placeholder="Overseerr API Key" class="u-flex-1 u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-arr-overseerr-key','settings-overseerr-key-btn')" id="settings-overseerr-key-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-8px">👁️</button>
+                                </div>
+                                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                    <button type="button" onclick="testSettingsArrConnection('overseerr')" id="settings-overseerr-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-c084fc u-color-c084fc u-font-size-11px u-padding-3px-8px">🔌 Test Overseerr</button>
+                                    <span id="settings-overseerr-test-status" class="u-font-size-11px u-color-text-muted"></span>
+                                </div>
+                            </div>
+                            <!-- Sonarr -->
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-accent-color">Sonarr (TV Shows)</div>
+                                <input type="text" id="settings-arr-sonarr-url" placeholder="http://<your-server-ip-or-domain>:8989" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <div class="u-display-flex u-gap-4px">
+                                    <input type="password" id="settings-arr-sonarr-key" placeholder="Sonarr API Key" class="u-flex-1 u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-arr-sonarr-key','settings-sonarr-key-btn')" id="settings-sonarr-key-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-8px">👁️</button>
+                                </div>
+                                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                    <button type="button" onclick="testSettingsArrConnection('sonarr')" id="settings-sonarr-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-38bdf8 u-color-accent-color u-font-size-11px u-padding-3px-8px">🔌 Test Sonarr</button>
+                                    <span id="settings-sonarr-test-status" class="u-font-size-11px u-color-text-muted"></span>
+                                </div>
+                            </div>
+                            <!-- Radarr -->
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-f59e0b">Radarr (Movies)</div>
+                                <input type="text" id="settings-arr-radarr-url" placeholder="http://<your-server-ip-or-domain>:7878" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <div class="u-display-flex u-gap-4px">
+                                    <input type="password" id="settings-arr-radarr-key" placeholder="Radarr API Key" class="u-flex-1 u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-arr-radarr-key','settings-radarr-key-btn')" id="settings-radarr-key-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-8px">👁️</button>
+                                </div>
+                                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                    <button type="button" onclick="testSettingsArrConnection('radarr')" id="settings-radarr-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-f59e0b u-color-f59e0b u-font-size-11px u-padding-3px-8px">🔌 Test Radarr</button>
+                                    <span id="settings-radarr-test-status" class="u-font-size-11px u-color-text-muted"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-14px u-flex-wrap-wrap">
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-arr-auto-add" /> Auto-Add from Trakt Watchlist
+                            </label>
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-arr-search-add" checked /> Search on Add
+                            </label>
+                        </div>
+                    </div>
+                </div>

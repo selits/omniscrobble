@@ -1,0 +1,1001 @@
+    <div id="command-palette-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="command-palette-title" onclick="if(event.target===this)closeCommandPalette()">
+        <div class="modal-dialog u-max-width-620px u-padding-12px">
+            <label id="command-palette-title" for="command-palette-search" class="u-position-absolute u-width-1px u-height-1px u-padding-0 u-margin-1px u-overflow-hidden u-clip-rect-0-0-0-0 u-white-space-nowrap u-border-0">Search commands</label>
+            <input id="command-palette-search" type="search" placeholder="Search actions and workspaces…" autocomplete="off" oninput="renderCommandPalette(this.value)" onkeydown="handleCommandPaletteKeydown(event)" class="u-width-100 u-padding-14px-16px u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-color-text-main u-font-inherit u-font-size-15px u-outline-none">
+            <div id="command-palette-results" role="listbox" class="u-display-flex u-flex-direction-column u-gap-4px u-margin-top-10px u-max-height-55vh u-overflow-y-auto"></div>
+            <div class="u-padding-9px-6px-2px u-color-text-muted u-font-size-11px">↑ ↓ to navigate · Enter to run · Esc to close</div>
+        </div>
+    </div>
+
+    <!-- Admin Unlock Modal -->
+    <div id="unlock-modal" class="modal" onclick="if(event.target===this)closeUnlockModal()">
+        <div class="modal-dialog modal-dialog-sm">
+            <h3 class="u-margin-top-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                <span>🔓</span> Unlock Admin Access
+            </h3>
+            <p class="u-color-text-muted u-font-size-13px u-margin-8px-0-16px u-line-height-1-5">
+                Enter your <code>WEBHOOK_SECRET</code> from your <code>.env</code> file to reveal webhook URLs and unlock administration features.
+            </p>
+            <form id="unlock-form" onsubmit="event.preventDefault();submitUnlock();" autocomplete="off" class="u-margin-0">
+                <input type="password" id="admin-secret-input" name="admin_secret" placeholder="Enter webhook secret..."
+                       autocomplete="current-password"
+                       class="u-width-100 u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-10px-12px u-color-text-main u-font-size-14px u-box-sizing-border-box u-margin-bottom-12px u-outline-none" />
+                <div id="unlock-error" class="u-color-ef4444 u-font-size-12px u-margin-bottom-12px u-display-none"></div>
+                <div class="u-display-flex u-justify-content-flex-end u-gap-8px">
+                    <button type="button" onclick="closeUnlockModal()" class="btn-sm u-background-334155 u-color-text-heading">Cancel</button>
+                    <button type="submit" id="unlock-submit-btn" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600">Unlock</button>
+                </div>
+            </form>
+            <div class="u-margin-top-16px u-padding-top-14px u-border-top-1px-solid-334155 u-font-size-12px u-color-text-muted u-text-align-center">
+                Just exploring? <a href="/demo" class="u-color-accent-color u-text-decoration-none u-font-weight-600">Try Demo Mode &rarr;</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick-Mark & Media Control Modal -->
+    <div id="scrobble-modal" class="modal" onclick="if(event.target===this)closeScrobbleModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>🍿</span> Quick-Mark &amp; Media Control
+                </h3>
+                <button onclick="closeScrobbleModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Mark movies or TV episodes as watched, sync to your Co-Watch partner, or remove/unscrobble entries across connected trackers.
+            </p>
+
+            <!-- Mode Tabs: Search vs Direct Entry -->
+            <div class="u-display-flex u-gap-8px u-margin-bottom-12px">
+                <button type="button" id="tab-btn-search" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600" onclick="switchScrobbleTab('search')">🔍 Search Catalog</button>
+                <button type="button" id="tab-btn-direct" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted" onclick="switchScrobbleTab('direct')">✍️ Direct Entry</button>
+            </div>
+
+            <!-- Target Trackers & Co-Watch -->
+            <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-6px u-padding-10px-12px u-margin-bottom-12px">
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-6px u-flex-wrap-wrap u-gap-4px">
+                    <div class="u-font-size-12px u-font-weight-600 u-color-text-heading">Target Trackers:</div>
+                    <div class="u-font-size-11px u-color-text-muted">Selected destinations receive this entry (works even if webhook auto-sync is paused)</div>
+                </div>
+                <div class="u-display-flex u-gap-14px u-flex-wrap-wrap u-font-size-12px u-color-text-main">
+                    <div class="u-display-flex u-gap-8px u-align-items-center u-flex-wrap-wrap">
+                        <span class="u-font-size-11px u-color-text-muted u-font-weight-600">Universal:</span>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-trakt" {{SCROBBLE_CHECKED_TRAKT}}> 🔴 Trakt{{SCROBBLE_BADGE_TRAKT}}
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-simkl" {{SCROBBLE_CHECKED_SIMKL}}> 🔵 Simkl{{SCROBBLE_BADGE_SIMKL}}
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-tmdb" {{SCROBBLE_CHECKED_TMDB}}> 🟡 TMDb{{SCROBBLE_BADGE_TMDB}}
+                        </label>
+                    </div>
+                    <div class="u-display-flex u-gap-8px u-align-items-center u-flex-wrap-wrap">
+                        <span class="u-font-size-11px u-color-text-muted u-font-weight-600">Anime:</span>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-anilist" {{SCROBBLE_CHECKED_ANILIST}}> 🔷 AniList{{SCROBBLE_BADGE_ANILIST}}
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-mal" {{SCROBBLE_CHECKED_MAL}}> 🟦 MAL{{SCROBBLE_BADGE_MAL}}
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-kitsu" {{SCROBBLE_CHECKED_KITSU}}> 🟠 Kitsu{{SCROBBLE_BADGE_KITSU}}
+                        </label>
+                    </div>
+                    <div class="u-display-flex u-gap-8px u-align-items-center u-flex-wrap-wrap">
+                        <span class="u-font-size-11px u-color-text-muted u-font-weight-600">Diaries &amp; Lists:</span>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-letterboxd" {{SCROBBLE_CHECKED_LETTERBOXD}}> 🟢 Letterboxd{{SCROBBLE_BADGE_LETTERBOXD}}
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-serializd" {{SCROBBLE_CHECKED_SERIALIZD}}> 🟨 Serializd{{SCROBBLE_BADGE_SERIALIZD}}
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-4px u-cursor-pointer">
+                            <input type="checkbox" id="scrobble-trk-mdblist" {{SCROBBLE_CHECKED_MDBLIST}}> 🟣 MDBList{{SCROBBLE_BADGE_MDBLIST}}
+                        </label>
+                    </div>
+                </div>
+                <div class="u-margin-top-8px u-border-top-1px-solid-1e293b u-padding-top-6px">
+                    <label class="u-display-flex u-align-items-center u-gap-6px u-cursor-pointer u-font-size-12px u-color-f5d0fe">
+                        <input type="checkbox" id="scrobble-cowatch-check"> 👥 Also sync to Co-Watch partner{{SCROBBLE_BADGE_COWATCH}}
+                    </label>
+                </div>
+            </div>
+
+            <!-- Search Catalog View -->
+            <div id="scrobble-view-search">
+                <div class="u-display-flex u-gap-6px u-margin-bottom-10px">
+                    <button type="button" class="btn-sm search-type-pill u-background-accent-color u-color-fff u-font-size-11px u-font-weight-600 u-padding-4px-10px" onclick="setSearchTypeFilter('', this)">All</button>
+                    <button type="button" class="btn-sm search-type-pill u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-font-size-11px u-padding-4px-10px" onclick="setSearchTypeFilter('movie', this)">Movies</button>
+                    <button type="button" class="btn-sm search-type-pill u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-font-size-11px u-padding-4px-10px" onclick="setSearchTypeFilter('show', this)">TV Shows</button>
+                </div>
+                <form onsubmit="event.preventDefault();executeTraktSearch();" autocomplete="off" class="u-margin-0-0-12px-0">
+                    <div class="search-form-row">
+                        <input type="search" id="scrobble-search-input" name="scrobble_search_query" placeholder="Search title (e.g. Severance, Dune, Avatar)..."
+                               autocomplete="off"
+                               data-lpignore="true"
+                               data-1p-ignore="true"
+                               class="u-flex-1 u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-9px-12px u-color-text-main u-font-size-13px u-outline-none" />
+                        <button type="submit" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-9px-16px">Search</button>
+                    </div>
+                </form>
+                <div id="scrobble-search-loading" class="u-display-none u-color-accent-color u-font-size-13px u-text-align-center u-padding-12px">
+                    Searching Trakt catalog...
+                </div>
+                <div id="scrobble-search-results" class="u-overflow-y-auto u-flex-1 u-display-flex u-flex-direction-column u-gap-8px u-max-height-280px u-padding-right-4px">
+                    <div class="u-color-text-muted u-text-align-center u-padding-24px u-font-size-13px">Type a title above and press Search</div>
+                </div>
+            </div>
+
+            <!-- Direct Entry View -->
+            <div id="scrobble-view-direct" class="u-display-none">
+                <!-- Option A Interactive Disambiguation Container -->
+                <div id="scrobble-disambig-container" class="u-display-none u-background-bg-page u-border-1px-solid-3b82f6 u-border-radius-8px u-padding-12px u-margin-bottom-12px">
+                    <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-93c5fd u-display-flex u-align-items-center u-gap-6px">
+                            <span>🎬</span> Disambiguation: Which movie did you mean?
+                        </div>
+                        <button type="button" onclick="cancelDisambiguation()" class="btn-sm u-background-334155 u-color-text-heading u-padding-2px-8px u-font-size-11px">Cancel</button>
+                    </div>
+                    <div id="scrobble-disambig-list" class="u-display-flex u-flex-direction-column u-gap-6px u-max-height-220px u-overflow-y-auto"></div>
+                </div>
+
+                <form id="direct-scrobble-form" onsubmit="event.preventDefault();submitDirectScrobble('watched');" class="u-display-flex u-flex-direction-column u-gap-10px u-margin-0">
+                    <div class="u-display-flex u-gap-10px">
+                        <div class="u-flex-1">
+                            <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Media Type</label>
+                            <select id="direct-type-select" onchange="toggleDirectMediaFields(this.value)" class="u-width-100 u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none">
+                                <option value="episode">TV Show Episode</option>
+                                <option value="movie">Movie</option>
+                            </select>
+                        </div>
+                        <div class="u-flex-1">
+                            <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Year (Optional)</label>
+                            <input type="number" id="direct-year-input" placeholder="e.g. 2024" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none" />
+                        </div>
+                    </div>
+
+                    <div id="direct-show-row">
+                        <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Series / Show Title</label>
+                        <input type="text" id="direct-show-input" placeholder="e.g. Severance, Shogun, The Expanse" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px u-outline-none" />
+                    </div>
+
+                    <div class="u-display-flex u-gap-10px">
+                        <div class="u-flex-2">
+                            <label id="direct-title-label" class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Episode Title (Optional)</label>
+                            <input type="text" id="direct-title-input" placeholder="e.g. Good News About Hell" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px u-outline-none" />
+                        </div>
+                        <div id="direct-season-col" class="u-flex-1">
+                            <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Season</label>
+                            <input type="number" id="direct-season-input" value="1" min="1" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none" />
+                        </div>
+                        <div id="direct-episode-col" class="u-flex-1">
+                            <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Episode</label>
+                            <input type="number" id="direct-episode-input" value="1" min="1" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none" />
+                        </div>
+                    </div>
+
+                    <div id="direct-id-row" class="u-display-none">
+                        <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">IMDb or TMDb ID (Optional, e.g. tt0499549 or 693134)</label>
+                        <input type="text" id="direct-id-input" placeholder="tt... or TMDb numeric ID" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px u-outline-none" />
+                    </div>
+
+                    <div id="direct-status-msg" class="u-display-none u-padding-8px-12px u-border-radius-6px u-font-size-12px"></div>
+
+                    <div class="u-display-flex u-justify-content-flex-end u-gap-8px u-margin-top-6px u-flex-wrap-wrap">
+                        <button type="button" onclick="submitDirectUnscrobble(this)" class="btn-sm u-background-7f1d1d u-border-1px-solid-ef4444 u-color-fee2e2 u-font-weight-600 u-padding-8px-14px">🗑️ Unscrobble</button>
+                        <button type="button" id="direct-start-btn" onclick="submitDirectScrobble('start')" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-8px-16px">▶️ Just Started Watching</button>
+                        <button type="submit" id="direct-submit-btn" class="btn-sm u-background-10b981 u-color-fff u-font-weight-600 u-padding-8px-18px">✓ Mark Watched</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Unified Diagnostics Drawer -->
+    <div id="diagnostics-modal" class="modal diagnostic-drawer" onclick="if(event.target===this)closeDiagnosticsDrawer()">
+        <div class="modal-dialog modal-dialog-lg diagnostics-shell u-display-flex u-flex-direction-column">
+            <div class="diagnostics-tabs" role="tablist" aria-label="Diagnostics">
+                <button id="diagnostics-tab-logs" class="btn-sm diagnostics-tab" role="tab" aria-selected="true" onclick="switchDiagnosticsTab('logs')">📜 Live Logs</button>
+                <button id="diagnostics-tab-inspector" class="btn-sm diagnostics-tab" role="tab" aria-selected="false" onclick="switchDiagnosticsTab('inspector')">🔍 Webhook Inspector</button>
+                <button onclick="closeDiagnosticsDrawer()" class="btn-sm diagnostics-close" aria-label="Close diagnostics">&times;</button>
+            </div>
+            <section id="diagnostics-pane-logs" class="diagnostics-pane" role="tabpanel" aria-labelledby="diagnostics-tab-logs"></section>
+            <section id="diagnostics-pane-inspector" class="diagnostics-pane" role="tabpanel" aria-labelledby="diagnostics-tab-inspector" hidden></section>
+        </div>
+    </div>
+    <!-- Server Logs Modal Content (moved into the diagnostics drawer on startup) -->
+    <div id="logs-modal" class="modal diagnostic-drawer" onclick="if(event.target===this)closeLogsModal()">
+        <div class="modal-dialog modal-dialog-lg">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-display-flex u-align-items-center u-gap-10px">
+                    <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                        <span>📜</span> Server Logs
+                    </h3>
+                    <span id="logs-source-badge" class="u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-2px-8px u-border-radius-9999px u-font-size-11px u-font-weight-600">Loading...</span>
+                </div>
+                <div class="u-display-flex u-align-items-center u-gap-8px">
+                    <button onclick="openWebhookDebuggerModal()" class="btn-sm">Inspector</button>
+                    <button onclick="fetchLogs()" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading">🔄 Refresh</button>
+                    <button onclick="copyLogsToClipboard()" id="copy-logs-btn" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600">📋 Copy</button>
+                    <button onclick="closeLogsModal()" class="btn-sm u-background-334155 u-color-text-heading u-padding-4px-10px u-font-size-14px u-font-weight-700">&times;</button>
+                </div>
+            </div>
+            <div class="logs-toolbar">
+                <div class="logs-filter-group">
+                    <input type="text" id="logs-search-input" placeholder="Filter logs (e.g. error, webhook, show title)..." oninput="filterLogs()" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-6px u-padding-6px-12px u-color-text-main u-font-size-12px u-outline-none" />
+                    <select id="logs-level-select" onchange="filterLogs()" class="u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-6px u-padding-6px-10px u-color-text-main u-font-size-12px u-outline-none">
+                        <option value="ALL">All Levels</option>
+                        <option value="ERROR">Errors Only</option>
+                        <option value="WARNING">Warnings &amp; Errors</option>
+                        <option value="INFO">Info &amp; Above</option>
+                    </select>
+                </div>
+                <div class="logs-status-group">
+                    <label class="u-font-size-12px u-color-text-muted u-cursor-pointer u-display-flex u-align-items-center u-gap-6px">
+                        <input type="checkbox" id="logs-tail-checkbox" checked> Auto-scroll bottom
+                    </label>
+                    <span id="logs-count-label" class="u-font-size-12px u-color-text-muted">0 lines</span>
+                </div>
+            </div>
+            <div id="logs-terminal" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-8px u-padding-14px u-overflow-y-auto u-font-family-ui-monospace-sfmono-regular-menlo-monaco-consolas-liberation-mono-monospace u-font-size-12px u-line-height-1-6 u-color-text-heading u-white-space-pre-wrap u-word-break-break-all u-min-height-300px">
+                Loading logs...
+            </div>
+        </div>
+    </div>
+
+    <!-- Synthetic Test Webhook Modal -->
+    <div id="test-modal" class="modal" onclick="if(event.target===this)closeTestWebhookModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>🧪</span> Synthetic Webhook Simulator
+                </h3>
+                <button onclick="closeTestWebhookModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-16px u-line-height-1-4">
+                Simulate an incoming Plex webhook to test event parsing, co-watch eligibility checks, and real-time activity logging safely.
+            </p>
+            <form onsubmit="event.preventDefault();submitTestWebhook();" class="u-margin-0 u-display-flex u-flex-direction-column u-gap-12px">
+                <div class="u-display-flex u-gap-10px">
+                    <div class="u-flex-1">
+                        <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Event Type</label>
+                        <select id="test-event-select" class="u-width-100 u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none">
+                            <option value="media.scrobble">media.scrobble (Watched)</option>
+                            <option value="media.play">media.play (Started)</option>
+                            <option value="media.pause">media.pause (Paused)</option>
+                            <option value="media.stop">media.stop (Stopped)</option>
+                        </select>
+                    </div>
+                    <div class="u-flex-1">
+                        <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Media Type</label>
+                        <select id="test-type-select" onchange="toggleTestMediaFields(this.value)" class="u-width-100 u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none">
+                            <option value="episode">Episode (TV Show)</option>
+                            <option value="movie">Movie</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="test-show-row">
+                    <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Series Title</label>
+                    <input type="text" id="test-show-input" value="Lanterns" placeholder="e.g. Lanterns, Severance" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px u-outline-none" />
+                </div>
+
+                <div class="u-display-flex u-gap-10px">
+                    <div class="u-flex-2">
+                        <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Item Title</label>
+                        <input type="text" id="test-title-input" value="Episode 7" placeholder="Episode title or Movie name" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px u-outline-none" />
+                    </div>
+                    <div id="test-season-col" class="u-flex-1">
+                        <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Season</label>
+                        <input type="number" id="test-season-input" value="1" min="1" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none" />
+                    </div>
+                    <div id="test-episode-col" class="u-flex-1">
+                        <label class="u-display-block u-font-size-12px u-color-text-muted u-margin-bottom-4px">Episode</label>
+                        <input type="number" id="test-episode-input" value="7" min="1" class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-13px u-outline-none" />
+                    </div>
+                </div>
+
+                <div class="u-display-flex u-align-items-center u-justify-content-space-between u-padding-10px-12px u-background-bg-page u-border-1px-solid-334155 u-border-radius-6px u-margin-top-4px">
+                    <div>
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-main">Dry-Run Simulation</div>
+                        <div class="u-font-size-11px u-color-text-muted">Verifies logic and displays in dashboard without calling external Trakt API</div>
+                    </div>
+                    <label class="u-font-size-12px u-color-text-muted u-cursor-pointer u-display-flex u-align-items-center u-gap-6px">
+                        <input type="checkbox" id="test-execute-trakt"> Execute Trakt
+                    </label>
+                </div>
+
+                <div id="test-result-box" class="u-display-none u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-6px u-padding-10px u-font-family-monospace u-font-size-12px u-color-text-heading u-max-height-120px u-overflow-y-auto"></div>
+
+                <div class="u-display-flex u-justify-content-flex-end u-gap-8px u-margin-top-6px">
+                    <button type="button" onclick="closeTestWebhookModal()" class="btn-sm u-background-334155 u-color-text-heading">Close</button>
+                    <button type="submit" id="test-submit-btn" class="btn-sm u-background-4338ca u-color-fff u-font-weight-600 u-padding-8px-16px">▶ Run Simulation</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Library Reconciliation Modal -->
+    <div id="reconcile-modal" class="modal" onclick="if(event.target===this)closeReconcileModal()">
+        <div class="modal-dialog modal-dialog-lg u-max-height-88vh">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-display-flex u-align-items-center u-gap-10px">
+                    <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                        <span>🔄</span> Two-Way Library Reconciliation
+                    </h3>
+                    <span id="reconcile-count-badge" class="u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-2px-8px u-border-radius-9999px u-font-size-11px u-font-weight-600">Loading...</span>
+                </div>
+                <div class="u-display-flex u-gap-8px u-align-items-center">
+                    <button onclick="fetchDiscrepancies(true)" class="btn-sm u-background-bg-surface u-border-1px-solid-475569" title="Rescan media server and Trakt">🔄 Rescan</button>
+                    <button onclick="closeReconcileModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+                </div>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Select items to synchronize between your media server and Trakt. Echo webhooks are suppressed automatically during reconciliation.
+            </p>
+
+            <!-- Media Server Switcher -->
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-display-flex u-align-items-center u-gap-6px">
+                    <span class="u-font-size-12px u-color-text-muted u-font-weight-600">Media Server:</span>
+                    <button type="button" id="recon-srv-btn-plex" class="btn-sm recon-srv-btn u-background-accent-color u-color-fff u-font-weight-600 u-padding-4px-10px u-font-size-12px" onclick="switchReconcileServer('plex')">🎬 Plex</button>
+                    <button type="button" id="recon-srv-btn-jellyfin" class="btn-sm recon-srv-btn u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-10px u-font-size-12px" onclick="switchReconcileServer('jellyfin')">🟣 Jellyfin</button>
+                    <button type="button" id="recon-srv-btn-emby" class="btn-sm recon-srv-btn u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-10px u-font-size-12px" onclick="switchReconcileServer('emby')">🟢 Emby</button>
+                </div>
+                <button type="button" onclick="openReconcileSettingsModal(activeReconcileServer)" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-font-size-12px u-padding-4px-10px">⚙️ Server Settings</button>
+            </div>
+
+            <!-- Filter tabs -->
+            <div class="u-display-flex u-gap-8px u-margin-bottom-12px u-flex-wrap-wrap">
+                <button type="button" class="btn-sm reconcile-tab u-background-accent-color u-color-fff" onclick="filterReconcile('all', this)">All (<span id="count-all">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterReconcile('trakt_only', this)">Tracker Only &bull; Mark <span id="label-filter-dest">Server</span> (<span id="count-trakt">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterReconcile('server_only', this)"><span id="label-filter-src">Server</span> Only &bull; Push Tracker (<span id="count-plex">0</span>)</button>
+                <button type="button" class="btn-sm reconcile-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterReconcile('rating_mismatch', this)">Ratings (<span id="count-ratings">0</span>)</button>
+            </div>
+
+            <!-- Reconciliation Progress Banner -->
+            <div id="reconcile-progress-box" class="u-display-none u-background-bg-page u-border-1px-solid-0284c7 u-border-radius-8px u-padding-12px u-margin-bottom-12px">
+                <div class="u-display-flex u-justify-content-space-between u-font-size-12px u-color-text-heading u-margin-bottom-6px">
+                    <span id="reconcile-progress-msg" class="u-font-weight-600">Reconciling items...</span>
+                    <span id="reconcile-progress-stats">0%</span>
+                </div>
+                <div class="u-background-bg-surface u-border-radius-9999px u-height-8px u-overflow-hidden">
+                    <div id="reconcile-progress-bar" class="u-background-accent-color u-height-100 u-width-0 u-transition-width-0-3s-ease"></div>
+                </div>
+            </div>
+
+            <!-- Discrepancies Table -->
+            <div class="table-container u-flex-1 u-overflow-y-auto u-max-height-420px u-border-1px-solid-334155 u-border-radius-8px">
+                <table class="u-width-100">
+                    <thead>
+                        <tr>
+                            <th class="u-width-36px u-text-align-center"><input type="checkbox" id="reconcile-select-all" onchange="toggleSelectAllReconcile(this)" /></th>
+                            <th>Media Item</th>
+                            <th>Type</th>
+                            <th id="reconcile-server-col-header">Plex Server</th>
+                            <th>Trakt Profile</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reconcile-tbody">
+                        <tr><td colspan="6" class="u-text-align-center u-padding-24px u-color-text-muted">Loading library discrepancies...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Footer Actions -->
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-14px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-font-size-12px u-color-text-muted">
+                    <span id="reconcile-selected-count">0</span> items selected
+                </div>
+                <div class="u-display-flex u-gap-8px">
+                    <button type="button" onclick="closeReconcileModal()" class="btn-sm u-background-334155 u-color-text-heading">Cancel</button>
+                    <button type="button" id="reconcile-selected-btn" onclick="executeSelectedReconcile()" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600" disabled>⚡ Sync Selected</button>
+                    <button type="button" id="reconcile-all-btn" onclick="executeAllReconcile()" class="btn-sm u-background-10b981 u-color-fff u-font-weight-600">⚡ Reconcile All</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- COMPONENT:settings_hub -->
+    <!-- Two-Way Reconciliation Settings Modal -->
+    <div id="reconcile-settings-modal" class="modal" onclick="if(event.target===this)closeReconcileSettingsModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>⚙️</span> Reconciliation &amp; Direct Connection
+                </h3>
+                <button onclick="closeReconcileSettingsModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Configure media server credentials for live discrepancy scanning, automated reverse sync, and user rating synchronization without restarting.
+            </p>
+
+            <!-- Server Selector Tabs -->
+            <div class="u-display-flex u-gap-6px u-margin-bottom-12px u-border-bottom-1px-solid-334155 u-padding-bottom-10px u-flex-wrap-wrap">
+                <button type="button" id="recon-tab-btn-plex" onclick="switchReconSettingsTab('plex')" class="btn-sm recon-cfg-tab u-background-accent-color u-color-fff u-font-weight-600 u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🎬</span> Plex
+                </button>
+                <button type="button" id="recon-tab-btn-jellyfin" onclick="switchReconSettingsTab('jellyfin')" class="btn-sm recon-cfg-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🟣</span> Jellyfin
+                </button>
+                <button type="button" id="recon-tab-btn-emby" onclick="switchReconSettingsTab('emby')" class="btn-sm recon-cfg-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-6px-14px u-border-radius-6px u-display-flex u-align-items-center u-gap-6px">
+                    <span>🟢</span> Emby
+                </button>
+            </div>
+
+            <form onsubmit="event.preventDefault();saveReconcileSettings();" class="u-display-flex u-flex-direction-column u-gap-12px u-margin-0">
+                <!-- Plex Server Section -->
+                <div id="recon-panel-plex" class="recon-server-panel u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                    <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                        <span>📺</span> Media Server Direct API (Plex)
+                    </div>
+                    <div class="u-display-flex u-flex-direction-column u-gap-8px">
+                        <div>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Server URL</label>
+                            <input type="text" id="recon-plex-url" placeholder="http://<your-server-ip-or-domain>:32400"
+                                   class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                        </div>
+                        <div>
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-4px">
+                                <label class="u-font-size-11px u-color-text-muted">Plex Token</label>
+                                <span id="recon-token-badge-plex" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="recon-plex-token" placeholder="Enter Plex X-Plex-Token"
+                                       class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('recon-plex-token','recon-token-toggle-btn-plex')" id="recon-token-toggle-btn-plex" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-4px u-flex-wrap-wrap u-gap-6px">
+                            <button type="button" onclick="testReconcileConnection('plex')" id="recon-test-btn-plex" class="btn-sm u-background-bg-surface u-border-1px-solid-3b82f6 u-color-60a5fa u-font-weight-600 u-padding-6px-12px">
+                                🔌 Test Connection
+                            </button>
+                            <span id="recon-test-status-plex" class="u-font-size-11px u-color-text-muted"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Jellyfin Server Section -->
+                <div id="recon-panel-jellyfin" class="recon-server-panel u-display-none u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                    <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                        <span>🟣</span> Media Server Direct API (Jellyfin)
+                    </div>
+                    <div class="u-display-flex u-flex-direction-column u-gap-8px">
+                        <div>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Server URL</label>
+                            <input type="text" id="recon-jellyfin-url" placeholder="http://<your-server-ip-or-domain>:8096"
+                                   class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                        </div>
+                        <div>
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-4px">
+                                <label class="u-font-size-11px u-color-text-muted">API Key / Access Token</label>
+                                <span id="recon-token-badge-jellyfin" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="recon-jellyfin-token" placeholder="Enter Jellyfin API Key"
+                                       class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('recon-jellyfin-token','recon-token-toggle-btn-jellyfin')" id="recon-token-toggle-btn-jellyfin" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">User ID (Optional)</label>
+                            <input type="text" id="recon-jellyfin-user-id" placeholder="Optional (auto-discovers administrator)"
+                                   class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                        </div>
+                        <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-4px u-flex-wrap-wrap u-gap-6px">
+                            <button type="button" onclick="testReconcileConnection('jellyfin')" id="recon-test-btn-jellyfin" class="btn-sm u-background-bg-surface u-border-1px-solid-8b5cf6 u-color-c084fc u-font-weight-600 u-padding-6px-12px">
+                                🔌 Test Connection
+                            </button>
+                            <span id="recon-test-status-jellyfin" class="u-font-size-11px u-color-text-muted"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Emby Server Section -->
+                <div id="recon-panel-emby" class="recon-server-panel u-display-none u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                    <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                        <span>🟢</span> Media Server Direct API (Emby)
+                    </div>
+                    <div class="u-display-flex u-flex-direction-column u-gap-8px">
+                        <div>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Server URL</label>
+                            <input type="text" id="recon-emby-url" placeholder="http://<your-server-ip-or-domain>:8096"
+                                   class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                        </div>
+                        <div>
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-4px">
+                                <label class="u-font-size-11px u-color-text-muted">API Key / Access Token</label>
+                                <span id="recon-token-badge-emby" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="recon-emby-token" placeholder="Enter Emby API Key"
+                                       class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('recon-emby-token','recon-token-toggle-btn-emby')" id="recon-token-toggle-btn-emby" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">User ID (Optional)</label>
+                            <input type="text" id="recon-emby-user-id" placeholder="Optional (auto-discovers administrator)"
+                                   class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                        </div>
+                        <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-4px u-flex-wrap-wrap u-gap-6px">
+                            <button type="button" onclick="testReconcileConnection('emby')" id="recon-test-btn-emby" class="btn-sm u-background-bg-surface u-border-1px-solid-10b981 u-color-6ee7b7 u-font-weight-600 u-padding-6px-12px">
+                                🔌 Test Connection
+                            </button>
+                            <span id="recon-test-status-emby" class="u-font-size-11px u-color-text-muted"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Automation & Preferences Section -->
+                <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                    <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                        <span>⏱️</span> Automation &amp; Sync Preferences
+                    </div>
+                    <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-10px">
+                        <div>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Primary Sync Server</label>
+                            <select id="recon-server-type-select" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-7px-8px u-color-text-main u-font-size-12px u-outline-none">
+                                <option value="plex">🎬 Plex Media Server</option>
+                                <option value="jellyfin">🟣 Jellyfin</option>
+                                <option value="emby">🟢 Emby</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Periodic Sync Interval</label>
+                            <select id="recon-interval-select" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-7px-8px u-color-text-main u-font-size-12px u-outline-none">
+                                <option value="0">Manual Only (0m)</option>
+                                <option value="15">Every 15 minutes</option>
+                                <option value="30">Every 30 minutes</option>
+                                <option value="60">Every 1 hour (60m)</option>
+                                <option value="180">Every 3 hours (180m)</option>
+                                <option value="360">Every 6 hours (360m)</option>
+                                <option value="720">Every 12 hours (720m)</option>
+                                <option value="1440">Every 24 hours (1440m)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="u-margin-top-10px">
+                        <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Default Sync Direction</label>
+                        <select id="recon-direction-select" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-7px-8px u-color-text-main u-font-size-12px u-outline-none">
+                            <option value="all">Bi-directional (All)</option>
+                            <option value="trakt_to_server">Trakt &rarr; Media Server Only</option>
+                            <option value="server_to_trakt">Media Server &rarr; Trakt Only</option>
+                        </select>
+                    </div>
+                    <div class="u-display-flex u-flex-direction-column u-gap-6px u-margin-top-10px">
+                        <label class="u-display-flex u-align-items-center u-gap-6px u-cursor-pointer u-font-size-12px u-color-text-heading">
+                            <input type="checkbox" id="recon-ratings-check" checked> Sync User Ratings (1-10 bi-directionally)
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-6px u-cursor-pointer u-font-size-12px u-color-text-heading">
+                            <input type="checkbox" id="recon-startup-check"> Scan &amp; Sync on Service Startup
+                        </label>
+                    </div>
+                </div>
+
+                <div id="recon-settings-msg" class="u-display-none u-padding-8px-12px u-border-radius-6px u-font-size-12px"></div>
+
+                <div class="u-display-flex u-justify-content-flex-end u-gap-8px u-margin-top-4px u-flex-wrap-wrap">
+                    <button type="button" onclick="closeReconcileSettingsModal()" class="btn-sm u-background-334155 u-color-text-heading">Cancel</button>
+                    <button type="submit" id="recon-save-btn" class="btn-sm u-background-10b981 u-color-fff u-font-weight-600 u-padding-8px-18px">💾 Save Settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Arr Watchlist Automation Modal -->
+    <div id="arr-modal" class="modal" onclick="if(event.target===this)closeArrModal()">
+        <div class="modal-dialog modal-dialog-lg">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-display-flex u-align-items-center u-gap-10px">
+                    <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                        <span>🎬</span> Watchlist Acquisition History
+                    </h3>
+                    <span id="arr-modal-status-badge" class="u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-2px-8px u-border-radius-9999px u-font-size-11px u-font-weight-600">Ready</span>
+                </div>
+                <div class="u-display-flex u-align-items-center u-gap-8px">
+                    <button onclick="triggerArrWatchlistSync()" id="arr-modal-sync-btn" class="btn-sm u-background-10b981 u-color-fff u-font-weight-600">⚡ Sync Watchlist Now</button>
+                    <button onclick="closeArrModal()" class="btn-sm u-background-334155 u-color-text-heading u-padding-4px-10px u-font-size-14px u-font-weight-700">&times;</button>
+                </div>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Recent movies and TV shows detected in your Trakt Watchlist and dispatched to Radarr and Sonarr.
+            </p>
+            <div id="arr-modal-content" class="u-flex-1 u-overflow-y-auto u-max-height-400px u-display-flex u-flex-direction-column u-gap-8px">
+                <div class="u-color-text-muted u-text-align-center u-padding-24px u-font-size-13px">Loading watchlist status...</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="add-arr-modal" class="modal" onclick="if(event.target===this)closeAddArrModal()">
+        <div class="modal-dialog modal-dialog-lg u-max-height-90vh u-overflow-auto">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-gap-8px">
+                <h3 class="u-margin-0 u-color-text-main">➕ Add media to Sonarr or Radarr</h3>
+                <button onclick="closeAddArrModal()" class="btn-sm u-background-334155 u-color-text-heading">&times;</button>
+            </div>
+            <div class="u-display-flex u-gap-8px u-margin-14px-0 u-flex-wrap-wrap">
+                <button id="arr-kind-series" onclick="setArrAddType('series')" class="btn-sm u-background-0369a1 u-color-fff">📺 TV Shows</button>
+                <button id="arr-kind-movie" onclick="setArrAddType('movie')" class="btn-sm u-background-bg-surface u-color-text-heading">🎬 Movies</button>
+                <input id="arr-add-search" type="search" placeholder="Search titles…" oninput="scheduleArrLookup()" class="u-flex-1 u-min-width-180px u-background-bg-page u-color-text-main u-border-1px-solid-334155 u-border-radius-6px u-padding-9px-11px">
+            </div>
+            <div id="arr-add-results" class="u-display-flex u-flex-direction-column u-gap-8px u-max-height-38vh u-overflow-auto"></div>
+            <div id="arr-add-options" class="u-display-none u-border-top-1px-solid-334155 u-margin-top-14px u-padding-top-14px">
+                <div id="arr-add-selected" class="u-color-text-main u-font-weight-600 u-margin-bottom-10px"></div>
+                <div class="u-display-flex u-gap-10px u-flex-wrap-wrap">
+                    <label class="u-flex-1 u-min-width-180px u-color-text-muted u-font-size-12px">Root folder<select id="arr-add-root" class="u-display-block u-width-100 u-margin-top-5px u-background-bg-page u-color-text-main u-border-1px-solid-334155 u-border-radius-6px u-padding-8px"></select></label>
+                    <label class="u-flex-1 u-min-width-180px u-color-text-muted u-font-size-12px">Quality profile<select id="arr-add-profile" class="u-display-block u-width-100 u-margin-top-5px u-background-bg-page u-color-text-main u-border-1px-solid-334155 u-border-radius-6px u-padding-8px"></select></label>
+                </div>
+                <div class="u-display-flex u-gap-14px u-flex-wrap-wrap u-margin-top-12px u-color-text-heading u-font-size-13px">
+                    <label><input type="checkbox" id="arr-add-monitored" checked> Monitor</label>
+                    <label><input type="checkbox" id="arr-add-search-now" checked> Search immediately</label>
+                    <label id="arr-add-cowatch-wrap" class="u-display-none u-color-fbbf24"><input type="checkbox" id="arr-add-cowatch"> <span id="arr-add-cowatch-label">Enable Co-Watching (optional)</span></label>
+                    <label id="arr-add-monitor-mode-wrap" class="u-color-text-muted">Monitor episodes<select id="arr-add-monitor-mode" class="u-margin-left-6px u-background-bg-page u-color-text-main u-border-1px-solid-334155 u-border-radius-6px u-padding-5px"><option value="all">All seasons</option><option value="future">Future episodes</option><option value="missing">Missing episodes</option><option value="none">None</option></select></label>
+                </div>
+                <div class="u-display-flex u-justify-content-flex-end u-gap-8px u-margin-top-14px u-flex-wrap-wrap">
+                    <span id="arr-add-message" class="u-flex-1 u-min-width-180px u-color-text-muted u-font-size-12px u-align-self-center"></span>
+                    <button onclick="submitArrAdd()" id="arr-add-submit" class="btn-sm u-background-10b981 u-color-fff u-font-weight-600">Add to service</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Simkl Integration Modal -->
+    <div id="simkl-modal" class="modal" onclick="if(event.target===this)closeSimklModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>✨</span> Simkl Multi-Tracker Settings
+                </h3>
+                <button onclick="closeSimklModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-16px u-line-height-1-4">
+                Link your Simkl account to automatically dual-scrobble movies, TV shows, and anime alongside Trakt.
+            </p>
+            <div id="simkl-modal-content" class="u-display-flex u-flex-direction-column u-gap-12px">
+                <div class="u-color-text-muted u-text-align-center u-padding-20px u-font-size-13px">Checking Simkl status...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AniList Integration Modal -->
+    <div id="anilist-modal" class="modal" onclick="if(event.target===this)closeAnilistModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>⚡</span> AniList Anime Tracker Settings
+                </h3>
+                <button onclick="closeAnilistModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-16px u-line-height-1-4">
+                Link your AniList account to scrobble anime episode progress and sync ratings via AniList's official GraphQL API.
+            </p>
+            <div id="anilist-modal-content" class="u-display-flex u-flex-direction-column u-gap-12px">
+                <div class="u-color-text-muted u-text-align-center u-padding-20px u-font-size-13px">Checking AniList status...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MyAnimeList Integration Modal -->
+    <div id="mal-modal" class="modal" onclick="if(event.target===this)closeMalModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>🎌</span> MyAnimeList (MAL) Settings
+                </h3>
+                <button onclick="closeMalModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-16px u-line-height-1-4">
+                Link your MyAnimeList account to scrobble anime episode progress and sync user ratings via the MAL v2 API.
+            </p>
+            <div id="mal-modal-content" class="u-display-flex u-flex-direction-column u-gap-12px">
+                <div class="u-color-text-muted u-text-align-center u-padding-20px u-font-size-13px">Checking MyAnimeList status...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Household Multi-Tenant Routing Rule Modal -->
+    <div id="household-rule-modal" class="modal" onclick="if(event.target===this)closeHouseholdRuleModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>🏡</span> Add Household Routing Rule
+                </h3>
+                <button onclick="closeHouseholdRuleModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-16px u-line-height-1-4">
+                Create granular scrobble routing rules for specific household player devices, media types, and user profiles (e.g. Living Room TV routes to User A & Kids).
+            </p>
+            <form onsubmit="event.preventDefault();submitHouseholdRule();" class="u-display-flex u-flex-direction-column u-gap-14px">
+                <div>
+                    <label class="u-display-block u-font-size-12px u-font-weight-600 u-color-text-heading u-margin-bottom-4px">Rule Name</label>
+                    <input type="text" id="hr-rule-name" placeholder="e.g. Living Room TV - Family" required
+                           class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px" />
+                </div>
+                <div>
+                    <label class="u-display-block u-font-size-12px u-font-weight-600 u-color-text-heading u-margin-bottom-4px">Target Profile Usernames (comma-separated)</label>
+                    <input type="text" id="hr-rule-targets" placeholder="e.g. partner, kids, alice" required
+                           class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px" />
+                    <div class="u-font-size-11px u-color-text-muted u-margin-top-2px">Playback on matching devices will dual-scrobble to these profiles.</div>
+                </div>
+                <div>
+                    <label class="u-display-block u-font-size-12px u-font-weight-600 u-color-text-heading u-margin-bottom-4px">Allowed Players / Devices (comma-separated, or * for all)</label>
+                    <input type="text" id="hr-rule-devices" placeholder="e.g. Living Room Apple TV, Shield TV, *"
+                           class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px" />
+                </div>
+                <div>
+                    <label class="u-display-block u-font-size-12px u-font-weight-600 u-color-text-heading u-margin-bottom-4px">Media Types</label>
+                    <div class="u-display-flex u-gap-16px u-align-items-center">
+                        <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-13px u-color-text-heading u-cursor-pointer">
+                            <input type="checkbox" id="hr-type-movie" checked class="u-accent-color-2563eb" /> Movies
+                        </label>
+                        <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-13px u-color-text-heading u-cursor-pointer">
+                            <input type="checkbox" id="hr-type-episode" checked class="u-accent-color-2563eb" /> TV Episodes
+                        </label>
+                    </div>
+                </div>
+                <div>
+                    <label class="u-display-block u-font-size-12px u-font-weight-600 u-color-text-heading u-margin-bottom-4px">Show Whitelist (optional, comma-separated or * for all)</label>
+                    <input type="text" id="hr-rule-shows" placeholder="e.g. Bluey, Severance, *"
+                           class="u-width-100 u-box-sizing-border-box u-background-bg-page u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-12px u-color-text-main u-font-size-13px" />
+                    <div class="u-font-size-11px u-color-text-muted u-margin-top-2px">Leave empty or * to allow all shows on this player.</div>
+                </div>
+                <div class="u-display-flex u-justify-content-flex-end u-gap-8px u-margin-top-8px">
+                    <button type="button" onclick="closeHouseholdRuleModal()" class="btn-sm u-background-334155 u-color-text-muted">Cancel</button>
+                    <button type="submit" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600">Save Rule</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- In-Browser Webhook Inspector & Payload Debugger Modal -->
+    <div id="webhook-debugger-modal" class="modal diagnostic-drawer" onclick="if(event.target===this)closeWebhookDebuggerModal()">
+        <div class="modal-dialog modal-dialog-lg u-max-height-88vh u-display-flex u-flex-direction-column">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-display-flex u-align-items-center u-gap-10px">
+                    <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                        <span>🔍</span> Webhook Inspector & Payload Debugger
+                    </h3>
+                    <span id="webhook-debugger-count" class="u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-2px-8px u-border-radius-9999px u-font-size-11px u-font-weight-600">0 events</span>
+                </div>
+                <div class="u-display-flex u-gap-6px u-align-items-center">
+                    <button onclick="openLogsModal()" class="btn-sm">Live Logs</button>
+                    <button onclick="loadDebugWebhooks()" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-5px-10px u-font-size-11px u-cursor-pointer">🔄 Refresh</button>
+                    <button onclick="clearDebugWebhooks()" class="btn-sm u-background-7f1d1d u-color-fecaca u-border-none u-padding-5px-10px u-font-size-11px u-cursor-pointer">🗑️ Clear</button>
+                    <button onclick="closeWebhookDebuggerModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+                </div>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Inspect recent incoming raw webhook requests from Plex, Jellyfin, Emby, and standalone players. Tokens are automatically redacted for privacy. Click <strong>Replay</strong> to test or edit any payload.
+            </p>
+            <div id="webhook-debugger-list" class="u-overflow-y-auto u-flex-1 u-max-height-60vh u-padding-right-4px">
+                <div class="u-color-text-muted u-font-size-12px u-font-style-italic u-padding-12px-0">Loading webhook history...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Personal Analytics OmniWrapped Modal -->
+    <div id="omniwrapped-modal" class="modal" onclick="if(event.target===this)closeOmniWrappedModal()">
+        <div class="modal-dialog modal-dialog-md u-max-height-88vh u-background-linear-gradient-145deg-0f172a-1e1b4b u-border-1px-solid-6366f1 u-box-shadow-0-10px-25px-5px-rgba-99-102-241-0-4">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <div class="u-display-flex u-align-items-center u-gap-8px">
+                    <span class="u-font-size-24px">✨</span>
+                    <h3 id="omniwrapped-headline" class="u-margin-0 u-font-size-20px u-color-fff u-font-weight-700">Your 2026 OmniWrapped</h3>
+                </div>
+                <button onclick="closeOmniWrappedModal()" class="u-background-none u-border-none u-color-text-heading u-font-size-22px u-cursor-pointer">&times;</button>
+            </div>
+
+            <!-- Archetype Badge -->
+            <div class="u-text-align-center u-padding-16px-12px u-background-rgba-255-255-255-0-05 u-border-1px-solid-rgba-255-255-255-0-1 u-border-radius-10px u-margin-bottom-14px">
+                <div class="u-font-size-11px u-text-transform-uppercase u-color-a5b4fc u-font-weight-700 u-letter-spacing-1px u-margin-bottom-4px">Your Viewing Archetype</div>
+                <div id="omniwrapped-archetype" class="u-font-size-20px u-font-weight-800 u-color-fbcfe8 u-text-shadow-0-0-12px-rgba-244-114-182-0-4">The Living Room Co-Watcher</div>
+                <div id="omniwrapped-description" class="u-font-size-12px u-color-text-heading u-margin-top-6px u-max-width-380px u-margin-left-auto u-margin-right-auto u-line-height-1-4">
+                    You cherish shared cinema moments, watching nearly half your media together with family and partners.
+                </div>
+            </div>
+
+            <!-- Big Stats Grid -->
+            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-10px u-margin-bottom-14px">
+                <div class="u-background-rgba-0-0-0-0-3 u-border-1px-solid-rgba-255-255-255-0-08 u-border-radius-8px u-padding-12px u-text-align-center">
+                    <div class="u-font-size-11px u-color-text-muted">Total Watch Time</div>
+                    <div id="omniwrapped-watchtime" class="u-font-size-22px u-font-weight-800 u-color-accent-color u-margin-top-2px">146h 30m</div>
+                </div>
+                <div class="u-background-rgba-0-0-0-0-3 u-border-1px-solid-rgba-255-255-255-0-08 u-border-radius-8px u-padding-12px u-text-align-center">
+                    <div class="u-font-size-11px u-color-text-muted">Completed Scrobbles</div>
+                    <div id="omniwrapped-titles" class="u-font-size-22px u-font-weight-800 u-color-text-main u-margin-top-2px">182</div>
+                    <div id="omniwrapped-titles-sub" class="u-font-size-10px u-color-text-muted">46 unique titles</div>
+                </div>
+                <div class="u-background-rgba-0-0-0-0-3 u-border-1px-solid-rgba-255-255-255-0-08 u-border-radius-8px u-padding-12px u-text-align-center">
+                    <div class="u-font-size-11px u-color-text-muted">Top Binge Series</div>
+                    <div id="omniwrapped-top-show" class="u-font-size-14px u-font-weight-700 u-color-c084fc u-margin-top-4px">Severance</div>
+                    <div id="omniwrapped-top-show-sub" class="u-font-size-10px u-color-text-muted">18 episodes logged</div>
+                </div>
+                <div class="u-background-rgba-0-0-0-0-3 u-border-1px-solid-rgba-255-255-255-0-08 u-border-radius-8px u-padding-12px u-text-align-center">
+                    <div class="u-font-size-11px u-color-text-muted">Co-Watch Share</div>
+                    <div id="omniwrapped-cowatch-pct" class="u-font-size-18px u-font-weight-700 u-color-f472b6 u-margin-top-4px">37% Shared</div>
+                    <div id="omniwrapped-cowatch-partner" class="u-font-size-10px u-color-text-muted">with @demo_partner</div>
+                </div>
+            </div>
+
+            <!-- Footer Action Buttons -->
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-8px">
+                <button onclick="downloadOmniWrappedJson()" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-font-size-11px u-cursor-pointer">
+                    📥 Export JSON
+                </button>
+                <button onclick="closeOmniWrappedModal()" class="btn-sm u-background-4f46e5 u-color-fff u-font-weight-600 u-border-none u-padding-6px-16px u-cursor-pointer">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cross-Tracker Sync (Trakt <-> Simkl) Modal -->
+    <div id="cross-sync-modal" class="modal" onclick="if(event.target===this)closeCrossSyncModal()">
+        <div class="modal-dialog modal-dialog-lg u-max-height-88vh">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-display-flex u-align-items-center u-gap-10px">
+                    <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                        <span>🔄</span> Cross-Tracker Reconciliation (Trakt &harr; Simkl)
+                    </h3>
+                    <span id="cross-sync-count-badge" class="u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-2px-8px u-border-radius-9999px u-font-size-11px u-font-weight-600">Loading...</span>
+                </div>
+                <div class="u-display-flex u-gap-8px u-align-items-center">
+                    <button onclick="fetchCrossSyncDiscrepancies(true)" class="btn-sm u-background-bg-surface u-border-1px-solid-475569" title="Rescan Trakt and Simkl">🔄 Rescan</button>
+                    <button onclick="closeCrossSyncModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+                </div>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Compare your Trakt and Simkl libraries to reconcile watch history and sync user ratings bi-directionally across Movies, TV Shows, and Anime.
+            </p>
+
+            <!-- Filter tabs -->
+            <div class="u-display-flex u-gap-8px u-margin-bottom-12px u-flex-wrap-wrap">
+                <button type="button" class="btn-sm cross-sync-tab u-background-accent-color u-color-fff" onclick="filterCrossSync('all', this)">All (<span id="cross-count-all">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('trakt_to_simkl', this)">Trakt &rarr; Simkl (<span id="cross-count-t2s">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('simkl_to_trakt', this)">Simkl &rarr; Trakt (<span id="cross-count-s2t">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('rating', this)">Ratings (<span id="cross-count-ratings">0</span>)</button>
+            </div>
+
+            <!-- Reconciliation Progress Banner -->
+            <div id="cross-sync-progress-box" class="u-display-none u-background-bg-page u-border-1px-solid-0284c7 u-border-radius-8px u-padding-12px u-margin-bottom-12px">
+                <div class="u-display-flex u-justify-content-space-between u-font-size-12px u-color-text-heading u-margin-bottom-6px">
+                    <span id="cross-sync-progress-msg" class="u-font-weight-600">Synchronizing items...</span>
+                    <span id="cross-sync-progress-stats">0%</span>
+                </div>
+                <div class="u-background-bg-surface u-border-radius-9999px u-height-8px u-overflow-hidden">
+                    <div id="cross-sync-progress-bar" class="u-background-accent-color u-height-100 u-width-0 u-transition-width-0-3s-ease"></div>
+                </div>
+            </div>
+
+            <!-- Discrepancies Table -->
+            <div class="table-container u-flex-1 u-overflow-y-auto u-max-height-420px u-border-1px-solid-334155 u-border-radius-8px">
+                <table class="u-width-100">
+                    <thead>
+                        <tr>
+                            <th class="u-width-36px u-text-align-center"><input type="checkbox" id="cross-sync-select-all" onchange="toggleSelectAllCrossSync(this)" /></th>
+                            <th>Direction</th>
+                            <th>Media Item</th>
+                            <th>Type</th>
+                            <th>Source Status</th>
+                            <th>Target Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cross-sync-tbody">
+                        <tr><td colspan="6" class="u-text-align-center u-padding-24px u-color-text-muted">Loading cross-tracker discrepancies...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Footer Actions -->
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-14px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-font-size-12px u-color-text-muted">
+                    <span id="cross-sync-selected-count">0</span> items selected
+                </div>
+                <div class="u-display-flex u-gap-8px">
+                    <button type="button" onclick="closeCrossSyncModal()" class="btn-sm u-background-334155 u-color-text-heading">Cancel</button>
+                    <button type="button" id="cross-sync-selected-btn" onclick="executeSelectedCrossSync()" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600" disabled>⚡ Sync Selected</button>
+                    <button type="button" id="cross-sync-all-btn" onclick="executeAllCrossSync()" class="btn-sm u-background-10b981 u-color-fff u-font-weight-600">⚡ Sync All Both Ways</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Theme & Appearance Modal -->
+    <div id="theme-modal" class="modal" onclick="if(event.target===this)closeThemeModal()">
+        <div class="modal-dialog modal-dialog-md">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>🎨</span> Theme &amp; Appearance
+                </h3>
+                <button onclick="closeThemeModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-16px u-line-height-1-4">
+                Personalize your Omniscrobble workspace. Select from 8 curated dark palettes and custom accent colors.
+            </p>
+
+            <div class="custom-scroll u-max-height-65vh u-overflow-y-auto u-padding-right-4px u-display-flex u-flex-direction-column u-gap-16px">
+                <!-- Base Palettes -->
+                <div>
+                    <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                        <span>🎭</span> Base Color Palette
+                    </div>
+                    <div class="u-display-grid u-grid-template-columns-repeat-auto-fill-minmax-160px-1fr u-gap-10px" id="theme-modal-palette-grid">
+                        <!-- Populated by renderThemePickers() -->
+                    </div>
+                </div>
+
+                <!-- Accent Highlights -->
+                <div>
+                    <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-8px u-display-flex u-align-items-center u-gap-6px">
+                        <span>✨</span> Accent Color
+                    </div>
+                    <div class="u-display-flex u-flex-wrap-wrap u-gap-8px" id="theme-modal-accent-grid">
+                        <!-- Populated by renderThemePickers() -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-top-16px u-padding-top-12px u-border-top-1px-solid-var-border-color u-flex-wrap-wrap u-gap-8px">
+                <div class="u-font-size-12px u-color-text-muted">
+                    Shortcut: <kbd class="u-background-bg-subtle u-border-1px-solid-var-border-color u-padding-2px-6px u-border-radius-4px u-font-family-monospace u-font-size-11px u-color-text-main">T</kbd> cycles themes
+                </div>
+                <div class="u-display-flex u-gap-8px">
+                    <button type="button" onclick="openShortcutsModal()" class="btn-sm u-background-bg-subtle u-border-1px-solid-var-border-color u-color-text-muted u-padding-8px-14px u-cursor-pointer">⌨️ Shortcuts</button>
+                    <button type="button" onclick="closeThemeModal()" class="btn-sm u-background-btn-copy-bg u-color-accent-text u-font-weight-600 u-padding-8px-18px u-cursor-pointer">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div id="shortcuts-modal" class="modal" onclick="if(event.target===this)closeShortcutsModal()">
+        <div class="modal-dialog modal-dialog-sm u-max-width-440px">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px">
+                <h3 class="u-margin-0 u-font-size-18px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
+                    <span>⌨️</span> Keyboard Shortcuts
+                </h3>
+                <button onclick="closeShortcutsModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
+            </div>
+            <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
+                Quickly navigate and control Omniscrobble from anywhere on the dashboard.
+            </p>
+
+            <div class="u-display-flex u-flex-direction-column u-gap-8px">
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-9px-12px">
+                    <span class="u-font-size-13px u-color-text-main">Open Command Palette</span>
+                    <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-3px-8px u-border-radius-4px u-font-family-monospace u-font-size-12px u-font-weight-600 u-color-text-heading">⌘ / Ctrl + K</kbd>
+                </div>
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-9px-12px">
+                    <span class="u-font-size-13px u-color-text-main">Cycle Theme Palette</span>
+                    <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-3px-8px u-border-radius-4px u-font-family-monospace u-font-size-12px u-font-weight-600 u-color-text-heading">T</kbd>
+                </div>
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-9px-12px">
+                    <span class="u-font-size-13px u-color-text-main">Open Settings Hub</span>
+                    <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-3px-8px u-border-radius-4px u-font-family-monospace u-font-size-12px u-font-weight-600 u-color-text-heading">S</kbd>
+                </div>
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-9px-12px">
+                    <span class="u-font-size-13px u-color-text-main">Open Live Logs</span>
+                    <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-3px-8px u-border-radius-4px u-font-family-monospace u-font-size-12px u-font-weight-600 u-color-text-heading">L</kbd>
+                </div>
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-9px-12px">
+                    <span class="u-font-size-13px u-color-text-main">Refresh Activity &amp; Queue</span>
+                    <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-3px-8px u-border-radius-4px u-font-family-monospace u-font-size-12px u-font-weight-600 u-color-text-heading">R</kbd>
+                </div>
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-9px-12px">
+                    <span class="u-font-size-13px u-color-text-main">Show Shortcuts Help</span>
+                    <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-3px-8px u-border-radius-4px u-font-family-monospace u-font-size-12px u-font-weight-600 u-color-text-heading">?</kbd>
+                </div>
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-9px-12px">
+                    <span class="u-font-size-13px u-color-text-main">Close Active Modal</span>
+                    <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-3px-8px u-border-radius-4px u-font-family-monospace u-font-size-12px u-font-weight-600 u-color-text-heading">Esc</kbd>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="u-display-flex u-justify-content-flex-end u-margin-top-16px u-padding-top-12px u-border-top-1px-solid-var-border-color">
+                <button type="button" onclick="closeShortcutsModal()" class="btn-sm u-background-btn-copy-bg u-color-accent-text u-font-weight-600 u-padding-8px-18px u-cursor-pointer">Got it</button>
+            </div>
+        </div>
+    </div>

@@ -1,0 +1,71 @@
+        <div class="card u-padding-0 u-overflow-hidden" id="card-activity">
+            <div class="activity-header">
+                <h3 class="u-margin-0">Live Activity & Scrobble History</h3>
+                <div class="activity-actions">
+                    {{MANUAL_SCROBBLE_BTN}}
+                    {{RETRY_QUEUE_BTN}}
+                    <label class="u-font-size-12px u-color-text-muted u-cursor-pointer u-display-flex u-align-items-center u-gap-6px">
+                        <input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh(this)"> Auto-refresh (30s)
+                    </label>
+                    <button onclick="fetchEvents()" class="btn-sm">Refresh</button>
+                    {{CLEAR_BUTTON}}
+                </div>
+            </div>
+            <div class="activity-filters" aria-label="Filter activity">
+                <div class="activity-filter-group" role="group" aria-label="Media type">
+                    <button type="button" class="activity-filter-chip" aria-pressed="true" onclick="setActivityFilter('type', 'all', this)">All</button>
+                    <button type="button" class="activity-filter-chip" aria-pressed="false" onclick="setActivityFilter('type', 'movie', this)">Movies</button>
+                    <button type="button" class="activity-filter-chip" aria-pressed="false" onclick="setActivityFilter('type', 'tv', this)">TV Shows</button>
+                    <button type="button" class="activity-filter-chip" aria-pressed="false" onclick="setActivityFilter('type', 'anime', this)">Anime</button>
+                </div>
+                <div class="activity-filter-group" role="group" aria-label="Delivery status">
+                    <button type="button" class="activity-filter-chip" aria-pressed="true" onclick="setActivityFilter('status', 'all', this)">Any status</button>
+                    <button type="button" class="activity-filter-chip" aria-pressed="false" onclick="setActivityFilter('status', 'success', this)">Success</button>
+                    <button type="button" class="activity-filter-chip" aria-pressed="false" onclick="setActivityFilter('status', 'queued', this)">In Queue</button>
+                    <button type="button" class="activity-filter-chip" aria-pressed="false" onclick="setActivityFilter('status', 'failed', this)">Failed</button>
+                </div>
+                <select id="activity-user-filter" class="activity-search" aria-label="Filter activity by user" onchange="setActivityUser(this.value)">
+                    <option value="">All users</option>
+                </select>
+                <input class="activity-search" id="activity-search" type="search" placeholder="Search title or user" aria-label="Search activity by title or user" oninput="setActivitySearch(this.value)">
+            </div>
+            <div id="activity-toast-region" class="activity-toast-region" aria-live="polite" aria-atomic="false"></div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Media Title</th>
+                            <th>Type</th>
+                            <th>User</th>
+                            <th>Action</th>
+                            <th class="u-white-space-nowrap">Status</th>
+                            {{ACTIONS_HEADER}}
+                        </tr>
+                    </thead>
+                    <tbody id="events-tbody">
+{{EVENT_ROWS}}
+                    </tbody>
+                </table>
+            </div>
+            <!-- Pagination Controls Footer -->
+            <div id="events-pagination" class="u-display-flex u-justify-content-space-between u-align-items-center u-padding-10px-16px u-background-bg-page u-border-top-1px-solid-334155 u-flex-wrap-wrap u-gap-10px u-font-size-12px u-color-text-muted">
+                <div id="events-page-info">{{EVENTS_PAGE_INFO}}</div>
+                <div class="u-display-flex u-align-items-center u-gap-10px u-flex-wrap-wrap">
+                    <label class="u-display-flex u-align-items-center u-gap-6px">
+                        <span>Per page:</span>
+                        <select id="events-page-size" onchange="changeEventsPageSize(this.value)" class="u-background-bg-surface u-border-1px-solid-334155 u-color-text-main u-padding-3px-8px u-border-radius-4px u-font-size-12px u-cursor-pointer u-outline-none">
+                            <option value="10" selected>10</option>
+                            <option value="20">20</option>
+                            <option value="50">50</option>
+                            <option value="all">All</option>
+                        </select>
+                    </label>
+                    <div class="u-display-flex u-align-items-center u-gap-4px">
+                        <button id="events-prev-btn" onclick="prevEventsPage()" class="btn-sm u-padding-3px-10px u-background-bg-surface u-border-1px-solid-334155 u-color-text-main u-cursor-pointer u-border-radius-4px" disabled>‹ Prev</button>
+                        <span id="events-page-num" class="u-padding-2px-8px u-font-weight-600 u-color-text-main u-font-size-12px">{{EVENTS_PAGE_NUM}}</span>
+                        <button id="events-next-btn" onclick="nextEventsPage()" class="btn-sm u-padding-3px-10px u-background-bg-surface u-border-1px-solid-334155 u-color-text-main u-cursor-pointer u-border-radius-4px" {{EVENTS_NEXT_DISABLED}}>Next ›</button>
+                    </div>
+                </div>
+            </div>
+        </div>

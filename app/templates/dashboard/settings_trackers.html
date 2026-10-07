@@ -1,0 +1,250 @@
+                <!-- Tab 2: Trackers & Scrobblers -->
+                <div id="settings-panel-trackers" class="settings-content-panel u-display-none u-flex-direction-column u-gap-14px">
+                    <!-- Tracker Category Tabs Filter -->
+                    <div class="u-display-flex u-gap-6px u-flex-wrap-wrap u-margin-bottom-4px u-background-bg-subtle u-padding-6px u-border-radius-8px u-border-1px-solid-1e293b">
+                        <button type="button" class="btn-sm settings-trk-cat-btn u-background-accent-color u-color-fff u-font-weight-600 u-padding-4px-10px u-border-radius-4px u-cursor-pointer" data-cat="all" onclick="filterSettingsTrackers('all', this)">All Trackers (9)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-10px u-border-radius-4px u-cursor-pointer" data-cat="universal" onclick="filterSettingsTrackers('universal', this)">Universal (3)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-10px u-border-radius-4px u-cursor-pointer" data-cat="anime" onclick="filterSettingsTrackers('anime', this)">Anime (3)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-10px u-border-radius-4px u-cursor-pointer" data-cat="social_diary" onclick="filterSettingsTrackers('social_diary', this)">Social Diaries (2)</button>
+                        <button type="button" class="btn-sm settings-trk-cat-btn u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-10px u-border-radius-4px u-cursor-pointer" data-cat="lists_ratings" onclick="filterSettingsTrackers('lists_ratings', this)">Lists &amp; Ratings (1)</button>
+                    </div>
+
+                    <!-- Trakt Card -->
+                    <div id="settings-section-trakt" data-tracker-cat="universal" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🔴</span> Trakt.tv (Universal)
+                            </div>
+                            <span id="settings-trk-status-trakt" class="u-font-size-11px u-color-10b981 u-font-weight-600">● Connected</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Primary scrobbling target for watch history, playback sessions, and ratings.</p>
+                        <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-10px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TRAKT_CLIENT_ID</label>
+                                <input type="text" id="settings-trakt-client-id" placeholder="Trakt API Client ID" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TRAKT_CLIENT_SECRET</label>
+                                <div class="u-display-flex u-gap-6px">
+                                    <input type="password" id="settings-trakt-client-secret" placeholder="Trakt Client Secret" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-trakt-client-secret','settings-trakt-sec-btn')" id="settings-trakt-sec-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <a href="/auth" class="btn-sm u-background-ed1c24 u-color-fff u-text-decoration-none u-font-weight-600 u-padding-6px-12px">🔑 Link Trakt Account</a>
+                            <button type="button" id="settings-trk-toggle-btn-trakt" onclick="toggleTrackerFromSettings('trakt')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                            <button type="button" onclick="disconnectTrakt(this)" class="btn-sm u-background-7f1d1d u-border-1px-solid-ef4444 u-color-fee2e2 u-padding-6px-12px">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <!-- Simkl Card -->
+                    <div id="settings-section-simkl" data-tracker-cat="universal" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🔵</span> Simkl (Universal)
+                            </div>
+                            <span id="settings-trk-status-simkl" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Simultaneous dual-scrobbling and cross-tracker library reconciliation across Movies, Shows, and Anime.</p>
+                        <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-10px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">SIMKL_CLIENT_ID</label>
+                                <input type="text" id="settings-simkl-client-id" placeholder="Simkl API Client ID" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">SIMKL_CLIENT_SECRET</label>
+                                <div class="u-display-flex u-gap-6px">
+                                    <input type="password" id="settings-simkl-client-secret" placeholder="Simkl Client Secret" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-simkl-client-secret','settings-simkl-sec-btn')" id="settings-simkl-sec-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <button type="button" onclick="saveSimklCredsAndStartPin()" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-6px-14px">💾 Save &amp; Link Simkl (PIN Flow)</button>
+                            <button type="button" id="settings-trk-toggle-btn-simkl" onclick="toggleTrackerFromSettings('simkl')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                            <button type="button" onclick="disconnectSimkl()" class="btn-sm u-background-7f1d1d u-border-1px-solid-ef4444 u-color-fee2e2 u-padding-6px-12px">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <!-- TMDb Card -->
+                    <div id="settings-section-tmdb" data-tracker-cat="universal" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🟡</span> The Movie Database (TMDb - Universal)
+                            </div>
+                            <span id="settings-trk-status-tmdb" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Synchronizes personal TMDb watchlist, favorites, and 1–10 star ratings via v3/v4 APIs.</p>
+                        <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-8px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDB_API_KEY (v3)</label>
+                                <input type="text" id="settings-tmdb-api-key" placeholder="TMDb API Key (v3)" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDB_SESSION_ID</label>
+                                <div class="u-display-flex u-gap-6px">
+                                    <input type="password" id="settings-tmdb-session-id" placeholder="User Session ID" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-tmdb-session-id','settings-tmdb-sec-btn')" id="settings-tmdb-sec-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="u-margin-bottom-10px">
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDB_ACCESS_TOKEN (v4 Read Token)</label>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="settings-tmdb-access-token" placeholder="TMDb v4 Read Access Token" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-tmdb-access-token','settings-tmdb-tok-btn')" id="settings-tmdb-tok-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <button type="button" id="settings-trk-toggle-btn-tmdb" onclick="toggleTrackerFromSettings('tmdb')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- AniList Card -->
+                    <div id="settings-section-anilist" data-tracker-cat="anime" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🔷</span> AniList (Anime Engine)
+                            </div>
+                            <span id="settings-trk-status-anilist" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Auto-scrobbles detected anime episodes and synchronizes scores via AniList GraphQL API.</p>
+                        <div class="u-margin-bottom-10px">
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">AniList Personal Access Token</label>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="settings-anilist-token" placeholder="Paste AniList Bearer token" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-anilist-token','settings-ani-tok-btn')" id="settings-ani-tok-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <button type="button" onclick="saveAniListFromSettings()" class="btn-sm u-background-02a9ff u-color-fff u-font-weight-600 u-padding-6px-14px">⚡ Save &amp; Connect AniList</button>
+                            <button type="button" id="settings-trk-toggle-btn-anilist" onclick="toggleTrackerFromSettings('anilist')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                            <button type="button" onclick="disconnectAnilist()" class="btn-sm u-background-7f1d1d u-border-1px-solid-ef4444 u-color-fee2e2 u-padding-6px-12px">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <!-- MyAnimeList Card -->
+                    <div id="settings-section-mal" data-tracker-cat="anime" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🟦</span> MyAnimeList (Anime Engine)
+                            </div>
+                            <span id="settings-trk-status-mal" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Scrobbles anime episodes and synchronizes scores via MyAnimeList REST API v2.</p>
+                        <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-8px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">MAL Client ID</label>
+                                <input type="text" id="settings-mal-client-id" placeholder="Client ID from apiconfig" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">MAL Client Secret</label>
+                                <div class="u-display-flex u-gap-6px">
+                                    <input type="password" id="settings-mal-client-secret" placeholder="Client Secret" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-mal-client-secret','settings-mal-sec-btn')" id="settings-mal-sec-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="u-margin-bottom-10px">
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">MAL Access Token</label>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="settings-mal-token" placeholder="MAL OAuth Access Token" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-mal-token','settings-mal-tok-btn')" id="settings-mal-tok-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <button type="button" onclick="saveMalFromSettings()" class="btn-sm u-background-2e51a2 u-color-fff u-font-weight-600 u-padding-6px-14px">🎌 Save &amp; Connect MAL</button>
+                            <button type="button" id="settings-trk-toggle-btn-mal" onclick="toggleTrackerFromSettings('mal')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                            <button type="button" onclick="disconnectMal()" class="btn-sm u-background-7f1d1d u-border-1px-solid-ef4444 u-color-fee2e2 u-padding-6px-12px">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <!-- Kitsu Card -->
+                    <div id="settings-section-kitsu" data-tracker-cat="anime" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🟠</span> Kitsu (Anime Engine)
+                            </div>
+                            <span id="settings-trk-status-kitsu" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Automated anime episode progress and rating sync via Kitsu JSON:API v1.</p>
+                        <div class="u-margin-bottom-10px">
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Kitsu OAuth API Token</label>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="settings-kitsu-token" placeholder="Paste Kitsu OAuth Bearer token" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-kitsu-token','settings-kitsu-tok-btn')" id="settings-kitsu-tok-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <button type="button" id="settings-trk-toggle-btn-kitsu" onclick="toggleTrackerFromSettings('kitsu')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- Letterboxd Card -->
+                    <div id="settings-section-letterboxd" data-tracker-cat="social_diary" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🟢</span> Letterboxd (Social Film Diary)
+                            </div>
+                            <span id="settings-trk-status-letterboxd" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Logs completed movies and ratings into your persistent diary. Generates 1-click RFC-4180 CSV export files ready for import at letterboxd.com/import.</p>
+                        <div class="u-margin-bottom-10px">
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Letterboxd Username</label>
+                            <input type="text" id="settings-letterboxd-username" placeholder="Letterboxd profile username" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <a href="/api/letterboxd/export" class="btn-sm u-background-00e054 u-color-0f172a u-text-decoration-none u-font-weight-600 u-padding-6px-14px">📥 1-Click Export CSV</a>
+                            <button type="button" id="settings-trk-toggle-btn-letterboxd" onclick="toggleTrackerFromSettings('letterboxd')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- Serializd Card -->
+                    <div id="settings-section-serializd" data-tracker-cat="social_diary" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🟨</span> Serializd (Social TV Diary)
+                            </div>
+                            <span id="settings-trk-status-serializd" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Logs watched TV episodes and episode star ratings directly to Serializd.</p>
+                        <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-10px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Serializd Username</label>
+                                <input type="text" id="settings-serializd-username" placeholder="Serializd username" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Serializd Auth Token / Cookie</label>
+                                <div class="u-display-flex u-gap-6px">
+                                    <input type="password" id="settings-serializd-token" placeholder="Session / Bearer token" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-serializd-token','settings-ser-tok-btn')" id="settings-ser-tok-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <button type="button" id="settings-trk-toggle-btn-serializd" onclick="toggleTrackerFromSettings('serializd')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                        </div>
+                    </div>
+
+                    <!-- MDBList Card -->
+                    <div id="settings-section-mdblist" data-tracker-cat="lists_ratings" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>🟣</span> MDBList (Multi-Source Ratings &amp; Lists)
+                            </div>
+                            <span id="settings-trk-status-mdblist" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Enriches items with Rotten Tomatoes, Metacritic, Letterboxd, and IMDb aggregate scores and manages custom dynamic lists.</p>
+                        <div class="u-margin-bottom-10px">
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">MDBList API Key</label>
+                            <div class="u-display-flex u-gap-6px">
+                                <input type="password" id="settings-mdblist-api-key" placeholder="Enter MDBList API key" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-mdblist-api-key','settings-mdb-key-btn')" id="settings-mdb-key-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                            </div>
+                        </div>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
+                            <button type="button" id="settings-trk-toggle-btn-mdblist" onclick="toggleTrackerFromSettings('mdblist')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-6px-12px">Pause</button>
+                        </div>
+                    </div>
+                </div>

@@ -117,10 +117,10 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 ### 7. Observability & UI Layer
 
-- **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, and activity feed rows, separating UI presentation logic from HTTP route handling.
+- **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, activity feed rows, and per-tracker delivery badges. Asynchronous Simkl/AniList/MAL results update the originating persisted event by its event ID.
 - **`app/services/analytics_manager.py`**: Personal analytics computation engine and "OmniWrapped" annual retrospective generator. Aggregates lifetime and windowed watch telemetry (using playhead offsets for threshold stops and runtime for completed watches, plus completed scrobbles, unique titles, solo vs shared co-watching ratios, multi-server distributions, top binged shows and genres) with viewer personality archetype heuristics.
 - **`app/services/webhook_debugger.py`**: In-memory raw webhook ring buffer and payload debugger. Securely captures incoming payloads across Plex, Jellyfin, Emby, Radarr, Sonarr, and standalone players with automatic token redaction, live in-browser inspection, and interactive dry-run / live replay execution.
-- **`app/templates/dashboard.html`**: Fully responsive, single-file HTML/CSS/JavaScript dashboard. Features real-time active stream cards, ecosystem health dots, paginated activity history, interactive reconciliation diff modals, live settings management, a multi-theme palette engine (8 dark modes, 9 accent highlights with zero-FOUC initialization), and global keyboard shortcuts.
+- **`app/templates/dashboard.html`**: Responsive dashboard shell with five keyboard-accessible workspaces, activity filters, live arrival feedback, shared diagnostics, and mobile bottom navigation. It composes reusable markup from `app/templates/dashboard/`, while theme tokens, layout rules, and interactions are served from `app/static/dashboard-theme.css`, `app/static/dashboard.css`, and `app/static/dashboard.js`.
 - **`app/metrics.py`**: Custom thread-safe Prometheus metrics registry exporting directly on `/metrics`.
 - **`app/services/log_manager.py`**: Real-time log streamer combining `journalctl --user` with an in-memory 1,000-line ring buffer. Features strict privacy redaction for query parameters and authorization headers.
 
@@ -131,6 +131,25 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ```text
 omniscrobble/
 ├── app/
+│   ├── static/                      # Dashboard stylesheet and static assets
+│   │   ├── dashboard.css            # Responsive dashboard layout, themes, and component styles
+│   │   ├── dashboard-theme.css      # Theme palettes, accent colors, and density settings
+│   │   ├── dashboard.js             # Generated browser bundle for dashboard interactions
+│   │   └── dashboard_modules/       # Ordered source modules used to build dashboard.js
+│   │       ├── activity.js          # Activity filters, refresh, and delivery indicators
+│   │       ├── api.js               # CSRF protection for state-changing fetch requests
+│   │       ├── arr.js                # Sonarr and Radarr acquisition actions
+│   │       ├── command_palette.js   # Workspace navigation and command palette
+│   │       ├── core.js               # Shared dashboard state and scrobble controls
+│   │       ├── cowatch.js           # Co-watch, household rules, and device controls
+│   │       ├── diagnostics.js       # Logs and diagnostic modal controls
+│   │       ├── playback.js          # Active playback card updates
+│   │       ├── reconciliation.js   # Reverse sync and reconciliation controls
+│   │       ├── settings.js          # Settings Hub and server configuration
+│   │       ├── tracker_auth.js      # Tracker OAuth and token workflows
+│   │       ├── webhook_inspector.js # Webhook payload inspection and replay
+│   │       ├── webhook_tests.js     # Webhook test and diagnostics operations
+│   │       └── wrapped.js           # Annual OmniWrapped report interactions
 │   ├── clients/                     # External API client implementations
 │   │   ├── trakt_client.py          # Trakt OAuth device flow, scrobbles, ratings, collection sync & search
 │   │   ├── simkl_client.py          # Simkl REST API client for OAuth Device PIN flow & dual-scrobbling
@@ -175,6 +194,19 @@ omniscrobble/
 │   │   └── webhook_debugger.py      # In-memory raw webhook ring buffer, credential redaction & live payload inspector
 │   ├── templates/                   # Externalized dashboard and authorization views
 │   │   ├── dashboard.html           # Main real-time status dashboard view
+│   │   ├── dashboard/               # Composable dashboard HTML components
+│   │   │   ├── activity_workspace.html # Activity feed and filters
+│   │   │   ├── dashboard_content.html # Composes workspace cards and page footer
+│   │   │   ├── dashboard_footer.html # Release, documentation, and repository links
+│   │   │   ├── modals.html          # Operational and diagnostics dialogs
+│   │   │   ├── settings_appearance.html # Theme and display preferences
+│   │   │   ├── settings_automation.html # Acquisition and automation integrations
+│   │   │   ├── settings_hub.html    # Settings dialog shell and tab navigation
+│   │   │   ├── settings_notifications.html # Notification channel preferences
+│   │   │   ├── settings_rules.html # Playback, library, and path rules
+│   │   │   ├── settings_servers.html # Media server and listener settings
+│   │   │   ├── settings_trackers.html # Tracker connections and credentials
+│   │   │   └── workspace_navigation.html # Header, health strip, and workspace tabs
 │   │   ├── auth.html                # Trakt device activation view
 │   │   ├── auth_simkl.html          # Simkl OAuth device PIN activation view
 │   │   ├── auth_anilist.html        # AniList access token authorization view
@@ -188,19 +220,20 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (109 endpoints)
+│   ├── API.md                       # Full REST API specification (112 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
 │   └── .nojekyll                    # Bypass Jekyll processing on GitHub Pages
 ├── scripts/                         # Maintenance, test & asset generation scripts
+│   ├── build_dashboard_bundle.py    # Bundles ordered dashboard JavaScript source modules
 │   ├── generate_static_demo.py      # Compiles dashboard template & mock datasets into static demo
 │   └── generate_logo_assets.py      # Renders branding, banner, and social card graphics
 ├── templates/                       # Community deployment templates & app stores
 │   ├── unraid-omniscrobble.xml      # Official Unraid Community Applications template
 │   └── docker-compose.portainer.yml # Portainer stack & TrueNAS SCALE compose specification
-├── tests/                           # Comprehensive test suite (256 tests, 0 external calls)
-│   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest
+├── tests/                           # Comprehensive test suite (260 tests, 0 external calls)
+│   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest (260 tests)
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool
 ├── plex-trakt.service               # systemd user service definition

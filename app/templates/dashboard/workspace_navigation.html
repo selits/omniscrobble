@@ -1,0 +1,53 @@
+        <div class="header">
+            <div class="title">
+                <div class="title-brand">
+                    <svg width="28" height="28" viewBox="0 0 512 512" fill="none" class="u-flex-shrink-0">
+                        <defs>
+                            <linearGradient id="headerArrowGradTop" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#38bdf8" />
+                                <stop offset="100%" stop-color="var(--accent-color)" />
+                            </linearGradient>
+                            <linearGradient id="headerArrowGradBottom" x1="0%" y1="100%" x2="100%" y2="0%">
+                                <stop offset="0%" stop-color="#38bdf8" />
+                                <stop offset="100%" stop-color="var(--accent-color)" />
+                            </linearGradient>
+                        </defs>
+                        <path d="M 405 285 C 418 200 360 98 256 98 C 190 98 135 135 110 188 L 86 160 L 98 238 L 174 220 L 148 194 C 168 152 210 126 256 126 C 340 126 388 206 376 280 Z" fill="url(#headerArrowGradTop)" />
+                        <path d="M 107 227 C 94 312 152 414 256 414 C 322 414 377 377 402 324 L 426 352 L 414 274 L 338 292 L 364 318 C 344 360 302 386 256 386 C 172 386 124 306 136 232 Z" fill="url(#headerArrowGradBottom)" />
+                        <circle cx="256" cy="256" r="114" fill="var(--bg-page)" stroke="var(--border-color)" stroke-width="12" />
+                        <rect x="182" y="174" width="148" height="164" rx="22" fill="var(--bg-surface)" stroke="var(--border-color)" stroke-width="6" />
+                        <polygon points="242,216 296,256 242,296" fill="#38bdf8" />
+                    </svg>
+                    <span>Omniscrobble</span>
+                </div>
+                <span class="title-sub" id="header-title-sub">Universal Media Scrobbler &amp; Multi-Tracker Hub</span>
+            </div>
+            <div class="header-actions">
+                <button type="button" onclick="openThemeModal()" id="theme-toggle-btn" class="btn-sm theme-toggle" title="Theme &amp; Accent Palette (Press 'T' to cycle, click to configure)">🎨 <span id="theme-btn-label">Slate</span></button>
+                {{STATUS_BADGE}}
+                {{SETTINGS_HEADER_BTN}}
+                {{ADMIN_BTN}}
+                {{DEMO_HEADER_BTN}}
+            </div>
+        </div>
+
+        <div class="health-strip" id="system-health-strip" aria-label="System health">
+            <span class="health-pill"><strong>System</strong> <span id="health-system-status">Ready</span></span>
+            <span class="health-pill"><strong>Trackers</strong> <span id="health-tracker-status">View status in Trackers</span></span>
+            <span class="health-pill"><strong>Listeners</strong> <span id="health-listener-status">View status in Trackers</span></span>
+            <span class="health-pill"><strong>Queue</strong> <span id="health-queue-status">View status in Diagnostics</span></span>
+        </div>
+        <nav class="workspace-nav" id="workspace-nav" role="tablist" aria-label="Dashboard workspaces">
+            <button class="workspace-tab" id="tab-operations" role="tab" aria-controls="view-operations" aria-selected="true" onclick="switchWorkspace('operations')">Operations</button>
+            <button class="workspace-tab" id="tab-trackers" role="tab" aria-controls="view-trackers" aria-selected="false" onclick="switchWorkspace('trackers')">Trackers &amp; Hub</button>
+            <button class="workspace-tab" id="tab-automation" role="tab" aria-controls="view-automation" aria-selected="false" onclick="switchWorkspace('automation')">Automation</button>
+            <button class="workspace-tab" id="tab-analytics" role="tab" aria-controls="view-analytics" aria-selected="false" onclick="switchWorkspace('analytics')">Analytics</button>
+            <button class="workspace-tab" id="tab-diagnostics" role="tab" aria-controls="view-diagnostics" aria-selected="false" onclick="switchWorkspace('diagnostics')">System</button>
+        </nav>
+        <main id="workspace-views">
+            <section class="workspace-panel" id="view-operations" role="tabpanel" aria-labelledby="tab-operations"></section>
+            <section class="workspace-panel" id="view-trackers" role="tabpanel" aria-labelledby="tab-trackers" hidden></section>
+            <section class="workspace-panel" id="view-automation" role="tabpanel" aria-labelledby="tab-automation" hidden></section>
+            <section class="workspace-panel" id="view-analytics" role="tabpanel" aria-labelledby="tab-analytics" hidden></section>
+            <section class="workspace-panel" id="view-diagnostics" role="tabpanel" aria-labelledby="tab-diagnostics" hidden></section>
+        </main>
