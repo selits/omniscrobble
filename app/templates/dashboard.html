@@ -1975,6 +1975,38 @@
         </div>
     </div>
 
+    <div id="add-arr-modal" class="modal" onclick="if(event.target===this)closeAddArrModal()">
+        <div class="modal-dialog modal-dialog-lg" style="max-height:90vh;overflow:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <h3 style="margin:0;color:#f8fafc;">➕ Add media to Sonarr or Radarr</h3>
+                <button onclick="closeAddArrModal()" class="btn-sm" style="background:#334155;color:#cbd5e1;">&times;</button>
+            </div>
+            <div style="display:flex;gap:8px;margin:14px 0;flex-wrap:wrap;">
+                <button id="arr-kind-series" onclick="setArrAddType('series')" class="btn-sm" style="background:#0369a1;color:#fff;">📺 TV Shows</button>
+                <button id="arr-kind-movie" onclick="setArrAddType('movie')" class="btn-sm" style="background:#1e293b;color:#cbd5e1;">🎬 Movies</button>
+                <input id="arr-add-search" type="search" placeholder="Search titles…" oninput="scheduleArrLookup()" style="flex:1;min-width:180px;background:#0f172a;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:9px 11px;">
+            </div>
+            <div id="arr-add-results" style="display:flex;flex-direction:column;gap:8px;max-height:38vh;overflow:auto;"></div>
+            <div id="arr-add-options" style="display:none;border-top:1px solid #334155;margin-top:14px;padding-top:14px;">
+                <div id="arr-add-selected" style="color:#f8fafc;font-weight:600;margin-bottom:10px;"></div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <label style="flex:1;min-width:180px;color:#94a3b8;font-size:12px;">Root folder<select id="arr-add-root" style="display:block;width:100%;margin-top:5px;background:#0f172a;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:8px;"></select></label>
+                    <label style="flex:1;min-width:180px;color:#94a3b8;font-size:12px;">Quality profile<select id="arr-add-profile" style="display:block;width:100%;margin-top:5px;background:#0f172a;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:8px;"></select></label>
+                </div>
+                <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;color:#cbd5e1;font-size:13px;">
+                    <label><input type="checkbox" id="arr-add-monitored" checked> Monitor</label>
+                    <label><input type="checkbox" id="arr-add-search-now" checked> Search immediately</label>
+                    <label id="arr-add-cowatch-wrap" style="display:none;color:#fbbf24;"><input type="checkbox" id="arr-add-cowatch"> <span id="arr-add-cowatch-label">Enable Co-Watching (optional)</span></label>
+                    <label id="arr-add-monitor-mode-wrap" style="color:#94a3b8;">Monitor episodes<select id="arr-add-monitor-mode" style="margin-left:6px;background:#0f172a;color:#f8fafc;border:1px solid #334155;border-radius:6px;padding:5px;"><option value="all">All seasons</option><option value="future">Future episodes</option><option value="missing">Missing episodes</option><option value="none">None</option></select></label>
+                </div>
+                <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap;">
+                    <span id="arr-add-message" style="flex:1;min-width:180px;color:#94a3b8;font-size:12px;align-self:center;"></span>
+                    <button onclick="submitArrAdd()" id="arr-add-submit" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;">Add to service</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Simkl Integration Modal -->
     <div id="simkl-modal" class="modal" onclick="if(event.target===this)closeSimklModal()">
         <div class="modal-dialog modal-dialog-md">
@@ -2446,6 +2478,11 @@
         }
 
         window.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                openAddArrModal();
+                return;
+            }
             if (e.key === 'Escape') {
                 closeUnlockModal();
                 closeScrobbleModal();
@@ -2455,6 +2492,7 @@
                 if (typeof closeSettingsModal === 'function') closeSettingsModal();
                 if (typeof closeReconcileSettingsModal === 'function') closeReconcileSettingsModal();
                 if (typeof closeArrModal === 'function') closeArrModal();
+                if (typeof closeAddArrModal === 'function') closeAddArrModal();
                 if (typeof closeSimklModal === 'function') closeSimklModal();
                 if (typeof closeAnilistModal === 'function') closeAnilistModal();
                 if (typeof closeMalModal === 'function') closeMalModal();
@@ -6032,6 +6070,7 @@
                 if (typeof closeLogsModal === 'function') closeLogsModal();
                 if (typeof closeScrobbleModal === 'function') closeScrobbleModal();
                 if (typeof closeArrModal === 'function') closeArrModal();
+                if (typeof closeAddArrModal === 'function') closeAddArrModal();
                 if (typeof closeSimklModal === 'function') closeSimklModal();
                 if (typeof closeCrossSyncModal === 'function') closeCrossSyncModal();
                 if (typeof closeAnilistModal === 'function') closeAnilistModal();
@@ -6448,6 +6487,111 @@
             const modal = document.getElementById('arr-modal');
             if (modal) modal.style.display = 'flex';
             fetchArrStatus();
+        }
+
+        let arrAddType = 'series';
+        let arrAddCandidate = null;
+        let arrAddTimer = null;
+        let arrAddConfig = null;
+        let arrAddConfigPromise = null;
+        function loadArrAddConfig(forceRefresh = false) {
+            if (forceRefresh) { arrAddConfig = null; arrAddConfigPromise = null; }
+            if (arrAddConfig) return Promise.resolve(arrAddConfig);
+            if (!arrAddConfigPromise) {
+                arrAddConfigPromise = fetch('/api/arr/config' + (isDemo ? '?demo=true' : ''))
+                    .then(async response => {
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Could not load Sonarr/Radarr options');
+                        arrAddConfig = data;
+                        const label = document.getElementById('arr-add-cowatch-label');
+                        if (label && data.co_watch_user) label.textContent = `Enable Co-Watching with @${data.co_watch_user} (optional)`;
+                        updateArrAddOptionVisibility();
+                        return data;
+                    })
+                    .catch(error => { arrAddConfigPromise = null; throw error; });
+            }
+            return arrAddConfigPromise;
+        }
+        function updateArrAddOptionVisibility() {
+            const wrap = document.getElementById('arr-add-cowatch-wrap');
+            if (wrap) wrap.style.display = arrAddType === 'series' && Boolean(arrAddConfig && arrAddConfig.co_watch_user) ? 'inline-flex' : 'none';
+        }
+        function openAddArrModal(mediaType, initialTerm) {
+            if (!isAdmin && !isDemo) { openUnlockModal(); return; }
+            const modal = document.getElementById('add-arr-modal');
+            if (modal) modal.style.display = 'flex';
+            const searchInput = document.getElementById('arr-add-search');
+            if (mediaType === 'series' || mediaType === 'movie') setArrAddType(mediaType);
+            if (initialTerm) searchInput.value = initialTerm;
+            else if (!mediaType) searchInput.value = '';
+            searchInput.focus();
+            loadArrAddConfig().catch(error => {
+                const message = document.getElementById('arr-add-message');
+                if (message) message.textContent = error.message;
+            });
+            if (!mediaType) setArrAddType('series');
+            if (initialTerm) scheduleArrLookup();
+        }
+        function closeAddArrModal() { const modal = document.getElementById('add-arr-modal'); if (modal) modal.style.display = 'none'; }
+        function setArrAddType(type) {
+            arrAddType = type; arrAddCandidate = null;
+            document.getElementById('arr-kind-series').style.background = type === 'series' ? '#0369a1' : '#1e293b';
+            document.getElementById('arr-kind-movie').style.background = type === 'movie' ? '#0369a1' : '#1e293b';
+            updateArrAddOptionVisibility();
+            document.getElementById('arr-add-monitor-mode-wrap').style.display = type === 'series' ? 'inline-flex' : 'none';
+            document.getElementById('arr-add-options').style.display = 'none';
+            scheduleArrLookup();
+        }
+        function scheduleArrLookup() { clearTimeout(arrAddTimer); arrAddTimer = setTimeout(fetchArrCandidates, 350); }
+        async function fetchArrCandidates() {
+            const term = document.getElementById('arr-add-search').value.trim();
+            const box = document.getElementById('arr-add-results');
+            if (!term) { box.innerHTML = ''; return; }
+            box.innerHTML = '<div style="color:#94a3b8;padding:10px;">Searching…</div>';
+            try {
+                const res = await fetch(`/api/arr/lookup?type=${arrAddType}&term=${encodeURIComponent(term)}${isDemo ? '&demo=true' : ''}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Search failed');
+                if (!data.results.length) { box.innerHTML = '<div style="color:#94a3b8;padding:10px;">No results found (or this service is not configured).</div>'; return; }
+                box.innerHTML = data.results.map((item, i) => {
+                    const poster = /^https?:\/\//i.test(item.poster_url || '') ? `<img src="${escapeHtml(item.poster_url)}" alt="" loading="lazy" style="width:48px;height:68px;object-fit:cover;border-radius:5px;background:#1e293b;">` : `<span style="font-size:24px;width:48px;text-align:center;align-self:center">${arrAddType === 'series' ? '📺' : '🎬'}</span>`;
+                    const studio = item.network ? `<small style="display:block;color:#38bdf8">${escapeHtml(item.network)}</small>` : '';
+                    return `<button onclick="selectArrCandidate(${i})" ${item.in_library ? 'disabled' : ''} style="text-align:left;display:flex;gap:10px;padding:10px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;cursor:${item.in_library ? 'default' : 'pointer'};opacity:${item.in_library ? '.6' : '1'}">${poster}<span><strong>${escapeHtml(item.title)}${item.year ? ` (${item.year})` : ''}</strong>${studio}<small style="display:block;color:#94a3b8">${escapeHtml(item.overview || '')}</small></span><span style="margin-left:auto;color:${item.in_library ? '#10b981' : '#38bdf8'}">${item.in_library ? 'In Library' : 'Select'}</span></button>`;
+                }).join('');
+                window.arrAddResults = data.results;
+            } catch (err) { box.innerHTML = `<div style="color:#f87171;padding:10px;">${escapeHtml(err.message)}</div>`; }
+        }
+        async function selectArrCandidate(index) {
+            arrAddCandidate = window.arrAddResults[index];
+            const message = document.getElementById('arr-add-message');
+            message.style.color = '#94a3b8';
+            message.textContent = 'Loading service options…';
+            let config;
+            try { config = await loadArrAddConfig(); }
+            catch (error) { message.style.color = '#f87171'; message.textContent = error.message; return; }
+            const opts = config[arrAddType === 'series' ? 'sonarr' : 'radarr'];
+            if (!opts || !opts.configured) { document.getElementById('arr-add-message').textContent = 'Configure this service in Settings first.'; return; }
+            const fill = (id, rows, key, labelKey, defaultValue) => {
+                const el = document.getElementById(id); el.innerHTML = (rows || []).map(x => `<option value="${escapeHtml(String(x[key] ?? ''))}" ${String(x[key]) === String(defaultValue) ? 'selected' : ''}>${escapeHtml(String(x[labelKey] || x[key]))}</option>`).join('');
+            };
+            fill('arr-add-root', opts.root_folders, 'path', 'path', opts.default_root || (opts.root_folders[0] || {}).path);
+            fill('arr-add-profile', opts.quality_profiles, 'id', 'name', opts.default_profile || (opts.quality_profiles[0] || {}).id);
+            document.getElementById('arr-add-selected').textContent = `${arrAddCandidate.title}${arrAddCandidate.year ? ` (${arrAddCandidate.year})` : ''}`;
+            document.getElementById('arr-add-message').textContent = '';
+            document.getElementById('arr-add-cowatch').checked = false;
+            document.getElementById('arr-add-options').style.display = 'block';
+        }
+        async function submitArrAdd() {
+            if (!arrAddCandidate) return;
+            const btn = document.getElementById('arr-add-submit'), msg = document.getElementById('arr-add-message');
+            btn.disabled = true; msg.textContent = 'Adding…';
+            try {
+                const res = await fetch('/api/arr/add' + (isDemo ? '?demo=true' : ''), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:arrAddType,item_data:arrAddCandidate.payload,root_folder_path:document.getElementById('arr-add-root').value,quality_profile_id:Number(document.getElementById('arr-add-profile').value),monitored:document.getElementById('arr-add-monitored').checked,monitor_option:document.getElementById('arr-add-monitor-mode').value,search_now:document.getElementById('arr-add-search-now').checked,enable_cowatch:arrAddType === 'series' && document.getElementById('arr-add-cowatch').checked})});
+                const data = await res.json(); if (!res.ok) throw new Error(data.detail || 'Addition failed');
+                msg.style.color = '#10b981'; msg.textContent = data.cowatch_enrolled ? 'Added and enrolled in Co-Watch.' : 'Added successfully.';
+                document.getElementById('arr-add-options').style.display = 'none';
+            } catch (err) { msg.style.color = '#f87171'; msg.textContent = err.message; }
+            finally { btn.disabled = false; }
         }
 
         function closeArrModal() {

@@ -171,7 +171,27 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/arr/status`** | `GET` | Public | **Content Bridge Status**: Connection health, latency, and library totals for Sonarr, Radarr, and Overseerr/Jellyseerr. |
 | **`/api/arr/sync`** | `POST` | Admin | **Sync Watchlist Now**: Scans Trakt watchlist and sends missing media to Overseerr/Sonarr/Radarr. |
 | **`/api/arr/test-connection`** | `POST` | Admin | **Test *Arr / Overseerr Connection**: Tests connectivity to Sonarr, Radarr, or Overseerr/Jellyseerr URL and API key. |
+| **`/api/arr/lookup`** | `GET` | Admin | **Interactive *Arr Catalog Search**: Searches Sonarr series or Radarr movies and flags existing library items. Query: `type=series\|movie&term=<query>`. |
+| **`/api/arr/config`** | `GET` | Admin | **Acquisition Options**: Returns configured root folders and quality profiles for Sonarr and Radarr, cached for five minutes. Includes the co-watch partner label for the admin UI. |
+| **`/api/arr/add`** | `POST` | Admin + CSRF | **Add Media**: Adds a selected catalog result with folder, quality, monitoring, and search options. Optional `enable_cowatch` is strictly `false` by default, applies only to series, and requires a configured co-watch partner. |
 | **`/api/ecosystem`** | `GET` | Public | **Ecosystem Status**: Aggregated health status (10/10 services) across servers, trackers, and downloaders/request managers. |
+
+`POST /api/arr/add` request example:
+
+```json
+{
+  "type": "series",
+  "item_data": { "title": "Example Series", "tvdbId": 123 },
+  "root_folder_path": "<configured-root-folder>",
+  "quality_profile_id": 1,
+  "monitored": true,
+  "monitor_option": "all",
+  "search_now": true,
+  "enable_cowatch": false
+}
+```
+
+The browser sends the matching `csrf_token` cookie value in `X-CSRF-Token`. Upstream error details are not returned because they can contain private service URLs or credentials.
 
 ---
 

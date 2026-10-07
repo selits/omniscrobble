@@ -91,6 +91,47 @@ class ArrBridgeManager:
     def set_trakt_client(self, client: TraktClient) -> None:
         self.trakt = client
 
+    async def lookup_media(self, media_type: str, term: str) -> list[dict[str, Any]]:
+        """Search the matching Arr catalog for an interactive dashboard acquisition."""
+        kind = (media_type or "").strip().lower()
+        if kind == "series":
+            return await self.sonarr.lookup_series(term)
+        if kind == "movie":
+            return await self.radarr.lookup_movie(term)
+        raise ValueError("media_type must be 'series' or 'movie'")
+
+    async def acquire_media(
+        self,
+        media_type: str,
+        item_data: dict[str, Any],
+        *,
+        root_folder_path: Optional[str] = None,
+        quality_profile_id: Optional[int] = None,
+        monitored: bool = True,
+        search_now: bool = True,
+        monitor_option: str = "all",
+    ) -> dict[str, Any]:
+        """Add a selected lookup result to Sonarr or Radarr."""
+        kind = (media_type or "").strip().lower()
+        if kind == "series":
+            return await self.sonarr.add_series(
+                item_data,
+                root_folder_path=root_folder_path,
+                quality_profile_id=quality_profile_id,
+                monitored=monitored,
+                search_for_missing_episodes=search_now,
+                monitor_option=monitor_option,
+            )
+        if kind == "movie":
+            return await self.radarr.add_movie(
+                item_data,
+                root_folder_path=root_folder_path,
+                quality_profile_id=quality_profile_id,
+                monitored=monitored,
+                search_for_movie=search_now,
+            )
+        raise ValueError("media_type must be 'series' or 'movie'")
+
     def get_trakt(self) -> TraktClient:
         if self.trakt is None:
             from app.main import trakt

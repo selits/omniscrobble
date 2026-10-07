@@ -254,6 +254,7 @@ class SonarrClient:
         quality_profile_id: Optional[int] = None,
         monitored: bool = True,
         search_for_missing_episodes: bool = True,
+        monitor_option: str = "all",
     ) -> dict[str, Any]:
         """Add a TV series to Sonarr library."""
         if not self.is_configured:
@@ -281,6 +282,7 @@ class SonarrClient:
         payload["rootFolderPath"] = r_path
         payload["qualityProfileId"] = qp_id
         payload["monitored"] = monitored
+        payload["monitor"] = monitor_option if monitor_option in {"all", "future", "missing", "none"} else "all"
         payload["seasonFolder"] = True
         payload["addOptions"] = {
             "searchForMissingEpisodes": search_for_missing_episodes,

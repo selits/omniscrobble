@@ -117,6 +117,8 @@ EMBY_USER_ID=your_emby_user_id_here
 
 The **Content Bridge** connects your personal Trakt Watchlist (`/sync/watchlist`) directly to **Radarr** and **Sonarr** for automated media acquisition and instant Trakt collection sync upon download.
 
+Admins can also search Sonarr and Radarr catalogs from the dashboard or with `Cmd+K`, choose the service's root folder and quality profile, and add a result with monitoring/search options. Series can optionally be enrolled in Co-Watch during addition; that checkbox starts unchecked and the API defaults `enable_cowatch` to `false`.
+
 ```mermaid
 flowchart LR
     A["Trakt Watchlist\n(Bookmarked items)"] --> B["Omniscrobble\nContent Bridge"]

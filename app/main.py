@@ -2304,6 +2304,7 @@ def update_settings_endpoint(payload: SettingsUpdateRequest, request: Request):
             overseerr_url=arr_cfg.get("overseerr_url"),
             overseerr_api_key=arr_cfg.get("overseerr_api_key"),
         )
+        invalidate_arr_acquisition_config_cache()
 
     return {"status": "success", "settings": updated}
 
@@ -3296,6 +3297,134 @@ class ArrTestConnectionRequest(BaseModel):
     api_key: Optional[str] = None
 
     model_config = {"extra": "ignore"}
+
+
+class ArrAddRequest(BaseModel):
+    type: str
+    item_data: dict[str, Any]
+    root_folder_path: Optional[str] = None
+    quality_profile_id: Optional[int] = None
+    monitored: bool = True
+    monitor_option: str = "all"
+    search_now: bool = True
+    enable_cowatch: bool = False
+
+    model_config = {"extra": "ignore"}
+
+
+_arr_acquisition_config_cache: dict[str, Any] = {"expires_at": 0.0, "data": None}
+
+
+def invalidate_arr_acquisition_config_cache() -> None:
+    """Discard cached service folders and profiles after Arr settings change."""
+    _arr_acquisition_config_cache.update({"expires_at": 0.0, "data": None})
+
+
+@app.get("/api/arr/lookup")
+async def lookup_arr_media(request: Request, type: str, term: str):
+    """Search Sonarr/Radarr catalog and mark items already in the local library."""
+    if request.query_params.get("demo") == "true":
+        return {"results": []}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    kind = type.strip().lower()
+    search = term.strip()[:120]
+    if kind not in {"series", "movie"}:
+        raise HTTPException(status_code=400, detail="type must be 'series' or 'movie'")
+    if not search:
+        return {"results": []}
+    client = arr_bridge.sonarr if kind == "series" else arr_bridge.radarr
+    if not client.is_configured:
+        return {"results": [], "configured": False}
+    candidates = await arr_bridge.lookup_media(kind, search)
+    results = []
+    for item in candidates[:20]:
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        if kind == "series":
+            exists = await arr_bridge.sonarr.has_series(tvdb_id=item.get("tvdbId"), imdb_id=item.get("imdbId"), title=title)
+            external_id = item.get("tvdbId")
+            network = item.get("network") or ""
+        else:
+            exists = await arr_bridge.radarr.has_movie(tmdb_id=item.get("tmdbId"), imdb_id=item.get("imdbId"), title=title)
+            external_id = item.get("tmdbId")
+            network = item.get("studio") or ""
+        images = item.get("images") or []
+        poster = next((img.get("remoteUrl") or img.get("url") for img in images if img.get("coverType") == "poster"), None)
+        results.append({"title": title, "year": item.get("year"), "overview": item.get("overview", ""),
+                        "network": network, "poster_url": poster, "in_library": exists,
+                        "payload": item, "external_id": external_id})
+    return {"results": results, "configured": True}
+
+
+@app.get("/api/arr/config")
+async def get_arr_acquisition_config(request: Request):
+    """Return the configured root folders and quality profiles for each Arr service."""
+    if request.query_params.get("demo") == "true":
+        return {"sonarr": {"configured": True, "root_folders": [], "quality_profiles": []},
+                "radarr": {"configured": True, "root_folders": [], "quality_profiles": []}}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    cached = _arr_acquisition_config_cache.get("data")
+    if cached is not None and time.monotonic() < _arr_acquisition_config_cache["expires_at"]:
+        return cached
+    arr_settings = settings_mgr.get_arr_settings(mask=False)
+    async def details(client, root_default, profile_default):
+        if not client.is_configured:
+            return {"configured": False, "root_folders": [], "quality_profiles": [], "default_root": root_default, "default_profile": profile_default}
+        folders, profiles = await asyncio.gather(client.get_root_folders(), client.get_quality_profiles())
+        return {"configured": True, "root_folders": folders, "quality_profiles": profiles,
+                "default_root": root_default, "default_profile": profile_default}
+    config = {
+        "sonarr": await details(arr_bridge.sonarr, arr_settings.get("sonarr_root_folder"), arr_settings.get("sonarr_quality_profile_id")),
+        "radarr": await details(arr_bridge.radarr, arr_settings.get("radarr_root_folder"), arr_settings.get("radarr_quality_profile_id")),
+        "co_watch_user": Config.CO_WATCH_USER or None,
+    }
+    _arr_acquisition_config_cache.update({"expires_at": time.monotonic() + 300.0, "data": config})
+    return config
+
+
+@app.post("/api/arr/add")
+async def add_arr_media(payload: ArrAddRequest, request: Request):
+    """Add a selected catalog item to Sonarr or Radarr with optional show co-watch enrollment."""
+    if request.query_params.get("demo") == "true":
+        return {"status": "ok", "success": True, "cowatch_enrolled": False}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    csrf_cookie = request.cookies.get("csrf_token", "")
+    csrf_header = request.headers.get("x-csrf-token", "")
+    if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+    kind = payload.type.strip().lower()
+    if kind not in {"series", "movie"}:
+        raise HTTPException(status_code=400, detail="type must be 'series' or 'movie'")
+    if kind == "series" and payload.enable_cowatch and not Config.CO_WATCH_USER:
+        raise HTTPException(status_code=400, detail="Co-Watch enrollment requires a configured partner account")
+    item = payload.item_data
+    title = str(item.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Selected item is missing a title")
+    result = await arr_bridge.acquire_media(
+        kind,
+        item,
+        root_folder_path=payload.root_folder_path,
+        quality_profile_id=payload.quality_profile_id,
+        monitored=payload.monitored,
+        search_now=payload.search_now,
+        monitor_option=payload.monitor_option,
+    )
+    if not result.get("success"):
+        logger.warning("Interactive *Arr addition failed for %s item (service=%s)", kind, "Sonarr" if kind == "series" else "Radarr")
+        raise HTTPException(status_code=400, detail="The item could not be added. Check the *Arr service connection and configuration.")
+    enrolled = False
+    if kind == "series" and payload.enable_cowatch:
+        cowatch_mgr.add_show(title)
+        enrolled = True
+    logger.info("Interactive media acquisition completed (type=%s, service=%s, co-watch=%s)", kind, "Sonarr" if kind == "series" else "Radarr", enrolled)
+    return {"status": "ok", "success": True, "title": title,
+            "service": "Sonarr" if kind == "series" else "Radarr", "cowatch_enrolled": enrolled,
+            "item_id": (result.get("data") or {}).get("id")}
 
 
 @app.post("/api/arr/test-connection")
