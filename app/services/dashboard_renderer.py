@@ -128,6 +128,12 @@ class DashboardRenderer:
                     if not show_title and ev.get("media_payload") and ev.get("media_payload", {}).get("media_type") == "show":
                         show_title = ev["media_payload"].get("title")
                     action_buttons = []
+                    media_kind = "series" if str(ev.get("type", "")).lower() in {"show", "series", "episode"} else ("movie" if str(ev.get("type", "")).lower() == "movie" else "")
+                    media_title = ev.get("show_title") or ev.get("title")
+                    if media_kind and media_title:
+                        kind_esc = urllib.parse.quote(media_kind)
+                        title_esc = urllib.parse.quote(str(media_title))
+                        action_buttons.append(f'<button data-kind="{kind_esc}" data-term="{title_esc}" onclick="openAddArrModal(decodeURIComponent(this.dataset.kind), decodeURIComponent(this.dataset.term))" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#075985;color:#e0f2fe;white-space:nowrap;" title="Search and add this title in Sonarr or Radarr">+ Add *Arr</button>')
                     if show_title:
                         show_esc = urllib.parse.quote(show_title)
                         if not is_cowatch_show_fn(show_title):
@@ -144,7 +150,7 @@ class DashboardRenderer:
                                 action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
                             if raw_act.startswith(("mark_watched", "scrobble_stop")) or raw_act in ("scrobble", "watched"):
                                 action_buttons.append(f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>')
-                    action_col = f'<td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
+                    action_col = f'<td style="padding:10px 12px;"><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
 
                 status_badge_html = render_status_badge(
                     ev.get("action"),
@@ -1123,6 +1129,10 @@ class DashboardRenderer:
                 if is_admin
                 else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Sync Watchlist</button>'
             )
+            add_media_btn_html = (
+                '<button onclick="openAddArrModal()" class="btn-sm" style="background:#0369a1;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">➕ Add Media</button>'
+                if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:8px 14px;">🔒 Add Media</button>'
+            )
 
             return f"""
             <div class="card" id="card-arr-bridge">
@@ -1145,6 +1155,7 @@ class DashboardRenderer:
                         <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>{'Enabled' if arr_status.get('search_on_add') else 'Disabled'}</strong> &bull; Alerts: <strong>{'On' if Config.ARR_NOTIFY_ON_ADD else 'Off'}</strong></span>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        {add_media_btn_html}
                         {sync_btn_html}
                         <button onclick="openArrModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;">📋 View Log</button>
                         <button onclick="openSettingsModal('automation')" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">⚙️ Configure</button>

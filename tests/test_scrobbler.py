@@ -315,6 +315,7 @@ async def test_webhook_get_info():
     data = res.json()
     assert data["status"] == "online"
     assert "Plex Webhook endpoint is active" in data["message"]
+    await client.aclose()
 
 
 def test_tv_show_year_extraction():
@@ -5418,6 +5419,88 @@ async def test_arr_api_endpoints_and_auth():
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_interactive_arr_acquisition_endpoints(monkeypatch):
+    """Interactive acquisition is admin-only, protected by CSRF, and co-watch defaults off."""
+    import app.main as main_module
+    client = make_async_test_client(app)
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "arr-admin-secret")
+    monkeypatch.setattr(Config, "CO_WATCH_USER", "partner_user")
+    monkeypatch.setitem(main_module._arr_acquisition_config_cache, "expires_at", 0.0)
+    monkeypatch.setitem(main_module._arr_acquisition_config_cache, "data", None)
+    monkeypatch.setattr(main_module.arr_bridge.sonarr, "base_url", "http://sonarr.test")
+    monkeypatch.setattr(main_module.arr_bridge.sonarr, "api_key", "test-key")
+    monkeypatch.setattr(main_module.arr_bridge.sonarr, "lookup_series", AsyncMock(return_value=[{
+        "title": "Example Series", "year": 2024, "tvdbId": 123, "imdbId": "tt123",
+        "overview": "A sample series", "images": [],
+    }]))
+    monkeypatch.setattr(main_module.arr_bridge.sonarr, "has_series", AsyncMock(return_value=False))
+    monkeypatch.setattr(main_module.arr_bridge.sonarr, "get_root_folders", AsyncMock(return_value=[]))
+    monkeypatch.setattr(main_module.arr_bridge.sonarr, "get_quality_profiles", AsyncMock(return_value=[]))
+    monkeypatch.setattr(main_module.arr_bridge.radarr, "base_url", "")
+    monkeypatch.setattr(main_module.arr_bridge.radarr, "api_key", "")
+
+    denied = await client.get("/api/arr/lookup?type=series&term=Example")
+    assert denied.status_code == 401
+    auth = {"x-webhook-secret": "arr-admin-secret"}
+    found = await client.get("/api/arr/lookup?type=series&term=Example", headers=auth)
+    assert found.status_code == 200
+    assert found.json()["results"][0]["title"] == "Example Series"
+    assert found.json()["results"][0]["in_library"] is False
+    assert (await client.get("/api/arr/lookup?type=other&term=x", headers=auth)).status_code == 400
+
+    # Even an authenticated admin must supply a matching double-submit CSRF token.
+    body = {"type": "series", "item_data": {"title": "Example Series"}}
+    no_csrf = await client.post("/api/arr/add", json=body, headers=auth)
+    assert no_csrf.status_code == 403
+    client.cookies.set("csrf_token", "csrf-test")
+    monkeypatch.setattr(main_module.arr_bridge.sonarr, "add_series", AsyncMock(return_value={"success": True, "data": {"id": 42}}))
+    add = await client.post("/api/arr/add", json=body, headers={**auth, "x-csrf-token": "csrf-test"})
+    assert add.status_code == 200
+    assert add.json()["cowatch_enrolled"] is False
+    main_module.arr_bridge.sonarr.add_series.assert_awaited_once()
+    assert not add.json().get("enable_cowatch", False)
+
+    with patch.object(main_module.cowatch_mgr, "add_show", return_value=["Example Series"]) as enroll:
+        opted_in = await client.post("/api/arr/add", json={**body, "enable_cowatch": True},
+                                     headers={**auth, "x-csrf-token": "csrf-test"})
+        assert opted_in.status_code == 200
+        assert opted_in.json()["cowatch_enrolled"] is True
+        enroll.assert_called_once_with("Example Series")
+
+    monkeypatch.setattr(Config, "CO_WATCH_USER", "")
+    no_partner = await client.post("/api/arr/add", json={**body, "enable_cowatch": True},
+                                   headers={**auth, "x-csrf-token": "csrf-test"})
+    assert no_partner.status_code == 400
+    assert "configured partner" in no_partner.json()["detail"]
+
+    config = await client.get("/api/arr/config", headers=auth)
+    assert config.status_code == 200
+    assert "sonarr" in config.json() and "radarr" in config.json()
+    assert "co_watch_user" in config.json()
+    await client.get("/api/arr/config", headers=auth)
+    main_module.arr_bridge.sonarr.get_root_folders.assert_awaited_once()
+    main_module.arr_bridge.sonarr.get_quality_profiles.assert_awaited_once()
+
+    # Radarr lookup/add is supported; the co-watch flag has no effect on movies.
+    monkeypatch.setattr(main_module.arr_bridge.radarr, "base_url", "http://radarr.test")
+    monkeypatch.setattr(main_module.arr_bridge.radarr, "api_key", "test-key")
+    monkeypatch.setattr(main_module.arr_bridge.radarr, "lookup_movie", AsyncMock(return_value=[{"title": "Example Movie", "year": 2025, "tmdbId": 456}]))
+    monkeypatch.setattr(main_module.arr_bridge.radarr, "has_movie", AsyncMock(return_value=False))
+    movie_lookup = await client.get("/api/arr/lookup?type=movie&term=Example", headers=auth)
+    assert movie_lookup.status_code == 200
+    assert movie_lookup.json()["results"][0]["title"] == "Example Movie"
+    monkeypatch.setattr(main_module.arr_bridge.radarr, "add_movie", AsyncMock(return_value={"success": True, "data": {"id": 8}}))
+    movie_body = {"type": "movie", "item_data": {"title": "Example Movie"}, "enable_cowatch": True}
+    with patch.object(main_module.cowatch_mgr, "add_show") as enroll_movie:
+        movie_add = await client.post("/api/arr/add", json=movie_body,
+                                      headers={**auth, "x-csrf-token": "csrf-test"})
+        assert movie_add.status_code == 200
+        assert movie_add.json()["cowatch_enrolled"] is False
+        enroll_movie.assert_not_called()
+    await client.aclose()
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_dashboard_arr_and_ecosystem_cards():
     """Verify Multi-Server Ecosystem and Arr Bridge cards appear on dashboard."""
     client = make_async_test_client(app)
@@ -7190,6 +7273,7 @@ async def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
     """Verify GET and POST /api/settings with credential masking, auth protection, and live reload."""
     from app.services.settings_manager import settings_mgr
     from app.main import simkl, arr_bridge
+    import app.main as main_module
     test_settings_file = tmp_path / "settings.json"
     monkeypatch.setattr(settings_mgr, "settings_file", test_settings_file)
     settings_mgr._settings = {
@@ -7252,8 +7336,10 @@ async def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
             "search_on_add": True,
         },
     }
+    main_module._arr_acquisition_config_cache.update({"data": {"stale": True}, "expires_at": time.monotonic() + 300})
     update_res = await client.post("/api/settings", json=payload)
     assert update_res.status_code == 200
+    assert main_module._arr_acquisition_config_cache["data"] is None
     up_data = update_res.json()
     assert up_data["status"] == "success"
     assert up_data["settings"]["servers"]["jellyfin"] is True

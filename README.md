@@ -37,7 +37,7 @@ A lightweight, high-performance Python service that receives media server webhoo
 - **🎯 Multi-Tracker & Anime Engine**: Broadcast playback scrobbles and ratings across **Trakt.tv**, **Simkl**, **AniList (GraphQL)**, and **MyAnimeList (REST v2)** simultaneously. Features automated anime detection heuristics, negative caching (`data/anime_cache.json`), and individual runtime tracker pause toggles.
 - **🔄 Two-Way Library Reconciliation**: Bi-directional matching of watched history and star ratings between media servers and cloud trackers (`/api/sync/*`). Includes interactive discrepancy diff modals, selective batch syncing, and automated echo loop suppression (`LoopPreventionManager`).
 - **👥 Watch Together (Co-Watching)**: Dual-scrobble shared TV shows and movies to your partner's Trakt profile automatically, with dynamic show whitelists, living room hardware player filters (`CO_WATCH_PLAYERS`), and live Sonarr autocomplete.
-- **⚡ Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to **Sonarr** and **Radarr** for automated media acquisition, library deduplication, and direct webhook ingestion for instant Trakt collection sync on download.
+- **⚡ Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to **Sonarr** and **Radarr**, or search and add media from the dashboard and `Cmd+K`. Interactive additions support quality/root-folder options and optional Co-Watch enrollment that defaults off.
 - **🛡️ Resilience & Homelab Observability**: Persistent SQLite offline retry queue (`data/queue.db`), thread-safe Prometheus metrics (`/metrics`), real-time terminal log viewer with secret redaction, 1-click backup/restore (`.zip`), ambient frosted-glass stream artwork, compact wall-mount tablet mode, dashboard card visibility customization, and an installable PWA dashboard with 8 curated dark palettes, 9 accent highlights, and global keyboard shortcuts.
 
 ---
@@ -151,7 +151,7 @@ For in-depth guides, variable references, and operational walk-throughs, explore
 | [**Deployment Guide**](./DEPLOYMENT.md) | systemd user service setup, Docker Compose, Unraid/TrueNAS, lingering, and reverse proxies. |
 | [**Feature Guides**](./docs/FEATURES.md) | Deep dives for Co-Watching, Two-Way Reconciliation, Content Bridge, Queue, and Notifications. |
 | [**Architecture Blueprint**](./docs/ARCHITECTURE.md) | Complete component layers, data flows, and file-by-file directory manifest. |
-| [**REST API Specification**](./docs/API.md) | Documentation for all 106 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
+| [**REST API Specification**](./docs/API.md) | Documentation for all 109 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
 | [**Troubleshooting & FAQ**](./docs/TROUBLESHOOTING.md) | Solutions for common errors (422, 409, 80%), health diagnostics, and networking setup. |
 
 ---
