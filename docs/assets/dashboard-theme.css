@@ -1,0 +1,226 @@
+        :root {
+            /* Base Slate Theme Variables */
+            --bg-page: #0f172a;
+            --bg-surface: #1e293b;
+            --bg-subtle: #0f172a;
+            --border-color: #334155;
+            --border-subtle: #1e293b;
+            --border-table: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-heading: #e2e8f0;
+            --modal-bg: #1e293b;
+
+            /* Accent Highlights */
+            --accent-color: #0284c7;
+            --accent-hover: #0369a1;
+            --accent-glow: rgba(2, 132, 199, 0.35);
+            --accent-text: #ffffff;
+            --btn-copy-bg: #0284c7;
+            --btn-copy-hover: #0369a1;
+            --status-playing: #10b981;
+            --status-paused: #f59e0b;
+            --status-finished: #38bdf8;
+            --status-error: #ef4444;
+            --status-success-bg: #064e3b;
+            --status-error-bg: #7f1d1d;
+            --status-success-text: #a7f3d0;
+            --status-error-text: #fee2e2;
+        }
+
+        /* 1. Slate Theme (Default) */
+        html.theme-slate {
+            --bg-page: #0f172a;
+            --bg-surface: #1e293b;
+            --bg-subtle: #0f172a;
+            --border-color: #334155;
+            --border-subtle: #1e293b;
+            --border-table: #334155;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-heading: #e2e8f0;
+            --modal-bg: #1e293b;
+        }
+
+        /* 2. OLED True-Black Theme */
+        html.theme-oled {
+            --bg-page: #000000;
+            --bg-surface: #09090b;
+            --bg-subtle: #000000;
+            --border-color: #27272a;
+            --border-subtle: #27272a;
+            --border-table: #18181b;
+            --text-main: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --text-heading: #fafafa;
+            --modal-bg: #09090b;
+        }
+        html.theme-oled body { background-color: #000000 !important; color: #f4f4f5 !important; }
+        html.theme-oled .card, html.theme-oled .modal-dialog { background: #09090b !important; border-color: #27272a !important; }
+        html.theme-oled .info-item, html.theme-oled .scrobble-item, html.theme-oled .cowatch-account-row, html.theme-oled th { background: #000000 !important; border-color: #27272a !important; }
+        html.theme-oled .header, html.theme-oled .activity-header { border-color: #27272a !important; }
+        html.theme-oled td, html.theme-oled tr { border-bottom-color: #18181b !important; }
+        html.theme-oled .cowatch-grid > div + div { border-color: #27272a !important; }
+        html.theme-oled div[style*="background:#0f172a"], html.theme-oled div[style*="background: #0f172a"] { background-color: #000000 !important; border-color: #27272a !important; }
+        html.theme-oled div[style*="background:#1e293b"], html.theme-oled div[style*="background: #1e293b"] { background-color: #09090b !important; border-color: #27272a !important; }
+
+        /* 3. Nord (Arctic Polar Night) */
+        html.theme-nord {
+            --bg-page: #242933;
+            --bg-surface: #2e3440;
+            --bg-subtle: #242933;
+            --border-color: #4c566a;
+            --border-subtle: #3b4252;
+            --border-table: #434c5e;
+            --text-main: #eceff4;
+            --text-muted: #d8dee9;
+            --text-heading: #e5e9f0;
+            --modal-bg: #2e3440;
+        }
+        html.theme-nord body { background-color: #242933 !important; color: #eceff4 !important; }
+        html.theme-nord .card, html.theme-nord .modal-dialog { background: #2e3440 !important; border-color: #4c566a !important; }
+        html.theme-nord .info-item, html.theme-nord .scrobble-item, html.theme-nord .cowatch-account-row, html.theme-nord th { background: #242933 !important; border-color: #434c5e !important; }
+        html.theme-nord .header, html.theme-nord .activity-header { border-color: #4c566a !important; }
+        html.theme-nord td, html.theme-nord tr { border-bottom-color: #3b4252 !important; }
+        html.theme-nord .cowatch-grid > div + div { border-color: #434c5e !important; }
+        html.theme-nord div[style*="background:#0f172a"], html.theme-nord div[style*="background: #0f172a"] { background-color: #242933 !important; border-color: #434c5e !important; }
+        html.theme-nord div[style*="background:#1e293b"], html.theme-nord div[style*="background: #1e293b"] { background-color: #2e3440 !important; border-color: #4c566a !important; }
+
+        /* 4. Catppuccin Mocha */
+        html.theme-catppuccin {
+            --bg-page: #181825;
+            --bg-surface: #1e1e2e;
+            --bg-subtle: #181825;
+            --border-color: #313244;
+            --border-subtle: #313244;
+            --border-table: #45475a;
+            --text-main: #cdd6f4;
+            --text-muted: #a6adc8;
+            --text-heading: #f5e0dc;
+            --modal-bg: #1e1e2e;
+        }
+        html.theme-catppuccin body { background-color: #181825 !important; color: #cdd6f4 !important; }
+        html.theme-catppuccin .card, html.theme-catppuccin .modal-dialog { background: #1e1e2e !important; border-color: #313244 !important; }
+        html.theme-catppuccin .info-item, html.theme-catppuccin .scrobble-item, html.theme-catppuccin .cowatch-account-row, html.theme-catppuccin th { background: #181825 !important; border-color: #313244 !important; }
+        html.theme-catppuccin .header, html.theme-catppuccin .activity-header { border-color: #313244 !important; }
+        html.theme-catppuccin td, html.theme-catppuccin tr { border-bottom-color: #262637 !important; }
+        html.theme-catppuccin .cowatch-grid > div + div { border-color: #313244 !important; }
+        html.theme-catppuccin div[style*="background:#0f172a"], html.theme-catppuccin div[style*="background: #0f172a"] { background-color: #181825 !important; border-color: #313244 !important; }
+        html.theme-catppuccin div[style*="background:#1e293b"], html.theme-catppuccin div[style*="background: #1e293b"] { background-color: #1e1e2e !important; border-color: #313244 !important; }
+
+        /* 5. Tokyo Night */
+        html.theme-tokyonight {
+            --bg-page: #1a1b26;
+            --bg-surface: #24283b;
+            --bg-subtle: #1a1b26;
+            --border-color: #3b4261;
+            --border-subtle: #292e42;
+            --border-table: #3b4261;
+            --text-main: #c0caf5;
+            --text-muted: #9aa5ce;
+            --text-heading: #7aa2f7;
+            --modal-bg: #24283b;
+        }
+        html.theme-tokyonight body { background-color: #1a1b26 !important; color: #c0caf5 !important; }
+        html.theme-tokyonight .card, html.theme-tokyonight .modal-dialog { background: #24283b !important; border-color: #3b4261 !important; }
+        html.theme-tokyonight .info-item, html.theme-tokyonight .scrobble-item, html.theme-tokyonight .cowatch-account-row, html.theme-tokyonight th { background: #1a1b26 !important; border-color: #3b4261 !important; }
+        html.theme-tokyonight .header, html.theme-tokyonight .activity-header { border-color: #3b4261 !important; }
+        html.theme-tokyonight td, html.theme-tokyonight tr { border-bottom-color: #292e42 !important; }
+        html.theme-tokyonight .cowatch-grid > div + div { border-color: #3b4261 !important; }
+        html.theme-tokyonight div[style*="background:#0f172a"], html.theme-tokyonight div[style*="background: #0f172a"] { background-color: #1a1b26 !important; border-color: #3b4261 !important; }
+        html.theme-tokyonight div[style*="background:#1e293b"], html.theme-tokyonight div[style*="background: #1e293b"] { background-color: #24283b !important; border-color: #3b4261 !important; }
+
+        /* 6. Dracula */
+        html.theme-dracula {
+            --bg-page: #21222c;
+            --bg-surface: #282a36;
+            --bg-subtle: #21222c;
+            --border-color: #44475a;
+            --border-subtle: #343746;
+            --border-table: #44475a;
+            --text-main: #f8f8f2;
+            --text-muted: #6272a4;
+            --text-heading: #bd93f9;
+            --modal-bg: #282a36;
+        }
+        html.theme-dracula body { background-color: #21222c !important; color: #f8f8f2 !important; }
+        html.theme-dracula .card, html.theme-dracula .modal-dialog { background: #282a36 !important; border-color: #44475a !important; }
+        html.theme-dracula .info-item, html.theme-dracula .scrobble-item, html.theme-dracula .cowatch-account-row, html.theme-dracula th { background: #21222c !important; border-color: #44475a !important; }
+        html.theme-dracula .header, html.theme-dracula .activity-header { border-color: #44475a !important; }
+        html.theme-dracula td, html.theme-dracula tr { border-bottom-color: #343746 !important; }
+        html.theme-dracula .cowatch-grid > div + div { border-color: #44475a !important; }
+        html.theme-dracula div[style*="background:#0f172a"], html.theme-dracula div[style*="background: #0f172a"] { background-color: #21222c !important; border-color: #44475a !important; }
+        html.theme-dracula div[style*="background:#1e293b"], html.theme-dracula div[style*="background: #1e293b"] { background-color: #282a36 !important; border-color: #44475a !important; }
+
+        /* 7. Emerald Forest */
+        html.theme-emerald {
+            --bg-page: #061a14;
+            --bg-surface: #0d2820;
+            --bg-subtle: #061a14;
+            --border-color: #1b4337;
+            --border-subtle: #13352c;
+            --border-table: #1b4337;
+            --text-main: #ecfdf5;
+            --text-muted: #6ee7b7;
+            --text-heading: #a7f3d0;
+            --modal-bg: #0d2820;
+        }
+        html.theme-emerald body { background-color: #061a14 !important; color: #ecfdf5 !important; }
+        html.theme-emerald .card, html.theme-emerald .modal-dialog { background: #0d2820 !important; border-color: #1b4337 !important; }
+        html.theme-emerald .info-item, html.theme-emerald .scrobble-item, html.theme-emerald .cowatch-account-row, html.theme-emerald th { background: #061a14 !important; border-color: #1b4337 !important; }
+        html.theme-emerald .header, html.theme-emerald .activity-header { border-color: #1b4337 !important; }
+        html.theme-emerald td, html.theme-emerald tr { border-bottom-color: #13352c !important; }
+        html.theme-emerald .cowatch-grid > div + div { border-color: #1b4337 !important; }
+        html.theme-emerald div[style*="background:#0f172a"], html.theme-emerald div[style*="background: #0f172a"] { background-color: #061a14 !important; border-color: #1b4337 !important; }
+        html.theme-emerald div[style*="background:#1e293b"], html.theme-emerald div[style*="background: #1e293b"] { background-color: #0d2820 !important; border-color: #1b4337 !important; }
+
+        /* 8. Rose Pine */
+        html.theme-rosepine {
+            --bg-page: #191724;
+            --bg-surface: #21202e;
+            --bg-subtle: #191724;
+            --border-color: #393552;
+            --border-subtle: #26233a;
+            --border-table: #393552;
+            --text-main: #e0def4;
+            --text-muted: #908caa;
+            --text-heading: #eb6f92;
+            --modal-bg: #21202e;
+        }
+        html.theme-rosepine body { background-color: #191724 !important; color: #e0def4 !important; }
+        html.theme-rosepine .card, html.theme-rosepine .modal-dialog { background: #21202e !important; border-color: #393552 !important; }
+        html.theme-rosepine .info-item, html.theme-rosepine .scrobble-item, html.theme-rosepine .cowatch-account-row, html.theme-rosepine th { background: #191724 !important; border-color: #393552 !important; }
+        html.theme-rosepine .header, html.theme-rosepine .activity-header { border-color: #393552 !important; }
+        html.theme-rosepine td, html.theme-rosepine tr { border-bottom-color: #26233a !important; }
+        html.theme-rosepine .cowatch-grid > div + div { border-color: #393552 !important; }
+        html.theme-rosepine div[style*="background:#0f172a"], html.theme-rosepine div[style*="background: #0f172a"] { background-color: #191724 !important; border-color: #393552 !important; }
+        html.theme-rosepine div[style*="background:#1e293b"], html.theme-rosepine div[style*="background: #1e293b"] { background-color: #21202e !important; border-color: #393552 !important; }
+
+        /* Accent Overrides */
+        html.accent-sky { --accent-color: #0284c7; --accent-hover: #0369a1; --btn-copy-bg: #0284c7; }
+        html.accent-amber { --accent-color: #f59e0b; --accent-hover: #d97706; --btn-copy-bg: #f59e0b; }
+        html.accent-trakt { --accent-color: #ed1c24; --accent-hover: #c41219; --btn-copy-bg: #ed1c24; }
+        html.accent-plex { --accent-color: #e5a00d; --accent-hover: #cc8e0a; --btn-copy-bg: #e5a00d; }
+        html.accent-jellyfin { --accent-color: #aa5cc3; --accent-hover: #9346ab; --btn-copy-bg: #aa5cc3; }
+        html.accent-emerald { --accent-color: #10b981; --accent-hover: #059669; --btn-copy-bg: #10b981; }
+        html.accent-cyan { --accent-color: #06b6d4; --accent-hover: #0891b2; --btn-copy-bg: #06b6d4; }
+        html.accent-rose { --accent-color: #eb6f92; --accent-hover: #d4597d; --btn-copy-bg: #eb6f92; }
+        html.accent-mauve { --accent-color: #cba6f7; --accent-hover: #b48cf0; --btn-copy-bg: #cba6f7; }
+
+        html[class*="accent-"] .btn-copy { background-color: var(--btn-copy-bg) !important; }
+
+        /* Display Density - Compact Mode (Tablet & Wall-Mount Optimized) */
+        html.density-compact body { padding: 18px 14px; }
+        html.density-compact .header { margin-bottom: 16px; padding-bottom: 14px; }
+        html.density-compact .card { padding: 14px 16px; margin-bottom: 14px; border-radius: 9px; }
+        html.density-compact .card h3 { font-size: 14px; margin-bottom: 8px; }
+        html.density-compact .info-grid { gap: 10px; }
+        html.density-compact .info-item { padding: 8px 12px; }
+        html.density-compact .info-value { font-size: 14px; margin: 2px 0; }
+        html.density-compact th { padding: 6px 10px; font-size: 11px; }
+        html.density-compact td { padding: 6px 10px; font-size: 11px; }
+        html.density-compact .activity-header { padding: 10px 14px; }
+        html.density-compact .cowatch-grid { gap: 12px; }
+        html.density-compact .cowatch-account-row { padding: 6px 10px; margin-bottom: 6px; }
+        html.density-compact #stream-poster-container { width: 56px; height: 78px; }
+        html.density-compact #active-playback-card { margin-bottom: 14px; }

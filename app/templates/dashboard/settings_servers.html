@@ -1,0 +1,127 @@
+                <!-- Tab 1: Media Servers -->
+                <div id="settings-panel-servers" class="settings-content-panel u-display-flex u-flex-direction-column u-gap-14px">
+                    <!-- Server Ingestion Listeners -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-10px u-display-flex u-align-items-center u-gap-6px">
+                            <span>📡</span> Webhook Ingestion Listeners (Runtime Toggles)
+                        </div>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-200px-1fr u-gap-10px">
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div>
+                                    <div class="u-font-size-12px u-font-weight-600 u-color-text-main">Plex Listener</div>
+                                    <div id="settings-listener-status-plex" class="u-font-size-11px u-color-10b981">● Active</div>
+                                </div>
+                                <button type="button" id="settings-toggle-btn-plex" onclick="toggleServerFromSettings('plex')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-4px-10px u-font-size-11px">Pause</button>
+                            </div>
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div>
+                                    <div class="u-font-size-12px u-font-weight-600 u-color-text-main">Jellyfin Listener</div>
+                                    <div id="settings-listener-status-jellyfin" class="u-font-size-11px u-color-text-muted">● Inactive</div>
+                                </div>
+                                <button type="button" id="settings-toggle-btn-jellyfin" onclick="toggleServerFromSettings('jellyfin')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-4px-10px u-font-size-11px">Resume</button>
+                            </div>
+                            <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div>
+                                    <div class="u-font-size-12px u-font-weight-600 u-color-text-main">Emby Listener</div>
+                                    <div id="settings-listener-status-emby" class="u-font-size-11px u-color-text-muted">● Inactive</div>
+                                </div>
+                                <button type="button" id="settings-toggle-btn-emby" onclick="toggleServerFromSettings('emby')" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-4px-10px u-font-size-11px">Resume</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Direct Connection Profiles (Two-Way Sync / Reconciliation) -->
+                    <div id="settings-section-reconcile" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-10px u-display-flex u-align-items-center u-gap-6px">
+                            <span>🔌</span> Media Server Direct API Connections (Two-Way Reverse Sync)
+                        </div>
+
+                        <!-- Server Sub-Tabs -->
+                        <div class="u-display-flex u-gap-6px u-margin-bottom-10px u-flex-wrap-wrap">
+                            <button type="button" id="settings-srv-tab-plex" onclick="switchSettingsServerSubTab('plex')" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-4px-12px u-border-radius-4px">Plex</button>
+                            <button type="button" id="settings-srv-tab-jellyfin" onclick="switchSettingsServerSubTab('jellyfin')" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-12px u-border-radius-4px">Jellyfin</button>
+                            <button type="button" id="settings-srv-tab-emby" onclick="switchSettingsServerSubTab('emby')" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-4px-12px u-border-radius-4px">Emby</button>
+                        </div>
+
+                        <!-- Plex Form -->
+                        <div id="settings-srv-form-plex" class="u-display-flex u-flex-direction-column u-gap-8px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Plex Server URL</label>
+                                <input type="text" id="settings-plex-url" placeholder="http://<your-server-ip-or-domain>:32400" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div>
+                                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-4px">
+                                    <label class="u-font-size-11px u-color-text-muted">X-Plex-Token</label>
+                                    <span id="settings-plex-token-badge" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                                </div>
+                                <div class="u-display-flex u-gap-6px">
+                                    <input type="password" id="settings-plex-token" placeholder="Enter Plex Token" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-plex-token','settings-plex-token-btn')" id="settings-plex-token-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                </div>
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-4px u-flex-wrap-wrap u-gap-6px">
+                                <div class="u-display-flex u-gap-6px u-align-items-center u-flex-wrap-wrap">
+                                    <button type="button" onclick="testSettingsServerConnection('plex')" id="settings-plex-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-3b82f6 u-color-60a5fa u-font-weight-600 u-padding-6px-12px">🔌 Test Connection</button>
+                                    <button type="button" onclick="registerServerWebhook('plex')" id="settings-plex-webhook-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-eab308 u-color-facc15 u-font-weight-600 u-padding-6px-12px">⚡ Auto-Register Webhook</button>
+                                </div>
+                                <span id="settings-plex-test-status" class="u-font-size-12px u-color-text-muted"></span>
+                            </div>
+                        </div>
+
+                        <!-- Jellyfin Form -->
+                        <div id="settings-srv-form-jellyfin" class="u-display-none u-flex-direction-column u-gap-8px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Jellyfin Server URL</label>
+                                <input type="text" id="settings-jellyfin-url" placeholder="http://<your-server-ip-or-domain>:8096" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px">
+                                <div>
+                                    <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Jellyfin API Token</label>
+                                    <div class="u-display-flex u-gap-6px">
+                                        <input type="password" id="settings-jellyfin-token" placeholder="API Key" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                        <button type="button" onclick="toggleReconTokenVisibility('settings-jellyfin-token','settings-jf-token-btn')" id="settings-jf-token-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Jellyfin User ID</label>
+                                    <input type="text" id="settings-jellyfin-user-id" placeholder="User ID guid" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                </div>
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-4px u-flex-wrap-wrap u-gap-6px">
+                                <div class="u-display-flex u-gap-6px u-align-items-center u-flex-wrap-wrap">
+                                    <button type="button" onclick="testSettingsServerConnection('jellyfin')" id="settings-jellyfin-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-a855f7 u-color-c084fc u-font-weight-600 u-padding-6px-12px">🔌 Test Jellyfin</button>
+                                    <button type="button" onclick="registerServerWebhook('jellyfin')" id="settings-jellyfin-webhook-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-eab308 u-color-facc15 u-font-weight-600 u-padding-6px-12px">⚡ Auto-Register Webhook</button>
+                                </div>
+                                <span id="settings-jellyfin-test-status" class="u-font-size-12px u-color-text-muted"></span>
+                            </div>
+                        </div>
+
+                        <!-- Emby Form -->
+                        <div id="settings-srv-form-emby" class="u-display-none u-flex-direction-column u-gap-8px">
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Emby Server URL</label>
+                                <input type="text" id="settings-emby-url" placeholder="http://<your-server-ip-or-domain>:8096" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                            </div>
+                            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px">
+                                <div>
+                                    <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Emby API Token</label>
+                                    <div class="u-display-flex u-gap-6px">
+                                        <input type="password" id="settings-emby-token" placeholder="API Key" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                        <button type="button" onclick="toggleReconTokenVisibility('settings-emby-token','settings-emby-token-btn')" id="settings-emby-token-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Emby User ID</label>
+                                    <input type="text" id="settings-emby-user-id" placeholder="User ID guid" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                </div>
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-4px u-flex-wrap-wrap u-gap-6px">
+                                <div class="u-display-flex u-gap-6px u-align-items-center u-flex-wrap-wrap">
+                                    <button type="button" onclick="testSettingsServerConnection('emby')" id="settings-emby-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-10b981 u-color-6ee7b7 u-font-weight-600 u-padding-6px-12px">🔌 Test Emby</button>
+                                    <button type="button" onclick="registerServerWebhook('emby')" id="settings-emby-webhook-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-eab308 u-color-facc15 u-font-weight-600 u-padding-6px-12px">⚡ Auto-Register Webhook</button>
+                                </div>
+                                <span id="settings-emby-test-status" class="u-font-size-12px u-color-text-muted"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>

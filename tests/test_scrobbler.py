@@ -32,6 +32,15 @@ def make_async_test_client(app, **kwargs):
     )
 
 
+async def dashboard_asset_text(client):
+    """Return the separately served dashboard CSS and JavaScript for source assertions."""
+    css = await client.get("/static/dashboard.css")
+    themes = await client.get("/static/dashboard-theme.css")
+    script = await client.get("/static/dashboard.js")
+    assert css.status_code == themes.status_code == script.status_code == 200
+    return themes.text + css.text + script.text
+
+
 class AsyncASGITestClient(httpx.AsyncClient):
     """Keep test requests separate from mocks of outbound HTTPX methods."""
 
@@ -2411,7 +2420,7 @@ async def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v3.0.0" in html
+    assert "v3.1.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -2700,13 +2709,17 @@ async def test_dashboard_mobile_responsiveness():
         resp = await client.get(path)
         assert resp.status_code == 200
         html = resp.text
+        html += await dashboard_asset_text(client)
+        css_resp = await client.get("/static/dashboard.css")
+        assert css_resp.status_code == 200
+        css = css_resp.text
 
         # 1. Viewport meta tag
         assert '<meta name="viewport" content="width=device-width, initial-scale=1.0">' in html
 
         # 2. CSS Media query for mobile viewports
-        assert "@media (max-width: 640px)" in html
-        assert "-webkit-overflow-scrolling: touch" in html
+        assert "@media (max-width: 640px)" in css
+        assert "-webkit-overflow-scrolling: touch" in css
 
         # 3. Mobile layout classes
         assert 'class="title-brand"' in html
@@ -2721,14 +2734,14 @@ async def test_dashboard_mobile_responsiveness():
         assert 'class="modal-dialog' in html
         assert 'class="logs-toolbar"' in html
         assert 'class="footer"' in html
-        assert '.cowatch-account-row' in html
-        assert '.cowatch-grid > div + div' in html
+        assert '.cowatch-account-row' in css
+        assert '.cowatch-grid > div + div' in css
         assert 'Universal Media Scrobbler &amp; Multi-Tracker Hub' in html
         assert 'Media Server Webhook Endpoints' in html
         assert 'Tracker Only &bull; Mark' in html
         assert 'omniscrobble_auto_refresh' in html
-        assert 'grid-template-columns: 1fr !important' in html
-        assert 'word-break: break-word' in html
+        assert 'grid-template-columns: 1fr !important' in css
+        assert 'word-break: break-word' in css
         assert 'settings-trk-cat-btn' in html
         assert 'scrobble-trk-kitsu' in html
 
@@ -3330,6 +3343,7 @@ def test_static_github_pages_demo_generation(tmp_path):
     import re
     from pathlib import Path
     from app.main import APP_VERSION
+    from scripts.build_dashboard_bundle import MODULES, OUTPUT, build_bundle
     from scripts.generate_static_demo import generate_static_demo
 
     # 1. Test generation to temporary directory
@@ -3339,6 +3353,11 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert (tmp_path / "manifest.json").is_file()
     assert (tmp_path / "static" / "icons" / "icon-192.svg").is_file()
     assert (tmp_path / "static" / "icons" / "icon-512.svg").is_file()
+    assert (tmp_path / "assets" / "dashboard.css").is_file()
+    assert (tmp_path / "assets" / "dashboard-theme.css").is_file()
+    assert (tmp_path / "assets" / "dashboard.js").is_file()
+    assert len(MODULES) == 14
+    assert OUTPUT.read_text(encoding="utf-8") == build_bundle()
 
     content = demo_file.read_text(encoding="utf-8")
     assert "Live Interactive Demo" in content
@@ -3354,8 +3373,9 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert "/api/logs" in content
     assert "/api/search" in content
     assert "/api/test/webhook" in content
-    assert "updateDemoSettingUI" in content
-    assert "!isDemo && 'serviceWorker'" in content
+    script_content = (tmp_path / "assets" / "dashboard.js").read_text(encoding="utf-8")
+    assert "updateDemoSettingUI" in script_content
+    assert "!isDemo && 'serviceWorker'" in script_content
 
     # Verify asset links use relative paths for GitHub Pages subpath compatibility
     assert 'href="manifest.json"' in content
@@ -3363,6 +3383,9 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert 'href="assets/icon-192.png"' in content
     assert 'href="assets/icon.svg"' in content
     assert 'href="/static/icons/icon-192.svg"' not in content
+    assert 'href="assets/dashboard.css"' in content
+    assert 'href="assets/dashboard-theme.css"' in content
+    assert 'src="assets/dashboard.js"' in content
 
     # Verify no unreplaced template placeholders
     unreplaced = re.findall(r"\{\{[A-Z_]+\}\}", content)
@@ -3729,7 +3752,7 @@ async def test_dashboard_multi_server_tabs_and_oled_theme():
     client = make_async_test_client(app)
     res = await client.get("/")
     assert res.status_code == 200
-    html = res.text
+    html = res.text + await dashboard_asset_text(client)
 
     # Multi-server tabs
     assert "switchWebhookTab('plex')" in html
@@ -4472,7 +4495,7 @@ async def test_dashboard_reconciliation_elements():
 
     res = await client.get("/")
     assert res.status_code == 200
-    html_content = res.text
+    html_content = res.text + await dashboard_asset_text(client)
     assert "Two-Way Library Reconciliation" in html_content
     assert 'id="reconcile-modal"' in html_content
     assert 'id="reconcile-settings-modal"' in html_content
@@ -6157,7 +6180,7 @@ async def test_dashboard_renders_simkl_card():
     client = make_async_test_client(app)
     resp = await client.get("/")
     assert resp.status_code == 200
-    html = resp.text
+    html = resp.text + await dashboard_asset_text(client)
 
     assert "Multi-Tracker Hub" in html
     assert "Cloud Synchronization" in html
@@ -6332,7 +6355,7 @@ async def test_dashboard_renders_cross_sync_modal():
     client = make_async_test_client(app)
     resp = await client.get("/")
     assert resp.status_code == 200
-    html = resp.text
+    html = resp.text + await dashboard_asset_text(client)
 
     assert "cross-sync-modal" in html
     assert "openCrossSyncModal" in html
@@ -6916,7 +6939,7 @@ async def test_dashboard_renders_anime_tracking_card_and_modals():
     client = make_async_test_client(app)
     resp = await client.get("/")
     assert resp.status_code == 200
-    html = resp.text
+    html = resp.text + await dashboard_asset_text(client)
 
     assert "Anime Tracking Engine" in html
     assert "anilist-modal" in html
@@ -7238,7 +7261,7 @@ async def test_quick_scrobble_modal_defaults_and_simkl_button():
     # 1. Test live dashboard (unauthenticated trackers by default in mock env)
     resp = await client.get("/")
     assert resp.status_code == 200
-    html = resp.text
+    html = resp.text + await dashboard_asset_text(client)
 
     # Co-watch partner must be unchecked by default
     assert '<input type="checkbox" id="scrobble-cowatch-check">' in html
@@ -7428,12 +7451,13 @@ async def test_settings_modal_dashboard_rendering():
     res = await client.get("/")
     assert res.status_code == 200
     html_content = res.text
+    css_content = (await client.get("/static/dashboard.css")).text
 
     assert 'id="settings-modal"' in html_content
     assert "Settings Hub" in html_content
     assert "{{SETTINGS_HEADER_BTN}}" not in html_content
     assert '<button onclick="openSettingsModal()"' in html_content
-    assert ", #settings-modal {" in html_content
+    assert ", #settings-modal {" in css_content
     assert "openSettingsModal" in html_content
     assert "saveAllSettingsFromModal" in html_content
     assert "testSettingsArrConnection" in html_content
@@ -7490,6 +7514,7 @@ async def test_all_dashboard_modals_have_overlay_styling_and_hidden_by_default()
         res = await client.get(path)
         assert res.status_code == 200
         html_content = res.text
+        css_content = (await client.get("/static/dashboard.css")).text
 
         collector = ModalCollector()
         collector.feed(html_content)
@@ -7508,7 +7533,7 @@ async def test_all_dashboard_modals_have_overlay_styling_and_hidden_by_default()
             assert required in modal_ids
 
         # Universal CSS rule hides every modal by default as a fixed overlay
-        css_match = re.search(r'(\.modal,\s*\.modal-overlay,[^{]*\{[^}]*\})', html_content)
+        css_match = re.search(r'(\.modal,\s*\.modal-overlay,[^{]*\{[^}]*\})', css_content)
         assert css_match, "Universal .modal CSS rule missing from stylesheet!"
         modal_css = css_match.group(0)
         assert "display: none;" in modal_css
@@ -7557,10 +7582,10 @@ async def test_activity_table_show_cowatch_alignment():
     client.cookies.set("admin_token", "unlocked")
     dash_res = await client.get("/")
     assert dash_res.status_code == 200
-    html = dash_res.text
+    html = dash_res.text + await dashboard_asset_text(client)
     assert "✓ Co-Watching" not in html
     assert 'data-show="Ted%20Lasso%20%282020%29"' not in html
-    assert '<div style="display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;">' in html
+    assert 'class="activity-row-actions"' in html
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -7762,6 +7787,7 @@ async def test_activity_table_ui_polish():
         format_action_label,
         should_display_cowatch_badge,
         render_status_badge,
+        render_tracker_delivery_badges,
         recent_events,
         log_event,
         process_media_event,
@@ -7810,6 +7836,10 @@ async def test_activity_table_ui_polish():
     assert "Ignored" in render_status_badge("scrobble_start", "ignored")
     assert "⏳ Queued" in render_status_badge("scrobble_stop", "queued")
     assert "✕ Failed" in render_status_badge("scrobble_stop", "error")
+    delivery_badges = render_tracker_delivery_badges({"trakt": "success", "simkl": "queued", "anilist": "failed"})
+    assert "TRK ✓" in delivery_badges
+    assert "SKL ⌛" in delivery_badges
+    assert "ANL ×" in delivery_badges
 
     # 4. Unhandled webhook events in scrobble mode do NOT log "none"
     parsed_unhandled = ParsedMedia(
@@ -7878,15 +7908,15 @@ async def test_activity_table_ui_polish():
 
     dash_res = await client.get("/")
     assert dash_res.status_code == 200
-    html_text = dash_res.text
+    html_text = dash_res.text + await dashboard_asset_text(client)
 
     # Header styling: renamed to clean universal "Status"
-    assert '<th style="white-space:nowrap;">Status</th>' in html_text
-    assert '<th style="min-width:220px;white-space:nowrap;">Actions</th>' in html_text
+    assert '<th class="u-white-space-nowrap">Status</th>' in html_text
+    assert '<th class="activity-actions-header">Actions</th>' in html_text
 
-    # Verify Co-Watched badge has white-space:nowrap and NO awkward 'ok' prepended
+    # Verify Co-Watched badge uses the shared status style and has no awkward 'ok' prepended
     assert '👥 Co-Watched</span>' in html_text
-    assert 'white-space:nowrap;" title="Synced to @partner' in html_text
+    assert 'activity-status-badge activity-status-cowatch" title="Synced to @partner' in html_text
 
     # Verify 0% stop gets clean ✓ OK badge and does NOT have Solo badge
     assert '✓ OK</span>' in html_text
@@ -7900,9 +7930,66 @@ async def test_activity_table_ui_polish():
     assert '🗑️ Unscrobble' in html_text
 
     # Action buttons flex styling
-    assert 'display:inline-flex;flex-wrap:nowrap;gap:6px;align-items:center;' in html_text
+    assert 'activity-row-actions' in html_text
 
 
+def test_async_tracker_delivery_updates_existing_event(monkeypatch):
+    """Async tracker outcomes update and persist the originating activity event."""
+    from app.main import _tracker_result_state, log_event, recent_events, update_event_tracker_delivery
+
+    assert _tracker_result_state({"status": 503, "error": "upstream unavailable"}) == "failed"
+    assert _tracker_result_state({"scrobble": {"status": 201}, "history": {"status": 503}}) == "failed"
+    assert _tracker_result_state({"status": "error", "error": "network timeout"}) == "failed"
+    assert _tracker_result_state({"status": "error", "error": "network timeout", "queued": True}) == "queued"
+    assert _tracker_result_state({"status": 400, "error": "invalid payload"}) == "failed"
+
+    original_events = list(recent_events)
+    monkeypatch.setattr("app.main.save_recent_events", lambda: None)
+    monkeypatch.setattr("app.main.save_scrobble_stats", lambda: None)
+    media = ParsedMedia(event="media.scrobble", username="delivery-test", media_type="movie", title="Delivery Test", progress=100)
+    recent_events.clear()
+    try:
+        event_id = log_event(media, "mark_watched", {"status": "success"})
+        assert recent_events[0]["tracker_delivery"] == {"trakt": "success"}
+
+        update_event_tracker_delivery(event_id, {"simkl": "success", "anilist": "failed"})
+        assert recent_events[0]["tracker_delivery"] == {
+            "trakt": "success", "simkl": "success", "anilist": "failed"
+        }
+    finally:
+        recent_events.clear()
+        recent_events.extend(original_events)
+
+
+def test_dashboard_search_escapes_metadata_and_inline_arguments():
+    """Untrusted tracker metadata cannot become HTML or break inline handlers."""
+    modules = Path(__file__).resolve().parents[1] / "app" / "static" / "dashboard_modules"
+    api = (modules / "api.js").read_text(encoding="utf-8")
+    core = (modules / "core.js").read_text(encoding="utf-8")
+    activity = (modules / "activity.js").read_text(encoding="utf-8")
+    cowatch = (modules / "cowatch.js").read_text(encoding="utf-8")
+    webhook_tests = (modules / "webhook_tests.js").read_text(encoding="utf-8")
+
+    assert "replace(/'/g, '%27')" in api
+    assert "const title = escapeHtml(media.title || '')" in core
+    assert "${escapeHtml(media.overview)}" in core
+    assert "encodeURIComponentForInlineJs(JSON.stringify(payloadData))" in core
+    assert "encodeURIComponentForInlineJs(JSON.stringify(ev.media_payload))" in activity
+    assert "${escapeHtml(s.status)}" in cowatch
+    assert "const titleStr = escapeHtml(item.type === 'episode'" in webhook_tests
+    assert "escapeHtml(item.type)" in webhook_tests
+    assert 'data-id="${escapeHtml(String(item.id ?? \'\'))}"' in webhook_tests
+    assert "escapeHtml(err.detail || 'Error')" in webhook_tests
+
+
+def test_command_palette_shortcut_toggles_open_state():
+    modules = Path(__file__).resolve().parents[1] / "app" / "static" / "dashboard_modules"
+    core = (modules / "core.js").read_text(encoding="utf-8")
+    palette = (modules / "command_palette.js").read_text(encoding="utf-8")
+
+    assert "e.preventDefault();\n                toggleCommandPalette();" in core
+    assert "if (modal.style.display === 'flex') closeCommandPalette();" in palette
+    assert "else openCommandPalette();" in palette
 @pytest.mark.asyncio(loop_scope="module")
 async def test_settings_api_notifications():
     """Verify GET and POST /api/settings handles notifications configuration and masking."""
@@ -9598,7 +9685,8 @@ async def test_multi_theme_palette_engine_and_accents():
     client = make_async_test_client(app)
     res = await client.get("/")
     assert res.status_code == 200
-    html = res.text
+    html = res.text + await dashboard_asset_text(client)
+    css = (await client.get("/static/dashboard-theme.css")).text + (await client.get("/static/dashboard.css")).text
 
     # 1. Zero-FOUC inline head script
     assert "omniscrobble_theme" in html
@@ -9617,7 +9705,7 @@ async def test_multi_theme_palette_engine_and_accents():
         "theme-emerald",
         "theme-rosepine",
     ]:
-        assert f"html.{theme}" in html
+        assert f"html.{theme}" in css
 
     # 3. Accent Highlight Classes (9 accents)
     for accent in [
@@ -9631,7 +9719,7 @@ async def test_multi_theme_palette_engine_and_accents():
         "accent-rose",
         "accent-mauve",
     ]:
-        assert f"html.{accent}" in html
+        assert f"html.{accent}" in css
 
     # 4. Header theme trigger button
     assert 'id="theme-toggle-btn"' in html
@@ -9668,7 +9756,7 @@ async def test_multi_theme_palette_engine_and_accents():
 
     # 8. Accent configuration defaults & reactive switching
     assert "localStorage.getItem('omniscrobble_accent') || 'sky'" in html
-    assert "--accent-color: #0284c7;" in html
+    assert "--accent-color: #0284c7;" in css
     assert "root.classList.add('accent-' + accentId);" in html
 
 
@@ -9798,7 +9886,8 @@ async def test_ambient_visuals_compact_mode_and_card_visibility():
     client = make_async_test_client(app)
     res = await client.get("/")
     assert res.status_code == 200
-    html = res.text
+    html = res.text + await dashboard_asset_text(client)
+    css = (await client.get("/static/dashboard-theme.css")).text + (await client.get("/static/dashboard.css")).text
 
     # Ambient Backdrop elements in template
     assert 'id="stream-ambient-backdrop"' in html
@@ -9806,7 +9895,7 @@ async def test_ambient_visuals_compact_mode_and_card_visibility():
     assert 'id="stream-poster-fallback"' in html
 
     # Compact Density Mode CSS and controls
-    assert "html.density-compact" in html
+    assert "html.density-compact" in css
     assert 'id="density-btn-comfortable"' in html
     assert 'id="density-btn-compact"' in html
     assert "setDensity('comfortable')" in html

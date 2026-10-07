@@ -19,6 +19,7 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 11. [Scrobbler Fidelity & Multi-Server Real-Time Mirroring](#11-scrobbler-fidelity--multi-server-real-time-mirroring)
 12. [In-Browser Webhook Inspector & Payload Debugger](#12-in-browser-webhook-inspector--payload-debugger)
 13. [Personal Viewing Analytics & OmniWrapped](#13-personal-viewing-analytics--omniwrapped)
+14. [Dashboard Workspaces & Navigation](#14-dashboard-workspaces--navigation)
 
 ---
 
@@ -508,3 +509,21 @@ The **Statistics Hub** computes lifetime and time-windowed viewing telemetry dir
   - *The Grand Homelab Binger* (> 100 watch hours)
   - *The Curated Media Connoisseur* (selective, high-fidelity viewing)
 - **Exportable Retrospectives**: Export complete OmniWrapped JSON summaries for archiving or sharing.
+
+---
+
+## 14. Dashboard Workspaces & Navigation
+
+The dashboard groups its existing cards into five workspaces to make frequent operations easier to reach. Tracker configuration shortcuts open the matching integration section in the Settings Hub, while co-watch partner linking keeps its user-specific authorization flow. Live Logs and Webhook Inspector share a tabbed diagnostics drawer.
+
+| Workspace | Contents |
+| :--- | :--- |
+| **Operations** | Active playback and live activity history |
+| **Trackers & Hub** | Server and account status, media server listeners, tracker connections, and reconciliation |
+| **Automation** | Watch Together and Sonarr/Radarr bridges |
+| **Analytics** | Viewing trends and OmniWrapped insights |
+| **System** | Backups and recovery controls |
+
+Operations is the default. The selected workspace is remembered in browser local storage. Tabs support arrow-key navigation, and on small screens the navigation stays within reach in a fixed bottom dock. The health strip summarizes account connection, active listeners, and offline queue count; detailed controls remain in their corresponding workspace cards.
+
+The activity stream includes media-type and delivery-status chips, a user selector, and title/user search. Each event shows the recorded result for applicable trackers; asynchronous Simkl, AniList, and MAL updates are attached to the same persisted event when they finish. Anime filtering uses the event's `is_anime` metadata when available. With auto-refresh enabled, new event rows animate into view and a brief toast announces each arrival. `Ctrl+K` / `⌘K` opens a searchable action palette for workspace navigation, manual scrobbling, queue retry, logs, reconciliation, theme selection, and *Arr search. Live Logs and Webhook Inspector share a tabbed right-side drawer, leaving the dashboard available behind it.

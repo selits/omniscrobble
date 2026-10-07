@@ -1,0 +1,51 @@
+    <div class="container">
+        {{DEMO_BANNER}}
+        <!-- COMPONENT:workspace_navigation -->
+
+        {{ACTIVE_PLAYBACK_CARD}}
+
+        <div class="card" id="card-server-config">
+            <h3>Server & Account Configuration</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Trakt Connection</div>
+                    <div class="info-value">{{ACCOUNT_DISPLAY}}</div>
+                    <div><span class="system-token-health is-{{TOKEN_HEALTH_CLASS}} u-font-size-12px">● {{TOKEN_HEALTH_STR}}</span></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Plex Users & Libraries</div>
+                    <div class="info-value">{{ALLOWED_USERS_DISPLAY}}</div>
+                    <div class="u-font-size-12px u-color-text-muted">Libs: {{ALLOWED_LIBS_DISPLAY}} &bull; Coll: {{SYNC_COLLECTION_DISPLAY}}</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Server Health</div>
+                    <div class="info-value">🟢 Online</div>
+                    <div class="u-font-size-12px u-color-text-muted">Uptime: {{UPTIME_STR}} &bull; <span class="system-queue-health is-{{QUEUE_CLASS}}">Queue: {{PENDING_QUEUE}} pending</span> &bull; <span>Alerts: {{NOTIF_SUMMARY}}</span></div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Playback Activity</div>
+                    <div class="info-value">🍿 {{STAT_TOTAL}} Scrobble(s)</div>
+                    <div class="u-font-size-12px u-color-text-muted">🎬 {{STAT_MOVIES}} &bull; 📺 {{STAT_EPISODES}} &bull; ⭐ {{STAT_RATINGS}} &bull; 📦 {{STAT_COLLECTIONS}} coll</div>
+                </div>
+            </div>
+            {{WEBHOOK_CARD}}
+        </div>
+
+        {{ECOSYSTEM_CARD}}
+
+        {{SIMKL_CARD}}
+
+        {{ARR_BRIDGE_CARD}}
+
+        {{COWATCH_CARD}}
+
+        {{ANALYTICS_CARD}}
+
+        {{RECONCILIATION_CARD}}
+
+        {{BACKUP_CARD}}
+
+        <!-- COMPONENT:activity_workspace -->
+
+        <!-- COMPONENT:dashboard_footer -->
+    </div>

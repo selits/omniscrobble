@@ -1,0 +1,71 @@
+                <!-- Tab 6: Appearance & Themes -->
+                <div id="settings-panel-appearance" class="settings-content-panel u-display-none u-flex-direction-column u-gap-14px">
+                    <!-- Theme Palettes -->
+                    <div class="u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-14px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-6px u-display-flex u-align-items-center u-gap-6px">
+                            <span>🎨</span> Base Color Palette
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-12px u-line-height-1-4">
+                            Select a curated dark mode palette. Applied immediately across the entire dashboard and saved to local storage.
+                        </p>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fill-minmax-180px-1fr u-gap-10px" id="settings-theme-grid">
+                            <!-- Populated by renderThemePickers() -->
+                        </div>
+                    </div>
+
+                    <!-- Accent Colors -->
+                    <div class="u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-14px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-6px u-display-flex u-align-items-center u-gap-6px">
+                            <span>✨</span> Primary Accent Highlight
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-12px u-line-height-1-4">
+                            Choose an accent color for action buttons, active navigation tabs, and system highlights.
+                        </p>
+                        <div class="u-display-flex u-flex-wrap-wrap u-gap-8px" id="settings-accent-grid">
+                            <!-- Populated by renderThemePickers() -->
+                        </div>
+                    </div>
+
+                    <!-- Display Density -->
+                    <div class="u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-14px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-6px u-display-flex u-align-items-center u-gap-6px">
+                            <span>📐</span> Display Density (Tablet &amp; Wall-Mount Friendly)
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-12px u-line-height-1-4">
+                            Adjust the spacing and padding across cards and tables. Compact mode condenses layouts for wall-mounted tablet displays.
+                        </p>
+                        <div class="u-display-flex u-gap-8px u-flex-wrap-wrap">
+                            <button type="button" id="density-btn-comfortable" onclick="setDensity('comfortable')" class="btn-sm u-padding-8px-16px u-cursor-pointer u-display-inline-flex u-align-items-center u-gap-6px">
+                                <span>🛋️</span> Comfortable (Default)
+                            </button>
+                            <button type="button" id="density-btn-compact" onclick="setDensity('compact')" class="btn-sm u-padding-8px-16px u-cursor-pointer u-display-inline-flex u-align-items-center u-gap-6px">
+                                <span>📱</span> Compact (Condensed)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Dashboard Card Visibility -->
+                    <div class="u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-14px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-6px u-flex-wrap-wrap u-gap-8px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>👁️</span> Dashboard Card Visibility
+                            </div>
+                            <button type="button" onclick="resetCardVisibility()" class="btn-sm u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-muted u-padding-3px-8px u-font-size-11px u-cursor-pointer">Reset to Default</button>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-12px u-line-height-1-4">
+                            Toggle visibility of individual dashboard cards. Useful for hiding unused services (such as Co-Watching or *Arr automation).
+                        </p>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fill-minmax-220px-1fr u-gap-8px" id="settings-card-visibility-grid">
+                            <!-- Populated by renderCardVisibilityPickers() -->
+                        </div>
+                    </div>
+
+                    <!-- Quick Shortcuts Info -->
+                    <div class="u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-12px u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-8px">
+                        <div class="u-font-size-12px u-color-text-muted">
+                            💡 Tip: Press <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-2px-6px u-border-radius-4px u-font-family-monospace u-font-size-11px u-color-text-main">T</kbd> anywhere to cycle themes, or <kbd class="u-background-bg-surface u-border-1px-solid-var-border-color u-padding-2px-6px u-border-radius-4px u-font-family-monospace u-font-size-11px u-color-text-main">?</kbd> for all shortcuts.
+                        </div>
+                        <button type="button" onclick="openShortcutsModal()" class="btn-sm u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-main u-padding-4px-10px u-font-size-11px u-cursor-pointer">⌨️ View Shortcuts</button>
+                    </div>
+                </div>
+            </div>

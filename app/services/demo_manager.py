@@ -154,7 +154,6 @@ class DemoManager:
                 "authenticated": True,
             },
         ]
-
     def get_demo_events(self) -> list[dict[str, Any]]:
         now = datetime.datetime.now()
         fmt = "%Y-%m-%d %H:%M:%S"
@@ -162,7 +161,27 @@ class DemoManager:
         def _time_ago(minutes: int) -> str:
             return (now - datetime.timedelta(minutes=minutes)).strftime(fmt)
 
-        return [
+        events = [
+            {
+                "timestamp": _time_ago(22),
+                "user": "demo_viewer",
+                "event": "media.scrobble",
+                "action": "scrobble",
+                "title": "Frieren: Beyond Journey's End S01E01 - The Journey's End",
+                "type": "episode",
+                "show_title": "Frieren: Beyond Journey's End",
+                "is_anime": True,
+                "media_payload": {
+                    "media_type": "episode",
+                    "title": "The Journey's End",
+                    "year": 2023,
+                    "season": 1,
+                    "episode": 1,
+                    "ids": {"mal": 52991},
+                },
+                "progress": "100.0%",
+                "result_status": "ok",
+            },
             {
                 "timestamp": _time_ago(4),
                 "user": "demo_viewer",
@@ -434,6 +453,13 @@ class DemoManager:
                 "result_status": "ok",
             },
         ]
+        for event in events:
+            event["tracker_delivery"] = {"trakt": "success"}
+            if event.get("is_anime"):
+                event["tracker_delivery"].update({"anilist": "success", "mal": "success"})
+            elif event.get("action") in {"scrobble", "rate"}:
+                event["tracker_delivery"]["simkl"] = "success"
+        return events
 
     def get_demo_sonarr_shows(self, query: str = "") -> list[dict[str, Any]]:
         q = (query or "").lower().strip()
@@ -1024,4 +1050,3 @@ class DemoManager:
 
 
 demo_mgr = DemoManager()
-

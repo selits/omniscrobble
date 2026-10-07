@@ -55,7 +55,7 @@ def render_status_badge(action: str, result_status: str, progress: str = "", cow
     if cw.get("synced") and should_display_cowatch_badge(action, result_status, progress):
         target_txt = html.escape(f"@{cw['target']}" if cw.get("target") else "partner")
         reason_txt = html.escape(cw.get("reason") or "Shared show whitelist match")
-        return f'<span style="background:#701a75;color:#f5d0fe;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
+        return f'<span class="activity-status-badge activity-status-cowatch" title="Synced to {target_txt}: {reason_txt}">👥 Co-Watched</span>'
 
     if stat in ("ok", "200", "201"):
         label = "✓ OK"
@@ -72,18 +72,45 @@ def render_status_badge(action: str, result_status: str, progress: str = "", cow
         elif clean_act == "rate" or raw_act.startswith("rate"):
             label = "✓ Rated"
             tooltip = "Rating synchronized"
-        return f'<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="{tooltip}">{label}</span>'
+        return f'<span class="activity-status-badge activity-status-success" title="{tooltip}">{label}</span>'
 
     if stat == "ignored":
-        return '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;" title="Playback or event skipped">Ignored</span>'
+        return '<span class="activity-status-badge activity-status-ignored" title="Playback or event skipped">Ignored</span>'
 
     if stat == "queued":
-        return '<span style="background:#78350f;color:#fde68a;border:1px solid #d97706;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Saved to offline retry queue">⏳ Queued</span>'
+        return '<span class="activity-status-badge activity-status-queued" title="Saved to offline retry queue">⏳ Queued</span>'
 
     if stat in ("error", "500", "502", "503", "504"):
-        return '<span style="background:#7f1d1d;color:#fecaca;border:1px solid #ef4444;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap;" title="Action failed">✕ Failed</span>'
+        return '<span class="activity-status-badge activity-status-failed" title="Action failed">✕ Failed</span>'
 
-    return f'<span style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;white-space:nowrap;">{html.escape(str(result_status))}</span>'
+    return f'<span class="activity-status-badge activity-status-unknown">{html.escape(str(result_status))}</span>'
+
+
+def render_tracker_delivery_badges(delivery: dict[str, Any] | None) -> str:
+    """Render compact, data-backed upstream tracker delivery states."""
+    labels = {
+        "trakt": "TRK", "simkl": "SKL", "anilist": "ANL", "mal": "MAL",
+        "myanimelist": "MAL", "kitsu": "KTS", "tmdb": "TMDB",
+        "letterboxd": "LBD", "serializd": "SER", "mdblist": "MDB",
+    }
+    states = {
+        "success": ("✓", "Delivered", "success"),
+        "queued": ("⌛", "Queued for retry", "queued"),
+        "failed": ("×", "Delivery failed", "failed"),
+        "skipped": ("—", "Not applicable to this event", "skipped"),
+    }
+    badges = []
+    for tracker, status in (delivery or {}).items():
+        key = str(tracker).lower()
+        state = states.get(str(status).lower())
+        if key not in labels or not state:
+            continue
+        icon, description, state_class = state
+        title = html.escape(f"{labels[key]}: {description}", quote=True)
+        badges.append(f'<span class="tracker-delivery-badge tracker-delivery-{state_class}" title="{title}" aria-label="{title}">{labels[key]} {icon}</span>')
+    if not badges:
+        return ""
+    return f'<span class="tracker-delivery-badges" aria-label="Tracker delivery">{"".join(badges)}</span>'
 
 
 class DashboardRenderer:
@@ -110,17 +137,13 @@ class DashboardRenderer:
         rows = ""
         col_span = 7 if is_admin else 6
         if not ssr_events:
-            rows = f'<tr><td colspan="{col_span}" style="text-align:center;padding:24px;color:#94a3b8;">No scrobble events received yet. Start playing media on Plex, Jellyfin, or Emby to test!</td></tr>'
+            rows = f'<tr><td colspan="{col_span}" class="activity-empty">No scrobble events received yet. Start playing media on Plex, Jellyfin, or Emby to test!</td></tr>'
         else:
             for ev in ssr_events:
                 u = ev["user"] if is_admin else mask_username_fn(ev["user"])
                 server_raw = ev.get("server", "plex").lower()
-                if server_raw == "jellyfin":
-                    server_badge = '<span style="background:#3b0764;color:#d8b4fe;border:1px solid #7e22ce;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Jellyfin</span>'
-                elif server_raw == "emby":
-                    server_badge = '<span style="background:#064e3b;color:#a7f3d0;border:1px solid #059669;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Emby</span>'
-                else:
-                    server_badge = '<span style="background:#1e293b;color:#94a3b8;border:1px solid #334155;font-size:10px;font-weight:600;padding:1px 5px;border-radius:3px;margin-right:5px;">Plex</span>'
+                server_name = server_raw.title() if server_raw in {"jellyfin", "emby"} else "Plex"
+                server_badge = f'<span class="activity-server-badge activity-server-{server_name.lower()}">{server_name}</span>'
 
                 action_col = ""
                 if is_admin:
@@ -133,11 +156,11 @@ class DashboardRenderer:
                     if media_kind and media_title:
                         kind_esc = urllib.parse.quote(media_kind)
                         title_esc = urllib.parse.quote(str(media_title))
-                        action_buttons.append(f'<button data-kind="{kind_esc}" data-term="{title_esc}" onclick="openAddArrModal(decodeURIComponent(this.dataset.kind), decodeURIComponent(this.dataset.term))" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#075985;color:#e0f2fe;white-space:nowrap;" title="Search and add this title in Sonarr or Radarr">+ Add *Arr</button>')
+                        action_buttons.append(f'<button data-kind="{kind_esc}" data-term="{title_esc}" onclick="openAddArrModal(decodeURIComponent(this.dataset.kind), decodeURIComponent(this.dataset.term))" class="btn-sm activity-row-button activity-row-button-arr" title="Search and add this title in Sonarr or Radarr">+ Add *Arr</button>')
                     if show_title:
                         show_esc = urllib.parse.quote(show_title)
                         if not is_cowatch_show_fn(show_title):
-                            action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#1e293b;border:1px solid #334155;white-space:nowrap;" title="Add show to co-watch whitelist">+ Co-Watch</button>')
+                            action_buttons.append(f'<button data-show="{show_esc}" onclick="quickAddShow(decodeURIComponent(this.dataset.show), this)" class="btn-sm activity-row-button activity-row-button-cowatch" title="Add show to co-watch whitelist">+ Co-Watch</button>')
                     if (cowatch_user or is_demo) and ev.get("media_payload"):
                         media_enc = urllib.parse.quote(json.dumps(ev["media_payload"]))
                         raw_act = str(ev.get("action", "")).lower().strip()
@@ -147,10 +170,10 @@ class DashboardRenderer:
                         if is_completion and res_stat != "ignored" and prog_val != "0.0%":
                             cw = ev.get("cowatch_status") or {}
                             if not cw.get("synced"):
-                                action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#701a75;color:#f5d0fe;white-space:nowrap;" title="Manually push this watch event to partner account">+ Sync Partner</button>')
+                                action_buttons.append(f'<button onclick="quickSyncPartner(\'{media_enc}\', this)" class="btn-sm activity-row-button activity-row-button-partner" title="Manually push this watch event to partner account">+ Sync Partner</button>')
                             if raw_act.startswith(("mark_watched", "scrobble_stop")) or raw_act in ("scrobble", "watched"):
-                                action_buttons.append(f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm" style="padding:2px 6px;font-size:11px;background:#7f1d1d;color:#fee2e2;border:1px solid #ef4444;white-space:nowrap;" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>')
-                    action_col = f'<td style="padding:10px 12px;"><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">{"".join(action_buttons)}</div></td>'
+                                action_buttons.append(f'<button onclick="quickUnscrobble(\'{media_enc}\', this)" class="btn-sm activity-row-button activity-row-button-danger" title="Unscrobble / Remove from connected trackers">🗑️ Unscrobble</button>')
+                    action_col = f'<td class="activity-actions-cell"><div class="activity-row-actions">{"".join(action_buttons)}</div></td>'
 
                 status_badge_html = render_status_badge(
                     ev.get("action"),
@@ -158,6 +181,7 @@ class DashboardRenderer:
                     ev.get("progress", ""),
                     ev.get("cowatch_status"),
                 )
+                tracker_badges_html = render_tracker_delivery_badges(ev.get("tracker_delivery"))
 
                 title_disp = html.escape(str(ev.get('title', '')))
                 type_disp = html.escape(str(ev.get('type', '')))
@@ -174,16 +198,16 @@ class DashboardRenderer:
                 time_disp = html.escape(str(ev.get('timestamp', '')))
 
                 rows += f"""
-                <tr style="border-bottom: 1px solid #334155;">
-                    <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;">{time_disp}</td>
-                    <td style="padding:10px 12px;color:#f8fafc;font-weight:500;">{title_disp}</td>
-                    <td style="padding:10px 12px;"><span style="background:#0f172a;color:#93c5fd;padding:2px 8px;border-radius:4px;font-size:12px;">{type_disp}</span></td>
-                    <td style="padding:10px 12px;color:#cbd5e1;font-size:13px;"><div style="display:inline-flex;align-items:center;">{server_badge}<span>{user_disp}</span></div></td>
-                    <td style="padding:10px 12px;"><span style="background:#0f172a;color:#e2e8f0;padding:2px 8px;border-radius:4px;font-size:12px;white-space:nowrap;">{action_text}</span></td>
-                    <td style="padding:10px 12px;white-space:nowrap;"><div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">{status_badge_html}</div></td>
+                <tr class="activity-row">
+                    <td class="activity-time">{time_disp}</td>
+                    <td class="activity-title">{title_disp}</td>
+                    <td><span class="activity-type">{type_disp}</span></td>
+                    <td class="activity-user"><div class="activity-user-content">{server_badge}<span>{user_disp}</span></div></td>
+                    <td><span class="activity-action">{action_text}</span></td>
+                    <td><div class="activity-status-group">{status_badge_html}{tracker_badges_html}</div></td>
                     {action_col}
                 </tr>
-                """
+                """.strip() + "\n"
 
         return rows, events_page_info, events_page_num, events_next_disabled
 
@@ -198,43 +222,43 @@ class DashboardRenderer:
         """Render media server webhook URL card with tab switching or masked lock badge."""
         if is_admin:
             return f"""
-            <div style="margin-top: 18px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+            <div class="u-margin-top-18px">
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px u-flex-wrap-wrap u-gap-8px">
                     <div class="info-label">Media Server Webhook Endpoints</div>
-                    <div style="display:flex;gap:6px;">
-                        <button type="button" onclick="switchWebhookTab('plex')" id="btn-tab-plex" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;">Plex</button>
-                        <button type="button" onclick="switchWebhookTab('jellyfin')" id="btn-tab-jellyfin" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Jellyfin</button>
-                        <button type="button" onclick="switchWebhookTab('emby')" id="btn-tab-emby" class="btn-sm" style="background:#1e293b;color:#94a3b8;">Emby</button>
+                    <div class="u-display-flex u-gap-6px">
+                        <button type="button" onclick="switchWebhookTab('plex')" id="btn-tab-plex" class="btn-sm webhook-tab" aria-pressed="true">Plex</button>
+                        <button type="button" onclick="switchWebhookTab('jellyfin')" id="btn-tab-jellyfin" class="btn-sm webhook-tab" aria-pressed="false">Jellyfin</button>
+                        <button type="button" onclick="switchWebhookTab('emby')" id="btn-tab-emby" class="btn-sm webhook-tab" aria-pressed="false">Emby</button>
                     </div>
                 </div>
                 <div class="webhook-row">
                     <input type="text" readonly id="webhook-url-input" value="{full_webhook_url}"
                            data-plex="{full_webhook_url}" data-jellyfin="{full_jellyfin_url}" data-emby="{full_emby_url}"
-                           style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#38bdf8;font-family:monospace;font-size:13px;outline:none;" />
+                           class="webhook-url-input" />
                     <button onclick="copyWebhookUrl()" id="copy-btn" class="btn-copy">
                         📋 Copy URL
                     </button>
                 </div>
-                <div id="webhook-instructions" style="font-size: 12px; color: #94a3b8; margin-top: 6px;">
+                <div id="webhook-instructions" class="webhook-help">
                     Add in Plex: <strong>Settings &rarr; Webhooks &rarr; Add Webhook</strong> &bull; Jellyfin (<code>/webhook/jellyfin</code>) &bull; Emby (<code>/webhook/emby</code>) &bull; Sonarr (<code>/sonarr</code>) &bull; Radarr (<code>/radarr</code>).
                 </div>
             </div>
             """
         else:
             return f"""
-            <div style="margin-top: 18px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div class="u-margin-top-18px">
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-6px">
                     <div class="info-label">Media Server Webhook Endpoints</div>
-                    <span style="color:#f59e0b;font-size:11px;font-weight:600;">🔒 Secret Masked</span>
+                    <span class="webhook-masked-label">🔒 Secret Masked</span>
                 </div>
                 <div class="webhook-row">
                     <input type="text" readonly value="{masked_webhook_url}"
-                           style="flex:1;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;color:#64748b;font-family:monospace;font-size:13px;outline:none;user-select:none;" />
-                    <button onclick="openUnlockModal()" class="btn-copy" style="background:#2563eb;">
+                           class="webhook-url-input webhook-url-masked" />
+                    <button onclick="openUnlockModal()" class="btn-copy webhook-unlock-button">
                         🔓 Unlock
                     </button>
                 </div>
-                <div style="font-size: 12px; color: #94a3b8; margin-top: 6px;">Admin authorization required to reveal webhook URLs. Supports Plex, Jellyfin, Emby, Sonarr, and Radarr.</div>
+                <div class="webhook-help">Admin authorization required to reveal webhook URLs. Supports Plex, Jellyfin, Emby, Sonarr, and Radarr.</div>
             </div>
             """
 
@@ -249,10 +273,9 @@ class DashboardRenderer:
         backdrop_url = None
         if active_sessions:
             s = active_sessions[0]
-            card_display = "block"
-            card_border = "#10b981" if s["state"] == "playing" else "#f59e0b"
+            card_hidden = ""
+            playback_state = "playing" if s["state"] == "playing" else "paused"
             badge_text = "Currently Streaming" if s["state"] == "playing" else "Paused"
-            badge_color = card_border
             user_dev = f"• {s['username']}" + (f" on {s['player']}" if (is_admin and s['player']) else "") + (f" ({s['device']})" if (is_admin and s['device']) else "")
             stream_title = s['title']
             stream_url = s['trakt_url']
@@ -264,10 +287,9 @@ class DashboardRenderer:
             backdrop_url = s.get("backdrop_url") or poster_url
         elif recently_finished:
             f = recently_finished
-            card_display = "block"
-            card_border = "#38bdf8"
+            card_hidden = ""
+            playback_state = "finished"
             badge_text = "Recently Finished"
-            badge_color = "#38bdf8"
             user_dev = f"• {f['username']}" + (f" on {f['player']}" if (is_admin and f['player']) else "")
             stream_title = f['title']
             stream_url = f['trakt_url']
@@ -276,10 +298,9 @@ class DashboardRenderer:
             poster_url = f.get("poster_url")
             backdrop_url = f.get("backdrop_url") or poster_url
         else:
-            card_display = "none"
-            card_border = "#10b981"
+            card_hidden = "hidden"
+            playback_state = "playing"
             badge_text = "Currently Streaming"
-            badge_color = "#10b981"
             user_dev = ""
             stream_title = ""
             stream_url = "https://trakt.tv"
@@ -292,8 +313,6 @@ class DashboardRenderer:
         clean_stream_url = stream_url if str(stream_url).startswith(("https://", "http://")) else "https://trakt.tv"
         clean_stream_url_esc = html.escape(clean_stream_url)
 
-        poster_display = "block" if poster_url else "none"
-        fallback_display = "none" if poster_url else "flex"
         poster_img_src = html.escape(str(poster_url)) if poster_url else ""
         if backdrop_url:
             backdrop_style = f"background-image: url('{html.escape(str(backdrop_url))}');"
@@ -301,42 +320,42 @@ class DashboardRenderer:
             backdrop_style = "background: radial-gradient(circle at top right, var(--accent-glow, rgba(56, 189, 248, 0.3)), transparent 60%);"
 
         return f"""
-        <div id="active-playback-card" class="card" style="position: relative; overflow: hidden; border-left: 4px solid {card_border}; margin-bottom: 24px; display: {card_display};">
+            <div id="active-playback-card" class="card playback-card playback-state-{playback_state}" {card_hidden}>
             <!-- Frosted Ambient Backdrop -->
-            <div id="stream-ambient-backdrop" style="position: absolute; inset: 0; {backdrop_style} background-size: cover; background-position: center; filter: blur(35px); opacity: 0.22; pointer-events: none; z-index: 0; transition: all 0.5s ease;"></div>
+            <div id="stream-ambient-backdrop" class="playback-ambient-backdrop" style="{backdrop_style}"></div>
 
             <!-- Content Area -->
-            <div style="position: relative; z-index: 1; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+            <div class="playback-content">
                 <!-- Leading Poster Thumbnail -->
-                <div id="stream-poster-container" style="flex-shrink: 0; width: 68px; height: 96px; border-radius: 8px; overflow: hidden; background: var(--bg-subtle); border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.35);">
-                    <img id="stream-poster-img" src="{poster_img_src}" alt="Poster" style="width: 100%; height: 100%; object-fit: cover; display: {poster_display};" onerror="this.style.display='none'; document.getElementById('stream-poster-fallback').style.display='flex';" />
-                    <div id="stream-poster-fallback" style="display: {fallback_display}; width: 100%; height: 100%; align-items: center; justify-content: center; font-size: 26px; color: var(--text-muted); background: linear-gradient(135deg, rgba(255,255,255,0.05), rgba(0,0,0,0.2));">
+                <div id="stream-poster-container" class="playback-poster">
+                    <img id="stream-poster-img" src="{poster_img_src}" alt="Poster" class="playback-poster-image" {'hidden' if not poster_url else ''} onerror="this.hidden=true; document.getElementById('stream-poster-fallback').hidden=false;" />
+                    <div id="stream-poster-fallback" class="playback-poster-fallback" {'hidden' if poster_url else ''}>
                         🎬
                     </div>
                 </div>
 
                 <!-- Playback Details & Progress -->
-                <div style="flex: 1; min-width: 240px;">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+                <div class="playback-details">
+                    <div class="playback-heading-row">
                         <div>
-                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-                                <span id="stream-pulse-indicator" class="pulse-indicator" style="background:{badge_color};"></span>
-                                <span style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:{badge_color};" id="stream-state-badge">{badge_text}</span>
-                                <span style="font-size:12px; color:var(--text-muted);" id="stream-user-device">{user_dev_esc}</span>
+                            <div class="playback-state-line">
+                                <span id="stream-pulse-indicator" class="pulse-indicator"></span>
+                                <span class="playback-state-label" id="stream-state-badge">{badge_text}</span>
+                                <span class="playback-user-device" id="stream-user-device">{user_dev_esc}</span>
                             </div>
-                            <h2 style="margin:4px 0 8px 0; font-size:18px; color:var(--text-main);" id="stream-title">{stream_title_esc}</h2>
+                            <h2 class="playback-title" id="stream-title">{stream_title_esc}</h2>
                         </div>
                         <div id="stream-actions">
-                            <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm" style="background:var(--bg-subtle); border:1px solid var(--border-color); color:var(--accent-color); text-decoration:none; display:inline-flex; align-items:center; gap:4px;">View on Trakt ↗</a>
+                            <a id="stream-trakt-link" href="{clean_stream_url_esc}" target="_blank" rel="noopener noreferrer" class="btn-sm playback-link">View on Trakt ↗</a>
                         </div>
                     </div>
-                    <div style="margin-top:8px;">
-                        <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); margin-bottom:6px;">
+                    <div class="playback-progress">
+                        <div class="playback-progress-labels">
                             <span>Playback Progress</span>
-                            <span id="stream-progress-text" style="font-weight:600; color:var(--text-main);">{stream_prog_text_esc}</span>
+                            <span id="stream-progress-text" class="playback-progress-value">{stream_prog_text_esc}</span>
                         </div>
-                        <div style="background:var(--bg-subtle); border-radius:9999px; height:8px; overflow:hidden; border:1px solid var(--border-color);">
-                            <div id="stream-progress-bar" style="background:{badge_color}; height:100%; width:{stream_prog_width}; border-radius:9999px; transition: width 0.4s ease;"></div>
+                        <div class="playback-progress-track">
+                            <div id="stream-progress-bar" class="playback-progress-bar" style="width:{stream_prog_width};"></div>
                         </div>
                     </div>
                 </div>
@@ -364,44 +383,44 @@ class DashboardRenderer:
         # Shared show chips
         if not is_admin:
             count = len(cw_shows)
-            chips_html = f'<div style="color:#94a3b8;font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 2px;"><span>🔒</span><span><strong>{count} shared show{"s" if count != 1 else ""} configured</strong> &bull; Unlock admin access to view titles and manage whitelist.</span></div>'
+            chips_html = f'<div class="cowatch-privacy-hint"><span>🔒</span><span><strong>{count} shared show{"s" if count != 1 else ""} configured</strong> &bull; Unlock admin access to view titles and manage whitelist.</span></div>'
         else:
             chips_html = ""
             for s in cw_shows:
                 s_enc = urllib.parse.quote(s)
                 del_btn = f'<button data-show="{s_enc}" onclick="removeCowatchShow(decodeURIComponent(this.dataset.show))" title="Remove {html.escape(s)}" class="cowatch-chip-del">&times;</button>'
-                chips_html += f'<span class="cowatch-chip" data-title="{html.escape(s.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">{html.escape(s)}{del_btn}</span>'
+                chips_html += f'<span class="cowatch-chip" data-title="{html.escape(s.lower())}">{html.escape(s)}{del_btn}</span>'
             if not chips_html:
-                chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">No shows added yet. Add shows below or directly from recent activity.</span>'
+                chips_html = '<span class="cowatch-empty">No shows added yet. Add shows below or directly from recent activity.</span>'
 
         # Allowed devices chips
         if not is_admin:
-            device_chips_html = '<div style="color:#94a3b8;font-size:13px;display:flex;align-items:center;gap:8px;padding:4px 2px;"><span>🔒</span><span>Unlock admin access to manage allowed devices.</span></div>'
+            device_chips_html = '<div class="cowatch-privacy-hint"><span>🔒</span><span>Unlock admin access to manage allowed devices.</span></div>'
             devices_count_badge = "🔒"
         else:
             devices_count_badge = str(len(cw_devices)) if cw_devices else "All"
             if not cw_devices:
-                device_chips_html = '<span style="color:#64748b;font-size:12px;font-style:italic;">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>'
+                device_chips_html = '<span class="cowatch-empty">All devices allowed (no device filtering). Playback on any player triggers co-watch.</span>'
             else:
                 device_chips_html = ""
                 for d in cw_devices:
                     d_enc = urllib.parse.quote(d)
                     del_btn = f'<button data-device="{d_enc}" onclick="removeCowatchDevice(decodeURIComponent(this.dataset.device))" title="Remove {html.escape(d)}" class="cowatch-chip-del">&times;</button>'
-                    device_chips_html += f'<span class="cowatch-device-chip" data-title="{html.escape(d.lower())}" style="background:#1e293b;border:1px solid #334155;color:#e2e8f0;padding:3px 9px;border-radius:9999px;font-size:12px;display:inline-flex;align-items:center;margin:2px 3px;">📺 {html.escape(d)}{del_btn}</span>'
+                    device_chips_html += f'<span class="cowatch-device-chip" data-title="{html.escape(d.lower())}">📺 {html.escape(d)}{del_btn}</span>'
 
         device_form_html = f'''
-        <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" style="margin:0;">
+        <form onsubmit="event.preventDefault();addCowatchDevice();" autocomplete="off" class="cowatch-device-form">
             <div class="cowatch-form-row">
                 <input type="text" id="cowatch-device-input" name="cowatch_device" placeholder="Add device (e.g. Apple TV, Shield TV)..."
-                       style="flex:1;min-width:0;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                       class="cowatch-form-input"
                        autocomplete="off" />
-                <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;flex-shrink:0;">+ Add Device</button>
+                <button type="submit" class="btn-sm cowatch-add-button">+ Add Device</button>
             </div>
         </form>
-        <div style="margin-top:4px;font-size:11px;color:#64748b;">
+        <div class="cowatch-form-help">
             Leave empty to allow all devices. When configured, co-watching only dual-scrobbles on these players.
         </div>
-        ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to configure allowed devices.</div>'
+        ''' if is_admin else '<div class="cowatch-admin-hint">Admin access required to configure allowed devices.</div>'
 
         # Multi-user accounts list
         users_badges_html = ""
@@ -410,22 +429,22 @@ class DashboardRenderer:
             is_def = u.get("is_default", False)
             is_cw = u.get("is_cowatch_target", False)
             auth = u.get("authenticated", False)
-            status_color = "#10b981" if auth else "#ef4444"
+            status_class = "connected" if auth else "disconnected"
             status_text = "Connected" if auth else "Not Linked"
             link_url = f"/auth?user={u_name}" if not is_def else "/auth"
 
             link_btn = ""
             if is_admin:
                 if not auth:
-                    link_btn = f'<a href="{link_url}" class="btn-sm" style="background:#2563eb;color:#fff;text-decoration:none;padding:2px 8px;font-size:11px;">Link &rarr;</a>'
+                    link_btn = f'<a href="{link_url}" class="btn-sm cowatch-link-button">Link &rarr;</a>'
                 else:
-                    link_btn = f'<a href="{link_url}" class="btn-sm" style="background:#334155;color:#94a3b8;text-decoration:none;padding:2px 8px;font-size:11px;">Reconnect</a>'
+                    link_btn = f'<a href="{link_url}" class="btn-sm cowatch-reconnect-button">Reconnect</a>'
 
             role_label = ""
             if is_def:
-                role_label = '<span style="background:#1e3a8a;color:#93c5fd;font-size:10px;padding:2px 6px;border-radius:4px;flex-shrink:0;">Default</span>'
+                role_label = '<span class="cowatch-role-badge cowatch-role-default">Default</span>'
             elif is_cw:
-                role_label = '<span style="background:#701a75;color:#f5d0fe;font-size:10px;padding:2px 6px;border-radius:4px;flex-shrink:0;">Partner</span>'
+                role_label = '<span class="cowatch-role-badge cowatch-role-partner">Partner</span>'
 
             if is_def and raw_username:
                 display_name = raw_username if is_admin else mask_username_fn(raw_username)
@@ -441,7 +460,7 @@ class DashboardRenderer:
                     {role_label}
                 </div>
                 <div class="cowatch-account-status">
-                    <span style="color:{status_color};font-size:12px;font-weight:500;">● {status_text}</span>
+                    <span class="cowatch-account-connection is-{status_class}">● {status_text}</span>
                     {link_btn}
                 </div>
             </div>
@@ -449,10 +468,10 @@ class DashboardRenderer:
 
         rule_movies_str = "Enabled" if cowatch_movies else "Disabled"
         sonarr_status_note = (
-            '<span style="color:#10b981;font-size:11px;font-weight:500;display:inline-flex;align-items:center;gap:4px;">'
+            '<span class="cowatch-sonarr-status is-connected">'
             '✓ Connected to Sonarr (type to search library)</span>'
             if sonarr_configured
-            else '<span style="color:#64748b;font-size:11px;">Configure SONARR_URL & SONARR_API_KEY in .env for library search</span>'
+            else '<span class="cowatch-sonarr-status">Configure SONARR_URL & SONARR_API_KEY in .env for library search</span>'
         )
 
         partner_trackers_html = ""
@@ -466,39 +485,39 @@ class DashboardRenderer:
             ]:
                 info = cw_trackers.get(trk_key, {})
                 auth = info.get("authenticated", False)
-                badge_color = "#10b981" if auth else "#64748b"
+                badge_class = "connected" if auth else "disconnected"
                 status_txt = "Connected" if auth else "Not Linked"
 
                 act_btn = ""
                 if is_admin:
                     if trk_key == "trakt":
                         link_href = f"/auth?user={cw_user}"
-                        act_btn = f'<a href="{link_href}" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#f8fafc;text-decoration:none;">{"Reconnect" if auth else "Link &rarr;"}</a>'
+                        act_btn = f'<a href="{link_href}" class="btn-sm cowatch-tracker-action">{"Reconnect" if auth else "Link &rarr;"}</a>'
                     elif trk_key == "simkl":
-                        act_btn = f'<button onclick="openSimklModal(\'{cw_user}\')" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#38bdf8;cursor:pointer;">{"PIN Reconnect" if auth else "Link PIN"}</button>'
+                        act_btn = f'<button onclick="openSimklModal(\'{cw_user}\')" class="btn-sm cowatch-tracker-action tracker-simkl">{"PIN Reconnect" if auth else "Link PIN"}</button>'
                     elif trk_key == "anilist":
-                        act_btn = f'<button onclick="openAnilistModal(\'{cw_user}\')" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#60a5fa;cursor:pointer;">{"Token" if auth else "Link &rarr;"}</button>'
+                        act_btn = f'<button onclick="openAnilistModal(\'{cw_user}\')" class="btn-sm cowatch-tracker-action tracker-anilist">{"Token" if auth else "Link &rarr;"}</button>'
                     elif trk_key == "mal":
-                        act_btn = f'<button onclick="openMalModal(\'{cw_user}\')" class="btn-sm" style="padding:2px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#818cf8;cursor:pointer;">{"Token" if auth else "Link &rarr;"}</button>'
+                        act_btn = f'<button onclick="openMalModal(\'{cw_user}\')" class="btn-sm cowatch-tracker-action tracker-mal">{"Token" if auth else "Link &rarr;"}</button>'
 
                 tracker_badges.append(f"""
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:6px;padding:8px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <span style="width:8px;height:8px;border-radius:50%;background:{badge_color};"></span>
-                        <strong style="font-size:12px;color:#f8fafc;">{trk_name}</strong>
-                        <span style="font-size:11px;color:#94a3b8;">({status_txt})</span>
+                <div class="cowatch-tracker-row">
+                    <div class="cowatch-tracker-info">
+                        <span class="cowatch-tracker-dot is-{badge_class}"></span>
+                        <strong>{trk_name}</strong>
+                        <span>({status_txt})</span>
                     </div>
                     {act_btn}
                 </div>
                 """)
 
             partner_trackers_html = f"""
-            <div style="margin-top:16px;border-top:1px solid #334155;padding-top:14px;">
-                <div style="font-size:13px;font-weight:600;color:#f1f5f9;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+            <div class="cowatch-partner-trackers">
+                <div class="cowatch-section-title">
                     <span>Partner Cloud Tracker Credentials</span>
-                    <span style="font-size:11px;color:#38bdf8;font-weight:normal;">(@{cw_user_display})</span>
+                    <span class="cowatch-partner-name">(@{cw_user_display})</span>
                 </div>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:8px;">
+                <div class="cowatch-tracker-grid">
                     {''.join(tracker_badges)}
                 </div>
             </div>
@@ -508,7 +527,7 @@ class DashboardRenderer:
         rules = household_rules or []
         rules_badge = str(len(rules))
         if not rules:
-            rules_html = '<div style="color:#64748b;font-size:12px;font-style:italic;padding:8px 4px;">No custom household routing rules configured. Secondary scrobbles follow the default partner settings above.</div>'
+            rules_html = '<div class="household-rules-empty">No custom household routing rules configured. Secondary scrobbles follow the default partner settings above.</div>'
         else:
             rule_items = []
             for r in rules:
@@ -531,38 +550,37 @@ class DashboardRenderer:
                 shows_str = ", ".join(rshows) if rshows else "All Shows"
                 media_str = ", ".join(m.capitalize() for m in rmedia) if rmedia else "All Media"
 
-                status_bg = "#065f46" if renabled else "#334155"
-                status_col = "#34d399" if renabled else "#94a3b8"
                 status_txt = "Active" if renabled else "Paused"
+                status_class = "active" if renabled else "paused"
 
                 actions_html = ""
                 if is_admin:
                     rid_esc = urllib.parse.quote(rid)
                     actions_html = f'''
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <button onclick="toggleHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#e2e8f0;cursor:pointer;">
+                    <div class="household-rule-actions">
+                        <button onclick="toggleHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm household-rule-toggle">
                             {"Pause" if renabled else "Activate"}
                         </button>
-                        <button onclick="deleteHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#7f1d1d;color:#fecaca;border:none;cursor:pointer;">
+                        <button onclick="deleteHouseholdRule(decodeURIComponent('{rid_esc}'))" class="btn-sm household-rule-delete">
                             &times; Delete
                         </button>
                     </div>
                     '''
 
                 rule_items.append(f'''
-                <div class="household-rule-card" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <strong style="color:#f8fafc;font-size:13px;">{html.escape(rname)}</strong>
-                            <span style="background:{status_bg};color:{status_col};font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;">{status_txt}</span>
+                <div class="household-rule-card">
+                    <div class="household-rule-heading">
+                        <div class="household-rule-title-group">
+                            <strong>{html.escape(rname)}</strong>
+                            <span class="household-rule-status is-{status_class}">{status_txt}</span>
                         </div>
                         {actions_html}
                     </div>
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));gap:6px;font-size:11px;color:#94a3b8;">
-                        <div><span style="color:#64748b;">Targets:</span> <strong style="color:#cbd5e1;">{html.escape(targets_str)}</strong></div>
-                        <div><span style="color:#64748b;">Players:</span> <strong style="color:#cbd5e1;">📺 {html.escape(devices_str)}</strong></div>
-                        <div><span style="color:#64748b;">Media:</span> <strong style="color:#cbd5e1;">🎬 {html.escape(media_str)}</strong></div>
-                        <div><span style="color:#64748b;">Shows:</span> <strong style="color:#cbd5e1;">📺 {html.escape(shows_str)}</strong></div>
+                    <div class="household-rule-details">
+                        <div><span>Targets:</span> <strong>{html.escape(targets_str)}</strong></div>
+                        <div><span>Players:</span> <strong>📺 {html.escape(devices_str)}</strong></div>
+                        <div><span>Media:</span> <strong>🎬 {html.escape(media_str)}</strong></div>
+                        <div><span>Shows:</span> <strong>📺 {html.escape(shows_str)}</strong></div>
                     </div>
                 </div>
                 ''')
@@ -570,15 +588,15 @@ class DashboardRenderer:
 
         household_section_html = f'''
         <!-- Household Multi-Tenant Routing Rules (3+ Profiles) -->
-        <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
-                <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+        <div class="household-section">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-10px u-flex-wrap-wrap u-gap-8px">
+                <div class="cowatch-section-title">
                     <span>🏡 Household Multi-Tenant Routing Rules</span>
-                    <span id="household-rules-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{rules_badge}</span>
+                    <span id="household-rules-count-badge" class="cowatch-count-badge">{rules_badge}</span>
                 </div>
-                {f'<button onclick="openHouseholdRuleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:4px 10px;font-size:11px;">+ New Routing Rule</button>' if is_admin else ''}
+                {f'<button onclick="openHouseholdRuleModal()" class="btn-sm cowatch-add-button">+ New Routing Rule</button>' if is_admin else ''}
             </div>
-            <p style="color:#94a3b8;font-size:12px;margin:0 0 10px 0;line-height:1.4;">
+            <p class="household-section-description">
                 Route scrobbles to specific family members or kids profiles based on player devices (e.g. Living Room TV vs Bedroom TV) and media types.
             </p>
             <div id="household-rules-container">
@@ -589,36 +607,36 @@ class DashboardRenderer:
 
         return f"""
         <div class="card" id="card-cowatch">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+            <div class="cowatch-card-heading">
+                <h3 class="cowatch-card-title">
                     <span>👥</span> Watch Together & Household Multi-Tenancy
                 </h3>
-                <span style="background:#0f172a;border:1px solid #334155;color:#38bdf8;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">
+                <span class="cowatch-card-mode">
                     {f"Partner: @{cw_user_display}" if cw_user else "Multi-Profile Routing"}
                 </span>
             </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            <p class="cowatch-card-description">
                 Dual-scrobble watched shows to your partner's Trakt account and route household playback across arbitrary user profiles.
             </p>
             <!-- Top Section: Targeting & Destinations (Accounts & Devices side-by-side) -->
             <div class="cowatch-grid">
                 <div>
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;">Linked Trakt Accounts</div>
-                        {f'<button onclick="promptLinkAccount()" class="btn-sm" style="background:#334155;color:#38bdf8;">+ Link Account</button>' if is_admin else ''}
+                    <div class="cowatch-subsection-heading">
+                        <div class="cowatch-section-title">Linked Trakt Accounts</div>
+                        {f'<button onclick="promptLinkAccount()" class="btn-sm cowatch-link-account">+ Link Account</button>' if is_admin else ''}
                     </div>
                     <div>
                         {users_badges_html}
                     </div>
                 </div>
                 <div>
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;">
-                        <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+                    <div class="cowatch-subsection-heading">
+                        <div class="cowatch-section-title">
                             <span>Allowed Devices Whitelist</span>
-                            <span id="cowatch-devices-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{devices_count_badge}</span>
+                            <span id="cowatch-devices-count-badge" class="cowatch-count-badge">{devices_count_badge}</span>
                         </div>
                     </div>
-                    <div id="cowatch-devices-chips-container" class="custom-scroll" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:8px 10px;min-height:44px;max-height:140px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                    <div id="cowatch-devices-chips-container" class="custom-scroll cowatch-chip-container cowatch-devices-container">
                         {device_chips_html}
                     </div>
                     {device_form_html}
@@ -627,39 +645,39 @@ class DashboardRenderer:
             {partner_trackers_html}
 
             <!-- Bottom Section: Shared Media & Shows Whitelist (Full Width) -->
-            <div style="margin-top:20px;border-top:1px solid #334155;padding-top:16px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
-                    <div style="font-size:13px;font-weight:600;color:#f1f5f9;display:flex;align-items:center;gap:6px;">
+            <div class="cowatch-shows-section">
+                <div class="cowatch-subsection-heading">
+                    <div class="cowatch-section-title">
                         <span>Shared Shows Whitelist</span>
-                        <span id="cowatch-count-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 6px;border-radius:9999px;font-size:11px;font-weight:700;">{len(cw_shows)}</span>
+                        <span id="cowatch-count-badge" class="cowatch-count-badge">{len(cw_shows)}</span>
                     </div>
-                    {f'<input type="text" id="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" style="background:#0f172a;border:1px solid #334155;border-radius:4px;padding:3px 8px;color:#f8fafc;font-size:11px;outline:none;width:130px;" />' if is_admin else ''}
+                    {f'<input type="text" id="cowatch-filter-input" class="cowatch-filter-input" placeholder="Filter list..." oninput="filterCowatchChips(this.value)" />' if is_admin else ''}
                 </div>
-                <div id="cowatch-chips-container" class="custom-scroll" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;min-height:54px;max-height:220px;overflow-y:auto;margin-bottom:10px;display:flex;flex-wrap:wrap;align-content:flex-start;align-items:center;">
+                <div id="cowatch-chips-container" class="custom-scroll cowatch-chip-container cowatch-shows-container">
                     {chips_html}
                 </div>
                 {f'''
-                <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" style="margin:0;">
+                <form onsubmit="event.preventDefault();addCowatchShow();" autocomplete="off" class="cowatch-show-form">
                     <div class="cowatch-form-row">
-                        <div style="flex:1;min-width:0;position:relative;">
+                        <div class="cowatch-suggestion-wrap">
                             <input type="search" id="cowatch-show-input" name="cowatch_show_search" placeholder="Add show (e.g. Severance, Lanterns)..."
-                                    style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #475569;border-radius:6px;padding:8px 12px;color:#f8fafc;font-size:13px;outline:none;"
+                                    class="cowatch-form-input cowatch-show-input"
                                     oninput="onCowatchShowInput(this.value)"
                                     onfocus="onCowatchShowInput(this.value)"
                                     autocomplete="off"
                                     data-lpignore="true"
                                     data-1p-ignore="true"
                                     onkeydown="if(event.key==='Enter')addCowatchShow()" />
-                            <div id="sonarr-suggestions" style="display:none;position:absolute;top:100%;left:0;right:0;background:#1e293b;border:1px solid #3b82f6;border-radius:6px;margin-top:4px;max-height:220px;overflow-y:auto;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,0.7);"></div>
+                            <div id="sonarr-suggestions" class="cowatch-suggestions"></div>
                         </div>
-                        <button type="submit" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:8px 14px;white-space:nowrap;flex-shrink:0;">+ Add Show</button>
+                        <button type="submit" class="btn-sm cowatch-add-button">+ Add Show</button>
                     </div>
                 </form>
-                <div style="margin-top:4px;">{sonarr_status_note}</div>
-                ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin access required to add or remove shared shows.</div>'}
-                <div style="margin-top:10px;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div class="u-margin-top-4px">{sonarr_status_note}</div>
+                ''' if is_admin else '<div class="u-font-size-12px u-color-text-muted">Admin access required to add or remove shared shows.</div>'}
+                <div class="cowatch-movies-controls">
                     <span>Movies: <strong id="cowatch-movies-status">{rule_movies_str}</strong></span>
-                    {f'<button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm" style="padding:2px 8px;font-size:11px;background:#334155;border:1px solid #475569;">Toggle Movies ({ "Disable" if cowatch_movies else "Enable" })</button>' if is_admin else ''}
+                    {f'<button id="cowatch-movies-btn" onclick="toggleCowatchMovies()" class="btn-sm cowatch-movies-button">Toggle Movies ({ "Disable" if cowatch_movies else "Enable" })</button>' if is_admin else ''}
                 </div>
             </div>
             {household_section_html}
@@ -685,25 +703,22 @@ class DashboardRenderer:
 
         server_status_badges = []
         if plex_cfg:
-            col = "#10b981" if plex_conn else "#f59e0b"
             st = "Online" if plex_conn else "Unreachable"
-            server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Plex {st}</span>')
+            server_status_badges.append(f'<span class="reconcile-server-status is-{"online" if plex_conn else "offline"}">● Plex {st}</span>')
         if jf_cfg:
-            col = "#10b981" if jf_conn else "#f59e0b"
             st = "Online" if jf_conn else "Unreachable"
-            server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Jellyfin {st}</span>')
+            server_status_badges.append(f'<span class="reconcile-server-status is-{"online" if jf_conn else "offline"}">● Jellyfin {st}</span>')
         if emby_cfg:
-            col = "#10b981" if emby_conn else "#f59e0b"
             st = "Online" if emby_conn else "Unreachable"
-            server_status_badges.append(f'<span style="color:{col};font-size:12px;font-weight:600;">● Emby {st}</span>')
+            server_status_badges.append(f'<span class="reconcile-server-status is-{"online" if emby_conn else "offline"}">● Emby {st}</span>')
 
         if not server_status_badges:
-            server_status_badges.append('<span style="color:#94a3b8;font-size:12px;">● Direct API Not Configured</span>')
+            server_status_badges.append('<span class="reconcile-server-status is-unconfigured">● Direct API Not Configured</span>')
         server_badges_html = " ".join(server_status_badges)
 
         diff_count = sync_status.get("diff_count", 0)
         int_mins = sync_status.get("interval_minutes", 0)
-        auto_sync_badge = f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Every {int_mins}m</span>' if int_mins > 0 else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:2px 8px;border-radius:4px;font-size:11px;">Periodic: Manual</span>'
+        auto_sync_badge = f'<span class="reconcile-schedule-badge">Periodic: Every {int_mins}m</span>' if int_mins > 0 else '<span class="reconcile-schedule-badge is-manual">Periodic: Manual</span>'
 
         # Background cloud sync telemetry
         bg_last_run = bg_sync_state.get("last_run_timestamp")
@@ -725,18 +740,18 @@ class DashboardRenderer:
             except Exception:
                 bg_next_display = str(bg_next_run)[:16]
 
-        bg_status_color = "#10b981" if bg_status_txt == "success" else ("#f59e0b" if bg_status_txt == "partial_error" else "#64748b")
+        bg_status_class = "success" if bg_status_txt == "success" else ("partial" if bg_status_txt == "partial_error" else "idle")
 
         cloud_sync_panel_html = f"""
-        <div style="margin-top:12px;background:#090d16;border:1px solid #1e293b;border-radius:6px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;">
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:#94a3b8;">
-                <span>Automated Cloud Sync: <strong style="color:#f1f5f9;">Every {bg_interval_hours}h</strong></span>
-                <span>Last Run: <strong style="color:#f1f5f9;">{bg_run_display}</strong> (<span style="color:{bg_status_color};">{bg_status_txt}</span>)</span>
-                <span>Next: <strong style="color:#38bdf8;">{bg_next_display}</strong></span>
-                <span>Export: <strong style="color:#10b981;">Letterboxd CSV</strong></span>
+        <div class="cloud-sync-panel">
+            <div class="cloud-sync-details">
+                <span>Automated Cloud Sync: <strong>Every {bg_interval_hours}h</strong></span>
+                <span>Last Run: <strong>{bg_run_display}</strong> (<span class="cloud-sync-status is-{bg_status_class}">{bg_status_txt}</span>)</span>
+                <span>Next: <strong class="cloud-sync-next">{bg_next_display}</strong></span>
+                <span>Export: <strong class="cloud-sync-export">Letterboxd CSV</strong></span>
             </div>
             <div>
-                {f'<button onclick="triggerBackgroundCloudSync(this)" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;font-weight:600;padding:4px 10px;">⚡ Run Cloud Sync Now</button>' if is_admin else ''}
+                {f'<button onclick="triggerBackgroundCloudSync(this)" class="btn-sm cloud-sync-action">⚡ Run Cloud Sync Now</button>' if is_admin else ''}
             </div>
         </div>
         """
@@ -745,32 +760,32 @@ class DashboardRenderer:
         if any_server_configured:
             return f"""
             <div class="card" id="card-reconciliation">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <div class="reconcile-heading">
+                    <h3 class="reconcile-title">
                         <span>🔄</span> Two-Way Library Reconciliation & Reverse Sync
                     </h3>
-                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <div class="reconcile-status-group">
                         {server_badges_html}
                         {auto_sync_badge}
                     </div>
                 </div>
-                <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+                <p class="reconcile-description">
                     Bi-directional sync matches watched history and ratings between your media servers (Plex, Jellyfin, Emby) and Trakt with automatic echo-loop suppression.
                 </p>
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                <div class="reconcile-summary-panel">
                     <div>
-                        <div style="font-size:14px;font-weight:600;color:#f8fafc;display:flex;align-items:center;gap:6px;">
+                        <div class="reconcile-summary-title">
                             <span>Pending Discrepancies</span>
-                            <span id="reconcile-diff-badge" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:1px 8px;border-radius:9999px;font-size:12px;font-weight:700;">{diff_count}</span>
+                            <span id="reconcile-diff-badge" class="cowatch-count-badge">{diff_count}</span>
                         </div>
-                        <div style="font-size:12px;color:#94a3b8;margin-top:4px;">
+                        <div class="reconcile-summary-note">
                             Ratings sync: {'Enabled' if sync_status.get('sync_ratings') else 'Disabled'} &bull; Startup sync: {'Active' if sync_status.get('sync_on_startup') else 'Off'}
                         </div>
                     </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        {f'<button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f8fafc;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Configure</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Configure</button>'}
-                        {f'<button onclick="openReconcileModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔍 Review Discrepancies</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Review Discrepancies</button>'}
-                        {f'<button onclick="quickReconcileTraktToPlex(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Quick Sync (Trakt &rarr; {active_srv.capitalize()})</button>' if is_admin else ''}
+                    <div class="reconcile-actions">
+                        {f'<button onclick="openReconcileSettingsModal()" class="btn-sm reconcile-button reconcile-button-secondary">⚙️ Configure</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm reconcile-button" >🔒 Configure</button>'}
+                        {f'<button onclick="openReconcileModal(true)" class="btn-sm reconcile-button reconcile-button-primary">🔍 Review Discrepancies</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm reconcile-button">🔒 Review Discrepancies</button>'}
+                        {f'<button onclick="quickReconcileTraktToPlex(this)" class="btn-sm reconcile-button reconcile-button-sync">⚡ Quick Sync (Trakt &rarr; {active_srv.capitalize()})</button>' if is_admin else ''}
                     </div>
                 </div>
                 {cloud_sync_panel_html}
@@ -779,20 +794,20 @@ class DashboardRenderer:
         else:
             return f"""
             <div class="card" id="card-reconciliation">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <div class="reconcile-heading">
+                    <h3 class="reconcile-title">
                         <span>🔄</span> Two-Way Library Reconciliation
                     </h3>
-                    <span style="color:#94a3b8;font-size:12px;">● Direct API Not Configured</span>
+                    <span class="reconcile-server-status is-unconfigured">● Direct API Not Configured</span>
                 </div>
-                <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;line-height:1.5;">
+                <p class="reconcile-description reconcile-description-compact">
                     Enable direct media server reconciliation (Plex, Jellyfin, Emby) to pull watched history and user ratings from Trakt back to your media server with loop prevention.
                 </p>
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <div class="reconcile-summary-panel reconcile-summary-panel-compact">
                     <span>Configure your media server direct connection to activate two-way reconciliation and rating synchronization.</span>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        {f'<button onclick="openReconcileSettingsModal()" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚙️ Set Up Connection</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Set Up Connection</button>'}
-                        <a href="{repo_url}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+                    <div class="reconcile-actions">
+                        {f'<button onclick="openReconcileSettingsModal()" class="btn-sm reconcile-button reconcile-button-primary">⚙️ Set Up Connection</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm reconcile-button">🔒 Set Up Connection</button>'}
+                        <a href="{repo_url}#readme" target="_blank" rel="noopener" class="btn-sm reconcile-button reconcile-button-link">View Guide &rarr;</a>
                     </div>
                 </div>
                 {cloud_sync_panel_html}
@@ -804,31 +819,31 @@ class DashboardRenderer:
         """Render system operations, backup download/restore, and observability card."""
         return f"""
         <div class="card" id="card-backup">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+            <div class="reconcile-heading">
+                <h3 class="reconcile-title">
                     <span>💾</span> System Operations & Observability
                 </h3>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    {f'<button onclick="openLogsModal()" class="btn-sm" style="background:#1e293b;border:1px solid #3b82f6;color:#60a5fa;display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;">📜 View Logs</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;cursor:pointer;" title="Admin unlock required to view logs">🔒 View Logs</button>'}
-                    <a href="/metrics" target="_blank" rel="noopener" class="btn-sm" style="background:#0f172a;border:1px solid #334155;color:#38bdf8;text-decoration:none;">📊 Prometheus /metrics ↗</a>
+                <div class="reconcile-actions">
+                    {f'<button onclick="openLogsModal()" class="btn-sm diagnostics-action-button is-admin">📜 View Logs</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm diagnostics-action-button" title="Admin unlock required to view logs">🔒 View Logs</button>'}
+                    <a href="/metrics" target="_blank" rel="noopener" class="btn-sm diagnostics-action-link">📊 Prometheus /metrics ↗</a>
                 </div>
             </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+            <p class="reconcile-description">
                 Export or restore your configuration, multi-user Trakt tokens, co-watch whitelist, and inspect live service logs.
             </p>
-            <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+            <div class="backup-actions">
                 {f'''
-                <a href="/api/backup" download class="btn-sm" style="background:#0284c7;color:#fff;text-decoration:none;padding:8px 16px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
+                <a href="/api/backup" download class="btn-sm backup-action-button backup-download-button">
                     💾 Download Backup (.zip)
                 </a>
-                <label class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                <label class="btn-sm backup-action-button backup-restore-button">
                     📤 Restore Backup (.zip)
-                    <input type="file" id="backup-file-input" accept=".zip" onchange="uploadBackup(this)" style="display:none;" />
+                    <input type="file" id="backup-file-input" accept=".zip" onchange="uploadBackup(this)" hidden />
                 </label>
-                <button onclick="openTestWebhookModal()" class="btn-sm" style="background:#4338ca;color:#fff;border:1px solid #6366f1;padding:8px 16px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                <button onclick="openTestWebhookModal()" class="btn-sm backup-action-button backup-test-button">
                     🧪 Test Webhook
                 </button>
-                ''' if is_admin else '<div style="font-size:12px;color:#64748b;">Admin authorization required to download or restore server backups.</div>'}
+                ''' if is_admin else '<div class="backup-admin-hint">Admin authorization required to download or restore server backups.</div>'}
             </div>
         </div>
         """
@@ -843,27 +858,6 @@ class DashboardRenderer:
         eco_cards_html = ""
         for srv in eco_servers:
             st = srv.get("status", "unknown")
-            if st == "connected":
-                st_color = "#10b981"
-                st_bg = "#064e3b"
-                st_border = "#059669"
-            elif st == "available":
-                st_color = "#38bdf8"
-                st_bg = "#0c4a6e"
-                st_border = "#0284c7"
-            elif st == "disabled":
-                st_color = "#cbd5e1"
-                st_bg = "#334155"
-                st_border = "#64748b"
-            elif st == "error":
-                st_color = "#f87171"
-                st_bg = "#7f1d1d"
-                st_border = "#dc2626"
-            else:
-                st_color = "#94a3b8"
-                st_bg = "#1e293b"
-                st_border = "#334155"
-
             srv_icon = "🎬"
             sid = srv.get("id", "")
             if sid == "plex":
@@ -888,36 +882,35 @@ class DashboardRenderer:
             srv_name = html.escape(srv.get('name', ''))
             is_disabled = (not srv.get("enabled", True)) or st == "disabled" or srv.get("badge") in ("Disabled", "Paused")
             card_class = "eco-card eco-card-disabled" if is_disabled else "eco-card"
-            card_extra_style = "opacity:0.65;transition:opacity 0.2s ease,border-color 0.2s ease;" if is_disabled else ""
-            card_extra_attrs = 'onmouseenter="this.style.opacity=\'1\'" onmouseleave="this.style.opacity=\'0.65\'"' if is_disabled else ""
+            status_class = "disabled" if is_disabled else st if st in {"connected", "available", "error"} else "unknown"
 
             toggle_btn = ""
             if is_admin and sid in ("plex", "jellyfin", "emby"):
                 cat = "server"
                 key = sid
                 is_en = srv.get("enabled", True)
-                config_gear = f'<button onclick="openReconcileSettingsModal(\'{sid}\')" class="btn-sm" style="display:inline-flex;align-items:center;padding:3px 7px;font-size:11px;background:#1e293b;border:1px solid #475569;color:#38bdf8;cursor:pointer;" title="Configure {srv_name} Direct API">⚙️</button>'
+                config_gear = f'<button onclick="openReconcileSettingsModal(\'{sid}\')" class="btn-sm eco-config-button" title="Configure {srv_name} Direct API">⚙️</button>'
                 if is_en:
-                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:500;border-radius:6px;background:#1e293b;border:1px solid #475569;color:#cbd5e1;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
+                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', false, this)" class="btn-sm eco-control-button" title="Disable {srv_name}"><span>⏸</span><span>Disable</span></button>'
                 else:
-                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;font-size:11px;font-weight:600;border-radius:6px;background:#064e3b;border:1px solid #059669;color:#6ee7b7;cursor:pointer;white-space:nowrap;line-height:1.2;flex-shrink:0;" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
+                    toggle_btn = f'{config_gear} <button onclick="toggleSetting(\'{cat}\', \'{key}\', true, this)" class="btn-sm eco-control-button eco-control-enable" title="Enable {srv_name}"><span>▶</span><span>Enable</span></button>'
 
             eco_cards_html += f"""
-            <div class="{card_class}" style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;{card_extra_style}" {card_extra_attrs}>
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                    <div style="display:flex;align-items:center;gap:8px;min-width:0;">
-                        <span style="font-size:18px;flex-shrink:0;">{srv_icon}</span>
-                        <div style="min-width:0;">
-                            <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{html.escape(srv.get('name', ''))}</div>
-                            <div style="font-size:11px;color:#64748b;">{html.escape(srv.get('category', ''))}</div>
+            <div class="{card_class}">
+                <div class="eco-card-heading">
+                    <div class="eco-card-title-group">
+                        <span class="eco-card-icon">{srv_icon}</span>
+                        <div class="eco-card-name-group">
+                            <div class="eco-card-name">{srv_name}</div>
+                            <div class="eco-card-category">{html.escape(srv.get('category', ''))}</div>
                         </div>
                     </div>
-                    <span style="background:{st_bg};border:1px solid {st_border};color:{st_color};font-size:11px;font-weight:600;padding:2px 8px;border-radius:9999px;white-space:nowrap;flex-shrink:0;">
+                    <span class="eco-status-badge is-{status_class}">
                         {html.escape(srv.get('badge', st.capitalize()))}
                     </span>
                 </div>
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:2px;">
-                    <div style="font-size:11px;color:#94a3b8;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;" title="{html.escape(srv.get('details', ''))}">
+                <div class="eco-card-footer">
+                    <div class="eco-card-details" title="{html.escape(srv.get('details', ''))}">
                         {html.escape(srv.get('details', ''))}
                     </div>
                     {toggle_btn}
@@ -927,22 +920,22 @@ class DashboardRenderer:
 
         return f"""
         <div class="card" id="card-ecosystem">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+            <div class="reconcile-heading">
+                <h3 class="reconcile-title">
                     <span>🌐</span> Multi-Server Ecosystem
                 </h3>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
-                        <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                <div class="eco-header-actions">
+                    <span class="eco-healthy-badge">
+                        <span class="eco-healthy-indicator"></span>
                         {eco_healthy}/{eco_total} Services Healthy
                     </span>
-                    <button onclick="openSettingsModal('servers')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;padding:4px 10px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">⚙️ Manage Servers</button>
+                    <button onclick="openSettingsModal('servers')" class="btn-sm eco-manage-button">⚙️ Manage Servers</button>
                 </div>
             </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            <p class="reconcile-description eco-description">
                 Unified operational topology across all media servers and automated acquisition engines.
             </p>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(270px, 1fr));gap:10px;">
+            <div class="eco-card-grid">
                 {eco_cards_html}
             </div>
         </div>
@@ -961,14 +954,14 @@ class DashboardRenderer:
         simkl_status = trackers_dict.get("simkl", {})
         simkl_auth = simkl_status.get("authenticated", False)
 
-        quick_scrobble_btn = '<button onclick="openManualScrobbleModal()" class="btn-sm" style="background:#2563eb;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🍿 Quick Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Quick Scrobble</button>'
+        quick_scrobble_btn = '<button onclick="openManualScrobbleModal()" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-6px-12px u-font-size-12px u-cursor-pointer u-display-inline-flex u-align-items-center u-gap-4px u-white-space-nowrap">🍿 Quick Scrobble</button>' if is_admin else '<button onclick="openUnlockModal()" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-12px u-font-size-12px u-cursor-pointer u-white-space-nowrap">🔒 Quick Scrobble</button>'
 
         cross_sync_btn = ""
         if simkl_auth and (is_demo or trakt_authenticated):
             if is_admin:
-                cross_sync_btn = '<button onclick="openCrossSyncModal(true)" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">🔄 Reconcile Trakt & Simkl</button>'
+                cross_sync_btn = '<button onclick="openCrossSyncModal(true)" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-6px-12px u-font-size-12px u-cursor-pointer u-display-inline-flex u-align-items-center u-gap-4px u-white-space-nowrap">🔄 Reconcile Trakt & Simkl</button>'
             else:
-                cross_sync_btn = '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">🔒 Reconcile</button>'
+                cross_sync_btn = '<button onclick="openUnlockModal()" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-12px u-font-size-12px u-cursor-pointer u-white-space-nowrap">🔒 Reconcile</button>'
 
         trackers_meta = [
             {"id": "trakt", "cat": "universal", "icon": "🔴", "name": "Trakt.tv", "desc": "Universal &bull; Movies &amp; Shows"},
@@ -993,43 +986,31 @@ class DashboardRenderer:
             t_enabled = settings_mgr.is_tracker_enabled(tm["id"])
 
             if not t_enabled and (t_auth or t_cfg):
-                t_badge = '<span style="background:#1e293b;border:1px solid #475569;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⏸ Paused</span>'
+                t_badge = '<span class="u-background-bg-surface u-border-1px-solid-475569 u-color-text-muted u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">⏸ Paused</span>'
             elif t_auth:
                 active_trackers_count += 1
                 u_suffix = f" (@{t_disp_user})" if t_disp_user else ""
-                t_badge = f'<span style="background:#064e3b;border:1px solid #059669;color:#a7f3d0;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Active{u_suffix}</span>'
+                t_badge = f'<span class="u-background-064e3b u-border-1px-solid-059669 u-color-a7f3d0 u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">● Active{u_suffix}</span>'
             elif t_cfg:
                 active_trackers_count += 1
-                t_badge = '<span style="background:#1e293b;border:1px solid #eab308;color:#fde047;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">● Ready</span>'
+                t_badge = '<span class="u-background-bg-surface u-border-1px-solid-eab308 u-color-fde047 u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">● Ready</span>'
             else:
-                t_badge = '<span style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">● Optional</span>'
+                t_badge = '<span class="u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-2px-8px u-border-radius-4px u-font-size-11px">● Optional</span>'
 
             tm_id = tm["id"]
             tm_name = tm["name"]
-            color_map = {
-                "trakt": "#f87171",
-                "simkl": "#38bdf8",
-                "tmdb": "#eab308",
-                "anilist": "#60a5fa",
-                "myanimelist": "#818cf8",
-                "kitsu": "#fb923c",
-                "letterboxd": "#34d399",
-                "serializd": "#facc15",
-                "mdblist": "#c084fc",
-            }
-            accent = color_map.get(tm_id, "#94a3b8")
-            cfg_btn = f'<button onclick="openSettingsModal(\'trackers\', \'{tm_id}\')" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:{accent};padding:2px 7px;font-size:11px;border-radius:4px;cursor:pointer;" title="{tm_name} Settings">⚙️</button>'
+            cfg_btn = f'<button onclick="openSettingsModal(\'trackers\', \'{tm_id}\')" class="btn-sm tracker-config-button tracker-config-{tm_id} u-background-bg-surface u-border-1px-solid-475569 u-padding-2px-7px u-font-size-11px u-border-radius-4px u-cursor-pointer" title="{tm_name} Settings">⚙️</button>'
 
             hub_items_html += f"""
-            <div class="hub-tracker-item" data-cat="{tm['cat']}" style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 14px;gap:8px;">
-                <div style="display:flex;align-items:center;gap:10px;min-width:0;">
-                    <span style="font-size:18px;flex-shrink:0;">{tm['icon']}</span>
-                    <div style="min-width:0;">
-                        <div style="font-size:13px;font-weight:600;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{tm['name']}</div>
-                        <div style="font-size:11px;color:#64748b;">{tm['desc']}</div>
+            <div class="hub-tracker-item u-display-flex u-align-items-center u-justify-content-space-between u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-10px-14px u-gap-8px" data-cat="{tm['cat']}">
+                <div class="u-display-flex u-align-items-center u-gap-10px u-min-width-0">
+                    <span class="u-font-size-18px u-flex-shrink-0">{tm['icon']}</span>
+                    <div class="u-min-width-0">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-main u-white-space-nowrap u-overflow-hidden u-text-overflow-ellipsis">{tm['name']}</div>
+                        <div class="u-font-size-11px u-color-text-muted">{tm['desc']}</div>
                     </div>
                 </div>
-                <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+                <div class="u-display-flex u-align-items-center u-gap-6px u-flex-shrink-0">
                     {t_badge}
                     {cfg_btn}
                 </div>
@@ -1038,48 +1019,48 @@ class DashboardRenderer:
 
         return f"""
         <div class="card" id="card-multi-tracker">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <h3 class="u-margin-0 u-display-flex u-align-items-center u-gap-8px">
                     <span>🌐</span> Multi-Tracker Hub &bull; Cloud Synchronization
                 </h3>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="background:#0f172a;border:1px solid #334155;color:#10b981;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:6px;">
-                        <span style="width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;"></span>
+                <div class="u-display-flex u-align-items-center u-gap-8px">
+                    <span class="u-background-bg-page u-border-1px-solid-334155 u-color-10b981 u-padding-4px-10px u-border-radius-6px u-font-size-12px u-font-weight-600 u-display-inline-flex u-align-items-center u-gap-6px">
+                        <span class="u-width-7px u-height-7px u-border-radius-50 u-background-10b981 u-display-inline-block"></span>
                         {active_trackers_count}/9 Trackers Active
                     </span>
                 </div>
             </div>
-            <p style="color:#94a3b8;font-size:13px;margin-bottom:14px;line-height:1.5;">
+            <p class="u-color-text-muted u-font-size-13px u-margin-bottom-14px u-line-height-1-5">
                 Broadcast playback scrobbles, ratings, and diary entries across universal trackers, dedicated anime services, social diaries, and curated lists in real time.
             </p>
-            <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
-                <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('all', this)" style="background:#0284c7;border:1px solid #0284c7;color:#fff;font-weight:600;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">All Trackers (9)</button>
-                <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('universal', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Universal (3)</button>
-                <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('anime', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Anime (3)</button>
-                <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('social_diary', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Social Diaries (2)</button>
-                <button class="btn-sm hub-cat-tab" onclick="filterHubTrackers('lists_ratings', this)" style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:5px 12px;font-size:12px;border-radius:6px;cursor:pointer;">Lists &amp; Ratings (1)</button>
+            <div class="u-display-flex u-gap-6px u-margin-bottom-14px u-flex-wrap-wrap">
+                <button class="btn-sm hub-cat-tab u-background-accent-color u-border-1px-solid-0284c7 u-color-fff u-font-weight-600 u-padding-5px-12px u-font-size-12px u-border-radius-6px u-cursor-pointer" onclick="filterHubTrackers('all', this)">All Trackers (9)</button>
+                <button class="btn-sm hub-cat-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-5px-12px u-font-size-12px u-border-radius-6px u-cursor-pointer" onclick="filterHubTrackers('universal', this)">Universal (3)</button>
+                <button class="btn-sm hub-cat-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-5px-12px u-font-size-12px u-border-radius-6px u-cursor-pointer" onclick="filterHubTrackers('anime', this)">Anime (3)</button>
+                <button class="btn-sm hub-cat-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-5px-12px u-font-size-12px u-border-radius-6px u-cursor-pointer" onclick="filterHubTrackers('social_diary', this)">Social Diaries (2)</button>
+                <button class="btn-sm hub-cat-tab u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-5px-12px u-font-size-12px u-border-radius-6px u-cursor-pointer" onclick="filterHubTrackers('lists_ratings', this)">Lists &amp; Ratings (1)</button>
             </div>
-            <div id="hub-trackers-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:10px;margin-bottom:14px;">
+            <div id="hub-trackers-grid" class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-260px-1fr u-gap-10px u-margin-bottom-14px">
                 {hub_items_html}
             </div>
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-                <div style="font-size:12px;color:#cbd5e1;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px-14px u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-12px">
+                <div class="u-font-size-12px u-color-text-heading u-display-flex u-align-items-center u-gap-10px u-flex-wrap-wrap">
                     <span>Active Trackers: <strong>{active_trackers_count}/9 Connected</strong></span>
-                    <span style="color:#64748b;">&bull;</span>
+                    <span class="u-color-text-muted">&bull;</span>
                     <span>Anime Tracking Engine: <strong>{"Auto-Detect Active" if Config.ANIME_AUTO_DETECT else "Explicit Only"}</strong></span>
-                    <span style="color:#64748b;">&bull;</span>
+                    <span class="u-color-text-muted">&bull;</span>
                     <span>Cross-Tracker Sync: <strong>{"Ready" if simkl_auth and (is_demo or trakt_authenticated) else "Requires Trakt + Simkl Auth"}</strong></span>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <div class="u-display-flex u-gap-8px u-align-items-center u-flex-wrap-wrap">
                     {quick_scrobble_btn}
                     {cross_sync_btn}
-                    <button onclick="openSettingsModal('trackers')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 14px;font-size:12px;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;">⚙️ Configure Trackers</button>
-                    <a href="/api/letterboxd/export" download="letterboxd_diary.csv" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#34d399;text-decoration:none;padding:6px 12px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;" title="Export Letterboxd Watch Diary as CSV">📥 Letterboxd CSV</a>
-                    <div style="display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap;">
-                        <a href="/auth" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#f87171;text-decoration:none;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;" title="Trakt Auth Portal">Trakt ↗</a>
-                        <button onclick="openSimklModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="Simkl Modal">Simkl PIN</button>
-                        <button onclick="openAnilistModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#60a5fa;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="AniList Auth Modal">AniList ↗</button>
-                        <button onclick="openMalModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#818cf8;padding:6px 10px;font-size:11px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="MyAnimeList Auth Modal">MAL ↗</button>
+                    <button onclick="openSettingsModal('trackers')" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-6px-14px u-font-size-12px u-display-inline-flex u-align-items-center u-gap-5px u-white-space-nowrap u-cursor-pointer">⚙️ Configure Trackers</button>
+                    <a href="/api/letterboxd/export" download="letterboxd_diary.csv" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-34d399 u-text-decoration-none u-padding-6px-12px u-font-size-12px u-display-inline-flex u-align-items-center u-gap-4px u-white-space-nowrap" title="Export Letterboxd Watch Diary as CSV">📥 Letterboxd CSV</a>
+                    <div class="u-display-inline-flex u-gap-4px u-align-items-center u-flex-wrap-wrap">
+                        <a href="/auth" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-f87171 u-text-decoration-none u-padding-6px-10px u-font-size-11px u-display-inline-flex u-align-items-center u-gap-3px u-white-space-nowrap" title="Trakt Auth Portal">Trakt ↗</a>
+                        <button onclick="openSettingsModal('trackers','simkl')" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-6px-10px u-font-size-11px u-display-inline-flex u-align-items-center u-gap-3px u-white-space-nowrap u-cursor-pointer" title="Configure Simkl">Simkl PIN</button>
+                        <button onclick="openSettingsModal('trackers','anilist')" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-60a5fa u-padding-6px-10px u-font-size-11px u-display-inline-flex u-align-items-center u-gap-3px u-white-space-nowrap u-cursor-pointer" title="Configure AniList">AniList ↗</button>
+                        <button onclick="openSettingsModal('trackers','mal')" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-818cf8 u-padding-6px-10px u-font-size-11px u-display-inline-flex u-align-items-center u-gap-3px u-white-space-nowrap u-cursor-pointer" title="Configure MyAnimeList">MAL ↗</button>
                     </div>
                 </div>
             </div>
@@ -1100,65 +1081,65 @@ class DashboardRenderer:
 
         if arr_cfg:
             auto_int = arr_status.get("interval_minutes", 0)
-            auto_badge = f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 8px;border-radius:4px;font-size:11px;">Polling: Every {auto_int}m</span>' if auto_int > 0 else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:2px 8px;border-radius:4px;font-size:11px;">Polling: Manual</span>'
+            auto_badge = f'<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-muted u-padding-2px-8px u-border-radius-4px u-font-size-11px">Polling: Every {auto_int}m</span>' if auto_int > 0 else '<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-muted u-padding-2px-8px u-border-radius-4px u-font-size-11px">Polling: Manual</span>'
 
             sonarr_desc = "Online" if sonarr_conn else "Unreachable"
             radarr_desc = "Online" if radarr_conn else "Unreachable"
             overseerr_desc = "Online" if overseerr_conn else "Unreachable"
 
             overseerr_pill = (
-                f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#a855f7;">✨ {overseerr_app}</span><span style="color:#10b981;font-weight:600;">{overseerr_desc}</span></span>'
+                f'<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-main u-padding-3px-9px u-border-radius-6px u-font-size-12px u-display-inline-flex u-align-items-center u-gap-6px"><span class="u-color-a855f7">✨ {overseerr_app}</span><span class="u-color-10b981 u-font-weight-600">{overseerr_desc}</span></span>'
                 if overseerr_cfg
-                else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">✨ Overseerr: Off</span>'
+                else '<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-muted u-padding-3px-9px u-border-radius-6px u-font-size-12px">✨ Overseerr: Off</span>'
             )
 
             sonarr_pill = (
-                f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#38bdf8;">📺 Sonarr</span><span style="color:#10b981;font-weight:600;">{sonarr_desc}</span></span>'
+                f'<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-main u-padding-3px-9px u-border-radius-6px u-font-size-12px u-display-inline-flex u-align-items-center u-gap-6px"><span class="u-color-accent-color">📺 Sonarr</span><span class="u-color-10b981 u-font-weight-600">{sonarr_desc}</span></span>'
                 if sonarr_cfg
-                else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">📺 Sonarr: Off</span>'
+                else '<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-muted u-padding-3px-9px u-border-radius-6px u-font-size-12px">📺 Sonarr: Off</span>'
             )
 
             radarr_pill = (
-                f'<span style="background:#0f172a;border:1px solid #334155;color:#f8fafc;padding:3px 9px;border-radius:6px;font-size:12px;display:inline-flex;align-items:center;gap:6px;"><span style="color:#f59e0b;">🍿 Radarr</span><span style="color:#10b981;font-weight:600;">{radarr_desc}</span></span>'
+                f'<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-main u-padding-3px-9px u-border-radius-6px u-font-size-12px u-display-inline-flex u-align-items-center u-gap-6px"><span class="u-color-f59e0b">🍿 Radarr</span><span class="u-color-10b981 u-font-weight-600">{radarr_desc}</span></span>'
                 if radarr_cfg
-                else '<span style="background:#0f172a;border:1px solid #334155;color:#64748b;padding:3px 9px;border-radius:6px;font-size:12px;">🍿 Radarr: Off</span>'
+                else '<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-muted u-padding-3px-9px u-border-radius-6px u-font-size-12px">🍿 Radarr: Off</span>'
             )
 
             sync_btn_html = (
-                '<button onclick="triggerArrWatchlistSync(this)" class="btn-sm" style="background:#10b981;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">⚡ Sync Watchlist Now</button>'
+                '<button onclick="triggerArrWatchlistSync(this)" class="btn-sm u-background-10b981 u-color-fff u-font-weight-600 u-display-inline-flex u-align-items-center u-gap-6px u-padding-8px-14px">⚡ Sync Watchlist Now</button>'
                 if is_admin
-                else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">🔒 Sync Watchlist</button>'
+                else '<button onclick="openUnlockModal()" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-display-inline-flex u-align-items-center u-gap-6px u-padding-8px-14px">🔒 Sync Watchlist</button>'
             )
             add_media_btn_html = (
-                '<button onclick="openAddArrModal()" class="btn-sm" style="background:#0369a1;color:#fff;font-weight:600;display:inline-flex;align-items:center;gap:6px;padding:8px 14px;">➕ Add Media</button>'
-                if is_admin else '<button onclick="openUnlockModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#64748b;padding:8px 14px;">🔒 Add Media</button>'
+                '<button onclick="openAddArrModal()" class="btn-sm u-background-0369a1 u-color-fff u-font-weight-600 u-display-inline-flex u-align-items-center u-gap-6px u-padding-8px-14px">➕ Add Media</button>'
+                if is_admin else '<button onclick="openUnlockModal()" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-14px">🔒 Add Media</button>'
             )
 
             return f"""
             <div class="card" id="card-arr-bridge">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                    <h3 class="u-margin-0 u-display-flex u-align-items-center u-gap-8px">
                         <span>🎬</span> Content Bridge & *Arr Watchlist Automation
                     </h3>
-                    <div style="display:flex;align-items:center;gap:8px;">
+                    <div class="u-display-flex u-align-items-center u-gap-8px">
                         {auto_badge}
                     </div>
                 </div>
-                <p style="color:#94a3b8;font-size:13px;margin-bottom:16px;line-height:1.5;">
+                <p class="u-color-text-muted u-font-size-13px u-margin-bottom-16px u-line-height-1-5">
                     Automatically monitors your Trakt Watchlist, checks library duplicates, and acquires new movies and shows into Overseerr, Radarr, and Sonarr with automatic search and notification dispatch.
                 </p>
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
-                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-14px u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-12px">
+                    <div class="u-display-flex u-align-items-center u-gap-10px u-flex-wrap-wrap">
                         {overseerr_pill}
                         {sonarr_pill}
                         {radarr_pill}
-                        <span style="font-size:12px;color:#94a3b8;">Search on add: <strong>{'Enabled' if arr_status.get('search_on_add') else 'Disabled'}</strong> &bull; Alerts: <strong>{'On' if Config.ARR_NOTIFY_ON_ADD else 'Off'}</strong></span>
+                        <span class="u-font-size-12px u-color-text-muted">Search on add: <strong>{'Enabled' if arr_status.get('search_on_add') else 'Disabled'}</strong> &bull; Alerts: <strong>{'On' if Config.ARR_NOTIFY_ON_ADD else 'Off'}</strong></span>
                     </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <div class="u-display-flex u-gap-8px u-flex-wrap-wrap">
                         {add_media_btn_html}
                         {sync_btn_html}
-                        <button onclick="openArrModal()" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;">📋 View Log</button>
-                        <button onclick="openSettingsModal('automation')" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;padding:8px 14px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">⚙️ Configure</button>
+                        <button onclick="openArrModal()" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-8px-14px u-display-inline-flex u-align-items-center u-gap-6px">📋 View Log</button>
+                        <button onclick="openSettingsModal('automation')" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-padding-8px-14px u-display-inline-flex u-align-items-center u-gap-6px u-cursor-pointer">⚙️ Configure</button>
                     </div>
                 </div>
             </div>
@@ -1166,20 +1147,20 @@ class DashboardRenderer:
         else:
             return f"""
             <div class="card" id="card-arr-bridge">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                    <h3 style="margin:0;display:flex;align-items:center;gap:8px;">
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                    <h3 class="u-margin-0 u-display-flex u-align-items-center u-gap-8px">
                         <span>🎬</span> Content Bridge & *Arr Automation
                     </h3>
-                    <span style="color:#94a3b8;font-size:12px;">● Not Configured</span>
+                    <span class="u-color-text-muted u-font-size-12px">● Not Configured</span>
                 </div>
-                <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;line-height:1.5;">
+                <p class="u-color-text-muted u-font-size-13px u-margin-bottom-12px u-line-height-1-5">
                     Connect Trakt Watchlists directly to Sonarr and Radarr. When you add movies or shows to your Trakt Watchlist, Omniscrobble automatically looks them up and queues them for acquisition.
                 </p>
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:12px 14px;font-size:13px;color:#cbd5e1;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px-14px u-font-size-13px u-color-text-heading u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-8px">
                     <span>Configure Sonarr and Radarr connections directly in the Settings Hub or via <code>.env</code>.</span>
-                    <div style="display:flex;gap:6px;align-items:center;">
-                        <button onclick="openSettingsModal('automation')" class="btn-sm" style="background:#0284c7;color:#fff;font-weight:600;padding:6px 12px;border:none;cursor:pointer;">⚙️ Setup *Arr Bridge</button>
-                        <a href="{repo_url}#readme" target="_blank" rel="noopener" class="btn-sm" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;text-decoration:none;">View Guide &rarr;</a>
+                    <div class="u-display-flex u-gap-6px u-align-items-center">
+                        <button onclick="openSettingsModal('automation')" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600 u-padding-6px-12px u-border-none u-cursor-pointer">⚙️ Setup *Arr Bridge</button>
+                        <a href="{repo_url}#readme" target="_blank" rel="noopener" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-accent-color u-text-decoration-none">View Guide &rarr;</a>
                     </div>
                 </div>
             </div>
@@ -1202,7 +1183,7 @@ class DashboardRenderer:
 
         server_dist = analytics.get("server_distribution", {"Plex": 100})
         server_badges = "".join(
-            f'<span style="background:#1e293b;border:1px solid #334155;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-right:6px;">{s}: <strong style="color:#38bdf8;">{pct}%</strong></span>'
+            f'<span class="u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600 u-margin-right-6px">{s}: <strong class="u-color-accent-color">{pct}%</strong></span>'
             for s, pct in server_dist.items()
         )
 
@@ -1211,14 +1192,14 @@ class DashboardRenderer:
 
         top_genres = analytics.get("top_genres", [])
         genre_tags = "".join(
-            f'<span style="background:#0f172a;border:1px solid #334155;color:#94a3b8;padding:2px 7px;border-radius:4px;font-size:10px;margin-right:4px;">{g["genre"]}</span>'
+            f'<span class="u-background-bg-page u-border-1px-solid-334155 u-color-text-muted u-padding-2px-7px u-border-radius-4px u-font-size-10px u-margin-right-4px">{g["genre"]}</span>'
             for g in top_genres[:4]
         )
 
         admin_debugger_btn = ""
         if is_admin:
             admin_debugger_btn = """
-            <button onclick="openWebhookDebuggerModal()" class="btn-sm" style="background:#1e293b;border:1px solid #475569;color:#e2e8f0;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;">
+            <button onclick="openWebhookDebuggerModal()" class="btn-sm u-background-bg-surface u-border-1px-solid-475569 u-color-text-heading u-padding-5px-10px u-font-size-11px u-font-weight-600 u-cursor-pointer u-display-inline-flex u-align-items-center u-gap-5px">
                 <span>🔍</span><span>Webhook Inspector</span>
             </button>
             """
@@ -1229,65 +1210,65 @@ class DashboardRenderer:
             scrobbles_sub = f"{movies} movies &bull; {episodes} eps"
 
         return f"""
-        <div class="card" style="margin-bottom:20px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <h3 style="margin:0;font-size:15px;color:#f8fafc;display:flex;align-items:center;gap:8px;">
+        <div class="card u-margin-bottom-20px" id="card-analytics">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-12px u-flex-wrap-wrap u-gap-8px">
+                <div class="u-display-flex u-align-items-center u-gap-8px">
+                    <h3 class="u-margin-0 u-font-size-15px u-color-text-main u-display-flex u-align-items-center u-gap-8px">
                         <span>📊</span> Personal Analytics & Viewing Habits
                     </h3>
                 </div>
-                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <div class="u-display-flex u-gap-6px u-align-items-center u-flex-wrap-wrap">
                     {admin_debugger_btn}
-                    <button onclick="openOmniWrappedModal()" class="btn-sm" style="background:linear-gradient(135deg, #8b5cf6, #3b82f6);color:#fff;border:none;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;box-shadow:0 2px 4px rgba(139,92,246,0.3);">
+                    <button onclick="openOmniWrappedModal()" class="btn-sm u-background-linear-gradient-135deg-8b5cf6-3b82f6 u-color-fff u-border-none u-padding-5px-12px u-font-size-11px u-font-weight-600 u-cursor-pointer u-display-inline-flex u-align-items-center u-gap-5px u-box-shadow-0-2px-4px-rgba-139-92-246-0-3">
                         <span>✨</span><span>OmniWrapped</span>
                     </button>
                 </div>
             </div>
 
             <!-- Quick Metrics Grid -->
-            <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:10px;margin-bottom:14px;">
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
-                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Watch Time</div>
-                    <div style="font-size:18px;font-weight:700;color:#38bdf8;">{watch_time}</div>
-                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Across all devices</div>
+            <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-130px-1fr u-gap-10px u-margin-bottom-14px">
+                <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-10px-12px">
+                    <div class="u-font-size-11px u-color-text-muted u-text-transform-uppercase u-font-weight-600 u-margin-bottom-2px">Watch Time</div>
+                    <div class="u-font-size-18px u-font-weight-700 u-color-accent-color">{watch_time}</div>
+                    <div class="u-font-size-10px u-color-text-muted u-margin-top-2px">Across all devices</div>
                 </div>
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
-                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Completed Scrobbles</div>
-                    <div style="font-size:18px;font-weight:700;color:#f8fafc;">{total_scrobbles}</div>
-                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{scrobbles_sub}</div>
+                <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-10px-12px">
+                    <div class="u-font-size-11px u-color-text-muted u-text-transform-uppercase u-font-weight-600 u-margin-bottom-2px">Completed Scrobbles</div>
+                    <div class="u-font-size-18px u-font-weight-700 u-color-text-main">{total_scrobbles}</div>
+                    <div class="u-font-size-10px u-color-text-muted u-margin-top-2px">{scrobbles_sub}</div>
                 </div>
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
-                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Co-Watch Ratio</div>
-                    <div style="font-size:18px;font-weight:700;color:#c084fc;">{cw_pct}%</div>
-                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">{cowatch_hours}h shared / {solo_hours}h solo</div>
+                <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-10px-12px">
+                    <div class="u-font-size-11px u-color-text-muted u-text-transform-uppercase u-font-weight-600 u-margin-bottom-2px">Co-Watch Ratio</div>
+                    <div class="u-font-size-18px u-font-weight-700 u-color-c084fc">{cw_pct}%</div>
+                    <div class="u-font-size-10px u-color-text-muted u-margin-top-2px">{cowatch_hours}h shared / {solo_hours}h solo</div>
                 </div>
-                <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;">
-                    <div style="font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600;margin-bottom:2px;">Star Ratings</div>
-                    <div style="font-size:18px;font-weight:700;color:#fbbf24;">{ratings}</div>
-                    <div style="font-size:10px;color:#94a3b8;margin-top:2px;">Synced across trackers</div>
+                <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-10px-12px">
+                    <div class="u-font-size-11px u-color-text-muted u-text-transform-uppercase u-font-weight-600 u-margin-bottom-2px">Star Ratings</div>
+                    <div class="u-font-size-18px u-font-weight-700 u-color-fbbf24">{ratings}</div>
+                    <div class="u-font-size-10px u-color-text-muted u-margin-top-2px">Synced across trackers</div>
                 </div>
             </div>
 
             <!-- Co-Watch Ratio Progress Bar -->
-            <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;margin-bottom:12px;">
-                <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-bottom:6px;">
-                    <span style="color:#94a3b8;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#38bdf8;margin-right:4px;"></span>Solo Viewing ({solo_pct}%)</span>
-                    <span style="color:#94a3b8;"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#c084fc;margin-right:4px;"></span>Shared Co-Watching ({cw_pct}%)</span>
+            <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-10px-12px u-margin-bottom-12px">
+                <div class="u-display-flex u-justify-content-space-between u-align-items-center u-font-size-11px u-margin-bottom-6px">
+                    <span class="u-color-text-muted"><span class="u-display-inline-block u-width-8px u-height-8px u-border-radius-50 u-background-38bdf8 u-margin-right-4px"></span>Solo Viewing ({solo_pct}%)</span>
+                    <span class="u-color-text-muted"><span class="u-display-inline-block u-width-8px u-height-8px u-border-radius-50 u-background-c084fc u-margin-right-4px"></span>Shared Co-Watching ({cw_pct}%)</span>
                 </div>
-                <div style="width:100%;height:6px;background:#1e293b;border-radius:9999px;overflow:hidden;display:flex;">
-                    <div style="height:100%;width:{solo_pct}%;background:#38bdf8;"></div>
-                    <div style="height:100%;width:{cw_pct}%;background:#c084fc;"></div>
+                <div class="u-width-100 u-height-6px u-background-bg-surface u-border-radius-9999px u-overflow-hidden u-display-flex">
+                    <div class="tracker-share-segment tracker-share-solo" style="width:{solo_pct}%;"></div>
+                    <div class="tracker-share-segment tracker-share-cowatch" style="width:{cw_pct}%;"></div>
                 </div>
             </div>
 
             <!-- Distribution & Highlights Footer -->
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;font-size:12px;color:#94a3b8;">
-                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;">
-                    <span style="color:#64748b;margin-right:4px;">Servers:</span>
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-10px u-font-size-12px u-color-text-muted">
+                <div class="u-display-flex u-align-items-center u-flex-wrap-wrap u-gap-4px">
+                    <span class="u-color-text-muted u-margin-right-4px">Servers:</span>
                     {server_badges}
                 </div>
-                <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
-                    <strong style="color:#cbd5e1;font-size:11px;">{top_show_label}</strong>
+                <div class="u-display-flex u-align-items-center u-flex-wrap-wrap u-gap-6px">
+                    <strong class="u-color-text-heading u-font-size-11px">{top_show_label}</strong>
                     {genre_tags}
                 </div>
             </div>

@@ -1,0 +1,180 @@
+                <!-- Tab 4: Notifications -->
+                <div id="settings-panel-notifications" class="settings-content-panel u-display-none u-flex-direction-column u-gap-14px">
+                    <!-- Event Notification Triggers -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-10px u-display-flex u-align-items-center u-gap-6px">
+                            <span>⚡</span> Event Notification Triggers (Runtime Toggles)
+                        </div>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-180px-1fr u-gap-8px">
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-notif-scrobble-check" checked /> Media Scrobbled
+                            </label>
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-notif-rate-check" checked /> Star Rated (1-10)
+                            </label>
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-notif-collection-check" checked /> Collection Imports
+                            </label>
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-notif-failure-check" checked /> API Failure Alerts
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Notification Channels Grid -->
+                    <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-280px-1fr u-gap-10px">
+                        <!-- Discord -->
+                        <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-5865f2 u-display-flex u-align-items-center u-gap-4px">
+                                    <span>💬</span> Discord Webhook
+                                </div>
+                                <span id="settings-notif-discord-badge" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-flex u-gap-4px">
+                                <input type="password" id="settings-notif-discord-url" placeholder="https://discord.com/api/webhooks/..." class="u-flex-1 u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-notif-discord-url','settings-notif-discord-btn')" id="settings-notif-discord-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-8px">👁️</button>
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                <button type="button" onclick="testNotificationChannel('discord')" id="settings-notif-discord-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-5865f2 u-color-818cf8 u-font-size-11px u-padding-4px-10px">🔔 Test Discord</button>
+                                <span id="settings-notif-discord-status" class="u-font-size-11px u-color-text-muted"></span>
+                            </div>
+                        </div>
+
+                        <!-- Telegram -->
+                        <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-229ed9 u-display-flex u-align-items-center u-gap-4px">
+                                    <span>✈️</span> Telegram Bot
+                                </div>
+                                <span id="settings-notif-telegram-badge" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-6px">
+                                <div class="u-display-flex u-gap-4px">
+                                    <input type="password" id="settings-notif-telegram-token" placeholder="Bot Token" class="u-flex-1 u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-notif-telegram-token','settings-notif-tele-btn')" id="settings-notif-tele-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-8px">👁️</button>
+                                </div>
+                                <input type="text" id="settings-notif-telegram-chat" placeholder="Chat ID" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                <button type="button" onclick="testNotificationChannel('telegram')" id="settings-notif-telegram-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-229ed9 u-color-accent-color u-font-size-11px u-padding-4px-10px">🔔 Test Telegram</button>
+                                <span id="settings-notif-telegram-status" class="u-font-size-11px u-color-text-muted"></span>
+                            </div>
+                        </div>
+
+                        <!-- Ntfy -->
+                        <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-10b981 u-display-flex u-align-items-center u-gap-4px">
+                                    <span>📢</span> Ntfy Push
+                                </div>
+                                <span id="settings-notif-ntfy-badge" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-6px">
+                                <input type="text" id="settings-notif-ntfy-url" placeholder="https://ntfy.sh/your-topic" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <input type="password" id="settings-notif-ntfy-auth" placeholder="Auth Token (Optional)" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                <button type="button" onclick="testNotificationChannel('ntfy')" id="settings-notif-ntfy-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-10b981 u-color-34d399 u-font-size-11px u-padding-4px-10px">🔔 Test Ntfy</button>
+                                <span id="settings-notif-ntfy-status" class="u-font-size-11px u-color-text-muted"></span>
+                            </div>
+                        </div>
+
+                        <!-- Pushover -->
+                        <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-f59e0b u-display-flex u-align-items-center u-gap-4px">
+                                    <span>📱</span> Pushover
+                                </div>
+                                <span id="settings-notif-pushover-badge" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-6px">
+                                <input type="password" id="settings-notif-pushover-user" placeholder="User Key" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <input type="password" id="settings-notif-pushover-token" placeholder="API Token" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                <button type="button" onclick="testNotificationChannel('pushover')" id="settings-notif-pushover-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-f59e0b u-color-fbbf24 u-font-size-11px u-padding-4px-10px">🔔 Test Pushover</button>
+                                <span id="settings-notif-pushover-status" class="u-font-size-11px u-color-text-muted"></span>
+                            </div>
+                        </div>
+
+                        <!-- Gotify -->
+                        <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-0ea5e9 u-display-flex u-align-items-center u-gap-4px">
+                                    <span>📬</span> Gotify
+                                </div>
+                                <span id="settings-notif-gotify-badge" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-6px">
+                                <input type="text" id="settings-notif-gotify-url" placeholder="http://<your-server-ip-or-domain>:8080" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <div class="u-display-flex u-gap-4px">
+                                    <input type="password" id="settings-notif-gotify-token" placeholder="App Token" class="u-flex-1 u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                    <button type="button" onclick="toggleReconTokenVisibility('settings-notif-gotify-token','settings-notif-gotify-btn')" id="settings-notif-gotify-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-8px">👁️</button>
+                                </div>
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                <button type="button" onclick="testNotificationChannel('gotify')" id="settings-notif-gotify-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-0ea5e9 u-color-accent-color u-font-size-11px u-padding-4px-10px">🔔 Test Gotify</button>
+                                <span id="settings-notif-gotify-status" class="u-font-size-11px u-color-text-muted"></span>
+                            </div>
+                        </div>
+
+                        <!-- Matrix -->
+                        <div class="u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-6px u-padding-10px u-display-flex u-flex-direction-column u-gap-6px">
+                            <div class="u-display-flex u-justify-content-space-between u-align-items-center">
+                                <div class="u-font-size-12px u-font-weight-600 u-color-10b981 u-display-flex u-align-items-center u-gap-4px">
+                                    <span>[m]</span> Matrix
+                                </div>
+                                <span id="settings-notif-matrix-badge" class="u-font-size-11px u-color-text-muted">Not Configured</span>
+                            </div>
+                            <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-6px">
+                                <input type="text" id="settings-notif-matrix-url" placeholder="https://matrix.org" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <input type="text" id="settings-notif-matrix-room" placeholder="!roomId:matrix.org" class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                            </div>
+                            <div class="u-display-flex u-gap-4px">
+                                <input type="password" id="settings-notif-matrix-token" placeholder="Access Token" class="u-flex-1 u-background-bg-page u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                                <button type="button" onclick="toggleReconTokenVisibility('settings-notif-matrix-token','settings-notif-matrix-btn')" id="settings-notif-matrix-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-6px-8px">👁️</button>
+                            </div>
+                            <div class="u-display-flex u-align-items-center u-justify-content-space-between u-margin-top-2px u-gap-6px u-flex-wrap-wrap">
+                                <button type="button" onclick="testNotificationChannel('matrix')" id="settings-notif-matrix-test-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-10b981 u-color-34d399 u-font-size-11px u-padding-4px-10px">🔔 Test Matrix</button>
+                                <span id="settings-notif-matrix-status" class="u-font-size-11px u-color-text-muted"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Scheduled Weekly Activity Digest -->
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-8px u-flex-wrap-wrap u-gap-6px">
+                            <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
+                                <span>📊</span> Scheduled Weekly Activity Digest
+                            </div>
+                            <button type="button" onclick="triggerWeeklyDigestNow()" id="settings-digest-now-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-38bdf8 u-color-accent-color u-font-size-11px u-padding-4px-10px">⚡ Send Digest Now</button>
+                        </div>
+                        <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px u-line-height-1-4">
+                            Automatically compiles and dispatches a comprehensive 7-day watch summary (hours watched, items scrobbled, top devices, co-watch sessions) to your configured notification channels.
+                        </p>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-180px-1fr u-gap-10px u-align-items-center">
+                            <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-heading u-cursor-pointer">
+                                <input type="checkbox" id="settings-digest-enabled" />
+                                <span><strong>Enable Weekly Digest</strong></span>
+                            </label>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-2px">Day of Week</label>
+                                <select id="settings-digest-day" class="u-width-100 u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px">
+                                    <option value="sunday">Sunday</option>
+                                    <option value="monday">Monday</option>
+                                    <option value="tuesday">Tuesday</option>
+                                    <option value="wednesday">Wednesday</option>
+                                    <option value="thursday">Thursday</option>
+                                    <option value="friday">Friday</option>
+                                    <option value="saturday">Saturday</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-2px">Hour of Day (24h UTC)</label>
+                                <input type="number" id="settings-digest-hour" min="0" max="23" value="20" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" />
+                            </div>
+                        </div>
+                        <div id="settings-digest-status" class="u-font-size-11px u-margin-top-6px u-color-text-muted"></div>
+                    </div>
+                </div>

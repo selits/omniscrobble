@@ -67,17 +67,37 @@ from app.services.dashboard_renderer import (
     format_action_label,
     should_display_cowatch_badge,
     render_status_badge,
+    render_tracker_delivery_badges,
     dashboard_renderer,
 )
 from pathlib import Path
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
+COMPONENTS_DIR = TEMPLATES_DIR / 'dashboard'
 AUTH_LOCKED_HTML = (TEMPLATES_DIR / 'auth_locked.html').read_text(encoding='utf-8')
 AUTH_HTML = (TEMPLATES_DIR / 'auth.html').read_text(encoding='utf-8')
 AUTH_SIMKL_HTML = (TEMPLATES_DIR / 'auth_simkl.html').read_text(encoding='utf-8')
 AUTH_ANILIST_HTML = (TEMPLATES_DIR / 'auth_anilist.html').read_text(encoding='utf-8')
 AUTH_MAL_HTML = (TEMPLATES_DIR / 'auth_mal.html').read_text(encoding='utf-8')
-DASHBOARD_HTML = (TEMPLATES_DIR / 'dashboard.html').read_text(encoding='utf-8')
+def load_dashboard_template() -> str:
+    """Assemble dashboard HTML from its shell and reusable template components."""
+    rendered = (TEMPLATES_DIR / 'dashboard.html').read_text(encoding='utf-8')
+    marker_start = '<!-- COMPONENT:'
+    while marker_start in rendered:
+        start = rendered.index(marker_start)
+        end = rendered.index('-->', start) + 3
+        component_name = rendered[start + len(marker_start):end - 3].strip()
+        component_path = COMPONENTS_DIR / f'{component_name}.html'
+        if not component_path.is_file():
+            raise FileNotFoundError(f'Dashboard template component not found: {component_path}')
+        rendered = rendered[:start] + component_path.read_text(encoding='utf-8') + rendered[end:]
+    return rendered
+
+
+DASHBOARD_HTML = load_dashboard_template()
+STYLESHEET_PATH = Path(__file__).resolve().parent / 'static' / 'dashboard.css'
+THEME_STYLESHEET_PATH = Path(__file__).resolve().parent / 'static' / 'dashboard-theme.css'
+SCRIPT_PATH = Path(__file__).resolve().parent / 'static' / 'dashboard.js'
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -660,7 +680,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -699,67 +719,85 @@ async def security_and_cache_middleware(request: Request, call_next):
 async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: str):
     """Dispatch playback scrobble event asynchronously to Simkl."""
     if not (settings_mgr.is_tracker_enabled("simkl") and simkl.is_enabled() and simkl.is_authenticated()):
-        return
+        return "skipped"
+    responses = []
     try:
         if event in ("media.play", "media.resume"):
-            await simkl.scrobble_start(parsed, progress=parsed.progress)
+            responses.append(await simkl.scrobble_start(parsed, progress=parsed.progress))
         elif event == "media.pause":
-            await simkl.scrobble_pause(parsed, progress=parsed.progress)
+            responses.append(await simkl.scrobble_pause(parsed, progress=parsed.progress))
         elif event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= Config.get_threshold(parsed.media_type)):
             res = await simkl.scrobble_stop(parsed, progress=parsed.progress)
+            responses.append(res)
             watched_at_ts = datetime.datetime.now(timezone.utc).isoformat()
-            await simkl.sync_history(parsed, watched_at=watched_at_ts)
+            responses.append(await simkl.sync_history(parsed, watched_at=watched_at_ts))
             if isinstance(res, dict) and res.get("status") == "error":
                 asyncio.create_task(notifier.send_failure_alert(parsed, "Simkl", str(res.get("error", "Error")), user=parsed.username))
         elif event == "media.rate":
-            await simkl.sync_ratings(parsed, rating=int(parsed.rating or 10))
+            responses.append(await simkl.sync_ratings(parsed, rating=int(parsed.rating or 10)))
+        else:
+            return "skipped"
+        response_states = [_tracker_result_state(response) for response in responses]
+        if "queued" in response_states:
+            return "queued"
+        if "failed" in response_states:
+            return "failed"
+        return "success" if "success" in response_states else "skipped"
     except Exception as e:
         logger.warning(f"Simkl dispatch error for {parsed.title}: {e}")
         asyncio.create_task(notifier.send_failure_alert(parsed, "Simkl", str(e), user=parsed.username))
+        return "failed"
 
 
-async def execute_multi_tracker_dispatch(parsed: ParsedMedia, action_taken: str, event: str, progress: float):
+async def execute_multi_tracker_dispatch(parsed: ParsedMedia, action_taken: str, event: str, progress: float, event_id: Optional[str] = None):
     """Dispatch playback scrobble and rating events asynchronously to Simkl, AniList, and MyAnimeList."""
-    # 1. Simkl
+    delivery: dict[str, str] = {}
     if settings_mgr.is_tracker_enabled("simkl") and simkl.is_enabled() and simkl.is_authenticated():
-        await execute_simkl_scrobble(parsed, action_taken, event)
+        delivery["simkl"] = await execute_simkl_scrobble(parsed, action_taken, event)
 
-    # 2. Anime tracking dispatch (AniList & MAL)
-    try:
-        ani_active = settings_mgr.is_tracker_enabled("anilist") and anilist.is_enabled() and anilist.is_authenticated()
-        mal_active = settings_mgr.is_tracker_enabled("mal") and mal.is_enabled() and mal.is_authenticated()
-        if ani_active or mal_active:
-            resolved_anime = await anime_resolver.resolve(parsed)
-            if resolved_anime and resolved_anime.get("is_anime"):
-                threshold = Config.get_threshold(parsed.media_type)
-                if event == "media.rate":
+    ani_active = settings_mgr.is_tracker_enabled("anilist") and anilist.is_enabled() and anilist.is_authenticated()
+    mal_active = settings_mgr.is_tracker_enabled("mal") and mal.is_enabled() and mal.is_authenticated()
+    anime_action = event == "media.rate" or event == "media.scrobble" or (action_taken == "scrobble_stop" and progress >= Config.get_threshold(parsed.media_type))
+    if ani_active or mal_active:
+        if not anime_action:
+            delivery.update({key: "skipped" for key, active in (("anilist", ani_active), ("mal", mal_active)) if active})
+        else:
+            try:
+                resolved_anime = await anime_resolver.resolve(parsed)
+                if not (resolved_anime and resolved_anime.get("is_anime")):
+                    delivery.update({key: "skipped" for key, active in (("anilist", ani_active), ("mal", mal_active)) if active})
+                elif event == "media.rate":
                     if ani_active:
                         ani_res = await anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
-                        if isinstance(ani_res, dict) and ani_res.get("status") == "error":
+                        delivery["anilist"] = _tracker_result_state(ani_res)
+                        if delivery["anilist"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "AniList", str(ani_res.get("errors", "Error")), user=parsed.username))
                     if mal_active and resolved_anime.get("mal_id"):
                         mal_res = await mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
-                        if isinstance(mal_res, dict) and mal_res.get("status") == "error":
+                        delivery["mal"] = _tracker_result_state(mal_res)
+                        if delivery["mal"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "MyAnimeList", str(mal_res.get("error", "Error")), user=parsed.username))
-                elif event == "media.scrobble" or (action_taken == "scrobble_stop" and progress >= threshold):
+                    elif mal_active:
+                        delivery["mal"] = "skipped"
+                else:
                     if ani_active:
-                        ani_res = await anilist.update_progress(
-                            resolved_anime["anilist_id"],
-                            resolved_anime["episode_number"],
-                            resolved_anime.get("episodes"),
-                        )
-                        if isinstance(ani_res, dict) and ani_res.get("status") == "error":
+                        ani_res = await anilist.update_progress(resolved_anime["anilist_id"], resolved_anime["episode_number"], resolved_anime.get("episodes"))
+                        delivery["anilist"] = _tracker_result_state(ani_res)
+                        if delivery["anilist"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "AniList", str(ani_res.get("errors", "Error")), user=parsed.username))
                     if mal_active and resolved_anime.get("mal_id"):
-                        mal_res = await mal.update_progress(
-                            resolved_anime["mal_id"],
-                            resolved_anime["episode_number"],
-                            resolved_anime.get("episodes"),
-                        )
-                        if isinstance(mal_res, dict) and mal_res.get("status") == "error":
+                        mal_res = await mal.update_progress(resolved_anime["mal_id"], resolved_anime["episode_number"], resolved_anime.get("episodes"))
+                        delivery["mal"] = _tracker_result_state(mal_res)
+                        if delivery["mal"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "MyAnimeList", str(mal_res.get("error", "Error")), user=parsed.username))
-    except Exception as e:
-        logger.warning(f"Anime multi-tracker dispatch error for {parsed.title}: {e}")
+                    elif mal_active:
+                        delivery["mal"] = "skipped"
+            except Exception as e:
+                logger.warning(f"Anime multi-tracker dispatch error for {parsed.title}: {e}")
+                delivery.update({key: "failed" for key, active in (("anilist", ani_active), ("mal", mal_active)) if active and key not in delivery})
+
+    if event_id and delivery:
+        update_event_tracker_delivery(event_id, delivery)
 
 
 # Persistent log of recent webhook events for the status dashboard
@@ -794,7 +832,68 @@ def save_recent_events() -> None:
 reload_recent_events_in_place()
 
 
-def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_status: Optional[dict[str, Any]] = None):
+def _tracker_result_state(result: Any) -> str:
+    """Reduce upstream responses to a small, safe status for activity badges."""
+    if not isinstance(result, dict):
+        return "success" if result else "skipped"
+    if result.get("queued"):
+        return "queued"
+    nested_results = [value for value in result.values() if isinstance(value, dict) and ("status" in value or "error" in value or "queued" in value)]
+    if nested_results:
+        nested_states = [_tracker_result_state(value) for value in nested_results]
+        if "queued" in nested_states:
+            return "queued"
+        if "failed" in nested_states:
+            return "failed"
+        return "success" if "success" in nested_states else "skipped"
+    status = str(result.get("status", "")).lower()
+    if status in {"success", "ok", "200", "201", "202", "204"}:
+        return "success"
+    if status in {"queued", "queue"}:
+        return "queued"
+    if status in {"skipped", "ignored", "disabled", "not_configured"}:
+        return "skipped"
+    if status.isdigit():
+        code = int(status)
+        return "success" if 200 <= code < 300 else "failed"
+    if result.get("reason"):
+        return "skipped"
+    if status in {"error", "failed", "failure"} or result.get("error"):
+        return "failed"
+    return "success"
+
+
+def _tracker_delivery_from_result(result: dict[str, Any], action: str) -> dict[str, str]:
+    """Extract known delivery results from synchronous Trakt and manual dispatches."""
+    delivery: dict[str, str] = {}
+    synced = result.get("synced_trackers")
+    if not isinstance(synced, list):
+        synced = result.get("removed_trackers")
+    errors = result.get("errors") if isinstance(result.get("errors"), dict) else {}
+    if isinstance(synced, list) or errors:
+        synced = synced if isinstance(synced, list) else []
+        aliases = {"myanimelist": "mal"}
+        delivery.update({aliases.get(str(tracker).lower(), str(tracker).lower()): "success" for tracker in synced})
+        delivery.update({aliases.get(str(tracker).lower(), str(tracker).lower()): "failed" for tracker in errors})
+        return delivery
+    if action in {"bypassed", "none"} or result.get("status") in {"ignored", "skipped"}:
+        delivery["trakt"] = "skipped"
+    else:
+        delivery["trakt"] = _tracker_result_state(result)
+    return delivery
+
+
+def update_event_tracker_delivery(event_id: str, delivery: dict[str, str]) -> None:
+    """Persist asynchronous tracker outcomes onto the originating activity event."""
+    for event_entry in recent_events:
+        if event_entry.get("event_id") == event_id:
+            current = event_entry.setdefault("tracker_delivery", {})
+            current.update({key: value for key, value in delivery.items() if value in {"success", "queued", "failed", "skipped"}})
+            save_recent_events()
+            return
+
+
+def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_status: Optional[dict[str, Any]] = None) -> str:
     if media.media_type == "episode":
         title_str = f"{media.show_title} S{media.season:02d}E{media.episode:02d} - {media.title}"
     else:
@@ -803,7 +902,17 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
     action_str = f"{action} ({media.rating}/10)" if action == "rate" and media.rating else action
     progress_str = f"{media.rating}/10" if action == "rate" and media.rating else f"{media.progress:.1f}%"
 
+    event_id = secrets.token_hex(12)
+    tracker_delivery = _tracker_delivery_from_result(result, action)
+    event_status = result.get("status") or ("ok" if not result.get("error") else "error")
+    if action in {"bypassed", "none"}:
+        event_status = "ignored"
+    elif tracker_delivery.get("trakt") == "queued":
+        event_status = "queued"
+    elif tracker_delivery.get("trakt") == "failed":
+        event_status = "error"
     entry = {
+        "event_id": event_id,
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user": media.username,
         "server": getattr(media, "server_type", "plex"),
@@ -824,13 +933,16 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
             "duration_ms": media.duration_ms,
         },
         "progress": progress_str,
-        "result_status": result.get("status") or ("ok" if not result.get("error") else "error"),
+        "is_anime": anime_resolver.is_explicit_anime(media),
+        "result_status": event_status,
+        "tracker_delivery": tracker_delivery,
         "raw_result": result,
         "cowatch_status": cowatch_status,
     }
     recent_events.appendleft(entry)
     save_recent_events()
     save_scrobble_stats()
+    return event_id
 
 
 async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Optional[list[str]] = None):
@@ -1048,6 +1160,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             result = await active_client.sync_collection(col_payload)
             if is_temporary_error(result):
                 queue_mgr.enqueue("sync_collection", col_payload, error=str(result.get("error", "")), username=parsed.username)
+                result["queued"] = True
                 metrics_registry.record_collection(parsed.media_type, "queued")
             else:
                 metrics_registry.record_collection(parsed.media_type, "success")
@@ -1075,12 +1188,14 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
 
             if is_temporary_error(scrobble_res):
                 queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")), username=parsed.username)
+                result["queued"] = True
                 metrics_registry.record_scrobble(parsed.media_type, "queued")
             else:
                 metrics_registry.record_scrobble(parsed.media_type, "success")
 
             if is_temporary_error(history_res):
                 queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(history_res.get("error", "")), username=parsed.username)
+                result["queued"] = True
 
             record_watch_stat(parsed)
 
@@ -1092,6 +1207,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             result = await active_client.sync_ratings(rating_payload)
             if is_temporary_error(result):
                 queue_mgr.enqueue("sync_ratings", rating_payload, error=str(result.get("error", "")), username=parsed.username)
+                result["queued"] = True
                 metrics_registry.record_rating("queued")
             else:
                 metrics_registry.record_rating("success")
@@ -1114,6 +1230,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                     result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
                         queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
+                        result["queued"] = True
                         metrics_registry.record_scrobble(parsed.media_type, "queued")
                     else:
                         metrics_registry.record_scrobble(parsed.media_type, "success")
@@ -1134,6 +1251,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                     result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
                         queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
+                        result["queued"] = True
                         metrics_registry.record_scrobble(parsed.media_type, "queued")
                     else:
                         metrics_registry.record_scrobble(parsed.media_type, "success")
@@ -1177,7 +1295,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             primary_target = targets[0] if targets else Config.CO_WATCH_USER
             cowatch_info = {"synced": False, "in_list": True, "reason": reason, "target": primary_target, "targets": targets}
 
-        log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
+        event_id = log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
 
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
             partner_target = (", ".join(targets) if targets else Config.CO_WATCH_USER) if (cowatch_info and cowatch_info.get("synced")) else None
@@ -1191,7 +1309,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             src_server = "plex" if endpoint_name in ("webhook", "plex") else endpoint_name
             asyncio.create_task(reverse_sync_mgr.mirror_rating(parsed, float(parsed.rating), source_server=src_server))
 
-        asyncio.create_task(execute_multi_tracker_dispatch(parsed, action_taken, event, parsed.progress))
+        asyncio.create_task(execute_multi_tracker_dispatch(parsed, action_taken, event, parsed.progress, event_id=event_id))
 
         metrics_registry.record_request(endpoint_name, 200)
         return {"status": "success", "event": event, "action": action_taken, "result": result}
@@ -1879,6 +1997,36 @@ def pwa_icon():
     return Response(content=OMNISCROBBLE_ICON_SVG, media_type="image/svg+xml")
 
 
+@app.get("/static/dashboard.css")
+def dashboard_stylesheet():
+    """Serves dashboard styles extracted from the HTML template."""
+    return Response(
+        content=STYLESHEET_PATH.read_text(encoding="utf-8"),
+        media_type="text/css",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/static/dashboard-theme.css")
+def dashboard_theme_stylesheet():
+    """Serves dashboard theme tokens, palettes, accents, and density rules."""
+    return Response(
+        content=THEME_STYLESHEET_PATH.read_text(encoding="utf-8"),
+        media_type="text/css",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/static/dashboard.js")
+def dashboard_script():
+    """Serves the dashboard interaction code extracted from the HTML template."""
+    return Response(
+        content=SCRIPT_PATH.read_text(encoding="utf-8"),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/metrics")
 def get_metrics():
     """Prometheus exposition metrics endpoint."""
@@ -2057,6 +2205,13 @@ def get_events(request: Request, limit: Optional[int] = None, offset: int = 0):
                 "type": ev.get("type"),
                 "show_title": None,
                 "progress": ev.get("progress"),
+                "is_anime": bool(ev.get("is_anime", False)),
+                "tracker_delivery": {
+                    str(tracker): state
+                    for tracker, state in (ev.get("tracker_delivery") or {}).items()
+                    if tracker in {"trakt", "simkl", "anilist", "mal", "kitsu", "tmdb", "letterboxd", "serializd", "mdblist"}
+                    and state in {"success", "queued", "failed", "skipped"}
+                },
                 "result_status": ev.get("result_status"),
                 "cowatch_status": None,
             }
@@ -4521,7 +4676,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         allowed_libs_display = "Movies, TV Shows, Anime"
         sync_collection_display = "On"
         token_health_str = "Healthy • Auto-renews in 84d"
-        token_health_color = "#10b981"
+        token_health_class = "healthy"
         status_badge = '<a href="javascript:void(0)" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">Connected as @demo_viewer &bull; Demo</a>'
         admin_btn = '<span style="font-size:12px;color:#38bdf8;background:#1e293b;border:1px solid #334155;padding:4px 10px;border-radius:6px;font-weight:600;">👑 Demo Admin</span>'
         full_webhook_url = "https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
@@ -4584,13 +4739,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             if token_info.get("healthy"):
                 days = token_info.get("days_remaining", 0)
                 token_health_str = f"Healthy • Auto-renews in {days}d"
-                token_health_color = "#10b981"
+                token_health_class = "healthy"
             else:
                 token_health_str = "Token Expired / Refresh Needed"
-                token_health_color = "#ef4444"
+                token_health_class = "expired"
         else:
             token_health_str = "Not Linked"
-            token_health_color = "#94a3b8"
+            token_health_class = "unlinked"
 
         # Header status badge
         trakt_enabled = settings_mgr.is_tracker_enabled("trakt")
@@ -4839,13 +4994,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{ADMIN_BTN}}': admin_btn,
         '{{ACTIVE_PLAYBACK_CARD}}': active_playback_card_html,
         '{{ACCOUNT_DISPLAY}}': ('@' + display_username if display_username else 'Connected' if auth_status else 'Not Connected'),
-        '{{TOKEN_HEALTH_COLOR}}': token_health_color,
+        '{{TOKEN_HEALTH_CLASS}}': token_health_class,
         '{{TOKEN_HEALTH_STR}}': token_health_str,
         '{{ALLOWED_USERS_DISPLAY}}': allowed_users_display,
         '{{ALLOWED_LIBS_DISPLAY}}': allowed_libs_display,
         '{{SYNC_COLLECTION_DISPLAY}}': ('On' if Config.SYNC_COLLECTION else 'Off'),
         '{{UPTIME_STR}}': get_uptime_str(),
-        '{{QUEUE_COLOR}}': ('#f59e0b' if pending_queue > 0 else '#94a3b8'),
+        '{{QUEUE_CLASS}}': ('pending' if pending_queue > 0 else 'clear'),
         '{{PENDING_QUEUE}}': str(pending_queue),
         '{{NOTIF_SUMMARY}}': notif_summary,
         '{{STAT_TOTAL}}': str(stats_data['total']),
@@ -4865,7 +5020,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{MANUAL_SCROBBLE_BTN}}': manual_scrobble_btn_html,
         '{{RETRY_QUEUE_BTN}}': (f'<button onclick="retryQueue()" class="btn-sm" style="background:#d97706;color:#fff;font-weight:600;">🔄 Retry Queue ({pending_queue})</button>' if pending_queue > 0 else ''),
         '{{CLEAR_BUTTON}}': clear_button_html,
-        '{{ACTIONS_HEADER}}': ('<th style="min-width:220px;white-space:nowrap;">Actions</th>' if is_admin else ''),
+        '{{ACTIONS_HEADER}}': ('<th class="activity-actions-header">Actions</th>' if is_admin else ''),
         '{{EVENT_ROWS}}': rows,
         '{{EVENTS_PAGE_INFO}}': events_page_info,
         '{{EVENTS_PAGE_NUM}}': events_page_num,

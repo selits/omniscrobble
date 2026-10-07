@@ -59,6 +59,9 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/metrics`** | `GET` | Public | **Prometheus Metrics**: Exposes thread-safe telemetry in Prometheus text exposition format. |
 | **`/manifest.json`** | `GET` | Public | **PWA Web App Manifest**: Metadata for mobile and desktop PWA installation. |
 | **`/sw.js`** | `GET` | Public | **PWA Service Worker**: Version-locked background asset cache. |
+| **`/static/dashboard.css`** | `GET` | Public | **Dashboard Stylesheet**: Serves the dashboard's external responsive theme and layout styles. |
+| **`/static/dashboard-theme.css`** | `GET` | Public | **Dashboard Theme Tokens**: Serves theme palettes, accent colors, and display density rules. |
+| **`/static/dashboard.js`** | `GET` | Public | **Dashboard Script**: Serves the dashboard's external workspace, integration, and interaction code. |
 
 ---
 
@@ -93,7 +96,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/events`** | `GET` | Public | **Recent Activity Feed**: Returns recent scrobbles, ratings, and Co-Watch sync statuses in JSON. Supports optional pagination (`?limit=10&offset=0`) and returns `{ events: [...], total: N }`. |
+| **`/api/events`** | `GET` | Public | **Recent Activity Feed**: Returns recent scrobbles, ratings, Co-Watch sync statuses, an `is_anime` boolean when known, and per-tracker `tracker_delivery` states (`success`, `queued`, `failed`, or `skipped`). Asynchronous Simkl/AniList/MAL results update the originating event. Supports optional pagination (`?limit=10&offset=0`) and returns `{ events: [...], total: N }`. |
 | **`/api/events/clear`** | `POST` | Admin | **Clear Activity Feed**: Purges the recent events history from disk (`data/events.json`). |
 | **`/api/playback`** | `GET` | Public | **Active Playback**: Returns active streams, calculated progress, and recently finished media. |
 | **`/api/stats/reset`** | `POST` | Admin | **Reset Stats**: Resets lifetime counters (movies, episodes, scrobbles, ratings) in `data/stats.json`. |
