@@ -211,6 +211,22 @@
         .arr-sync-status { font-size:11px; font-weight:600; padding:2px 8px; border-radius:9999px; }
         .arr-sync-status.is-added { background:rgba(6,78,59,.45); border:1px solid #059669; color:#10b981; }
         .arr-sync-status.is-skipped { background:var(--bg-surface); border:1px solid var(--border-color); color:var(--text-muted); }
+        .settings-hub-dialog { min-height: 0; }
+        .settings-hub-content { min-height: 0; -webkit-overflow-scrolling: touch; }
+        .settings-hub-footer { flex-shrink: 0; background: var(--bg-subtle); }
+        #settings-save-all-btn { background: #075985; color: #fff; }
+        .settings-save-hint { color: var(--text-muted); font-size: 11px; flex: 1 1 100%; }
+        .settings-field-help { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+        .watch-list-dialog-panel { display: flex; flex-direction: column; gap: 10px; }
+        .watch-list-dialog-panel > p { margin: 0; }
+        .watch-list-dialog-input { width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-page); color: var(--text-main); font: inherit; }
+        .watch-list-dialog-input:focus { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+        textarea.watch-list-dialog-input { min-height: 150px; resize: vertical; }
+        .watch-list-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+        .watch-list-dialog-confirm { background: var(--accent-color); color: #fff; border: 0; }
+        .watch-list-dialog-confirm.is-danger { background: #b91c1c; color: #fff; }
+        .watch-list-empty { padding: 14px; border: 1px dashed var(--border-color); border-radius: 8px; text-align: center; }
+        .watch-list-empty p { margin: 0 0 10px; }
         .webhook-test-eligibility { font-weight:600; }
         .webhook-test-eligibility.is-eligible { color:#10b981; }
         .webhook-test-eligibility.is-ineligible { color:#fbbf24; }
@@ -282,7 +298,7 @@
         .activity-time, .activity-user { color: var(--text-muted); font-size: 13px; }
         .activity-title { color: var(--text-main); font-weight: 500; }
         .activity-type, .activity-action { display: inline-block; background: var(--bg-subtle); color: var(--text-heading); padding: 2px 8px; border-radius: 4px; font-size: 12px; white-space: nowrap; }
-        .activity-type { color: var(--accent-color); }
+        .activity-type { color: #93c5fd; }
         .activity-user-content, .activity-status-group { display: inline-flex; align-items: center; gap: 6px; }
         .activity-status-group { white-space: nowrap; }
         .activity-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -687,6 +703,19 @@
             .activity-search { width: 100%; }
             table th, table td { padding: 8px 10px !important; font-size: 12px !important; }
             .modal-dialog { padding: 18px 14px; width: 95%; max-height: 90vh; }
+            #settings-modal { padding: 0; align-items: stretch; }
+            #settings-modal .settings-hub-dialog { width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: 100vh; max-height: 100dvh; box-sizing: border-box; border-radius: 0; padding: 16px 14px calc(10px + env(safe-area-inset-bottom)); }
+            #settings-modal .settings-hub-content { padding-right: 0; }
+            #settings-modal .settings-hub-footer { position: sticky; bottom: 0; margin-left: -14px; margin-right: -14px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); flex-direction: column; align-items: stretch; }
+            #settings-modal .settings-hub-footer > div { width: 100%; flex-wrap: wrap; }
+            #settings-modal .settings-hub-footer button { min-height: 44px; flex: 1 1 auto; }
+            #settings-modal .settings-nav-tab { min-height: 42px; justify-content: center; flex: 1 1 calc(50% - 6px); }
+            #settings-modal .settings-nav-tab:last-child { flex-grow: 1; }
+            #settings-modal .settings-content-panel input, #settings-modal .settings-content-panel select, #settings-modal .settings-content-panel textarea { min-height: 42px; font-size: 16px; }
+            #settings-modal .settings-content-panel .btn-sm { min-height: 42px; }
+            .watch-list-dialog-actions button { min-height: 44px; flex: 1 1 120px; }
+            .watch-list-dialog-input { font-size: 16px; }
+            #card-watch-lists .btn-sm, #card-watch-lists input, #card-watch-lists select { min-height: 42px; }
             .modal-dialog .u-grid-template-columns-1fr-1fr {
                 grid-template-columns: 1fr !important;
             }
@@ -703,4 +732,113 @@
             .workspace-nav { position: fixed; z-index: 100; left: 0; right: 0; bottom: 0; margin: 0; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--bg-page) 94%, transparent); backdrop-filter: blur(12px); border-top: 1px solid var(--border-color); border-bottom: 0; -webkit-overflow-scrolling: touch; }
             .workspace-tab { min-height: 44px; padding: 8px 12px; }
             body { padding-bottom: calc(82px + env(safe-area-inset-bottom)); }
+        }
+
+        /* Workspace navigation and activity layouts */
+        .workspace-tab { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+        .workspace-intro { padding: 2px 2px 4px; margin-bottom: 12px; }
+        .workspace-intro h2 { color: var(--text-heading); font-size: 19px; margin: 0 0 4px; }
+        .workspace-intro p { color: var(--text-muted); font-size: 13px; line-height: 1.5; margin: 0; }
+        .health-pill-action { font: inherit; text-align: left; cursor: pointer; }
+        .health-pill-action:hover { border-color: var(--accent-color); color: var(--text-main); }
+        .health-pill-arrow { color: var(--accent-color); font-size: 11px; }
+        .setup-checklist { margin: 0 0 14px; padding: 16px; }
+        .setup-checklist[hidden] { display: none; }
+        .setup-checklist-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+        .setup-checklist-heading h3 { margin: 0; }
+        .setup-checklist-heading p { margin: 5px 0 0; color: var(--text-muted); font-size: 12px; }
+        .setup-checklist-progress { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
+        .setup-checklist ol { display: grid; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
+        .setup-checklist li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px; border: 1px solid var(--border-color); border-radius: 8px; }
+        .setup-step-state { display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; border-radius: 50%; background: var(--bg-subtle); color: var(--text-muted); font-weight: 700; }
+        .setup-checklist li > span:nth-child(2) { display: grid; flex: 1; gap: 3px; min-width: 0; }
+        .setup-checklist li small { color: var(--text-muted); }
+        .setup-checklist li.is-complete .setup-step-state { background: color-mix(in srgb, var(--status-success, #22c55e) 20%, var(--bg-surface)); color: var(--status-success, #22c55e); }
+        .setup-checklist li.is-complete strong { color: var(--text-muted); }
+        .workspace-panel[hidden] { display: none !important; }
+        .workspace-panel:focus { outline: none; }
+        :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+        .playback-content { flex-wrap: nowrap; align-items: flex-start; }
+        .playback-details { min-width: 0; }
+        .playback-heading-row { align-items: flex-start; }
+        .playback-title { line-height: 1.35; }
+
+        @media (min-width: 1200px) {
+            .container { max-width: 1240px; }
+            .info-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+        }
+        @media (min-width: 641px) and (max-width: 900px) {
+            body { padding: 24px 18px; }
+            .container { max-width: 100%; }
+            .workspace-nav { gap: 6px; }
+            .workspace-tab { padding: 8px 10px; font-size: 12px; }
+            .info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .card { padding: 20px; }
+            .modal-dialog-lg { width: min(94vw, 850px); }
+            #card-activity .table-container { overflow: visible; }
+            #card-activity table, #card-activity tbody { display: block; width: 100%; }
+            #card-activity thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+            #card-activity .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-table); background: var(--bg-surface); }
+            #card-activity .activity-row td { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 4px 0 !important; border: 0; font-size: 12px !important; }
+            #card-activity .activity-row td::before { content: attr(data-label); flex: 0 0 62px; color: var(--text-muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+            #card-activity .activity-row .activity-title { grid-column: 1 / -1; grid-row: 1; display: block; padding: 2px 0 7px !important; font-size: 14px !important; line-height: 1.4; overflow-wrap: anywhere; }
+            #card-activity .activity-row .activity-title::before { display: none; }
+            #card-activity .activity-row .activity-time { grid-column: 1 / -1; color: var(--text-muted); font-size: 11px !important; }
+            #card-activity .activity-row .activity-actions-cell { grid-column: 1 / -1; }
+            #card-activity .activity-row .activity-actions-cell::before { content: "Actions"; }
+            #card-activity .activity-row .activity-row-button { min-height: 36px; padding: 6px 9px; }
+            #card-activity .activity-row .activity-empty { display: block; grid-column: 1 / -1; padding: 20px !important; text-align: center; }
+            #card-activity .activity-row:has(.activity-empty) { display: block; }
+        }
+        @media (max-width: 640px) {
+            .workspace-nav { justify-content: flex-start; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; }
+            .workspace-tab { flex: 0 0 auto; scroll-snap-align: start; }
+            .workspace-tab-label { max-width: 105px; overflow: hidden; text-overflow: ellipsis; }
+            .health-strip { gap: 6px; }
+            .health-pill { max-width: 100%; }
+            .playback-content { gap: 12px; }
+            .playback-poster { width: 56px; height: 80px; }
+            .playback-user-device { line-height: 1.4; }
+            #card-activity .table-container { overflow: visible; }
+            #card-activity table, #card-activity tbody { display: block; width: 100%; }
+            #card-activity thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+            #card-activity .activity-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-table); background: var(--bg-surface); }
+            #card-activity .activity-row td { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 4px 0 !important; border: 0; font-size: 12px !important; }
+            #card-activity .activity-row td::before { content: attr(data-label); flex: 0 0 62px; color: var(--text-muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+            #card-activity .activity-row .activity-title { grid-column: 1 / -1; grid-row: 1; display: block; padding: 2px 0 7px !important; font-size: 14px !important; line-height: 1.4; overflow-wrap: anywhere; }
+            #card-activity .activity-row .activity-title::before { display: none; }
+            #card-activity .activity-row .activity-time { grid-column: 1 / -1; color: var(--text-muted); font-size: 11px !important; }
+            #card-activity .activity-row .activity-actions-cell { grid-column: 1 / -1; }
+            #card-activity .activity-row .activity-actions-cell::before { content: "Actions"; }
+            #card-activity .activity-row .activity-row-actions { gap: 6px; }
+            #card-activity .activity-row .activity-row-button { min-height: 36px; padding: 6px 9px; }
+            #card-activity .activity-row .activity-empty { display: block; grid-column: 1 / -1; padding: 20px !important; text-align: center; }
+            #card-activity .activity-row:has(.activity-empty) { display: block; }
+            #events-pagination { padding: 10px 12px; }
+            #events-pagination > div:last-child { width: 100%; justify-content: space-between; }
+            #events-pagination button, #events-page-size { min-height: 40px; }
+        }
+        @media (max-width: 380px) {
+            .workspace-tab { flex: 1 0 54px; flex-direction: column; gap: 2px; padding: 5px 6px; font-size: 10px; }
+            .workspace-tab-label { max-width: 64px; }
+            .workspace-nav { gap: 4px; }
+            .activity-filter-chip { flex: 1 1 auto; }
+            .playback-heading-row { flex-direction: column; }
+        }
+        @media (max-height: 520px) and (max-width: 900px) {
+            #settings-modal .settings-hub-dialog { height: 100dvh; max-height: 100dvh; }
+            #settings-modal .settings-hub-footer { position: static; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+        }
+        @media (prefers-contrast: more) {
+            :root { --border-color: #94a3b8; --border-subtle: #94a3b8; --text-muted: #cbd5e1; }
+            .activity-status-badge, .tracker-delivery-badge, .eco-status-badge, .health-pill { border-width: 2px; }
+            .workspace-tab[aria-selected="true"] { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+        }
+        @media (forced-colors: active) {
+            .workspace-tab, .health-pill, .activity-status-badge, .tracker-delivery-badge { border: 1px solid ButtonText; }
+            .workspace-tab[aria-selected="true"] { outline: 2px solid Highlight; }
+            .activity-status-success, .activity-status-queued, .activity-status-failed { color: CanvasText; }
         }

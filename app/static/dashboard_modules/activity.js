@@ -205,6 +205,7 @@
                 if (pageNum) pageNum.textContent = 'Page 1 of 1';
                 if (prevBtn) prevBtn.disabled = true;
                 if (nextBtn) nextBtn.disabled = true;
+                if (typeof updateSetupChecklist === 'function') updateSetupChecklist();
                 return;
             }
 
@@ -271,17 +272,18 @@
                 const rowClass = ['activity-row', activityFreshKeys.has(activityEventKey(ev)) ? 'activity-row-enter' : ''].filter(Boolean).join(' ');
                 html += `
                 <tr class="${rowClass}">
-                    <td class="activity-time">${escapeHtml(ev.timestamp)}</td>
-                    <td class="activity-title">${escapeHtml(ev.title)}</td>
-                    <td><span class="activity-type">${escapeHtml(ev.type)}</span></td>
-                    <td class="activity-user"><div class="activity-user-content">${serverBadge}<span>${escapeHtml(ev.user)}</span></div></td>
-                    <td><span class="activity-action">${escapeHtml(actionText)}</span></td>
-                    <td><div class="activity-status-group">${statusBadgeHtml}${renderTrackerDeliveryBadges(ev.tracker_delivery)}</div></td>
+                    <td class="activity-time" data-label="When">${escapeHtml(ev.timestamp)}</td>
+                    <td class="activity-title" data-label="Title">${escapeHtml(ev.title)}</td>
+                    <td data-label="Type"><span class="activity-type">${escapeHtml(ev.type)}</span></td>
+                    <td class="activity-user" data-label="User"><div class="activity-user-content">${serverBadge}<span>${escapeHtml(ev.user)}</span></div></td>
+                    <td data-label="Action"><span class="activity-action">${escapeHtml(actionText)}</span></td>
+                    <td data-label="Status"><div class="activity-status-group">${statusBadgeHtml}${renderTrackerDeliveryBadges(ev.tracker_delivery)}</div></td>
                     ${actionCol}
                 </tr>`;
             }
             tbody.innerHTML = html;
             activityFreshKeys.clear();
+            if (typeof updateSetupChecklist === 'function') updateSetupChecklist();
         }
 
         function changeEventsPageSize(newSize) {

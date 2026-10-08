@@ -18,9 +18,9 @@ else
 fi
 
 if command -v markdownlint >/dev/null 2>&1; then
-    markdownlint ${FIX_FLAG} "**/*.md" --ignore .venv
+    markdownlint ${FIX_FLAG} "**/*.md" --ignore .venv --ignore node_modules
 elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    docker run --rm -v "$(pwd):/workdir" -w /workdir ghcr.io/igorshubovych/markdownlint-cli:latest ${FIX_FLAG} "**/*.md" --ignore .venv
+    docker run --rm -v "$(pwd):/workdir" -w /workdir ghcr.io/igorshubovych/markdownlint-cli:latest ${FIX_FLAG} "**/*.md" --ignore .venv --ignore node_modules
 else
     echo "⚠ Error: Neither local 'markdownlint' nor 'docker' is available to run markdownlint."
     exit 1

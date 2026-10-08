@@ -4888,14 +4888,14 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         sync_collection_display = "On"
         token_health_str = "Healthy • Auto-renews in 84d"
         token_health_class = "healthy"
-        status_badge = '<a href="javascript:void(0)" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">Connected as @demo_viewer &bull; Demo</a>'
+        status_badge = '<span role="status" style="background:#047857;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;">Connected as @demo_viewer &bull; Demo</span>'
         admin_btn = '<span style="font-size:12px;color:#38bdf8;background:#1e293b;border:1px solid #334155;padding:4px 10px;border-radius:6px;font-weight:600;">👑 Demo Admin</span>'
         full_webhook_url = "https://plex.example.com/webhook?token=demo_webhook_secret_xyz"
         full_jellyfin_url = "https://jellyfin.example.com/webhook/jellyfin?token=demo_webhook_secret_xyz"
         full_emby_url = "https://emby.example.com/webhook/emby?token=demo_webhook_secret_xyz"
         masked_webhook_url = full_webhook_url
         demo_banner = '<div style="background:linear-gradient(90deg, #1e3a8a, #0284c7);color:#ffffff;padding:12px 18px;border-radius:10px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 4px 6px -1px rgba(0,0,0,0.3);flex-wrap:wrap;gap:10px;"><div style="display:flex;align-items:center;gap:10px;"><span style="font-size:18px;">🎭</span><div><strong style="color:#ffffff;">Demo Mode Active:</strong><span style="color:#e0f2fe;font-size:13px;margin-left:4px;">Simulated authenticated view with mock information. No real accounts or tokens are exposed.</span></div></div><a href="/" style="background:rgba(255,255,255,0.2);color:#ffffff;text-decoration:none;padding:5px 12px;border-radius:6px;font-weight:600;font-size:12px;transition:background 0.15s;" onmouseover="this.style.background=\'rgba(255,255,255,0.3)\'" onmouseout="this.style.background=\'rgba(255,255,255,0.2)\'">Exit Demo &rarr;</a></div>'
-        demo_header_btn = '<a href="/" class="btn-sm" style="background:#0284c7;border:1px solid #38bdf8;color:#ffffff;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:opacity 0.15s;" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Exit demo mode">✕ Exit Demo</a>'
+        demo_header_btn = '<a href="/" class="btn-sm" style="background:#0369a1;border:1px solid #38bdf8;color:#ffffff;text-decoration:none;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:opacity 0.15s;" onmouseover="this.style.opacity=\'0.9\'" onmouseout="this.style.opacity=\'1\'" title="Exit demo mode">✕ Exit Demo</a>'
         demo_footer_link = '<a href="/" style="color:#38bdf8;text-decoration:none;font-weight:600;">Exit Demo</a>'
     else:
         demo_banner = ""
@@ -4969,7 +4969,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
                 else:
                     status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#1e293b;border:1px solid #475569;color:#94a3b8;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">⏸️ {paused_label} &bull; 🔒 Locked</a>'
             elif is_admin:
-                status_badge = f'<a href="/auth" style="background:#10b981;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">{user_label} &bull; Manage</a>'
+                status_badge = f'<a href="/auth" style="background:#047857;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;">{user_label} &bull; Manage</a>'
             else:
                 status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#065f46;color:#a7f3d0;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">{user_label} &bull; 🔒 Locked</a>'
         else:

@@ -21,6 +21,7 @@ __pycache__/
 
 # Testing & Coverage
 .pytest_cache/
+node_modules/
 .coverage
 htmlcov/
 

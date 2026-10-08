@@ -22,6 +22,19 @@
 
         // -------------------------------------------------------------
         // Omniscrobble Unified Settings Hub
+        async function copySettingsField(fieldId, button) {
+            const field = document.getElementById(fieldId);
+            if (!field?.value) return;
+            try {
+                await navigator.clipboard.writeText(field.value);
+                const original = button.textContent;
+                button.textContent = 'Copied';
+                window.setTimeout(() => { button.textContent = original; }, 1400);
+            } catch (error) {
+                const status = document.getElementById('settings-modal-status-msg');
+                if (status) status.textContent = 'Clipboard access was unavailable. Select and copy the client ID manually.';
+            }
+        }
         // -------------------------------------------------------------
         let currentSettingsData = null;
         let activeSettingsServerSubTab = 'plex';
