@@ -79,6 +79,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 - **`app/services/household_manager.py`**: Extends Co-Watch into arbitrary multi-tenant household routing beyond 2 users (`HouseholdManager(CowatchManager)`). Evaluates granular routing rules matching player client devices, media types, and show titles to resolve concurrent scrobble targets across family and roommate profiles while preserving full backward compatibility with legacy 2-user `CO_WATCH_*` environments.
 - **`app/services/loop_prevention.py`**: Thread-safe in-memory cache tracking recently synced rating keys and GUIDs with automated TTL cleanup to prevent infinite ping-pong loops between media servers and trackers.
 - **`app/services/anime_resolver.py`**: Intelligent anime detection using title heuristic scoring, regex normalization, and cached AniList/MAL mappings (`data/anime_cache.json`).
+- **`app/services/watch_list_manager.py`**: Validates and atomically persists private, versioned movie/TV/anime watch lists (`data/watch_lists.json`), including ordering and duplicate-safe JSON/TXT import and export.
 
 ### 4. Client Layer
 
@@ -149,7 +150,8 @@ omniscrobble/
 │   │       ├── tracker_auth.js      # Tracker OAuth and token workflows
 │   │       ├── webhook_inspector.js # Webhook payload inspection and replay
 │   │       ├── webhook_tests.js     # Webhook test and diagnostics operations
-│   │       └── wrapped.js           # Annual OmniWrapped report interactions
+│   │       ├── wrapped.js           # Annual OmniWrapped report interactions
+│   │       └── watch_lists.js       # Personal watch-list dashboard controls
 │   ├── clients/                     # External API client implementations
 │   │   ├── trakt_client.py          # Trakt OAuth device flow, scrobbles, ratings, collection sync & search
 │   │   ├── simkl_client.py          # Simkl REST API client for OAuth Device PIN flow & dual-scrobbling
@@ -171,6 +173,7 @@ omniscrobble/
 │   ├── services/                    # Core business logic and background services
 │   │   ├── analytics_manager.py     # Personal viewing analytics, watch time calculation, co-watch ratio & OmniWrapped engine
 │   │   ├── anime_resolver.py        # Anime detection heuristics, title normalization & GUID caching
+│   │   ├── watch_list_manager.py    # Versioned local watch lists and JSON/TXT interchange
 │   │   ├── arr_bridge.py            # Content Bridge manager for Trakt watchlist sync & ecosystem health
 │   │   ├── atomic_writer.py         # Crash-resilient atomic JSON/text file persistence with fsync
 │   │   ├── cloud_sync_manager.py    # Automated background cloud reconciliation, Letterboxd CSV snapshots & mutex locks
@@ -220,7 +223,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (112 endpoints)
+│   ├── API.md                       # Full REST API specification (123 endpoints)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling

@@ -926,6 +926,10 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         const demoOmniWrapped = {json.dumps(demo_mgr.get_demo_omniwrapped())};
 
         const clientState = {{
+            watchLists: [{{ id: 'demo-watch-list', name: 'Weekend picks', items: [
+                {{ id: 'demo-watch-movie', title: 'Arrival', media_type: 'movie', year: 2016, ids: {{}}, position: 0 }},
+                {{ id: 'demo-watch-anime', title: 'Frieren: Beyond Journey’s End', media_type: 'anime', year: 2023, ids: {{ anilist: 154587 }}, position: 1 }}
+            ] }}],
             shows: [...initialShows],
             devices: [...initialDevices],
             events: [...initialEvents],
@@ -1067,6 +1071,38 @@ def generate_static_demo(output_dir: Path = None) -> Path:
                     headers: {{ 'Content-Type': 'application/json' }}
                 }});
             }};
+
+            // Personal watch-list workspace (in-memory demo only)
+            if (path.startsWith('/api/watch-lists')) {{
+                if (path.endsWith('/anime-search')) return jsonResp({{ match: {{ title: 'Frieren: Beyond Journey’s End', media_type: 'anime', year: 2023, ids: {{ anilist: 154587 }} }} }});
+                if (path.endsWith('/export')) {{
+                    const text = '# Omniscrobble Watch Lists v1\\n' + clientState.watchLists.map(list => `## ${{list.name}}\\n` + list.items.map(item => `[${{item.media_type}}]\\t${{item.title}}\\t${{item.year || ''}}`).join('\\n')).join('\\n\\n');
+                    return new Response(url.searchParams.get('format') === 'json' ? JSON.stringify({{version:1,lists:clientState.watchLists}}, null, 2) : text, {{status:200,headers:{{'Content-Type':url.searchParams.get('format') === 'json' ? 'application/json' : 'text/plain'}}}});
+                }}
+                if (path.endsWith('/import/preview')) return jsonResp({{list_count:1,item_count:1,duplicates_skipped:0}});
+                if (path.endsWith('/import')) return jsonResp({{status:'ok',lists:clientState.watchLists,duplicates_skipped:0}});
+                if (path === '/api/watch-lists') {{
+                    if (method === 'GET') return jsonResp({{version:1,lists:clientState.watchLists,cowatch_available:true}});
+                    if (method === 'POST') {{ const body=init.body?JSON.parse(init.body):{{}}; const list={{id:'demo-'+Date.now(),name:body.name,items:[]}}; clientState.watchLists.push(list); return jsonResp(list); }}
+                }}
+                const parts = path.split('/').filter(Boolean), listId = parts[2], list = clientState.watchLists.find(entry => entry.id === listId);
+                if (!list) return jsonResp({{detail:'Watch list not found'}},404);
+                if (parts.length === 3 && method === 'PATCH') {{ const body=JSON.parse(init.body||'{{}}'); list.name=body.name; return jsonResp(list); }}
+                if (parts.length === 3 && method === 'DELETE') {{ clientState.watchLists=clientState.watchLists.filter(entry=>entry.id!==listId); return jsonResp({{status:'ok'}}); }}
+                if (parts[3] === 'items' && parts.length === 4 && method === 'POST') {{ const body=JSON.parse(init.body||'{{}}'); const item={{...body,id:'demo-item-'+Date.now(),position:list.items.length,ids:body.ids||{{}}}}; list.items.push(item); return jsonResp(item); }}
+                if (parts[3] === 'items' && parts[4] === 'order' && method === 'PATCH') {{ const order=JSON.parse(init.body||'{{}}').item_ids; list.items.sort((a,b)=>order.indexOf(a.id)-order.indexOf(b.id)); return jsonResp(list); }}
+                if (parts[3] === 'items' && parts.length === 5 && method === 'DELETE') {{ list.items=list.items.filter(item=>item.id!==parts[4]); return jsonResp({{status:'ok'}}); }}
+            }}
+
+            if (path.endsWith('/api/arr/lookup')) {{
+                const term = url.searchParams.get('term') || 'Sample title';
+                const type = url.searchParams.get('type') === 'movie' ? 'movie' : 'series';
+                return jsonResp({{configured:true,results:[{{title:term,year:type==='movie'?2024:2023,overview:'Demo catalog match',network:type==='movie'?'Studio':'Network',poster_url:null,in_library:false,payload:{{title:term,year:type==='movie'?2024:2023,tmdbId:type==='movie'?12345:undefined,tvdbId:type==='series'?54321:undefined}}}}]}});
+            }}
+
+            if (path === '/api/cowatch') {{
+                return jsonResp({{status:{{shows:clientState.shows,co_watch_user:'demo_partner',co_watch_players:[]}},configured_users:[]}});
+            }}
 
             // 1. Playback status
             if (path.endsWith('/api/playback')) {{

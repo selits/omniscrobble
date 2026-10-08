@@ -6,6 +6,7 @@
         }
         const workspaceCards = {
             operations: ['active-playback-card', 'card-activity'],
+            'watch-lists': ['card-watch-lists'],
             trackers: ['card-server-config', 'card-ecosystem', 'card-multi-tracker', 'card-reconciliation'],
             automation: ['card-cowatch', 'card-arr-bridge'],
             analytics: ['card-analytics'],
@@ -32,7 +33,7 @@
             { label: 'Reconcile Trakt and Media Server', detail: 'Scan library watch history', run: () => { switchWorkspace('trackers'); openReconcileModal(); } },
             { label: 'Add Media with Sonarr or Radarr', detail: 'Search the acquisition catalog', run: () => openAddArrModal() },
             { label: 'Webhook Inspector', detail: 'Inspect recent incoming events', run: () => openWebhookDebuggerModal() },
-            ...Object.entries({ operations: 'Operations', trackers: 'Trackers & Hub', automation: 'Automation', analytics: 'Analytics', diagnostics: 'System' }).map(([id, label]) => ({ label: `Go to ${label}`, detail: 'Switch dashboard workspace', run: () => switchWorkspace(id) }))
+            ...Object.entries({ operations: 'Operations', 'watch-lists': 'Watch Lists', trackers: 'Trackers & Hub', automation: 'Automation', analytics: 'Analytics', diagnostics: 'System' }).map(([id, label]) => ({ label: `Go to ${label}`, detail: 'Switch dashboard workspace', run: () => switchWorkspace(id) }))
         ];
         let commandPaletteMatches = [];
         let commandPaletteIndex = 0;

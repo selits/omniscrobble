@@ -54,6 +54,7 @@ from app.clients.serializd_client import SerializdClient
 from app.clients.simkl_client import SimklClient
 from app.clients.tmdb_client import TMDbClient
 from app.services.anime_resolver import AnimeResolver
+from app.services.watch_list_manager import WatchListManager, WatchListError
 from app.services.multi_tracker import MultiTrackerManager
 from app.services.loop_prevention import loop_prevention
 from app.services.reverse_sync_manager import reverse_sync_mgr
@@ -122,6 +123,7 @@ anime_resolver = AnimeResolver(
     mal_client=mal,
     kitsu_client=kitsu,
 )
+watch_list_mgr = WatchListManager(Config.BASE_DIR / "data" / "watch_lists.json")
 multi_tracker = MultiTrackerManager(
     Config,
     simkl_client=simkl,
@@ -893,6 +895,20 @@ def update_event_tracker_delivery(event_id: str, delivery: dict[str, str]) -> No
             return
 
 
+def update_event_cowatch_status(event_id: str, status: str) -> None:
+    """Persist the completed outcome of a background Co-Watch sync."""
+    for event_entry in recent_events:
+        if event_entry.get("event_id") == event_id:
+            current = event_entry.setdefault("cowatch_status", {})
+            current.update({
+                "status": status,
+                "scheduled": False,
+                "synced": status == "success",
+            })
+            save_recent_events()
+            return
+
+
 def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_status: Optional[dict[str, Any]] = None) -> str:
     if media.media_type == "episode":
         title_str = f"{media.show_title} S{media.season:02d}E{media.episode:02d} - {media.title}"
@@ -959,9 +975,10 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
             target_users = []
 
     if not target_users:
-        return
+        return "skipped"
 
     tasks = []
+    immediate_outcomes: list[str] = []
     watched_at_ts = datetime.datetime.now(timezone.utc).isoformat()
 
     for target_user in target_users:
@@ -976,19 +993,35 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
                     if is_temporary_error(res):
                         queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=u)
                         metrics_registry.record_cowatch("queued")
+                        return "queued"
                     elif isinstance(res, dict) and res.get("status") == "error":
                         logger.warning(f"Household Trakt error for @{u}: {res.get('error')}")
-                        metrics_registry.record_cowatch("failed")
+                        queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "Trakt sync failed")), username=u)
+                        metrics_registry.record_cowatch("queued")
+                        return "queued"
                     else:
                         logger.info(f"Household sync succeeded for profile @{u} (Trakt): {parsed.title}")
                         metrics_registry.record_cowatch("success")
+                        return "success"
                 except Exception as e:
                     logger.error(f"Error during household Trakt sync for @{u}: {e}")
                     queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(e), username=u)
-                    metrics_registry.record_cowatch("failed")
+                    metrics_registry.record_cowatch("queued")
+                    return "queued"
             tasks.append(_sync_trakt())
         else:
-            logger.debug(f"Household profile @{target_user} Trakt is not authenticated.")
+            history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
+            logger.warning(
+                f"Household profile @{target_user} Trakt is not authenticated; queueing watched history for retry."
+            )
+            queue_mgr.enqueue(
+                "sync_history",
+                history_payload,
+                error="Co-Watch target Trakt profile is not authenticated",
+                username=target_user,
+            )
+            metrics_registry.record_cowatch("queued")
+            immediate_outcomes.append("queued")
 
         # 2. Partner/Profile Simkl
         cw_simkl = user_mgr.get_tracker_client(target_user, "simkl")
@@ -997,14 +1030,19 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
                 try:
                     logger.info(f"Household sync triggering for profile @{u} (Simkl): {parsed.title}")
                     if action == "rate":
-                        await client.sync_ratings(parsed, rating=int(parsed.rating or 10))
+                        res = await client.sync_ratings(parsed, rating=int(parsed.rating or 10))
                     else:
                         res = await client.scrobble_stop(parsed, progress=parsed.progress)
-                        await client.sync_history(parsed, watched_at=watched_at_ts)
+                        history_res = await client.sync_history(parsed, watched_at=watched_at_ts)
                         if isinstance(res, dict) and res.get("status") == "error":
                             logger.warning(f"Household Simkl error for @{u}: {res.get('error')}")
+                            return "failed"
+                        if isinstance(history_res, dict) and history_res.get("status") == "error":
+                            return "failed"
+                    return "failed" if isinstance(res, dict) and res.get("status") == "error" else "success"
                 except Exception as e:
                     logger.warning(f"Error during household Simkl sync for @{u}: {e}")
+                    return "failed"
             tasks.append(_sync_simkl())
 
         # 3. Partner/Profile Anime Trackers (AniList & MAL)
@@ -1017,31 +1055,64 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
             async def _sync_anime(u=target_user, a_auth=ani_auth, m_auth=mal_auth, c_ani=cw_anilist, c_mal=cw_mal):
                 try:
                     resolved_anime = await anime_resolver.resolve(parsed)
-                    if resolved_anime and resolved_anime.get("is_anime"):
-                        if action == "rate":
-                            if a_auth:
-                                await c_ani.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
-                            if m_auth and resolved_anime.get("mal_id"):
-                                await c_mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
-                        else:
-                            if a_auth:
-                                await c_ani.update_progress(
-                                    resolved_anime["anilist_id"],
-                                    resolved_anime["episode_number"],
-                                    resolved_anime.get("episodes"),
-                                )
-                            if m_auth and resolved_anime.get("mal_id"):
-                                await c_mal.update_progress(
-                                    resolved_anime["mal_id"],
-                                    resolved_anime["episode_number"],
-                                    resolved_anime.get("episodes"),
-                                )
+                    if not resolved_anime or not resolved_anime.get("is_anime"):
+                        return "skipped"
+                    if action == "rate":
+                        if a_auth:
+                            await c_ani.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
+                        if m_auth and resolved_anime.get("mal_id"):
+                            await c_mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
+                    else:
+                        if a_auth:
+                            await c_ani.update_progress(
+                                resolved_anime["anilist_id"],
+                                resolved_anime["episode_number"],
+                                resolved_anime.get("episodes"),
+                            )
+                        if m_auth and resolved_anime.get("mal_id"):
+                            await c_mal.update_progress(
+                                resolved_anime["mal_id"],
+                                resolved_anime["episode_number"],
+                                resolved_anime.get("episodes"),
+                            )
+                    return "success"
                 except Exception as e:
                     logger.warning(f"Error during household anime sync for @{u}: {e}")
+                    return "failed"
             tasks.append(_sync_anime())
 
     if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        immediate_outcomes.extend(
+            "failed" if isinstance(result, BaseException) else result
+            for result in results
+        )
+
+    outcomes = [outcome for outcome in immediate_outcomes if outcome in {"success", "queued", "failed"}]
+    if not outcomes:
+        return "skipped"
+    if "success" in outcomes and any(outcome != "success" for outcome in outcomes):
+        return "partial"
+    if "success" in outcomes:
+        return "success"
+    if "queued" in outcomes and "failed" in outcomes:
+        return "partial"
+    if "queued" in outcomes:
+        return "queued"
+    return "failed"
+
+
+async def execute_cowatch_sync_for_event(parsed: ParsedMedia, action: str, targets: list[str], event_id: str) -> None:
+    """Run Co-Watch delivery and update the originating activity event."""
+    try:
+        status = await execute_cowatch_sync(parsed, action, targets=targets)
+    except Exception:
+        logger.exception("Unexpected error while executing Co-Watch sync for event %s", event_id)
+        status = "failed"
+    if status not in {"success", "queued", "partial", "failed", "skipped"}:
+        logger.error("Co-Watch sync for event %s returned an invalid status: %r", event_id, status)
+        status = "failed"
+    update_event_cowatch_status(event_id, status)
 
 
 @app.get("/webhook")
@@ -1245,6 +1316,15 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                 if finished and finished.get("scrobbled"):
                     metrics_registry.record_request(endpoint_name, 200)
                     return {"status": "ignored", "reason": "Watch already recorded for this playback session"}
+                if finished:
+                    # Some servers send a stop event with a zero or missing
+                    # offset. Use the best position captured during playback.
+                    parsed = parsed.model_copy(update={
+                        "progress": max(parsed.progress, float(finished.get("progress") or 0.0)),
+                        "duration_ms": parsed.duration_ms or finished.get("duration_ms"),
+                        "view_offset_ms": parsed.view_offset_ms if parsed.view_offset_ms is not None else finished.get("view_offset_ms"),
+                    })
+                    scrobble_payload = parsed.to_trakt_scrobble_payload()
                 if parsed.progress >= threshold:
                     action_taken = "scrobble_stop"
                     logger.info(f"Scrobble stop (watched past threshold {threshold}%): {parsed.title} ({parsed.progress:.1f}%)")
@@ -1259,10 +1339,9 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                 else:
                     action_taken = "playback_stopped"
                     logger.info(f"Playback stopped below threshold {threshold}%: {parsed.title} ({parsed.progress:.1f}%)")
-                    if parsed.progress >= 1.0:
-                        result = await active_client.scrobble_stop(scrobble_payload)
-                    else:
-                        result = {"status": "ignored", "reason": "Progress below 1.0%"}
+                    # Always close Trakt's in-progress scrobble. The watched
+                    # threshold controls history/Co-Watch, not session cleanup.
+                    result = await active_client.scrobble_stop(scrobble_payload)
             else:
                 action_taken = f"skipped_{event}"
         else:
@@ -1276,29 +1355,35 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
         targets = cowatch_mgr.resolve_targets(parsed)
         is_sync_trigger = (event == "media.scrobble" or (action_taken == "scrobble_stop" and parsed.progress >= threshold))
         cowatch_info = None
+        cowatch_targets_to_sync: list[str] = []
 
         if is_sync_trigger:
             if targets or eligible:
-                primary_target = targets[0] if targets else Config.CO_WATCH_USER
-                target_str = ", ".join(targets) if len(targets) > 1 else primary_target
-                sync_reason = f"Household routing to {target_str}" if len(targets) > 1 else reason
+                cowatch_targets_to_sync = targets or ([Config.CO_WATCH_USER] if eligible and Config.CO_WATCH_USER else [])
+                primary_target = cowatch_targets_to_sync[0] if cowatch_targets_to_sync else Config.CO_WATCH_USER
+                target_str = ", ".join(cowatch_targets_to_sync) if len(cowatch_targets_to_sync) > 1 else primary_target
+                sync_reason = f"Household routing to {target_str}" if len(cowatch_targets_to_sync) > 1 else reason
                 cowatch_info = {
-                    "synced": bool(targets or eligible),
+                    "synced": False,
+                    "scheduled": True,
+                    "status": "scheduled",
                     "reason": sync_reason,
                     "target": primary_target,
-                    "targets": targets,
+                    "targets": cowatch_targets_to_sync,
                 }
-                asyncio.create_task(execute_cowatch_sync(parsed, action_taken, targets=targets))
             else:
-                cowatch_info = {"synced": False, "reason": reason, "target": Config.CO_WATCH_USER, "targets": []}
+                cowatch_info = {"synced": False, "scheduled": False, "status": "skipped", "reason": reason, "target": Config.CO_WATCH_USER, "targets": []}
         elif eligible or targets:
             primary_target = targets[0] if targets else Config.CO_WATCH_USER
             cowatch_info = {"synced": False, "in_list": True, "reason": reason, "target": primary_target, "targets": targets}
 
         event_id = log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
 
+        if cowatch_targets_to_sync:
+            asyncio.create_task(execute_cowatch_sync_for_event(parsed, action_taken, cowatch_targets_to_sync, event_id))
+
         if action_taken in ("mark_watched", "scrobble_stop", "rate"):
-            partner_target = (", ".join(targets) if targets else Config.CO_WATCH_USER) if (cowatch_info and cowatch_info.get("synced")) else None
+            partner_target = (", ".join(cowatch_targets_to_sync) if cowatch_targets_to_sync else None) if (cowatch_info and cowatch_info.get("scheduled")) else None
             asyncio.create_task(notifier.dispatch(parsed, action_taken, cowatch_partner=partner_target))
 
         # Real-time multi-server watched status and rating mirroring
@@ -2083,6 +2168,9 @@ async def export_backup(request: Request, passphrase: Optional[str] = None):
             zf.write(EVENTS_FILE, arcname="data/events.json")
         if Config.SETTINGS_FILE.exists():
             zf.write(Config.SETTINGS_FILE, arcname="data/settings.json")
+        watch_lists_file = Config.BASE_DIR / "data" / "watch_lists.json"
+        if watch_lists_file.exists():
+            zf.write(watch_lists_file, arcname="data/watch_lists.json")
         diary_file = getattr(Config, "LETTERBOXD_DIARY_FILE", None)
         if diary_file and diary_file.exists():
             zf.write(diary_file, arcname="data/letterboxd_diary.json")
@@ -2170,6 +2258,7 @@ async def import_backup(request: Request):
         cowatch_mgr._load_shows()
         cowatch_mgr._load_devices()
         settings_mgr._load_settings()
+        watch_list_mgr._document = watch_list_mgr._load()
         scrobble_stats.clear()
         scrobble_stats.update(load_scrobble_stats())
         reload_recent_events_in_place()
@@ -2816,6 +2905,128 @@ class WatchlistRequest(BaseModel):
     title: str
     year: Optional[int] = None
     ids: dict[str, Any] = {}
+
+
+class WatchListCreateRequest(BaseModel):
+    name: str
+
+
+class WatchListItemRequest(BaseModel):
+    title: str
+    media_type: str
+    year: Optional[int] = None
+    ids: dict[str, Any] = Field(default_factory=dict)
+    poster_url: Optional[str] = None
+
+
+class WatchListOrderRequest(BaseModel):
+    item_ids: list[str]
+
+
+class WatchListImportRequest(BaseModel):
+    data: Any
+    replace: bool = False
+
+
+def _watch_list_operation(operation):
+    try:
+        return operation()
+    except WatchListError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/watch-lists")
+def get_watch_lists(request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return {**watch_list_mgr.get_all(), "cowatch_available": bool(Config.CO_WATCH_USER)}
+
+
+@app.get("/api/watch-lists/anime-search")
+async def search_watch_list_anime(title: str, request: Request, year: Optional[int] = None):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    clean_title = title.strip()
+    if not clean_title or len(clean_title) > 200:
+        raise HTTPException(status_code=400, detail="A title of 1 to 200 characters is required")
+    match = await anilist.search_anime(clean_title, year=year)
+    if not match:
+        return {"match": None}
+    return {"match": {"title": match.get("title_preferred") or clean_title,
+                       "media_type": "anime", "year": match.get("year"),
+                       "ids": {"anilist": match.get("id"), "mal": match.get("idMal")},
+                       "poster_url": match.get("cover_image")}}
+
+
+@app.post("/api/watch-lists")
+def create_watch_list(payload: WatchListCreateRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return _watch_list_operation(lambda: watch_list_mgr.create_list(payload.name))
+
+
+@app.patch("/api/watch-lists/{list_id}")
+def rename_watch_list(list_id: str, payload: WatchListCreateRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return _watch_list_operation(lambda: watch_list_mgr.rename_list(list_id, payload.name))
+
+
+@app.delete("/api/watch-lists/{list_id}")
+def delete_watch_list(list_id: str, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    _watch_list_operation(lambda: watch_list_mgr.delete_list(list_id))
+    return {"status": "ok"}
+
+
+@app.post("/api/watch-lists/{list_id}/items")
+def add_watch_list_item(list_id: str, payload: WatchListItemRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return _watch_list_operation(lambda: watch_list_mgr.add_item(list_id, payload.model_dump()))
+
+
+@app.patch("/api/watch-lists/{list_id}/items/order")
+def reorder_watch_list_items(list_id: str, payload: WatchListOrderRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return _watch_list_operation(lambda: watch_list_mgr.reorder(list_id, payload.item_ids))
+
+
+@app.delete("/api/watch-lists/{list_id}/items/{item_id}")
+def delete_watch_list_item(list_id: str, item_id: str, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    _watch_list_operation(lambda: watch_list_mgr.remove_item(list_id, item_id))
+    return {"status": "ok"}
+
+
+@app.post("/api/watch-lists/import/preview")
+def preview_watch_list_import(payload: WatchListImportRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return _watch_list_operation(lambda: watch_list_mgr.preview_import(payload.data, payload.replace))
+
+
+@app.post("/api/watch-lists/import")
+def import_watch_lists(payload: WatchListImportRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return _watch_list_operation(lambda: watch_list_mgr.apply_import(payload.data, payload.replace))
+
+
+@app.get("/api/watch-lists/export")
+def export_watch_lists(request: Request, format: str = "json"):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    if format == "json":
+        content, media_type, filename = json.dumps(watch_list_mgr.get_all(), indent=2, ensure_ascii=False), "application/json", "watch-lists.json"
+    elif format == "txt":
+        content, media_type, filename = watch_list_mgr.export_text(), "text/plain; charset=utf-8", "watch-lists.txt"
+    else:
+        raise HTTPException(status_code=400, detail="format must be json or txt")
+    return Response(content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.post("/api/watchlist")

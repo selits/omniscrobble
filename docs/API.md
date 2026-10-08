@@ -30,6 +30,7 @@ This document provides the complete API reference for **Omniscrobble**, includin
 14. [Synthetic Webhook Testing](#14-synthetic-webhook-testing)
 15. [Diagnostics & Webhook Debugger](#15-diagnostics--webhook-debugger)
 16. [Personal Analytics & OmniWrapped](#16-personal-analytics--omniwrapped)
+17. [Personal Watch Lists](#17-personal-watch-lists)
 
 ---
 
@@ -96,7 +97,7 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/events`** | `GET` | Public | **Recent Activity Feed**: Returns recent scrobbles, ratings, Co-Watch sync statuses, an `is_anime` boolean when known, and per-tracker `tracker_delivery` states (`success`, `queued`, `failed`, or `skipped`). Asynchronous Simkl/AniList/MAL results update the originating event. Supports optional pagination (`?limit=10&offset=0`) and returns `{ events: [...], total: N }`. |
+| **`/api/events`** | `GET` | Public | **Recent Activity Feed**: Returns recent scrobbles, ratings, Co-Watch sync statuses (`scheduled`, `success`, `queued`, `partial`, `failed`, or `skipped`), an `is_anime` boolean when known, and per-tracker `tracker_delivery` states (`success`, `queued`, `failed`, or `skipped`). Asynchronous sync results update the originating event. Supports optional pagination (`?limit=10&offset=0`) and returns `{ events: [...], total: N }`. |
 | **`/api/events/clear`** | `POST` | Admin | **Clear Activity Feed**: Purges the recent events history from disk (`data/events.json`). |
 | **`/api/playback`** | `GET` | Public | **Active Playback**: Returns active streams, calculated progress, and recently finished media. |
 | **`/api/stats/reset`** | `POST` | Admin | **Reset Stats**: Resets lifetime counters (movies, episodes, scrobbles, ratings) in `data/stats.json`. |
@@ -125,8 +126,8 @@ Omniscrobble utilizes a multi-level access control model based on `WEBHOOK_SECRE
 | **`/api/queue/retry`** | `POST` | Admin | **Flush Queue**: Immediately drains and retries all pending offline items against Trakt. |
 | **`/api/queue/clear`** | `POST` | Admin | **Purge Queue**: Clears all pending and failed offline items from the SQLite database. |
 | **`/api/queue/prune`** | `POST` | Admin | **Prune Queue Retention**: Prunes completed and expired offline queue records older than configured retention period (default 90 days). Accepts optional JSON body `{"days": <int>}`. |
-| **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped archive containing all OAuth tokens, settings, and SQLite queue. Supports AES-256-GCM encryption via `?passphrase=`, `x-backup-passphrase` header, or `CONFIG_ENCRYPTION_KEY`. |
-| **`/api/restore`** | `POST` | Admin | **Restore Backup**: Accepts a multipart archive upload with Zip Slip path-traversal protection and transparent AES-256-GCM decryption via form field `passphrase` or header. |
+| **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped archive containing OAuth tokens, settings, SQLite queue, and private watch lists. Supports AES-256-GCM encryption via `?passphrase=`, `x-backup-passphrase` header, or `CONFIG_ENCRYPTION_KEY`. |
+| **`/api/restore`** | `POST` | Admin | **Restore Backup**: Accepts a multipart archive upload with Zip Slip path-traversal protection and transparent AES-256-GCM decryption via form field `passphrase` or header. Restored watch-list data is reloaded into memory. |
 
 ---
 
@@ -279,3 +280,25 @@ The browser sends the matching `csrf_token` cookie value in `X-CSRF-Token`. Upst
 | --- | :---: | :---: | --- |
 | **`/api/analytics/summary`** | `GET` | Public | **Viewing Analytics Summary**: Returns aggregated watch metrics (cumulative high-precision watch time calculated from exact media runtimes, completed scrobbles, unique titles, completed movies/episodes, star ratings, solo vs shared co-watching ratios, and media server platform distribution). Supports `?period=all\|year\|month\|week`, `?demo=true`, and applies privacy shielding for non-admin callers. |
 | **`/api/analytics/wrapped`** | `GET` | Public | **OmniWrapped Retrospective**: Computes an annual viewing celebration card including personality archetype heuristics, top binge show, co-watch breakdown, and genre telemetry. Supports `?year=YYYY` (defaults to current year), `?demo=true`, and applies partner/device privacy masking for non-admin callers. |
+
+---
+
+## 17. Personal Watch Lists
+
+All watch-list endpoints require admin authorization. Cookie-authenticated mutations also require the dashboard's CSRF token. Data is stored locally in `data/watch_lists.json` and is independent from the Trakt `/api/watchlist` integration.
+
+| Endpoint | Method | Auth | Description |
+| --- | :---: | :---: | --- |
+| **`/api/watch-lists`** | `GET` | Admin | Return all private lists and items, plus whether a Co-Watch partner account is configured. |
+| **`/api/watch-lists`** | `POST` | Admin | Create a list. Body: `{"name":"Weekend picks"}`. |
+| **`/api/watch-lists/{list_id}`** | `PATCH` | Admin | Rename a list. Body: `{"name":"New name"}`. |
+| **`/api/watch-lists/{list_id}`** | `DELETE` | Admin | Delete a list and its items. |
+| **`/api/watch-lists/{list_id}/items`** | `POST` | Admin | Add a movie, TV show, or anime. Body includes `title`, `media_type`, optional `year`, `ids`, and `poster_url`. Duplicate title/type/year entries in the same list are rejected. |
+| **`/api/watch-lists/{list_id}/items/order`** | `PATCH` | Admin | Reorder all items. Body: `{"item_ids":["...","..."]}`; each saved item ID must appear exactly once. |
+| **`/api/watch-lists/{list_id}/items/{item_id}`** | `DELETE` | Admin | Remove one item. |
+| **`/api/watch-lists/anime-search`** | `GET` | Admin | Search AniList by `title` and optional `year`; returns a suggested item or `{"match":null}`. |
+| **`/api/watch-lists/import/preview`** | `POST` | Admin | Validate JSON or exported TXT before applying. Body: `{"data":<JSON object or text>,"replace":false}`. Reports list/item counts and duplicates. |
+| **`/api/watch-lists/import`** | `POST` | Admin | Apply validated import. `replace:false` merges items into same-name lists and adds new lists; `replace:true` replaces all lists. Duplicate items are skipped and counted. |
+| **`/api/watch-lists/export?format=json\|txt`** | `GET` | Admin | Download all lists as lossless JSON or readable TXT. The dashboard also copies the TXT representation to the clipboard. |
+
+TXT format uses `## List name` headings and `[movie]`, `[tv]`, or `[anime]` item lines. JSON retains IDs, ordering, and metadata; TXT retains list names, titles, types, and years.

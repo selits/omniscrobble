@@ -24,6 +24,7 @@ MODULES = (
     "tracker_auth.js",
     "webhook_inspector.js",
     "wrapped.js",
+    "watch_lists.js",
     "command_palette.js",
 )
 

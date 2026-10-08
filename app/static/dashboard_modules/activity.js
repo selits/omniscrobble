@@ -107,6 +107,19 @@
                 return `<span class="activity-status-badge activity-status-cowatch" title="Synced to ${escapeHtml(targetTxt)}: ${reasonTxt}">👥 Co-Watched</span>`;
             }
 
+            if (cw && cw.status === 'scheduled') {
+                return '<span class="activity-status-badge activity-status-queued" title="Co-Watch sync is running">⏳ Co-Watch pending</span>';
+            }
+            if (cw && cw.status === 'queued') {
+                return '<span class="activity-status-badge activity-status-queued" title="Co-Watch history is waiting for retry">⏳ Co-Watch queued</span>';
+            }
+            if (cw && cw.status === 'partial') {
+                return '<span class="activity-status-badge activity-status-failed" title="Some Co-Watch destinations did not sync">! Co-Watch partial</span>';
+            }
+            if (cw && cw.status === 'failed') {
+                return '<span class="activity-status-badge activity-status-failed" title="Co-Watch sync failed">✕ Co-Watch failed</span>';
+            }
+
             if (stat === 'ok' || stat === '200' || stat === '201') {
                 let label = '✓ OK';
                 let tooltip = 'Action successful';

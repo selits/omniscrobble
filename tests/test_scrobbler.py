@@ -829,6 +829,24 @@ async def test_process_queue_success(tmp_path):
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_process_queue_keeps_user_history_pending_until_authenticated(tmp_path):
+    db_file = tmp_path / "process_queue_unauthenticated.db"
+    qm = QueueManager(db_file)
+    qm.enqueue("sync_history", {"episodes": [{"title": "Carrie"}]}, username="partner")
+
+    disconnected_client = MagicMock(spec=TraktClient)
+    disconnected_client.is_authenticated.return_value = False
+    profiles = MagicMock()
+    profiles.get_client.return_value = disconnected_client
+
+    stats = await process_queue(MagicMock(spec=TraktClient), qm, user_mgr=profiles)
+
+    assert stats["succeeded"] == 0
+    assert stats["failed"] == 0
+    assert qm.get_pending_count() == 1
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_process_queue_transient_failure(tmp_path):
     db_file = tmp_path / "process_queue_fail.db"
     qm = QueueManager(db_file)
@@ -2490,14 +2508,14 @@ async def test_media_stop_below_one_percent():
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
          patch.object(notifier, "dispatch", new_callable=AsyncMock) as mock_dispatch:
+        mock_stop.return_value = {"action": "pause"}
 
         res = await client.post("/webhook", data={"payload": json.dumps(stop_payload)})
         assert res.status_code == 200
         data = res.json()
         assert data["action"] == "playback_stopped"
-        assert data["result"]["status"] == "ignored"
         assert scrobble_stats["total"] == initial_total
-        mock_stop.assert_not_called()
+        mock_stop.assert_called_once()
         mock_dispatch.assert_not_called()
 
 
@@ -3062,8 +3080,26 @@ def test_playback_manager_zero_offset_progress_estimation():
     assert PlaybackManager.estimate_position({"duration_ms": None}) is None
 
 
-def test_plex_parser_omitted_view_offset_defaults_to_zero():
-    """Verify Plex webhook without viewOffset sets view_offset_ms to 0 rather than None."""
+def test_playback_manager_stop_preserves_last_known_progress():
+    from app.services.playback_manager import PlaybackManager
+
+    manager = PlaybackManager()
+    playing = ParsedMedia(
+        event="media.play", username="review-test", media_type="episode",
+        title="Episode 2", show_title="Carrie", progress=42,
+        duration_ms=2_400_000, view_offset_ms=1_008_000,
+        player="Review Player",
+    )
+    manager.update_playback(playing, state="playing")
+    stopped = playing.model_copy(update={"event": "media.stop", "progress": 0, "view_offset_ms": 0})
+
+    finished = manager.stop_playback(stopped)
+
+    assert finished["progress"] >= 42
+
+
+def test_plex_parser_omitted_view_offset_remains_unknown():
+    """Verify a missing Plex viewOffset is distinct from an explicit zero offset."""
     payload = {
         "event": "media.play",
         "user": True,
@@ -3079,8 +3115,29 @@ def test_plex_parser_omitted_view_offset_defaults_to_zero():
     }
     parsed = parse_plex_webhook(payload, allowed_users=["selits"])
     assert parsed is not None
-    assert parsed.view_offset_ms == 0
+    assert parsed.view_offset_ms is None
     assert parsed.progress == 0.0
+
+
+def test_playback_manager_preserves_estimate_when_update_omits_offset():
+    from app.services.playback_manager import PlaybackManager
+    import time
+
+    manager = PlaybackManager()
+    media = ParsedMedia(
+        event="media.play", username="review-test", media_type="movie",
+        title="Progress Test", duration_ms=3_600_000, view_offset_ms=600_000,
+        progress=100 / 6, player="Review Player",
+    )
+    manager.update_playback(media, state="playing")
+    key = manager._get_key(media)
+    manager.sessions[key]["updated_at"] = time.time() - 120
+
+    update = media.model_copy(update={"event": "media.resume", "view_offset_ms": None, "progress": 0})
+    session = manager.update_playback(update, state="playing")
+
+    assert session["view_offset_ms"] >= 720_000
+    assert session["progress"] >= 20
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -3268,6 +3325,8 @@ async def test_radarr_webhook_collection_sync():
 @pytest.mark.asyncio(loop_scope="module")
 async def test_webhook_records_cowatch_status_and_privacy():
     """Verify live webhooks record cowatch_status in events and respect privacy masking."""
+    import asyncio
+
     client = make_async_test_client(app)
     recent_events.clear()
 
@@ -3291,15 +3350,18 @@ async def test_webhook_records_cowatch_status_and_privacy():
          patch.object(Config, "WEBHOOK_SECRET", "privacy_token"), \
          patch.object(cowatch_mgr, "is_cowatch_show", return_value=True), \
          patch.object(trakt, "is_authenticated", return_value=True), \
-         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop:
+         patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
+         patch("app.main.execute_cowatch_sync", new_callable=AsyncMock, return_value="success"):
 
         mock_stop.return_value = {"action": "scrobble"}
 
         res = await client.post("/webhook?token=privacy_token", data={"payload": json.dumps(payload)})
         assert res.status_code == 200
+        await asyncio.sleep(0.01)
         assert len(recent_events) >= 1
         ev = recent_events[0]
         assert ev.get("cowatch_status") is not None
+        assert ev["cowatch_status"]["status"] == "success"
         assert ev["cowatch_status"]["synced"] is True
         assert ev["cowatch_status"]["target"] == "partner"
 
@@ -3356,7 +3418,7 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert (tmp_path / "assets" / "dashboard.css").is_file()
     assert (tmp_path / "assets" / "dashboard-theme.css").is_file()
     assert (tmp_path / "assets" / "dashboard.js").is_file()
-    assert len(MODULES) == 14
+    assert len(MODULES) == 15
     assert OUTPUT.read_text(encoding="utf-8") == build_bundle()
 
     content = demo_file.read_text(encoding="utf-8")
@@ -4019,6 +4081,7 @@ async def test_jellyfin_and_emby_cowatch_integration():
          patch("app.main.execute_cowatch_sync", new_callable=AsyncMock) as mock_cowatch_sync, \
          patch.object(notifier, "dispatch", new_callable=AsyncMock):
         mock_stop.return_value = {"action": "scrobble"}
+        mock_cowatch_sync.return_value = "success"
 
         res = await client.post("/webhook/jellyfin", json=jf_cowatch_payload)
         assert res.status_code == 200
@@ -9556,6 +9619,71 @@ async def test_execute_cowatch_sync_multi_tracker_dual_dispatch_and_failure_isol
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_execute_cowatch_sync_queues_history_for_unauthenticated_partner():
+    from app.main import execute_cowatch_sync, queue_mgr
+    from app.plex_parser import ParsedMedia
+    from app.services.user_manager import user_mgr
+    from app.config import Config
+
+    parsed = ParsedMedia(
+        event="media.scrobble", username="viewer", media_type="episode",
+        title="Episode 2", show_title="Carrie", season=1, episode=2,
+        progress=100,
+    )
+    disconnected = MagicMock()
+    disconnected.is_authenticated.return_value = False
+    other_tracker = MagicMock()
+    other_tracker.is_authenticated.return_value = False
+
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(user_mgr, "get_client", return_value=disconnected), \
+         patch.object(user_mgr, "get_tracker_client", return_value=other_tracker), \
+         patch.object(queue_mgr, "enqueue") as enqueue:
+        await execute_cowatch_sync(parsed, "mark_watched", targets=["partner"])
+
+    enqueue.assert_called_once()
+    args, kwargs = enqueue.call_args
+    assert args[0] == "sync_history"
+    assert kwargs["username"] == "partner"
+    assert "not authenticated" in kwargs["error"]
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_execute_cowatch_sync_uses_anilist_client_for_anilist_progress():
+    from app.main import execute_cowatch_sync
+    from app.plex_parser import ParsedMedia
+    from app.services.user_manager import user_mgr
+    from app.config import Config
+
+    parsed = ParsedMedia(
+        event="media.scrobble", username="viewer", media_type="episode",
+        title="Episode 3", show_title="Example Anime", season=1, episode=3,
+        progress=100,
+    )
+    trakt_client = MagicMock()
+    trakt_client.is_authenticated.return_value = False
+    anilist_client = MagicMock()
+    anilist_client.is_authenticated.return_value = True
+    anilist_client.update_progress = AsyncMock()
+    mal_client = MagicMock()
+    mal_client.is_authenticated.return_value = False
+    mal_client.update_progress = AsyncMock()
+    anime_match = {"is_anime": True, "anilist_id": 987, "mal_id": None,
+                   "episode_number": 3, "episodes": 12}
+
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(user_mgr, "get_client", return_value=trakt_client), \
+         patch.object(user_mgr, "get_tracker_client", side_effect=lambda _u, tracker: anilist_client if tracker == "anilist" else mal_client), \
+         patch("app.main.anime_resolver.resolve", new_callable=AsyncMock, return_value=anime_match), \
+         patch("app.main.queue_mgr.enqueue"):
+        status = await execute_cowatch_sync(parsed, "mark_watched", targets=["partner"])
+
+    assert status == "partial"
+    anilist_client.update_progress.assert_awaited_once_with(987, 3, 12)
+    mal_client.update_progress.assert_not_awaited()
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_cloud_sync_manager_run_cycle_and_letterboxd_export(tmp_path):
     """Verify CloudSyncManager executes full sync cycle, exports Letterboxd CSV, and records telemetry."""
     from app.services.cloud_sync_manager import CloudSyncManager
@@ -11433,6 +11561,7 @@ async def test_household_multi_tenant_webhook_dual_sync():
             # Verify cowatch_status recorded in recent_events contains targets
             ev = recent_events[0]
             assert ev.get("cowatch_status") is not None
+            assert ev["cowatch_status"]["status"] == "success"
             assert ev["cowatch_status"]["synced"] is True
             assert "partner_user" in ev["cowatch_status"]["targets"]
             assert "kids_user" in ev["cowatch_status"]["targets"]
