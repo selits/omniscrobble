@@ -249,6 +249,26 @@ async def test_settings_footer_stays_within_narrow_mobile_viewport(dashboard_pag
     assert await footer.evaluate(
         "element => element.parentElement.classList.contains('settings-hub-dialog')"
     ), "the settings footer must remain inside the dialog"
+    nav_tabs = page.locator("#settings-nav-tabs")
+    nav = await nav_tabs.evaluate("element => ({clientWidth: element.clientWidth, scrollWidth: element.scrollWidth})")
+    assert nav["scrollWidth"] > nav["clientWidth"], "mobile settings tabs should scroll horizontally"
+    tab_tops = await nav_tabs.locator(".settings-nav-tab").evaluate_all(
+        "elements => elements.map(element => element.getBoundingClientRect().top)"
+    )
+    assert len(set(tab_tops)) == 1, "mobile settings tabs should stay on one row"
+
+    content_height = await page.locator("#settings-modal .settings-hub-content").evaluate(
+        "element => element.clientHeight"
+    )
+    assert content_height >= 180, f"settings content area is too short at {width}px: {content_height}px"
+
+    close_button = footer.locator("button[onclick=\"closeSettingsModal()\"]")
+    save_button = footer.locator("#settings-save-all-btn")
+    close_bounds = await close_button.bounding_box()
+    save_bounds = await save_button.bounding_box()
+    assert close_bounds and save_bounds
+    assert abs(close_bounds["y"] - save_bounds["y"]) <= 1, "mobile footer actions should share a row"
+
     for name, locator in (
         ("dialog", dialog),
         ("footer", footer),
