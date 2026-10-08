@@ -66,6 +66,21 @@ class PlaybackManager:
             and existing_session.get("media_type") == media.media_type
         )
 
+        view_offset_ms = media.view_offset_ms
+        progress = media.progress
+        if same_media and existing_session and view_offset_ms is None:
+            # Webhooks may omit position on play/resume updates. Carry forward
+            # the estimated current position so refreshing the session does not
+            # repeatedly restart dashboard progress at zero.
+            estimate = self.estimate_position(existing_session, now)
+            if estimate:
+                current_sec, duration_sec = estimate
+                view_offset_ms = int(current_sec * 1000)
+                progress = max(progress, current_sec / duration_sec * 100.0)
+            else:
+                view_offset_ms = existing_session.get("view_offset_ms")
+                progress = max(progress, float(existing_session.get("progress") or 0.0))
+
         session = {
             "key": key,
             "username": media.username,
@@ -78,9 +93,9 @@ class PlaybackManager:
             "episode": media.episode,
             "year": media.year,
             "state": state,  # "playing" or "paused"
-            "progress": round(media.progress, 1),
-            "duration_ms": media.duration_ms,
-            "view_offset_ms": media.view_offset_ms,
+            "progress": round(progress, 1),
+            "duration_ms": media.duration_ms or (existing_session.get("duration_ms") if same_media and existing_session else None),
+            "view_offset_ms": view_offset_ms,
             "updated_at": now,
             "last_heartbeat_at": last_hb,
             "trakt_url": trakt_url,
@@ -119,6 +134,17 @@ class PlaybackManager:
                     existing = self.sessions.pop(k, None)
                     break
 
+        # Stop webhooks often omit the final position or report zero. Preserve
+        # the best position observed during this session for the dashboard and
+        # threshold decision made by the caller.
+        progress = media.progress
+        if existing:
+            progress = max(progress, float(existing.get("progress") or 0.0))
+            estimate = self.estimate_position(existing)
+            if estimate:
+                current_sec, duration_sec = estimate
+                progress = max(progress, current_sec / duration_sec * 100.0)
+
         trakt_url = get_trakt_url(media)
         finished_entry = {
             "title": title_str,
@@ -126,7 +152,9 @@ class PlaybackManager:
             "player": media.player or (existing.get("player") if existing else "Plex Client"),
             "device": media.device or (existing.get("device") if existing else ""),
             "media_type": media.media_type,
-            "progress": round(media.progress, 1),
+            "progress": round(progress, 1),
+            "duration_ms": media.duration_ms or (existing.get("duration_ms") if existing else None),
+            "view_offset_ms": media.view_offset_ms if media.view_offset_ms is not None else (existing.get("view_offset_ms") if existing else None),
             "finished_at": time.time(),
             "trakt_url": trakt_url,
             "poster_url": media.poster_url or (existing.get("poster_url") if existing else None),

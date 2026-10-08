@@ -2,6 +2,32 @@
         {{DEMO_BANNER}}
         <!-- COMPONENT:workspace_navigation -->
 
+        <section class="card" id="card-watch-lists" aria-labelledby="watch-lists-title">
+            <div class="u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-10px">
+                <div><h3 id="watch-lists-title" class="u-margin-0">Personal Watch Lists</h3><p class="u-color-text-muted u-font-size-12px">Keep movies, TV shows, and anime you plan to watch.</p></div>
+                <div class="u-display-flex u-flex-wrap-wrap u-gap-6px">
+                    <button class="btn-sm" onclick="exportWatchLists('json')">Export JSON</button><button class="btn-sm" onclick="exportWatchLists('txt')">Export TXT</button><button class="btn-sm" onclick="copyWatchLists()">Copy</button>
+                    <button class="btn-sm" onclick="document.getElementById('watch-list-import-file').click()">Import file</button><button class="btn-sm" onclick="openWatchListPaste()">Paste import</button>
+                    <input id="watch-list-import-file" type="file" accept=".json,.txt,application/json,text/plain" class="u-display-none" onchange="readWatchListImport(this)">
+                </div>
+            </div>
+            <div id="watch-list-message" class="u-color-text-muted u-font-size-12px" aria-live="polite"></div>
+            <div class="u-display-flex u-align-items-center u-flex-wrap-wrap u-gap-8px u-margin-top-12px">
+                <label for="watch-list-select" class="u-color-text-muted">List</label><select id="watch-list-select" onchange="renderWatchListItems()" class="u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-main u-padding-6px-10px u-border-radius-6px"></select>
+                <button class="btn-sm" onclick="createWatchList()">New list</button><button class="btn-sm" onclick="renameWatchList()">Rename</button><button class="btn-sm" onclick="deleteWatchList()">Delete list</button>
+            </div>
+            <div class="u-display-flex u-align-items-center u-flex-wrap-wrap u-gap-6px u-margin-top-12px">
+                <input id="watch-item-title" type="text" maxlength="300" placeholder="Title" aria-label="Item title" class="activity-search">
+                <select id="watch-item-type" aria-label="Media type" class="u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-main u-padding-6px-10px u-border-radius-6px"><option value="movie">Movie</option><option value="tv">TV show</option><option value="anime">Anime</option></select>
+                <input id="watch-item-year" type="number" min="1800" max="2200" placeholder="Year" aria-label="Year" class="activity-search">
+                <button class="btn-sm" onclick="addWatchListItem()">Add item</button>
+                <button class="btn-sm" onclick="searchWatchListCatalog()">Search movie/TV catalog</button>
+                <button class="btn-sm" onclick="searchAnimeForWatchList()">Find anime on AniList</button>
+            </div>
+            <div id="watch-list-search-results" class="u-display-flex u-flex-direction-column u-gap-6px u-margin-top-8px" aria-live="polite"></div>
+            <div id="watch-list-items" class="u-display-flex u-flex-direction-column u-gap-8px u-margin-top-12px"></div>
+        </section>
+
         {{ACTIVE_PLAYBACK_CARD}}
 
         <div class="card" id="card-server-config">

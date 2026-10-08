@@ -39,6 +39,7 @@
         </div>
         <nav class="workspace-nav" id="workspace-nav" role="tablist" aria-label="Dashboard workspaces">
             <button class="workspace-tab" id="tab-operations" role="tab" aria-controls="view-operations" aria-selected="true" onclick="switchWorkspace('operations')">Operations</button>
+            <button class="workspace-tab" id="tab-watch-lists" role="tab" aria-controls="view-watch-lists" aria-selected="false" onclick="switchWorkspace('watch-lists')">Watch Lists</button>
             <button class="workspace-tab" id="tab-trackers" role="tab" aria-controls="view-trackers" aria-selected="false" onclick="switchWorkspace('trackers')">Trackers &amp; Hub</button>
             <button class="workspace-tab" id="tab-automation" role="tab" aria-controls="view-automation" aria-selected="false" onclick="switchWorkspace('automation')">Automation</button>
             <button class="workspace-tab" id="tab-analytics" role="tab" aria-controls="view-analytics" aria-selected="false" onclick="switchWorkspace('analytics')">Analytics</button>
@@ -46,6 +47,7 @@
         </nav>
         <main id="workspace-views">
             <section class="workspace-panel" id="view-operations" role="tabpanel" aria-labelledby="tab-operations"></section>
+            <section class="workspace-panel" id="view-watch-lists" role="tabpanel" aria-labelledby="tab-watch-lists" hidden></section>
             <section class="workspace-panel" id="view-trackers" role="tabpanel" aria-labelledby="tab-trackers" hidden></section>
             <section class="workspace-panel" id="view-automation" role="tabpanel" aria-labelledby="tab-automation" hidden></section>
             <section class="workspace-panel" id="view-analytics" role="tabpanel" aria-labelledby="tab-analytics" hidden></section>

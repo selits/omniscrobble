@@ -224,6 +224,13 @@ async def process_queue(
 
         client = user_mgr.get_client(username) if user_mgr else trakt_client
 
+        # Keep user-specific work pending until that profile is connected.
+        # Otherwise an unauthenticated response can be mistaken for success
+        # and permanently discard Co-Watch history.
+        if user_mgr and not client.is_authenticated():
+            logger.info(f"Queued event {item_id} ({event_type}) is waiting for Trakt authentication for @{username}.")
+            continue
+
         try:
             res: dict[str, Any] = {}
             if event_type == "scrobble_stop":
@@ -248,6 +255,12 @@ async def process_queue(
 
             status = res.get("status")
             error_val = res.get("error")
+
+            if status == "error":
+                logger.warning(f"Queued event {item_id} ({event_type}) returned an error: {error_val or res}")
+                queue_mgr.mark_failure(item_id, str(error_val or res))
+                failed += 1
+                continue
 
             # Check if Trakt responded with temporary error (5xx, 429, or connection error)
             is_temp_error = (
