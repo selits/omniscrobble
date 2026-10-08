@@ -20,15 +20,17 @@
                         <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Primary scrobbling target for watch history, playback sessions, and ratings.</p>
                         <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-10px">
                             <div>
-                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TRAKT_CLIENT_ID</label>
-                                <input type="text" id="settings-trakt-client-id" placeholder="Trakt API Client ID" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
+                                <label for="settings-trakt-client-id" class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Trakt client ID <span class="u-color-text-muted">(public app identifier)</span></label>
+                                <div class="u-display-flex u-gap-6px"><input type="text" id="settings-trakt-client-id" placeholder="Trakt API Client ID" autocomplete="off" class="u-flex-1 u-min-width-0 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" /><button type="button" onclick="copySettingsField('settings-trakt-client-id', this)" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-heading" aria-label="Copy Trakt client ID">Copy</button></div>
+                                <p class="settings-field-help">Identifies your Trakt app during sign-in. It is okay to share; keep the client secret private.</p>
                             </div>
                             <div>
-                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TRAKT_CLIENT_SECRET</label>
+                                <label for="settings-trakt-client-secret" class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Trakt client secret <span class="u-color-text-muted">(private)</span></label>
                                 <div class="u-display-flex u-gap-6px">
                                     <input type="password" id="settings-trakt-client-secret" placeholder="Trakt Client Secret" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
                                     <button type="button" onclick="toggleReconTokenVisibility('settings-trakt-client-secret','settings-trakt-sec-btn')" id="settings-trakt-sec-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
                                 </div>
+                                <p class="settings-field-help">Keep this secret private. It stays masked unless you choose to reveal it.</p>
                             </div>
                         </div>
                         <div class="u-display-flex u-gap-8px u-flex-wrap-wrap u-align-items-center">
@@ -49,11 +51,11 @@
                         <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Simultaneous dual-scrobbling and cross-tracker library reconciliation across Movies, Shows, and Anime.</p>
                         <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-10px">
                             <div>
-                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">SIMKL_CLIENT_ID</label>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Simkl client ID <span class="u-color-text-muted">(SIMKL_CLIENT_ID)</span></label>
                                 <input type="text" id="settings-simkl-client-id" placeholder="Simkl API Client ID" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
                             </div>
                             <div>
-                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">SIMKL_CLIENT_SECRET</label>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">Simkl client secret <span class="u-color-text-muted">(private)</span></label>
                                 <div class="u-display-flex u-gap-6px">
                                     <input type="password" id="settings-simkl-client-secret" placeholder="Simkl Client Secret" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
                                     <button type="button" onclick="toggleReconTokenVisibility('settings-simkl-client-secret','settings-simkl-sec-btn')" id="settings-simkl-sec-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
@@ -78,11 +80,11 @@
                         <p class="u-font-size-12px u-color-text-muted u-margin-0-0-10px">Synchronizes personal TMDb watchlist, favorites, and 1–10 star ratings via v3/v4 APIs.</p>
                         <div class="u-display-grid u-grid-template-columns-1fr-1fr u-gap-8px u-margin-bottom-8px">
                             <div>
-                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDB_API_KEY (v3)</label>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDb API key <span class="u-color-text-muted">(v3)</span></label>
                                 <input type="text" id="settings-tmdb-api-key" placeholder="TMDb API Key (v3)" class="u-width-100 u-box-sizing-border-box u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
                             </div>
                             <div>
-                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDB_SESSION_ID</label>
+                                <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDb session ID <span class="u-color-text-muted">(private)</span></label>
                                 <div class="u-display-flex u-gap-6px">
                                     <input type="password" id="settings-tmdb-session-id" placeholder="User Session ID" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
                                     <button type="button" onclick="toggleReconTokenVisibility('settings-tmdb-session-id','settings-tmdb-sec-btn')" id="settings-tmdb-sec-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>
@@ -90,7 +92,7 @@
                             </div>
                         </div>
                         <div class="u-margin-bottom-10px">
-                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDB_ACCESS_TOKEN (v4 Read Token)</label>
+                            <label class="u-display-block u-font-size-11px u-color-text-muted u-margin-bottom-4px">TMDb access token <span class="u-color-text-muted">(v4 read token)</span></label>
                             <div class="u-display-flex u-gap-6px">
                                 <input type="password" id="settings-tmdb-access-token" placeholder="TMDb v4 Read Access Token" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-475569 u-border-radius-6px u-padding-8px-10px u-color-text-main u-font-size-12px u-outline-none" />
                                 <button type="button" onclick="toggleReconTokenVisibility('settings-tmdb-access-token','settings-tmdb-tok-btn')" id="settings-tmdb-tok-btn" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-8px-10px">👁️</button>

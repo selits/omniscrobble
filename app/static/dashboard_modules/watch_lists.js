@@ -2,6 +2,46 @@
         let watchListCowatchShows = [];
         let watchListCowatchAvailable = false;
         let watchListCatalogMatches = [];
+        function watchListDialog({title, message, value = '', type = 'text', confirmLabel = 'Continue', danger = false, options = []}) {
+            return new Promise(resolve => {
+                const returnFocus = document.activeElement;
+                const modal = document.getElementById('watch-list-modal');
+                const heading = document.getElementById('watch-list-dialog-title');
+                const description = document.getElementById('watch-list-dialog-message');
+                const field = document.getElementById('watch-list-dialog-field');
+                const confirm = document.getElementById('watch-list-dialog-confirm');
+                const cancel = document.getElementById('watch-list-dialog-cancel');
+                heading.textContent = title; description.textContent = message;
+                field.replaceChildren();
+                if (type === 'text' || type === 'select' || type === 'textarea') {
+                    const control = document.createElement(type === 'textarea' ? 'textarea' : type === 'select' ? 'select' : 'input');
+                    if (type === 'text') control.type = 'text';
+                    control.id = 'watch-list-dialog-input'; control.className = 'watch-list-dialog-input';
+                    control.setAttribute('aria-label', title);
+                    if (type === 'select') options.forEach(option => { const node = document.createElement('option'); node.value = option.value; node.textContent = option.label; control.append(node); });
+                    else control.value = value;
+                    field.append(control);
+                }
+                confirm.textContent = confirmLabel;
+                confirm.classList.toggle('is-danger', danger);
+                modal.style.display = 'flex';
+                const input = field.querySelector('input, select, textarea');
+                (input || confirm).focus();
+                const finish = result => {
+                    modal.style.display = 'none';
+                    confirm.removeEventListener('click', accept); cancel.removeEventListener('click', decline);
+                    modal.removeEventListener('click', outside); document.removeEventListener('keydown', keydown);
+                    if (returnFocus?.isConnected) returnFocus.focus();
+                    resolve(result);
+                };
+                const accept = () => finish(type === 'confirm' ? true : (input ? input.value : true));
+                const decline = () => finish(null);
+                const outside = event => { if (event.target === modal) decline(); };
+                const keydown = event => { if (event.key === 'Escape') decline(); else if (event.key === 'Enter' && event.target === input && type !== 'textarea') { event.preventDefault(); accept(); } };
+                confirm.addEventListener('click', accept); cancel.addEventListener('click', decline);
+                modal.addEventListener('click', outside); document.addEventListener('keydown', keydown);
+            });
+        }
         function watchListMessage(message, error = false) {
             const node = document.getElementById('watch-list-message');
             if (node) { node.textContent = message; node.style.color = error ? 'var(--status-error)' : 'var(--text-muted)'; }
@@ -48,19 +88,19 @@
         }
         function selectedWatchList() { return watchLists.find(list => list.id === document.getElementById('watch-list-select')?.value); }
         async function createWatchList() {
-            const name = window.prompt('Name this watch list:');
+            const name = await watchListDialog({title:'Create a watch list', message:'Choose a name for this list.', confirmLabel:'Create list'});
             if (!name?.trim()) return;
             try { await watchListRequest('/api/watch-lists', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}); await loadWatchLists(); }
             catch (error) { watchListMessage(error.message, true); }
         }
         async function renameWatchList() {
             const list = selectedWatchList(); if (!list) return;
-            const name = window.prompt('Rename this list:', list.name); if (!name?.trim()) return;
+            const name = await watchListDialog({title:'Rename watch list', message:'Enter a new name for this list.', value:list.name, confirmLabel:'Save name'}); if (!name?.trim()) return;
             try { await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}); await loadWatchLists(); }
             catch (error) { watchListMessage(error.message, true); }
         }
         async function deleteWatchList() {
-            const list = selectedWatchList(); if (!list || !window.confirm(`Delete “${list.name}” and its ${list.items.length} item(s)?`)) return;
+            const list = selectedWatchList(); if (!list || !await watchListDialog({title:'Delete watch list?', message:`“${list.name}” and all ${list.items.length} ${list.items.length === 1 ? 'item' : 'items'} in it will be deleted.`, type:'confirm', confirmLabel:'Delete list', danger:true})) return;
             try { await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}`, {method:'DELETE'}); await loadWatchLists(); }
             catch (error) { watchListMessage(error.message, true); }
         }
@@ -84,7 +124,7 @@
             try {
                 const data = await watchListRequest(`/api/watch-lists/anime-search?title=${encodeURIComponent(title)}${year ? `&year=${encodeURIComponent(year)}` : ''}`);
                 if (!data.match) { watchListMessage('AniList did not find a match. You can add the title manually.', true); return; }
-                if (!window.confirm(`Add AniList match “${data.match.title}${data.match.year ? ` (${data.match.year})` : ''}”?`)) return;
+                if (!await watchListDialog({title:'Add AniList match?', message:`Add “${data.match.title}${data.match.year ? ` (${data.match.year})` : ''}” to this list?`, type:'confirm', confirmLabel:'Add item'})) return;
                 await addWatchListItem(data.match);
             } catch (error) { watchListMessage(error.message, true); }
         }
@@ -120,7 +160,7 @@
             const list = selectedWatchList();
             const box = document.getElementById('watch-list-items'); if (!box) return;
             if (!list) { box.innerHTML = '<p class="u-color-text-muted">No watch lists yet. Select New list to create one.</p>'; return; }
-            if (!list.items.length) { box.innerHTML = '<p class="u-color-text-muted">This list is empty.</p>'; return; }
+            if (!list.items.length) { box.innerHTML = '<div class="watch-list-empty"><p class="u-color-text-muted">This list is empty.</p><button type="button" class="btn-sm" onclick="document.getElementById(\'watch-item-title\').focus()">Add your first movie, show, or anime</button></div>'; return; }
             const readOnly = isDemo ? 'disabled' : '';
             box.innerHTML = list.items.map((item, index) => {
                 const year = item.year ? ` (${item.year})` : '';
@@ -177,10 +217,10 @@
             try {
                 const preview = await watchListRequest('/api/watch-lists/import/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({data})});
                 const summary = `${preview.list_count} list(s), ${preview.item_count} unique item(s), ${preview.duplicates_skipped} duplicate(s) skipped.`;
-                const choice = window.prompt(`Import preview: ${summary}\n\nType merge to add items to matching lists, replace to overwrite all saved lists, or cancel to abort.`, 'merge');
-                if (!choice || !['merge', 'replace'].includes(choice.trim().toLowerCase())) return;
-                const replace = choice.trim().toLowerCase() === 'replace';
-                if (replace && !window.confirm('Replace every saved watch list with the imported data? This cannot be undone.')) return;
+                const choice = await watchListDialog({title:'Import watch lists', message:`Preview: ${summary} Choose how to apply the import.`, type:'select', options:[{value:'merge',label:'Merge with saved lists'},{value:'replace',label:'Replace all saved lists'}], confirmLabel:'Continue'});
+                if (!choice) return;
+                const replace = choice === 'replace';
+                if (replace && !await watchListDialog({title:'Replace all watch lists?', message:'Every saved list will be replaced with the imported data. This cannot be undone.', type:'confirm', confirmLabel:'Replace lists', danger:true})) return;
                 const result = await watchListRequest('/api/watch-lists/import', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({data, replace})});
                 await loadWatchLists(); watchListMessage(`Import complete: ${summary} ${result.duplicates_skipped} existing duplicate(s) skipped.`);
             } catch (error) { watchListMessage(error.message, true); }
@@ -191,7 +231,7 @@
             await importWatchListData(await file.text()); input.value = '';
         }
         async function openWatchListPaste() {
-            const text = window.prompt('Paste JSON or exported watch-list text here:');
+            const text = await watchListDialog({title:'Paste watch-list data', message:'Paste JSON or exported watch-list text below.', type:'textarea', confirmLabel:'Preview import'});
             if (text?.trim()) await importWatchListData(text);
         }
         document.addEventListener('DOMContentLoaded', loadWatchLists);

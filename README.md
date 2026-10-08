@@ -222,6 +222,10 @@ Omniscrobble includes a complete local testing framework featuring a CLI webhook
 
 # 3. Run the unit test suite directly
 .venv/bin/pytest -v
+
+# 4. Run dashboard browser tests (install browsers once first)
+.venv/bin/python -m playwright install chromium firefox webkit
+.venv/bin/pytest tests/test_dashboard_playwright.py -v
 ```
 
 > 📖 For full webhook simulation options and scenario presets, see [**`docs/LOCAL_TESTING.md`**](./docs/LOCAL_TESTING.md).

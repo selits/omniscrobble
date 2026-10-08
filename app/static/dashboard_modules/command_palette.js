@@ -25,6 +25,73 @@
             });
             try { localStorage.setItem('omniscrobble_workspace', name); } catch (e) {}
         }
+        function openTrackerRecovery() {
+            const text = document.getElementById('health-tracker-status')?.textContent || '';
+            openSettingsModal('trackers', /refresh|expired/i.test(text) ? 'trakt' : null);
+        }
+        function openListenerRecovery() { openSettingsModal('servers'); }
+        function openQueueRecovery() {
+            switchWorkspace('operations');
+            const status = document.getElementById('health-queue-status')?.textContent || '';
+            const failedFilter = Array.from(document.querySelectorAll('.activity-filter-chip')).find((button) => button.getAttribute('onclick') === "setActivityFilter('status', 'failed', this)");
+            const hasFailedEvents = (Array.isArray(allEvents) && allEvents.some((event) => {
+                const result = String(event.result_status || '').toLowerCase();
+                const deliveries = Object.values(event.tracker_delivery || {}).map((value) => String(value).toLowerCase());
+                return result === 'error' || result === 'failed' || result === '429' || /^4\d\d$/.test(result) || /^5\d\d$/.test(result) || deliveries.includes('failed');
+            })) || Boolean(document.querySelector('#events-tbody .activity-status-failed, #events-tbody .tracker-delivery-failed'));
+            if (hasFailedEvents && failedFilter) {
+                const allTypesFilter = Array.from(document.querySelectorAll('#card-activity .activity-filter-group[aria-label="Media type"] .activity-filter-chip')).find((button) => button.getAttribute('onclick') === "setActivityFilter('type', 'all', this)");
+                if (allTypesFilter) setActivityFilter('type', 'all', allTypesFilter);
+                const userFilter = document.getElementById('activity-user-filter');
+                if (userFilter) userFilter.value = '';
+                setActivityUser('');
+                const search = document.getElementById('activity-search');
+                if (search) search.value = '';
+                setActivitySearch('');
+                setActivityFilter('status', 'failed', failedFilter);
+                document.querySelector('#events-tbody .activity-row')?.scrollIntoView({behavior:'smooth', block:'center'});
+            } else if (/\d+ pending/i.test(status) && typeof retryQueue === 'function') {
+                const retryButton = document.querySelector('#card-activity button[onclick="retryQueue()"]');
+                if (retryButton) retryButton.focus();
+                else document.getElementById('card-activity')?.scrollIntoView({behavior:'smooth', block:'start'});
+            } else {
+                document.getElementById('activity-search')?.focus();
+            }
+        }
+        function updateSetupChecklist() {
+            const checklist = document.getElementById('setup-checklist');
+            if (!checklist) return;
+            const serverCards = Array.from(document.querySelectorAll('#card-ecosystem .eco-card'));
+            const serverReady = serverCards.some((card) => {
+                const name = card.querySelector('.eco-card-name')?.textContent || '';
+                const badge = card.querySelector('.eco-status-badge');
+                return /plex|jellyfin|emby/i.test(name) && (badge?.classList.contains('is-connected') || badge?.classList.contains('is-available'));
+            });
+            const trackerReady = Array.from(document.querySelectorAll('#hub-trackers-grid .hub-tracker-item')).some((item) => {
+                const status = item.querySelector(':scope > div:last-child > span:first-child')?.textContent || '';
+                return /\b(active|ready)\b/i.test(status);
+            });
+            const successfulScrobbleActions = new Set(['scrobble', 'watched']);
+            const activityReady = Array.isArray(allEvents) && allEvents.some((event) => {
+                const status = String(event.result_status || '').toLowerCase();
+                const action = String(event.action || '').toLowerCase();
+                const succeeded = ['ok', 'success', '200', '201'].includes(status);
+                const isScrobble = successfulScrobbleActions.has(action) || action.startsWith('mark_watched') || action.startsWith('scrobble_stop');
+                return succeeded && isScrobble;
+            });
+            const states = {server:serverReady, tracker:trackerReady, activity:activityReady};
+            let complete = 0;
+            Object.entries(states).forEach(([step, done]) => {
+                const item = checklist.querySelector(`[data-setup-step="${step}"]`);
+                if (!item) return;
+                item.classList.toggle('is-complete', done);
+                item.querySelector('.setup-step-state').textContent = done ? '✓' : String(Object.keys(states).indexOf(step) + 1);
+                if (done) complete += 1;
+            });
+            const progress = document.getElementById('setup-checklist-progress');
+            if (progress) progress.textContent = `${complete} of 3 complete`;
+            checklist.hidden = complete === 3;
+        }
         const dashboardCommands = [
             { label: 'Manual Scrobble', detail: 'Search and mark media watched', run: () => openManualScrobbleModal() },
             { label: 'Retry Offline Queue', detail: 'Retry pending tracker deliveries', run: () => retryQueue() },
@@ -145,6 +212,7 @@
             let saved = 'operations';
             try { saved = localStorage.getItem('omniscrobble_workspace') || saved; } catch (e) {}
             switchWorkspace(saved);
+            updateSetupChecklist();
             const serverCard = document.getElementById('card-server-config');
             if (serverCard) {
                 const labels = Array.from(serverCard.querySelectorAll('.info-item'));
@@ -156,12 +224,61 @@
                 const queueStatus = document.getElementById('health-queue-status');
                 if (queueStatus && queue) queueStatus.textContent = queue[0].replace(/^Queue:\s*/i, '');
             }
-            const listeners = document.querySelectorAll('#card-ecosystem .eco-card:not(.eco-card-disabled)').length;
+            const listeners = Array.from(document.querySelectorAll('#card-ecosystem .eco-card:not(.eco-card-disabled)')).filter((card) => /plex|jellyfin|emby/i.test(card.querySelector('.eco-card-name')?.textContent || '')).length;
             const listenerStatus = document.getElementById('health-listener-status');
             if (listenerStatus) listenerStatus.textContent = listeners ? `${listeners} active` : 'None active';
+            updateSetupChecklist();
+        }
+        function initModalAccessibility() {
+            const activeDialogs = new Map();
+            const getDialog = (overlay) => overlay.querySelector('.modal-dialog, [role="dialog"]') || overlay;
+            const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+            const syncOverlay = (overlay) => {
+                const dialog = getDialog(overlay);
+                const isOpen = getComputedStyle(overlay).display !== 'none';
+                if (isOpen && !activeDialogs.has(overlay)) {
+                    activeDialogs.set(overlay, document.activeElement);
+                    dialog.setAttribute('role', 'dialog');
+                    dialog.setAttribute('aria-modal', 'true');
+                    if (!dialog.hasAttribute('tabindex')) dialog.tabIndex = -1;
+                    if (!dialog.hasAttribute('aria-labelledby') && !dialog.hasAttribute('aria-label')) {
+                        const heading = dialog.querySelector('h1, h2, h3, [data-dialog-title]');
+                        if (heading) {
+                            if (!heading.id) heading.id = `dialog-title-${overlays.indexOf(overlay)}`;
+                            dialog.setAttribute('aria-labelledby', heading.id);
+                        }
+                    }
+                    window.setTimeout(() => {
+                        if (getComputedStyle(overlay).display === 'none') return;
+                        const first = Array.from(dialog.querySelectorAll(focusableSelector)).find((el) => el.getClientRects().length && !el.closest('[hidden]'));
+                        (first || dialog).focus({ preventScroll: true });
+                    }, 0);
+                } else if (!isOpen && activeDialogs.has(overlay)) {
+                    const opener = activeDialogs.get(overlay);
+                    activeDialogs.delete(overlay);
+                    if (opener?.isConnected && typeof opener.focus === 'function') opener.focus({ preventScroll: true });
+                }
+            };
+            const overlays = Array.from(document.querySelectorAll('.modal, #command-palette-modal'));
+            overlays.forEach(syncOverlay);
+            const observer = new MutationObserver((records) => records.forEach((record) => syncOverlay(record.target)));
+            overlays.forEach((overlay) => observer.observe(overlay, { attributes: true, attributeFilter: ['style', 'hidden'] }));
+            document.addEventListener('keydown', (event) => {
+                if (event.key !== 'Tab') return;
+                const overlay = overlays.filter((item) => getComputedStyle(item).display !== 'none').at(-1);
+                if (!overlay) return;
+                const dialog = getDialog(overlay);
+                const focusable = Array.from(dialog.querySelectorAll(focusableSelector)).filter((el) => el.getClientRects().length && !el.closest('[hidden]'));
+                if (!focusable.length) { event.preventDefault(); dialog.focus(); return; }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+                else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+            });
         }
         window.addEventListener('pageshow', resetCowatchScroll);
         document.addEventListener('DOMContentLoaded', () => {
+            initModalAccessibility();
             initWorkspaces();
             resetCowatchScroll();
             fetchEvents();

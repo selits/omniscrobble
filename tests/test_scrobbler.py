@@ -2738,6 +2738,15 @@ async def test_dashboard_mobile_responsiveness():
         # 2. CSS Media query for mobile viewports
         assert "@media (max-width: 640px)" in css
         assert "-webkit-overflow-scrolling: touch" in css
+        assert "@media (min-width: 641px) and (max-width: 900px)" in css
+        assert "@media (min-width: 1200px)" in css
+        assert "scroll-snap-type: x proximity" in css
+        assert "#card-activity .activity-row td::before" in css
+        assert "grid-template-columns: minmax(0, 1fr) auto" in css
+        assert "@media (max-height: 520px) and (max-width: 900px)" in css
+        assert "@media (prefers-reduced-motion: reduce)" in css
+        assert "@media (prefers-contrast: more)" in css
+        assert "@media (forced-colors: active)" in css
 
         # 3. Mobile layout classes
         assert 'class="title-brand"' in html
@@ -2762,6 +2771,49 @@ async def test_dashboard_mobile_responsiveness():
         assert 'word-break: break-word' in css
         assert 'settings-trk-cat-btn' in html
         assert 'scrobble-trk-kitsu' in html
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dashboard_workspace_and_accessibility_contracts():
+    """Guard workspace navigation, activity card labels, and modal keyboard support."""
+    client = make_async_test_client(app)
+    response = await client.get("/")
+    assert response.status_code == 200
+    html = response.text + await dashboard_asset_text(client)
+
+    # Workspace tabs expose short visual labels and full accessible names.
+    for tab_id, label in [
+        ("operations", "Operations"),
+        ("watch-lists", "Watch Lists"),
+        ("trackers", "Trackers and Hub"),
+        ("automation", "Automation"),
+        ("analytics", "Analytics"),
+        ("diagnostics", "System"),
+    ]:
+        assert f'id="tab-{tab_id}"' in html
+        assert f'aria-label="{label}"' in html
+        assert f'id="view-{tab_id}"' in html
+    assert 'id="view-operations" role="tabpanel" tabindex="0"' in html
+    assert 'class="workspace-intro"' in html
+
+    # Health indicators open the matching connection or recovery flow.
+    assert 'class="health-pill health-pill-action" onclick="openTrackerRecovery()"' in html
+    assert 'onclick="openListenerRecovery()"' in html
+    assert 'onclick="openQueueRecovery()"' in html
+    assert "function openTrackerRecovery()" in html
+    assert "function openQueueRecovery()" in html
+
+    # Activity rows include labels used by the stacked mobile card layout.
+    for label in ["When", "Title", "Type", "User", "Action", "Status"]:
+        assert f'data-label="{label}"' in html
+
+    # Workspace arrow-key handling and modal focus containment/restoration stay wired.
+    assert "['ArrowLeft', 'ArrowRight', 'Home', 'End']" in html
+    assert "event.key === 'ArrowRight'" in html
+    assert "function initModalAccessibility()" in html
+    assert "dialog.setAttribute('aria-modal', 'true')" in html
+    assert "event.shiftKey && (document.activeElement === first" in html
+    assert "opener.focus({ preventScroll: true })" in html
 
 
 @pytest.mark.asyncio(loop_scope="module")

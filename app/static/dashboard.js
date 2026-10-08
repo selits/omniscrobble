@@ -683,6 +683,19 @@
 
         // -------------------------------------------------------------
         // Omniscrobble Unified Settings Hub
+        async function copySettingsField(fieldId, button) {
+            const field = document.getElementById(fieldId);
+            if (!field?.value) return;
+            try {
+                await navigator.clipboard.writeText(field.value);
+                const original = button.textContent;
+                button.textContent = 'Copied';
+                window.setTimeout(() => { button.textContent = original; }, 1400);
+            } catch (error) {
+                const status = document.getElementById('settings-modal-status-msg');
+                if (status) status.textContent = 'Clipboard access was unavailable. Select and copy the client ID manually.';
+            }
+        }
         // -------------------------------------------------------------
         let currentSettingsData = null;
         let activeSettingsServerSubTab = 'plex';
@@ -2645,6 +2658,7 @@
                 if (pageNum) pageNum.textContent = 'Page 1 of 1';
                 if (prevBtn) prevBtn.disabled = true;
                 if (nextBtn) nextBtn.disabled = true;
+                if (typeof updateSetupChecklist === 'function') updateSetupChecklist();
                 return;
             }
 
@@ -2711,17 +2725,18 @@
                 const rowClass = ['activity-row', activityFreshKeys.has(activityEventKey(ev)) ? 'activity-row-enter' : ''].filter(Boolean).join(' ');
                 html += `
                 <tr class="${rowClass}">
-                    <td class="activity-time">${escapeHtml(ev.timestamp)}</td>
-                    <td class="activity-title">${escapeHtml(ev.title)}</td>
-                    <td><span class="activity-type">${escapeHtml(ev.type)}</span></td>
-                    <td class="activity-user"><div class="activity-user-content">${serverBadge}<span>${escapeHtml(ev.user)}</span></div></td>
-                    <td><span class="activity-action">${escapeHtml(actionText)}</span></td>
-                    <td><div class="activity-status-group">${statusBadgeHtml}${renderTrackerDeliveryBadges(ev.tracker_delivery)}</div></td>
+                    <td class="activity-time" data-label="When">${escapeHtml(ev.timestamp)}</td>
+                    <td class="activity-title" data-label="Title">${escapeHtml(ev.title)}</td>
+                    <td data-label="Type"><span class="activity-type">${escapeHtml(ev.type)}</span></td>
+                    <td class="activity-user" data-label="User"><div class="activity-user-content">${serverBadge}<span>${escapeHtml(ev.user)}</span></div></td>
+                    <td data-label="Action"><span class="activity-action">${escapeHtml(actionText)}</span></td>
+                    <td data-label="Status"><div class="activity-status-group">${statusBadgeHtml}${renderTrackerDeliveryBadges(ev.tracker_delivery)}</div></td>
                     ${actionCol}
                 </tr>`;
             }
             tbody.innerHTML = html;
             activityFreshKeys.clear();
+            if (typeof updateSetupChecklist === 'function') updateSetupChecklist();
         }
 
         function changeEventsPageSize(newSize) {
@@ -5594,6 +5609,46 @@ SIMKL_ENABLED=true</pre>
         let watchListCowatchShows = [];
         let watchListCowatchAvailable = false;
         let watchListCatalogMatches = [];
+        function watchListDialog({title, message, value = '', type = 'text', confirmLabel = 'Continue', danger = false, options = []}) {
+            return new Promise(resolve => {
+                const returnFocus = document.activeElement;
+                const modal = document.getElementById('watch-list-modal');
+                const heading = document.getElementById('watch-list-dialog-title');
+                const description = document.getElementById('watch-list-dialog-message');
+                const field = document.getElementById('watch-list-dialog-field');
+                const confirm = document.getElementById('watch-list-dialog-confirm');
+                const cancel = document.getElementById('watch-list-dialog-cancel');
+                heading.textContent = title; description.textContent = message;
+                field.replaceChildren();
+                if (type === 'text' || type === 'select' || type === 'textarea') {
+                    const control = document.createElement(type === 'textarea' ? 'textarea' : type === 'select' ? 'select' : 'input');
+                    if (type === 'text') control.type = 'text';
+                    control.id = 'watch-list-dialog-input'; control.className = 'watch-list-dialog-input';
+                    control.setAttribute('aria-label', title);
+                    if (type === 'select') options.forEach(option => { const node = document.createElement('option'); node.value = option.value; node.textContent = option.label; control.append(node); });
+                    else control.value = value;
+                    field.append(control);
+                }
+                confirm.textContent = confirmLabel;
+                confirm.classList.toggle('is-danger', danger);
+                modal.style.display = 'flex';
+                const input = field.querySelector('input, select, textarea');
+                (input || confirm).focus();
+                const finish = result => {
+                    modal.style.display = 'none';
+                    confirm.removeEventListener('click', accept); cancel.removeEventListener('click', decline);
+                    modal.removeEventListener('click', outside); document.removeEventListener('keydown', keydown);
+                    if (returnFocus?.isConnected) returnFocus.focus();
+                    resolve(result);
+                };
+                const accept = () => finish(type === 'confirm' ? true : (input ? input.value : true));
+                const decline = () => finish(null);
+                const outside = event => { if (event.target === modal) decline(); };
+                const keydown = event => { if (event.key === 'Escape') decline(); else if (event.key === 'Enter' && event.target === input && type !== 'textarea') { event.preventDefault(); accept(); } };
+                confirm.addEventListener('click', accept); cancel.addEventListener('click', decline);
+                modal.addEventListener('click', outside); document.addEventListener('keydown', keydown);
+            });
+        }
         function watchListMessage(message, error = false) {
             const node = document.getElementById('watch-list-message');
             if (node) { node.textContent = message; node.style.color = error ? 'var(--status-error)' : 'var(--text-muted)'; }
@@ -5640,19 +5695,19 @@ SIMKL_ENABLED=true</pre>
         }
         function selectedWatchList() { return watchLists.find(list => list.id === document.getElementById('watch-list-select')?.value); }
         async function createWatchList() {
-            const name = window.prompt('Name this watch list:');
+            const name = await watchListDialog({title:'Create a watch list', message:'Choose a name for this list.', confirmLabel:'Create list'});
             if (!name?.trim()) return;
             try { await watchListRequest('/api/watch-lists', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}); await loadWatchLists(); }
             catch (error) { watchListMessage(error.message, true); }
         }
         async function renameWatchList() {
             const list = selectedWatchList(); if (!list) return;
-            const name = window.prompt('Rename this list:', list.name); if (!name?.trim()) return;
+            const name = await watchListDialog({title:'Rename watch list', message:'Enter a new name for this list.', value:list.name, confirmLabel:'Save name'}); if (!name?.trim()) return;
             try { await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}); await loadWatchLists(); }
             catch (error) { watchListMessage(error.message, true); }
         }
         async function deleteWatchList() {
-            const list = selectedWatchList(); if (!list || !window.confirm(`Delete “${list.name}” and its ${list.items.length} item(s)?`)) return;
+            const list = selectedWatchList(); if (!list || !await watchListDialog({title:'Delete watch list?', message:`“${list.name}” and all ${list.items.length} ${list.items.length === 1 ? 'item' : 'items'} in it will be deleted.`, type:'confirm', confirmLabel:'Delete list', danger:true})) return;
             try { await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}`, {method:'DELETE'}); await loadWatchLists(); }
             catch (error) { watchListMessage(error.message, true); }
         }
@@ -5676,7 +5731,7 @@ SIMKL_ENABLED=true</pre>
             try {
                 const data = await watchListRequest(`/api/watch-lists/anime-search?title=${encodeURIComponent(title)}${year ? `&year=${encodeURIComponent(year)}` : ''}`);
                 if (!data.match) { watchListMessage('AniList did not find a match. You can add the title manually.', true); return; }
-                if (!window.confirm(`Add AniList match “${data.match.title}${data.match.year ? ` (${data.match.year})` : ''}”?`)) return;
+                if (!await watchListDialog({title:'Add AniList match?', message:`Add “${data.match.title}${data.match.year ? ` (${data.match.year})` : ''}” to this list?`, type:'confirm', confirmLabel:'Add item'})) return;
                 await addWatchListItem(data.match);
             } catch (error) { watchListMessage(error.message, true); }
         }
@@ -5712,7 +5767,7 @@ SIMKL_ENABLED=true</pre>
             const list = selectedWatchList();
             const box = document.getElementById('watch-list-items'); if (!box) return;
             if (!list) { box.innerHTML = '<p class="u-color-text-muted">No watch lists yet. Select New list to create one.</p>'; return; }
-            if (!list.items.length) { box.innerHTML = '<p class="u-color-text-muted">This list is empty.</p>'; return; }
+            if (!list.items.length) { box.innerHTML = '<div class="watch-list-empty"><p class="u-color-text-muted">This list is empty.</p><button type="button" class="btn-sm" onclick="document.getElementById(\'watch-item-title\').focus()">Add your first movie, show, or anime</button></div>'; return; }
             const readOnly = isDemo ? 'disabled' : '';
             box.innerHTML = list.items.map((item, index) => {
                 const year = item.year ? ` (${item.year})` : '';
@@ -5769,10 +5824,10 @@ SIMKL_ENABLED=true</pre>
             try {
                 const preview = await watchListRequest('/api/watch-lists/import/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({data})});
                 const summary = `${preview.list_count} list(s), ${preview.item_count} unique item(s), ${preview.duplicates_skipped} duplicate(s) skipped.`;
-                const choice = window.prompt(`Import preview: ${summary}\n\nType merge to add items to matching lists, replace to overwrite all saved lists, or cancel to abort.`, 'merge');
-                if (!choice || !['merge', 'replace'].includes(choice.trim().toLowerCase())) return;
-                const replace = choice.trim().toLowerCase() === 'replace';
-                if (replace && !window.confirm('Replace every saved watch list with the imported data? This cannot be undone.')) return;
+                const choice = await watchListDialog({title:'Import watch lists', message:`Preview: ${summary} Choose how to apply the import.`, type:'select', options:[{value:'merge',label:'Merge with saved lists'},{value:'replace',label:'Replace all saved lists'}], confirmLabel:'Continue'});
+                if (!choice) return;
+                const replace = choice === 'replace';
+                if (replace && !await watchListDialog({title:'Replace all watch lists?', message:'Every saved list will be replaced with the imported data. This cannot be undone.', type:'confirm', confirmLabel:'Replace lists', danger:true})) return;
                 const result = await watchListRequest('/api/watch-lists/import', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({data, replace})});
                 await loadWatchLists(); watchListMessage(`Import complete: ${summary} ${result.duplicates_skipped} existing duplicate(s) skipped.`);
             } catch (error) { watchListMessage(error.message, true); }
@@ -5783,7 +5838,7 @@ SIMKL_ENABLED=true</pre>
             await importWatchListData(await file.text()); input.value = '';
         }
         async function openWatchListPaste() {
-            const text = window.prompt('Paste JSON or exported watch-list text here:');
+            const text = await watchListDialog({title:'Paste watch-list data', message:'Paste JSON or exported watch-list text below.', type:'textarea', confirmLabel:'Preview import'});
             if (text?.trim()) await importWatchListData(text);
         }
         document.addEventListener('DOMContentLoaded', loadWatchLists);
@@ -5815,6 +5870,73 @@ SIMKL_ENABLED=true</pre>
                 panel.hidden = panel.id !== `view-${name}`;
             });
             try { localStorage.setItem('omniscrobble_workspace', name); } catch (e) {}
+        }
+        function openTrackerRecovery() {
+            const text = document.getElementById('health-tracker-status')?.textContent || '';
+            openSettingsModal('trackers', /refresh|expired/i.test(text) ? 'trakt' : null);
+        }
+        function openListenerRecovery() { openSettingsModal('servers'); }
+        function openQueueRecovery() {
+            switchWorkspace('operations');
+            const status = document.getElementById('health-queue-status')?.textContent || '';
+            const failedFilter = Array.from(document.querySelectorAll('.activity-filter-chip')).find((button) => button.getAttribute('onclick') === "setActivityFilter('status', 'failed', this)");
+            const hasFailedEvents = (Array.isArray(allEvents) && allEvents.some((event) => {
+                const result = String(event.result_status || '').toLowerCase();
+                const deliveries = Object.values(event.tracker_delivery || {}).map((value) => String(value).toLowerCase());
+                return result === 'error' || result === 'failed' || result === '429' || /^4\d\d$/.test(result) || /^5\d\d$/.test(result) || deliveries.includes('failed');
+            })) || Boolean(document.querySelector('#events-tbody .activity-status-failed, #events-tbody .tracker-delivery-failed'));
+            if (hasFailedEvents && failedFilter) {
+                const allTypesFilter = Array.from(document.querySelectorAll('#card-activity .activity-filter-group[aria-label="Media type"] .activity-filter-chip')).find((button) => button.getAttribute('onclick') === "setActivityFilter('type', 'all', this)");
+                if (allTypesFilter) setActivityFilter('type', 'all', allTypesFilter);
+                const userFilter = document.getElementById('activity-user-filter');
+                if (userFilter) userFilter.value = '';
+                setActivityUser('');
+                const search = document.getElementById('activity-search');
+                if (search) search.value = '';
+                setActivitySearch('');
+                setActivityFilter('status', 'failed', failedFilter);
+                document.querySelector('#events-tbody .activity-row')?.scrollIntoView({behavior:'smooth', block:'center'});
+            } else if (/\d+ pending/i.test(status) && typeof retryQueue === 'function') {
+                const retryButton = document.querySelector('#card-activity button[onclick="retryQueue()"]');
+                if (retryButton) retryButton.focus();
+                else document.getElementById('card-activity')?.scrollIntoView({behavior:'smooth', block:'start'});
+            } else {
+                document.getElementById('activity-search')?.focus();
+            }
+        }
+        function updateSetupChecklist() {
+            const checklist = document.getElementById('setup-checklist');
+            if (!checklist) return;
+            const serverCards = Array.from(document.querySelectorAll('#card-ecosystem .eco-card'));
+            const serverReady = serverCards.some((card) => {
+                const name = card.querySelector('.eco-card-name')?.textContent || '';
+                const badge = card.querySelector('.eco-status-badge');
+                return /plex|jellyfin|emby/i.test(name) && (badge?.classList.contains('is-connected') || badge?.classList.contains('is-available'));
+            });
+            const trackerReady = Array.from(document.querySelectorAll('#hub-trackers-grid .hub-tracker-item')).some((item) => {
+                const status = item.querySelector(':scope > div:last-child > span:first-child')?.textContent || '';
+                return /\b(active|ready)\b/i.test(status);
+            });
+            const successfulScrobbleActions = new Set(['scrobble', 'watched']);
+            const activityReady = Array.isArray(allEvents) && allEvents.some((event) => {
+                const status = String(event.result_status || '').toLowerCase();
+                const action = String(event.action || '').toLowerCase();
+                const succeeded = ['ok', 'success', '200', '201'].includes(status);
+                const isScrobble = successfulScrobbleActions.has(action) || action.startsWith('mark_watched') || action.startsWith('scrobble_stop');
+                return succeeded && isScrobble;
+            });
+            const states = {server:serverReady, tracker:trackerReady, activity:activityReady};
+            let complete = 0;
+            Object.entries(states).forEach(([step, done]) => {
+                const item = checklist.querySelector(`[data-setup-step="${step}"]`);
+                if (!item) return;
+                item.classList.toggle('is-complete', done);
+                item.querySelector('.setup-step-state').textContent = done ? '✓' : String(Object.keys(states).indexOf(step) + 1);
+                if (done) complete += 1;
+            });
+            const progress = document.getElementById('setup-checklist-progress');
+            if (progress) progress.textContent = `${complete} of 3 complete`;
+            checklist.hidden = complete === 3;
         }
         const dashboardCommands = [
             { label: 'Manual Scrobble', detail: 'Search and mark media watched', run: () => openManualScrobbleModal() },
@@ -5936,6 +6058,7 @@ SIMKL_ENABLED=true</pre>
             let saved = 'operations';
             try { saved = localStorage.getItem('omniscrobble_workspace') || saved; } catch (e) {}
             switchWorkspace(saved);
+            updateSetupChecklist();
             const serverCard = document.getElementById('card-server-config');
             if (serverCard) {
                 const labels = Array.from(serverCard.querySelectorAll('.info-item'));
@@ -5947,12 +6070,61 @@ SIMKL_ENABLED=true</pre>
                 const queueStatus = document.getElementById('health-queue-status');
                 if (queueStatus && queue) queueStatus.textContent = queue[0].replace(/^Queue:\s*/i, '');
             }
-            const listeners = document.querySelectorAll('#card-ecosystem .eco-card:not(.eco-card-disabled)').length;
+            const listeners = Array.from(document.querySelectorAll('#card-ecosystem .eco-card:not(.eco-card-disabled)')).filter((card) => /plex|jellyfin|emby/i.test(card.querySelector('.eco-card-name')?.textContent || '')).length;
             const listenerStatus = document.getElementById('health-listener-status');
             if (listenerStatus) listenerStatus.textContent = listeners ? `${listeners} active` : 'None active';
+            updateSetupChecklist();
+        }
+        function initModalAccessibility() {
+            const activeDialogs = new Map();
+            const getDialog = (overlay) => overlay.querySelector('.modal-dialog, [role="dialog"]') || overlay;
+            const focusableSelector = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+            const syncOverlay = (overlay) => {
+                const dialog = getDialog(overlay);
+                const isOpen = getComputedStyle(overlay).display !== 'none';
+                if (isOpen && !activeDialogs.has(overlay)) {
+                    activeDialogs.set(overlay, document.activeElement);
+                    dialog.setAttribute('role', 'dialog');
+                    dialog.setAttribute('aria-modal', 'true');
+                    if (!dialog.hasAttribute('tabindex')) dialog.tabIndex = -1;
+                    if (!dialog.hasAttribute('aria-labelledby') && !dialog.hasAttribute('aria-label')) {
+                        const heading = dialog.querySelector('h1, h2, h3, [data-dialog-title]');
+                        if (heading) {
+                            if (!heading.id) heading.id = `dialog-title-${overlays.indexOf(overlay)}`;
+                            dialog.setAttribute('aria-labelledby', heading.id);
+                        }
+                    }
+                    window.setTimeout(() => {
+                        if (getComputedStyle(overlay).display === 'none') return;
+                        const first = Array.from(dialog.querySelectorAll(focusableSelector)).find((el) => el.getClientRects().length && !el.closest('[hidden]'));
+                        (first || dialog).focus({ preventScroll: true });
+                    }, 0);
+                } else if (!isOpen && activeDialogs.has(overlay)) {
+                    const opener = activeDialogs.get(overlay);
+                    activeDialogs.delete(overlay);
+                    if (opener?.isConnected && typeof opener.focus === 'function') opener.focus({ preventScroll: true });
+                }
+            };
+            const overlays = Array.from(document.querySelectorAll('.modal, #command-palette-modal'));
+            overlays.forEach(syncOverlay);
+            const observer = new MutationObserver((records) => records.forEach((record) => syncOverlay(record.target)));
+            overlays.forEach((overlay) => observer.observe(overlay, { attributes: true, attributeFilter: ['style', 'hidden'] }));
+            document.addEventListener('keydown', (event) => {
+                if (event.key !== 'Tab') return;
+                const overlay = overlays.filter((item) => getComputedStyle(item).display !== 'none').at(-1);
+                if (!overlay) return;
+                const dialog = getDialog(overlay);
+                const focusable = Array.from(dialog.querySelectorAll(focusableSelector)).filter((el) => el.getClientRects().length && !el.closest('[hidden]'));
+                if (!focusable.length) { event.preventDefault(); dialog.focus(); return; }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+                else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+            });
         }
         window.addEventListener('pageshow', resetCowatchScroll);
         document.addEventListener('DOMContentLoaded', () => {
+            initModalAccessibility();
             initWorkspaces();
             resetCowatchScroll();
             fetchEvents();

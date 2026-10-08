@@ -121,7 +121,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 - **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, activity feed rows, and per-tracker delivery badges. Asynchronous Simkl/AniList/MAL results update the originating persisted event by its event ID.
 - **`app/services/analytics_manager.py`**: Personal analytics computation engine and "OmniWrapped" annual retrospective generator. Aggregates lifetime and windowed watch telemetry (using playhead offsets for threshold stops and runtime for completed watches, plus completed scrobbles, unique titles, solo vs shared co-watching ratios, multi-server distributions, top binged shows and genres) with viewer personality archetype heuristics.
 - **`app/services/webhook_debugger.py`**: In-memory raw webhook ring buffer and payload debugger. Securely captures incoming payloads across Plex, Jellyfin, Emby, Radarr, Sonarr, and standalone players with automatic token redaction, live in-browser inspection, and interactive dry-run / live replay execution.
-- **`app/templates/dashboard.html`**: Responsive dashboard shell with five keyboard-accessible workspaces, activity filters, live arrival feedback, shared diagnostics, and mobile bottom navigation. It composes reusable markup from `app/templates/dashboard/`, while theme tokens, layout rules, and interactions are served from `app/static/dashboard-theme.css`, `app/static/dashboard.css`, and `app/static/dashboard.js`.
+- **`app/templates/dashboard.html`**: Responsive dashboard shell with six keyboard-accessible workspaces, an adaptive setup checklist, direct tracker/listener/queue recovery shortcuts, activity filters, shared diagnostics, and mobile bottom navigation. It composes reusable markup from `app/templates/dashboard/`, while theme tokens, layout rules, and interactions are served from `app/static/dashboard-theme.css`, `app/static/dashboard.css`, and `app/static/dashboard.js`.
 - **`app/metrics.py`**: Custom thread-safe Prometheus metrics registry exporting directly on `/metrics`.
 - **`app/services/log_manager.py`**: Real-time log streamer combining `journalctl --user` with an in-memory 1,000-line ring buffer. Features strict privacy redaction for query parameters and authorization headers.
 
@@ -235,8 +235,12 @@ omniscrobble/
 ├── templates/                       # Community deployment templates & app stores
 │   ├── unraid-omniscrobble.xml      # Official Unraid Community Applications template
 │   └── docker-compose.portainer.yml # Portainer stack & TrueNAS SCALE compose specification
-├── tests/                           # Comprehensive test suite (260 tests, 0 external calls)
-│   └── test_scrobbler.py            # End-to-end integration and unit tests with pytest (260 tests)
+├── tests/                           # Unit, integration, and browser regression tests
+│   ├── test_scrobbler.py            # End-to-end integration and service unit tests with pytest
+│   ├── test_watch_list_manager.py   # Watch-list persistence and API tests
+│   └── test_dashboard_playwright.py # Cross-browser UI, accessibility, and watch-list flows
+├── package.json                     # axe-core browser accessibility test dependency
+├── package-lock.json                # Reproducible JavaScript test dependency lockfile
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
 ├── auth.py                          # Standalone CLI device code authentication tool
 ├── plex-trakt.service               # systemd user service definition

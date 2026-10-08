@@ -23,7 +23,19 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 1.2 Local Configuration (`.env`)
+### 1.2 Browser UI Tests
+
+The Playwright suite exercises the rendered dashboard in Chromium, Firefox, and WebKit at phone, tablet, desktop, and short landscape sizes. It also scans the dashboard with axe-core and exercises watch-list CRUD and import flows against an isolated temporary data file. Install the JavaScript test dependency and browsers once, then run the browser checks:
+
+```bash
+.venv/bin/python -m playwright install chromium firefox webkit
+npm ci
+.venv/bin/pytest tests/test_dashboard_playwright.py -v
+```
+
+The regular CI workflow installs axe-core, Chromium, Firefox, WebKit, and their host dependencies automatically and runs the same browser checks with the full pytest suite. Layout and accessibility cases load the demo dashboard; watch-list write flows use a temporary file so local user data is not touched. Locally, cases for browsers that are missing or cannot launch because the operating system lacks their dependencies are skipped with a reason.
+
+### 1.3 Local Configuration (`.env`)
 
 Copy the example configuration or create a minimal `.env`:
 
@@ -33,7 +45,7 @@ cp .env.example .env
 
 For purely local testing, Omniscrobble will run safely with defaults. If testing with authentication or protected endpoints, configure `WEBHOOK_SECRET` in your `.env`.
 
-### 1.3 Running the Local Server
+### 1.4 Running the Local Server
 
 Start the FastAPI application with Uvicorn:
 

@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "devDependencies": {
+    "axe-core": "^4.10.3"
+  }
+}
