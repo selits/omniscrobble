@@ -54,10 +54,15 @@
     <script>
         const targetUser = "{{TARGET_UNAME}}";
         let pollInterval = null;
+        function csrfHeaders(headers = {}) {
+            const match = document.cookie.match(/(^|;\s*)csrf_token=([^;]+)/);
+            if (match) headers['x-csrf-token'] = decodeURIComponent(match[2]);
+            return headers;
+        }
         async function initAuth() {
             try {
                 const url = targetUser ? ('/api/auth/start?user=' + encodeURIComponent(targetUser)) : '/api/auth/start';
-                const res = await fetch(url, { method: 'POST' });
+                const res = await fetch(url, { method: 'POST', headers: csrfHeaders() });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.error || !data.user_code) throw new Error(data.detail || data.error || 'Failed to generate device code from Trakt. Check client credentials in Settings Hub or .env.');
                 document.getElementById('code-display').textContent = data.user_code;
@@ -70,7 +75,7 @@
                     try {
                         const pollRes = await fetch('/api/auth/poll', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: csrfHeaders({ 'Content-Type': 'application/json' }),
                             body: JSON.stringify({ device_code: data.device_code, user: targetUser || null })
                         });
                         const pollData = await pollRes.json();

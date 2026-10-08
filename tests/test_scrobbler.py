@@ -481,6 +481,43 @@ async def test_auth_endpoints_and_page():
         assert res_poll_ok.json()["status"] == "success"
 
 
+@pytest.mark.asyncio(loop_scope="function")
+async def test_trakt_auth_endpoints_enforce_admin_cookie_csrf():
+    """Require a matching CSRF header for cookie-authenticated Trakt auth POSTs."""
+    client = make_async_test_client(app)
+    secret = "test_admin_secret"
+    csrf_token = "test_csrf_token"
+    fake_client = MagicMock()
+    fake_client.generate_device_code = AsyncMock(return_value={
+        "device_code": "device-123",
+        "user_code": "ABCD1234",
+        "verification_url": "https://trakt.tv/activate",
+        "interval": 5,
+    })
+    fake_client.poll_for_token = AsyncMock(return_value={"status": "pending"})
+
+    with patch.object(Config, "WEBHOOK_SECRET", secret), \
+            patch("app.main.user_mgr.get_client", return_value=fake_client):
+        client.cookies.set("admin_token", secret)
+        client.cookies.set("csrf_token", csrf_token)
+
+        assert (await client.post("/api/auth/start")).status_code == 401
+        assert (await client.post("/api/auth/poll", json={"device_code": "device-123"})).status_code == 401
+
+        headers = {"x-csrf-token": csrf_token}
+        start = await client.post("/api/auth/start", headers=headers)
+        assert start.status_code == 200
+        assert start.json()["user_code"] == "ABCD1234"
+
+        poll = await client.post(
+            "/api/auth/poll",
+            json={"device_code": "device-123"},
+            headers=headers,
+        )
+        assert poll.status_code == 200
+        assert poll.json()["status"] == "pending"
+
+
 def test_mask_username():
     assert mask_username("selits") == "se****"
     assert mask_username("alex") == "a***"

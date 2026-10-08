@@ -1,5 +1,6 @@
 """Real-browser dashboard layout and keyboard interaction checks."""
 
+import asyncio
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -231,6 +232,107 @@ async def test_settings_modal_fits_short_landscape_viewport(dashboard_page: Page
     assert await page.locator("#settings-modal .settings-hub-content").evaluate(
         "element => element.scrollHeight >= element.clientHeight"
     )
+
+
+@pytest.mark.parametrize("width", [320, 360, 390])
+@pytest.mark.asyncio(loop_scope="function")
+async def test_settings_footer_stays_within_narrow_mobile_viewport(dashboard_page: Page, width: int) -> None:
+    """Keep settings guidance and save controls visible without horizontal overflow."""
+    page = dashboard_page
+    await page.set_viewport_size({"width": width, "height": 800})
+    await page.locator('button[onclick="openSettingsModal()"]').click()
+
+    dialog = page.locator("#settings-modal .settings-hub-dialog")
+    footer = page.locator("#settings-modal .settings-hub-footer")
+    await dialog.wait_for(state="visible")
+    await footer.wait_for(state="visible")
+    assert await footer.evaluate(
+        "element => element.parentElement.classList.contains('settings-hub-dialog')"
+    ), "the settings footer must remain inside the dialog"
+    for name, locator in (
+        ("dialog", dialog),
+        ("footer", footer),
+        ("hint", footer.locator(".settings-save-hint")),
+        ("buttons", footer.locator("button")),
+    ):
+        for bounds in await locator.evaluate_all(
+            "elements => elements.map(element => { const r = element.getBoundingClientRect(); "
+            "return {left: r.left, right: r.right, width: r.width}; })"
+        ):
+            assert bounds["left"] >= -1, f"{name} starts outside viewport at {width}px: {bounds}"
+            assert bounds["right"] <= width + 1, f"{name} overflows viewport at {width}px: {bounds}"
+
+    assert await footer.evaluate("element => element.scrollWidth <= element.clientWidth + 1")
+    assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_trakt_auth_page_sends_csrf_header_for_start_and_poll(
+    browser: Browser,
+) -> None:
+    """The browser auth flow includes the CSRF header required by admin cookies."""
+    csrf_token = "playwright-csrf-token"
+    page = await browser.new_page(viewport={"width": 390, "height": 844})
+    await page.context.add_cookies([
+        {"name": "csrf_token", "value": csrf_token, "url": "http://auth.test"},
+    ])
+    observed_headers: dict[str, str] = {}
+    poll_request_seen = asyncio.Event()
+
+    async def serve_auth(route: Route) -> None:
+        request = route.request
+        parsed = urlparse(request.url)
+        headers = {
+            "x-csrf-token": request.headers.get("x-csrf-token", ""),
+        }
+        if parsed.path == "/auth":
+            auth_html = (
+                dashboard_main.AUTH_HTML
+                .replace("{{PAGE_TITLE}}", "Link Trakt Account")
+                .replace("{{H1_TEXT}}", "Link Trakt Account")
+                .replace(
+                    "{{P_DESC}}",
+                    "Authorize this scrobbler to record playback and sync history with your Trakt profile.",
+                )
+                .replace("{{ALREADY_CONNECTED_BANNER}}", "")
+                .replace("{{TARGET_UNAME}}", "")
+            )
+            await route.fulfill(status=200, content_type="text/html", body=auth_html)
+            return
+        elif parsed.path == "/api/auth/start":
+            observed_headers[parsed.path] = headers["x-csrf-token"]
+            await route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=(
+                    '{"device_code":"test-device-code","user_code":"ABCD1234",'
+                    '"verification_url":"https://trakt.tv/activate","expires_in":600,"interval":1}'
+                ),
+            )
+            return
+        elif parsed.path == "/api/auth/poll":
+            observed_headers[parsed.path] = headers["x-csrf-token"]
+            poll_request_seen.set()
+            await route.fulfill(status=200, content_type="application/json", body='{"status":"pending"}')
+            return
+        else:
+            await route.fulfill(status=204, body="")
+            return
+        await route.fulfill(
+            status=response.status_code,
+            content_type=response.headers.get("content-type", "text/html"),
+            body=response.content,
+        )
+
+    await page.route("**/*", serve_auth)
+    try:
+        await page.goto("http://auth.test/auth", wait_until="domcontentloaded")
+        await page.get_by_text("ABCD1234").wait_for(state="visible")
+        await asyncio.wait_for(poll_request_seen.wait(), timeout=7)
+        assert observed_headers["/api/auth/start"] == csrf_token
+        assert observed_headers["/api/auth/poll"] == csrf_token
+    finally:
+        await page.close()
 
 
 @pytest.mark.asyncio(loop_scope="function")
