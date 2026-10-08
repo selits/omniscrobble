@@ -709,10 +709,10 @@
             #settings-modal .settings-hub-content { padding-right: 0; }
             #settings-modal .settings-hub-footer { position: static; margin-left: 0; margin-right: 0; padding: 10px 0 calc(10px + env(safe-area-inset-bottom)); }
             #settings-modal .settings-hub-footer > div { width: 100%; flex-wrap: wrap; }
-            #settings-modal .settings-hub-footer button { min-height: 44px; flex: 1 1 100%; min-width: 0; white-space: normal; }
+            #settings-modal .settings-hub-footer button { min-height: 44px; flex: 1 1 140px; min-width: 0; white-space: normal; }
             #settings-modal .settings-save-hint { white-space: normal; overflow-wrap: anywhere; }
-            #settings-modal .settings-nav-tab { min-height: 42px; justify-content: center; flex: 1 1 calc(50% - 6px); }
-            #settings-modal .settings-nav-tab:last-child { flex-grow: 1; }
+            #settings-modal #settings-nav-tabs { max-width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; }
+            #settings-modal .settings-nav-tab { min-height: 42px; justify-content: center; flex: 0 0 auto; white-space: nowrap; }
             #settings-modal .settings-content-panel input, #settings-modal .settings-content-panel select, #settings-modal .settings-content-panel textarea { min-height: 42px; font-size: 16px; }
             #settings-modal .settings-content-panel .btn-sm { min-height: 42px; }
             .watch-list-dialog-actions button { min-height: 44px; flex: 1 1 120px; }
