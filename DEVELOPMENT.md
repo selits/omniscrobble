@@ -10,7 +10,7 @@ Welcome to Omniscrobble development! This document provides guidelines, environm
 - [**System Architecture & Directory Map**](./docs/ARCHITECTURE.md) — Technical layers, data flow, and components.
 - [**API Documentation**](./docs/API.md) — Endpoints, payloads, and authentication.
 - [**Configuration Guide**](./CONFIGURATION.md) — Environment variables and runtime settings.
-- [**Agent Guidelines**](./AGENTS.md) & [**Project Instructions**](./GEMINI.md) — Security boundaries and Git rules.
+- [**Agent Guidelines & Project Instructions**](./AGENTS.md) — Security boundaries, architecture, development workflow, and Git rules.
 
 ---
 
@@ -62,9 +62,10 @@ This script verifies:
 
 1. **Git Privacy Verification**: Asserts that `git config user.email` uses the privacy email `selits@users.noreply.github.com`.
 2. **State Isolation**: Asserts no `.env` or files under `data/` are tracked by git.
-3. **Unit Tests**: Runs `.venv/bin/pytest -v` (0 failures allowed).
-4. **Secret Scanning**: Runs Gitleaks across git history.
-5. **Static Demo Validation**: Regenerates and validates `docs/index.html`.
+3. **Dependency Audit**: CI separately runs `pip-audit -r requirements.txt` against known Python dependency advisories.
+4. **Unit and Browser Tests**: Runs `.venv/bin/pytest -v` (0 failures allowed).
+5. **Secret Scanning**: Runs Gitleaks across git history.
+6. **Static Demo Validation**: Regenerates and validates `docs/index.html`.
 
 ---
 

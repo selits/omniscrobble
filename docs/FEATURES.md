@@ -1,6 +1,6 @@
 # Omniscrobble — Feature Guides & Deep Dives
 
-This document provides in-depth technical guides for Omniscrobble's advanced capabilities, including multi-user co-watching, two-way library reconciliation, Sonarr/Radarr content bridging, offline resilience, and multi-channel notifications.
+This document provides in-depth technical guides for Omniscrobble's advanced capabilities, including multi-user co-watching, cross-tracker reconciliation, Sonarr/Radarr content bridging, offline resilience, and multi-channel notifications.
 
 ---
 
@@ -20,7 +20,15 @@ This document provides in-depth technical guides for Omniscrobble's advanced cap
 12. [In-Browser Webhook Inspector & Payload Debugger](#12-in-browser-webhook-inspector--payload-debugger)
 13. [Personal Viewing Analytics & OmniWrapped](#13-personal-viewing-analytics--omniwrapped)
 14. [Dashboard Workspaces & Navigation](#14-dashboard-workspaces--navigation)
-15. [Personal Watch Lists](#15-personal-watch-lists)
+15. [Shared and Personal Watch Lists](#15-shared-and-personal-watch-lists)
+16. [Explainable Sync History](#16-explainable-sync-history)
+17. [Guided Setup and Recovery Checks](#17-guided-setup-and-recovery-checks)
+18. [Backup Restore Preview](#18-backup-restore-preview)
+19. [Backup, Restore, and Recovery](#19-backup-restore-and-recovery)
+20. [Reconciliation Preview and Approval](#20-reconciliation-preview-and-approval)
+21. [Tracker Capability Registry](#21-tracker-capability-registry)
+22. [Flexible Event Automation Rules](#22-flexible-event-automation-rules)
+23. [Cross-Tracker Ratings Reconciliation](#23-cross-tracker-ratings-reconciliation)
 
 ---
 
@@ -84,6 +92,10 @@ Standard scrobbling is one-directional (Media Server $\to$ Trakt). Omniscrobble 
 | **Simkl** | ✅ Yes | ✅ Yes | ✅ Yes | ✅ **Verified** (Dual-tracker engine) |
 
 ### Reconciliation Capabilities
+
+The reconciliation workspace supports two-way Trakt/TMDb rating updates for movies and TV shows. TMDb-rated account lists are read through the authenticated, paginated account endpoints; only exact shared TMDb IDs are eligible, and title-only matches are skipped. Rating differences show both possible actions, while one-sided ratings can be sent to the other service. Ratings are previewed in the diff and applied only for selected rows. TMDb does not provide a watched-history list through these account-rated endpoints, so this path covers ratings only.
+
+For a conflicting Trakt–Simkl movie rating, the **Rating conflict policy** control supports manual selection, preferring Trakt, preferring Simkl, or choosing the newest rating when both `rated_at` timestamps are available. Bulk apply under manual selection leaves conflict pairs untouched. The engine rejects applying both opposite actions for the same conflict. Missing or equal timestamps stop the newest policy and require a source preference or manual choice.
 
 - **Intelligent GUID Matching**: Compares Trakt cloud history against your libraries via IMDb, TMDb, and TVDb IDs, detecting discrepancies:
   - `Trakt Only`: Watched on Trakt but unwatched on the media server.
@@ -188,7 +200,7 @@ stateDiagram-v2
 
 ### 1-Click System Backup & Restore
 
-- **Snapshot Export (`GET /api/backup`)**: Downloads a timestamped zip archive containing your configuration (`settings.json`), statistics (`stats.json`), co-watching rules (`cowatch_shows.json`), and encrypted OAuth token caches.
+- **Snapshot Export (`GET /api/backup`)**: Downloads a timestamped zip archive containing configuration (`settings.json`), statistics (`stats.json`), co-watching rules (`cowatch_shows.json`), automation rules (`automation_rules.json`), and encrypted OAuth token caches.
 - **Safe Drag-and-Drop Restore (`POST /api/restore`)**: Restore settings instantly via the web dashboard. Includes built-in Zip Slip path sanitization to guarantee safe extraction.
 
 ---
@@ -254,9 +266,11 @@ WEEKLY_DIGEST_HOUR=20
 
 ### Dashboard Runtime Configuration & Channel Testing
 
-All notification channels, event toggles, and weekly digest settings can be configured and managed live from the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab in the dashboard without editing `.env` or restarting services.
+All notification channels, event toggles, per-event channel destinations, severity, profile subscriptions, and weekly digest settings can be configured live from the **Settings Hub ⚙️ &rarr; 🔔 Notifications** tab without editing `.env` or restarting services. Scrobbles, ratings, collection, acquisitions, playback starts, queue recovery, token expiry, weekly digests, and sync failures can each select their own configured destinations. Media events can be limited to selected configured Plex profiles; an empty selection includes all profiles. Ntfy, Pushover, and Gotify receive the selected severity as push priority; Discord, Telegram, and Matrix retain their channel-specific formatting. With no saved route preference, events continue to use every configured channel.
 
 - **1-Click Test Buttons**: Verify delivery for Discord, Telegram, Ntfy, Pushover, Gotify, or Matrix with instant visual status feedback directly in the modal.
+- **Route Preview**: Review selected channels, severity, and applicable alert cooldowns before saving event preferences.
+- **Send Sample Through Route**: Send a labeled sample to the saved event destinations to verify the complete routing setup without creating a media activity record.
 - **⚡ Send Digest Now**: Test and immediately trigger a full activity digest across active notification channels or in demo mode.
 - **Credential Privacy**: Webhook URLs, bot tokens, auth tokens, and user keys are shielded (`••••••••`) in UI inputs and API payloads.
 
@@ -510,6 +524,7 @@ The **Statistics Hub** computes lifetime and time-windowed viewing telemetry dir
   - *The Grand Homelab Binger* (> 100 watch hours)
   - *The Curated Media Connoisseur* (selective, high-fidelity viewing)
 - **Exportable Retrospectives**: Export complete OmniWrapped JSON summaries for archiving or sharing.
+- **Activity and Summary Exports**: Admins can download filtered activity rows or dashboard-consistent analytics as CSV or versioned JSON. Filters cover inclusive date range, profile, media type, server, tracker, and solo/shared viewing. CSV uses RFC-4180 quoting and escapes spreadsheet formula prefixes; JSON records schema version, generation time, filters, and timestamp interpretation.
 
 ---
 
@@ -520,7 +535,7 @@ The dashboard groups its existing cards into six workspaces to make frequent ope
 | Workspace | Contents |
 | :--- | :--- |
 | **Operations** | Active playback and live activity history |
-| **Watch Lists** | Private local movie, TV, and anime lists |
+| **Watch Lists** | Shared and private movie, TV, and anime lists |
 | **Trackers & Hub** | Server and account status, media server listeners, tracker connections, and reconciliation |
 | **Automation** | Watch Together and Sonarr/Radarr bridges |
 | **Analytics** | Viewing trends and OmniWrapped insights |
@@ -530,12 +545,94 @@ Operations is the default. The selected workspace is remembered in browser local
 
 The activity stream includes media-type and delivery-status chips, a user selector, and title/user search. Each event shows the recorded result for applicable trackers; asynchronous Simkl, AniList, and MAL updates are attached to the same persisted event when they finish. Anime filtering uses the event's `is_anime` metadata when available. With auto-refresh enabled, new event rows animate into view and a brief toast announces each arrival. `Ctrl+K` / `⌘K` opens a searchable action palette for workspace navigation, manual scrobbling, queue retry, logs, reconciliation, theme selection, and *Arr search. Live Logs and Webhook Inspector share a tabbed right-side drawer, leaving the dashboard available behind it.
 
+Admin activity rows include a **Details** panel with a stable operation ID and per-destination outcome, a redacted explanation, last update time, attempt count, and bounded outcome history. Public activity responses omit these details and private operation identifiers.
+
 ---
 
-## 15. Personal Watch Lists
+## 15. Shared and Personal Watch Lists
 
-The Watch Lists workspace stores multiple private lists in `data/watch_lists.json`. Lists support movies, TV shows, and anime, including manual entries when catalog matching is unavailable. The editor searches configured Radarr/Sonarr catalogs for movie and TV metadata; AniList lookup can fill in a suggested anime title, year, and provider IDs.
+The Watch Lists workspace stores local lists in `data/watch_lists.json`. Signed-in household members can create private lists; an owner can share a list with enabled member accounts as an editor or viewer. Editors can change list items and ordering; viewers can read the list. Only the owner or admin can rename, delete, or change access. Existing unowned lists stay admin-only. Lists support movies, TV shows, and anime, including manual entries when catalog matching is unavailable. Items can have up to 20 tags and a 1,000-character note; owners and editors can add or edit them. The editor searches configured Radarr/Sonarr catalogs for movie and TV metadata; AniList lookup can fill in a suggested anime title, year, and provider IDs.
 
-Add a movie or series to Radarr or Sonarr from its list row; the existing acquisition dialog remains responsible for catalog match selection, root folder, profile, monitoring, and confirmation. TV and anime entries can also be added to or removed from the Co-Watch show whitelist. These actions do not remove the item from its personal list.
+Admins can add a movie or series to Radarr or Sonarr from a list row; the existing acquisition dialog remains responsible for catalog match selection, root folder, profile, monitoring, and confirmation. Admins can also add TV and anime entries to or remove them from the Co-Watch show whitelist. These actions do not remove the item from its list.
 
-Lists export as lossless JSON or readable TXT and can be copied to the clipboard. Import accepts JSON files, TXT files, or pasted text, shows a validation preview, and offers merge, replace, or cancel. Merge appends unique entries to matching list names. JSON preserves provider IDs and item ordering; TXT preserves list names, titles, media types, and years. The service writes JSON atomically and stores no downloaded artwork or credentials.
+Use **Refresh availability** to check configured Radarr/Sonarr libraries and Overseerr/Jellyseerr. Each item shows a combined state, per-service results, and the last check time; matching relies on provider IDs rather than title guesses. Admins can submit an individually selected item with a TMDb ID to the request service. Existing or pending requests are skipped, and approval remains governed by Overseerr/Jellyseerr. Direct library acquisition still uses the existing selection dialog.
+
+List owners can set **On item added** to Manual, Request, or Acquire. Manual is the default. Request sends only an item with an exact TMDb ID and checks for an existing or pending request before submitting it. The request service controls approval. Acquire requires an exact TMDb, TVDB, or IMDb catalog match and uses the administrator-configured root folder and quality profile; it marks the item monitored and starts the configured search. An editor adding an item to an opted-in list will trigger that list's action. The action result and check time are saved on the item. Imported lists reset this setting to Manual.
+
+Admins can export all lists as lossless JSON or readable TXT and import JSON files, TXT files, or pasted text with a validation preview and merge, replace, or cancel choices. Imports preserve the familiar formats but deliberately drop local owner and access grants, so imported data cannot grant access to an account. Merge appends unique entries to matching list names. JSON and TXT preserve tags and notes; JSON also preserves provider IDs and item ordering. Earlier TXT exports remain readable. The service writes JSON atomically and stores no downloaded artwork or credentials.
+
+---
+
+## 16. Explainable Sync History
+
+Admin users can open **Details** on an activity row to inspect its stable operation ID and per-destination delivery state. Each destination records a redacted explanation, an outcome category, last update time, attempt count, and up to 10 outcome history entries. Queue retry results, asynchronous tracker and household work, and media-server mirror outcomes attach to the originating event. Mixed destination results display **Partial delivery** so a successful primary tracker does not mask a failed or pending destination. Queue events retain their activity link through retry processing. Admins can retry an individual failed transient queue operation; authorization and permanent client errors must be fixed first. History and scrobble retries require explicit confirmation because an upstream timeout can leave the original outcome uncertain. Public activity responses continue to provide only privacy-safe status information and omit operation IDs and delivery details.
+
+---
+
+## 17. Guided Setup and Recovery Checks
+
+Admin users can open the **System** workspace to review a read-only snapshot of tracker authentication, enabled media server listeners, webhook secret configuration, recent captured webhook processing errors, queue counts, notification channel configuration, and required worker state. The snapshot includes the multi-tracker capability registry and explicitly notes that provider OAuth scopes are not introspected.
+
+The checklist does not contact external services when it loads. Admins can explicitly test tracker connectivity, a media server, or an *Arr integration, or send a test notification to a configured channel. Results include a status and check time but omit hostnames, account identifiers, and credentials. The webhook check reports bounded authentication-rejection counts by endpoint for the last 24 hours without retaining request payloads, tokens, or client IPs. Webhook Inspector opens from the check to review captured payload processing outcomes.
+
+---
+
+## 18. Backup Restore Preview
+
+System workspace backup restore first validates the selected archive and summarizes the files that would be replaced or preserved. ZIP and passphrase-protected backups are supported. Validation checks the versioned manifest when present, archive integrity, allowed paths, duplicate entries, symbolic links, JSON files, entry count, and maximum expanded size. Legacy archives without a manifest remain supported with a warning.
+
+Preview does not write files. Applying a restore runs the same validation again before writes, then reloads the affected in-memory settings, watch lists, activity, and tracker clients. A malformed or incompatible archive is rejected before restore begins. This validation does not make a multi-file restore transactional if the filesystem fails during the write stage.
+
+## 19. Backup, Restore, and Recovery
+
+Administrators can download backups, preview an archive before restoring it, and create local snapshots from the System workspace. Local snapshots are stored in `data/backups/` with owner-only permissions. `BACKUP_RETENTION_COUNT` controls how many newest snapshots are kept (default 5, bounded to 1–50). Backups include saved automation rules, household account password hashes, and account audit records. Active sessions are excluded and are revoked when accounts reload during restore. Restore validation checks the archive before writing and reports which data files would be replaced or preserved.
+
+## 20. Reconciliation Preview and Approval
+
+Library reconciliation now scans and presents proposed watched-history and rating actions before applying them. The preview reports action counts and flags entries without IMDb, TMDB, or TVDB IDs as title-based matches that need careful review. Applying through the dashboard references the short-lived preview snapshot, so the reviewed actions are the actions sent for execution. Closing the confirmation leaves library and tracker state unchanged.
+
+## 21. Tracker Capability Registry
+
+Tracker status and recovery checks use a shared per-tracker capability list for live playback, watched history, progress, ratings, watch lists, collection, and search. These describe actions Omniscrobble implements for each tracker; provider permission scopes are not inferred. Capability metadata is copied before returning it so callers cannot mutate the registry used elsewhere in the app.
+
+Tracker dispatch preflights live playback and rating requests against the same registry. Unsupported actions are returned with a plain-language reason and are recorded as skipped outcomes in activity details. For example, selecting Letterboxd for live playback reports that it only supports completed movie diary entries.
+
+The System recovery checklist also validates local configuration values and dependencies without contacting services. It flags invalid scrobble thresholds and digest schedules, incomplete notification and *Arr credentials, automation with no configured destination, and integrations that are configured but disabled. It shows effective non-secret values with their source (runtime settings, environment, or defaults).
+
+The same checklist reports the app and Python versions plus schema compatibility for runtime settings, watch lists, automation rules, dashboard accounts, and the offline queue. Unknown integration versions remain unknown; only explicit connection tests record integration reachability and any returned version. Loading the checklist does not contact integrations. If a newer settings, automation, account, watch-list, or queue schema is detected, the current app refuses to overwrite that data.
+
+## 22. Flexible Event Automation Rules
+
+Admins can manage ordered event rules in the **Automation** workspace. Conditions can match the source server, library, media type, player/device, user, and a timezone-aware weekly time window. Existing minimum-duration, library exclusion, and file-path filters run first; the existing scrobble thresholds and tracker pause settings remain in effect after the automation decision.
+
+Rules use the lowest numeric priority first, with saved order breaking ties. The default is **allow**. The workspace can evaluate a sample without dispatching it and preview a proposed rule set against the saved rules without writing changes. Results identify the winning rule and explain conflicting matches. Match-all rules and invalid actions/conditions are rejected.
+
+Live **suppress** and **review** decisions hold events before tracker calls and preserve the explanation in activity details. The review queue lets an administrator approve a held event for one-time reprocessing or reject it. Review stores only normalized media fields, not the original webhook payload or file path.
+
+**Route** rules send events to selected enabled trackers. Optional profiles receive completed watches and ratings through the existing household profile dispatcher. Global tracker pause settings still apply. Unsupported event types remain held for review with an explanation.
+
+---
+
+## 23. Cross-Tracker Ratings Reconciliation
+
+The existing cross-tracker reconciliation view compares Trakt and Simkl history and ratings. It can also compare Trakt ratings with your authenticated TMDb account for movies and TV shows, even when Simkl is not connected.
+
+TMDb reads use its paginated [rated movies](https://developer.themoviedb.org/reference/account-rated-movies) and [rated TV](https://developer.themoviedb.org/reference/account-rated-tv) endpoints. Requests are sequential, capped at 500 pages, and stop when an HTTP error occurs; a failed or rate-limited response does not become a partial successful scan. TMDb describes a soft upper request limit around 40 requests per second and asks clients to respect HTTP 429 responses ([rate limiting](https://developer.themoviedb.org/docs/rate-limiting)). Apply writes are sequential and each diff row is individually selectable.
+
+Matching requires a shared TMDb ID. Title and year are shown for review but are not used to authorize an update. For conflicts, choose a direction manually or use the source preference policy; newest-rated applies only when both timestamps exist and differ. Unmatched Trakt ratings are skipped. Watched-history reconciliation with TMDb is not included because these account endpoints expose ratings, not a watched-history collection.
+
+Fractional TMDb ratings are rounded to the nearest Trakt integer with halves rounded upward and values clamped to 1–10. Rating comparison follows that conversion. After a successful conflict resolution, both cached directions are invalidated.
+
+Applied rating conflict choices are retained in a bounded local provenance history and included in application backups. Admins can review recent decisions through the cross-sync provenance API.
+
+For existing Trakt–Simkl movie rating mismatches, choose **Manual selection**, **Prefer Trakt**, **Prefer Simkl**, or **Newest rating** before applying. Manual bulk sync leaves both sides of a conflicting rating untouched; if both opposite rows are selected manually, the request is rejected. Newest rating applies only when both records expose parseable, different `rated_at` timestamps. If timestamps are missing or tied, choose a source or select one row manually. History differences do not use the rating policy.
+
+### Review safeguards and household controls
+
+The header's Accounts modal lets administrators create household accounts, change roles and passwords, disable access, and delete accounts. Members use My account to connect or disconnect their own Trakt, Simkl, AniList, and MyAnimeList profiles. Local account sessions have a Sign out action. Member dashboard HTML, playback polling, activity, and analytics use the same profile scope; global household configuration remains restricted to administrators.
+
+Review approvals claim a pending event before any tracker dispatch. Concurrent decisions cannot dispatch that event again while processing; a dispatch exception returns it to pending. Mirror exceptions appear as failures in delivery telemetry. Queue retries retain the Trakt account selected during ingestion, including the default-account fallback, while explicit household targets continue waiting for their own authentication.
+
+Unsupported newer queue schemas disable queue access before SQLite journal settings or writes. Account, automation, settings, and watch-list mutations refuse newer schemas before modifying memory, and failed persistence rolls back live state. Nested Settings Hub edits persist as one outer settings update.
+
+For Pushover, critical notification routes use high priority (1). Emergency priority (2) requires retry/expiry settings that the application does not expose, so configured Pushover priorities above 1 are capped at 1.

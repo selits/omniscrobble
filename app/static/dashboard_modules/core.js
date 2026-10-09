@@ -1,5 +1,6 @@
         const isAdmin = window.dashboardConfig.isAdmin;
         const isDemo = window.dashboardConfig.isDemo;
+        const isMember = window.dashboardConfig.isMember === true;
         let refreshTimer = null;
 
         function copyWebhookUrl() {
@@ -95,6 +96,7 @@
             }
             if (e.key === 'Escape') {
                 closeCommandPalette();
+                if (typeof closeAccountModal === "function") closeAccountModal();
                 closeUnlockModal();
                 closeScrobbleModal();
                 closeLogsModal();

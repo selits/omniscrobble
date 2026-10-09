@@ -36,9 +36,10 @@ A lightweight, high-performance Python service that receives media server webhoo
 - **🎬 Universal Media Server Ingestion**: Native webhook support for **Plex** (`/webhook`), **Jellyfin** (`/webhook/jellyfin`), and **Emby** (`/webhook/emby`), standardizing metadata, provider GUIDs (IMDb, TMDb, TVDb), and playback states into a unified scrobble pipeline with media-specific thresholds (`EPISODE_SCROBBLE_THRESHOLD=80`, `MOVIE_SCROBBLE_THRESHOLD=90`).
 - **🎯 Multi-Tracker & Anime Engine**: Broadcast playback scrobbles and ratings across **Trakt.tv**, **Simkl**, **AniList (GraphQL)**, and **MyAnimeList (REST v2)** simultaneously. Features automated anime detection heuristics, negative caching (`data/anime_cache.json`), individual runtime tracker pause toggles, and per-event tracker delivery indicators.
 - **🔄 Two-Way Library Reconciliation**: Bi-directional matching of watched history and star ratings between media servers and cloud trackers (`/api/sync/*`). Includes interactive discrepancy diff modals, selective batch syncing, and automated echo loop suppression (`LoopPreventionManager`).
+- **🏠 Household Accounts**: Admin account management, member-scoped activity and analytics, personal tracker connections, and account backups with session revocation on restore.
 - **👥 Watch Together (Co-Watching)**: Dual-scrobble shared TV shows and movies to your partner's Trakt profile automatically, with dynamic show whitelists, living room hardware player filters (`CO_WATCH_PLAYERS`), and live Sonarr autocomplete.
 - **⚡ Content Bridge & *Arr Automation**: Connect your Trakt Watchlist (`/sync/watchlist`) directly to **Sonarr** and **Radarr**, or search and add media from the dashboard and `Cmd+K`. Interactive additions support quality/root-folder options and optional Co-Watch enrollment that defaults off.
-- **🛡️ Resilience & Homelab Observability**: Persistent SQLite offline retry queue (`data/queue.db`), thread-safe Prometheus metrics (`/metrics`), real-time terminal log viewer with secret redaction, 1-click backup/restore (`.zip`), and a responsive dashboard with five workspaces, searchable activity filters, a command palette, a shared Logs and Webhook Inspector drawer, mobile bottom navigation, card visibility customization, 8 curated dark palettes, and 9 accent highlights.
+- **🛡️ Resilience & Homelab Observability**: Persistent SQLite offline retry queue (`data/queue.db`), thread-safe Prometheus metrics (`/metrics`), real-time terminal log viewer with secret redaction, backup preview and restore with bounded local snapshots, and a responsive dashboard with six workspaces, searchable activity filters, a command palette, a shared Logs and Webhook Inspector drawer, mobile bottom navigation, card visibility customization, 8 curated dark palettes, and 9 accent highlights.
 
 ---
 
@@ -149,9 +150,9 @@ For in-depth guides, variable references, and operational walk-throughs, explore
 | :--- | :--- |
 | [**Configuration Reference**](./CONFIGURATION.md) | Exhaustive documentation of all 55+ environment variables, server credentials, and secrets. |
 | [**Deployment Guide**](./DEPLOYMENT.md) | systemd user service setup, Docker Compose, Unraid/TrueNAS, lingering, and reverse proxies. |
-| [**Feature Guides**](./docs/FEATURES.md) | Deep dives for Co-Watching, Two-Way Reconciliation, Content Bridge, Queue, and Notifications. |
+| [**Feature Guides**](./docs/FEATURES.md) | Deep dives for household roles and shared watch lists, Co-Watching, Two-Way Reconciliation, Content Bridge, Queue, and Notifications. |
 | [**Architecture Blueprint**](./docs/ARCHITECTURE.md) | Complete component layers, data flows, and file-by-file directory manifest. |
-| [**REST API Specification**](./docs/API.md) | Documentation for all 123 REST endpoints, webhook payloads, and Prometheus scrape metrics. |
+| [**REST API Specification**](./docs/API.md) | Documentation for all 133 registered REST routes, webhook payloads, and Prometheus scrape metrics. |
 | [**Troubleshooting & FAQ**](./docs/TROUBLESHOOTING.md) | Solutions for common errors (422, 409, 80%), health diagnostics, and networking setup. |
 
 ---
@@ -182,7 +183,7 @@ omniscrobble/
 ## 🗺️ Roadmap & Horizons
 
 - [x] **Universal Media Server Ingestion & Auto-Registration**: Multi-server webhooks and 1-click webhook auto-registration for Plex, Jellyfin, and Emby.
-- [x] **Multi-Tracker Synchronization**: Simultaneous dispatch across Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, BetaSeries, and Serializd.
+- [x] **Multi-Tracker Synchronization**: Simultaneous dispatch across Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, Serializd, and MDBList.
 - [x] **Bi-Directional Library Reconciliation**: Discrepancy diffing and played/rating sync across Plex, Jellyfin, Emby, Trakt, and Simkl.
 - [x] **Watch Together / Co-Watch**: Dynamic multi-user partner scrobbling with show and device whitelists.
 - [x] **Content Bridge & Request Engine**: Automated Trakt Watchlist sync to Overseerr/Jellyseerr requests or direct Sonarr/Radarr grabs.
@@ -191,6 +192,7 @@ omniscrobble/
 - [x] **Dynamic Rules & Filters Engine**: Granular episode vs. movie thresholds, minimum duration filters, library section ignore lists, and path regex pattern matching.
 - [x] **Automated Background Cloud Reconciliation & Co-Watch Multi-Tracker Hub**: Periodic Letterboxd RFC-4180 CSV snapshots, two-way server diffs, Simkl cross-sync, and partner cloud tracker profiles (Simkl, AniList, MAL).
 - [x] **Packaging, Diagnostics & Personal Analytics**: Automated multi-arch container publishing (GHCR), Unraid & Portainer/TrueNAS templates, in-browser raw webhook inspector, and personal viewing analytics with OmniWrapped.
+- [x] **Shared Watch Lists & Availability**: Household owner/editor/viewer access, tags and notes, per-item library/request-service status, selected requests, and owner-configured automatic Overseerr/Jellyseerr or Sonarr/Radarr actions.
 - [ ] **Direct P2P Sync**: Mesh synchronization between distributed Omniscrobble instances.
 
 > 📦 For release notes, changelogs, and upgrade instructions, visit [**GitHub Releases**](https://github.com/selits/omniscrobble/releases).

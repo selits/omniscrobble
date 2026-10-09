@@ -8,7 +8,7 @@
             operations: ['active-playback-card', 'card-activity'],
             'watch-lists': ['card-watch-lists'],
             trackers: ['card-server-config', 'card-ecosystem', 'card-multi-tracker', 'card-reconciliation'],
-            automation: ['card-cowatch', 'card-arr-bridge'],
+            automation: ['automation-rules-card', 'card-cowatch', 'card-arr-bridge'],
             analytics: ['card-analytics'],
             diagnostics: ['card-backup']
         };
@@ -24,6 +24,177 @@
                 panel.hidden = panel.id !== `view-${name}`;
             });
             try { localStorage.setItem('omniscrobble_workspace', name); } catch (e) {}
+            if (name === 'diagnostics' && isAdmin && !document.getElementById('recovery-checks-list')?.dataset.loaded) refreshRecoveryChecks();
+            if (name === 'automation') loadAutomationRules();
+        }
+        function openRecoveryAction(action) {
+            if (action === 'compatibility') return;
+            if (action === 'servers') return openSettingsModal('servers');
+            if (action === 'trackers') return openSettingsModal('trackers');
+            if (action === 'notifications') return openSettingsModal('notifications');
+            if (action === 'queue') return openQueueRecovery();
+            if (action === 'logs') return openLogsModal();
+            if (action === 'webhook') return openWebhookDebuggerModal();
+            openSettingsModal('servers');
+        }
+        async function refreshRecoveryChecks() {
+            const list = document.getElementById('recovery-checks-list');
+            const updated = document.getElementById('recovery-checks-updated');
+            if (!list || !updated) return;
+            list.replaceChildren(Object.assign(document.createElement('p'), {textContent: 'Loading checks…'}));
+            try {
+                const response = await fetch('/api/health/recovery');
+                if (!response.ok) throw new Error(response.status === 401 ? 'Admin access is required to view recovery checks.' : 'Could not load recovery checks.');
+                const data = await response.json();
+                list.replaceChildren();
+                (data.checks || []).forEach((check) => {
+                    const item = document.createElement('article');
+                    item.className = `recovery-check recovery-check-${check.status}`;
+                    const heading = document.createElement('div');
+                    heading.className = 'recovery-check-heading';
+                    const title = document.createElement('strong');
+                    title.textContent = check.label;
+                    const badge = document.createElement('span');
+                    badge.className = 'recovery-check-status';
+                    badge.textContent = check.status.replaceAll('_', ' ');
+                    heading.append(title, badge);
+                    const summary = document.createElement('p');
+                    summary.textContent = check.summary;
+                    if (Array.isArray(check.compatibility_items) && check.compatibility_items.length) {
+                        const formatList = document.createElement('ul');
+                        formatList.className = 'recovery-capability-list';
+                        check.compatibility_items.forEach((format) => {
+                            const row = document.createElement('li');
+                            const observed = format.observed_version === null ? 'not present' : `v${format.observed_version}`;
+                            row.textContent = `${format.id.replaceAll('_', ' ')}: ${format.status.replaceAll('_', ' ')} (${observed}; current v${format.current_version}). ${format.action}`;
+                            formatList.append(row);
+                        });
+                        item.append(heading, summary, formatList);
+                    } else if (Array.isArray(check.findings) && check.findings.length) {
+                        const findingsList = document.createElement('ul');
+                        findingsList.className = 'recovery-capability-list';
+                        check.findings.forEach((finding) => {
+                            const row = document.createElement('li');
+                            row.textContent = `${finding.severity.toUpperCase()}: ${finding.message}`;
+                            findingsList.append(row);
+                        });
+                        item.append(heading, summary, findingsList);
+                    } else {
+                        item.append(heading, summary);
+                    }
+                    if (check.id === 'compatibility') {
+                        const details = document.createElement('small');
+                        const integrations = Object.entries(check.integrations || {}).map(([name, value]) => `${name}: ${value.version || 'unknown'} (${value.status}; ${value.compatibility})`);
+                        const ruleset = check.ruleset || {};
+                        details.textContent = `${check.application?.name} ${check.application?.version} · Python ${check.runtime?.python_version} (${check.runtime?.status}) · Integration versions are learned from explicit connection tests${integrations.length ? `: ${integrations.join('; ')}` : ''}. Ruleset v${ruleset.version}, reviewed ${ruleset.last_reviewed}.`;
+                        item.append(details);
+                    }
+                    if (Array.isArray(check.effective_settings) && check.effective_settings.length) {
+                        const details = document.createElement('details');
+                        const detailsHeading = document.createElement('summary');
+                        detailsHeading.textContent = 'Effective settings and sources';
+                        const sourceList = document.createElement('ul');
+                        sourceList.className = 'recovery-capability-list';
+                        check.effective_settings.forEach((setting) => {
+                            const row = document.createElement('li');
+                            row.textContent = `${setting.name}: ${setting.value} (from ${setting.source})`;
+                            sourceList.append(row);
+                        });
+                        details.append(detailsHeading, sourceList);
+                        item.append(details);
+                    }
+                    if (Array.isArray(check.tracker_capabilities) && check.tracker_capabilities.length) {
+                        const capabilityList = document.createElement('ul');
+                        capabilityList.className = 'recovery-capability-list';
+                        check.tracker_capabilities.forEach((tracker) => {
+                            const capabilityLabels = {
+                                realtime_playback: 'live playback', history: 'watched history', progress: 'progress',
+                                ratings: 'ratings', watchlist: 'watch lists', collection: 'collection', search: 'search',
+                            };
+                            const capabilities = (tracker.capabilities || []).map((capability) => capabilityLabels[capability] || capability);
+                            const detail = document.createElement('li');
+                            detail.textContent = `${tracker.name}: ${capabilities.join(', ')} (${tracker.media_types.join(', ')})`;
+                            capabilityList.append(detail);
+                        });
+                        item.append(capabilityList);
+                    }
+                    if (check.auth_rejections?.count) {
+                        const rejectionList = document.createElement('ul');
+                        rejectionList.className = 'recovery-capability-list';
+                        Object.entries(check.auth_rejections.by_endpoint || {}).forEach(([endpoint, count]) => {
+                            const detail = document.createElement('li');
+                            detail.textContent = `${endpoint}: ${count} rejected request${count === 1 ? '' : 's'}`;
+                            rejectionList.append(detail);
+                        });
+                        item.append(rejectionList);
+                    }
+                    const footer = document.createElement('div');
+                    footer.className = 'recovery-check-footer';
+                    const time = document.createElement('small');
+                    time.textContent = `Checked ${new Date(check.last_checked).toLocaleString()}`;
+                    footer.append(time);
+                    if (Array.isArray(check.test_integrations) && check.test_integrations.length) {
+                        const tests = document.createElement('div');
+                        tests.className = 'recovery-check-tests';
+                        check.test_integrations.forEach((integration) => {
+                            const button = document.createElement('button');
+                            button.type = 'button';
+                            button.className = 'btn-sm';
+                            const label = integration.startsWith('notification:') ? integration.split(':')[1] : integration;
+                            button.textContent = `Test ${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+                            button.addEventListener('click', () => runRecoveryConnectionTest(integration, button));
+                            tests.append(button);
+                        });
+                        item.append(tests);
+                    }
+                    const action = document.createElement('button');
+                    action.type = 'button';
+                    action.className = 'btn-sm';
+                    action.textContent = check.id === 'compatibility' ? 'Version report' : (check.status === 'healthy' || check.status === 'optional' ? 'Open settings' : 'Review');
+                    action.disabled = check.id === 'compatibility';
+                    action.addEventListener('click', () => openRecoveryAction(check.next_action));
+                    footer.append(action);
+                    const testResult = document.createElement('p');
+                    testResult.className = 'recovery-test-result';
+                    testResult.setAttribute('aria-live', 'polite');
+                    testResult.dataset.integration = check.id;
+                    item.append(footer, testResult);
+                    list.append(item);
+                });
+                list.dataset.loaded = 'true';
+                updated.textContent = `Last checked ${new Date(data.checked_at).toLocaleString()}. Checks do not contact external services.`;
+            } catch (error) {
+                list.replaceChildren(Object.assign(document.createElement('p'), {textContent: error.message || 'Could not load recovery checks.'}));
+                updated.textContent = 'Recovery checks unavailable.';
+            }
+        }
+        async function runRecoveryConnectionTest(integration, button) {
+            const result = button.closest('.recovery-check')?.querySelector('.recovery-test-result');
+            button.disabled = true;
+            button.textContent = 'Testing…';
+            if (result) result.textContent = `Testing ${integration}…`;
+            try {
+                const response = await fetch('/api/health/recovery/test', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({integration})
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Connection test failed.');
+                if (result) {
+                    result.className = `recovery-test-result recovery-test-${data.status}`;
+                    result.textContent = `${integration}: ${data.message} Checked ${new Date(data.checked_at).toLocaleString()}.`;
+                }
+            } catch (error) {
+                if (result) {
+                    result.className = 'recovery-test-result recovery-test-failed';
+                    result.textContent = error.message || 'Connection test failed.';
+                }
+            } finally {
+                button.disabled = false;
+                const label = integration.startsWith('notification:') ? integration.split(':')[1] : integration;
+                button.textContent = `Test ${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+            }
         }
         function openTrackerRecovery() {
             const text = document.getElementById('health-tracker-status')?.textContent || '';

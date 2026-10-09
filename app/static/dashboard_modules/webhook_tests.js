@@ -812,11 +812,32 @@
             if (allBtn) allBtn.disabled = true;
 
             try {
+                const previewUrl = isDemo ? '/api/sync/reconcile/preview?demo=true' : '/api/sync/reconcile/preview';
+                const previewResponse = await fetch(previewUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const preview = await previewResponse.json();
+                if (!previewResponse.ok) throw new Error(preview.detail || 'Preview failed');
+                if (!preview.total) {
+                    if (pMsg) pMsg.innerText = 'Preview found no eligible changes.';
+                    if (pBar) pBar.style.width = '100%';
+                    return;
+                }
+                const actionSummary = Object.entries(preview.actions || {}).map(([action, count]) => `${count} ${action.replaceAll('_', ' ')}`).join(', ');
+                const uncertain = (preview.warnings || []).map(item => item.title).filter(Boolean);
+                const caution = uncertain.length ? `\n\n${uncertain.length} item(s) rely on title matching and need careful review: ${uncertain.slice(0, 5).join(', ')}${uncertain.length > 5 ? ', …' : ''}.` : '';
+                if (!confirm(`Review ${preview.total} proposed reconciliation change(s): ${actionSummary}.${caution}\n\nApply this exact preview?`)) {
+                    if (pMsg) pMsg.innerText = 'Preview reviewed; no changes applied.';
+                    if (pBar) pBar.style.width = '100%';
+                    return;
+                }
                 const url = isDemo ? '/api/sync/reconcile?demo=true' : '/api/sync/reconcile';
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
+                    body: JSON.stringify({ preview_id: preview.preview_id, server: payload.server }),
                 });
                 if (res.ok) {
                     const data = await res.json();

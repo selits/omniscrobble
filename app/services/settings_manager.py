@@ -1,3 +1,5 @@
+from app.services.persistence_guard import persisted_mutation
+import threading
 import json
 import logging
 import os
@@ -12,9 +14,14 @@ except ImportError:
 
 logger = logging.getLogger("settings_manager")
 
+NOTIFICATION_CHANNELS = {"discord", "telegram", "ntfy", "pushover", "gotify", "matrix"}
+NOTIFICATION_ROUTE_EVENTS = {"scrobble", "rate", "collection", "arr_add", "playback_start", "queue_recovery", "token_expiry", "digest", "failure"}
+
 
 class SettingsManager:
     """Manages persistent dynamic enablement settings for media servers and trackers."""
+
+    SCHEMA_VERSION = 1
 
     def __init__(
         self,
@@ -22,6 +29,7 @@ class SettingsManager:
         settings_file: Path | None = None,
         data_dir: Path | None = None,
     ):
+        self._lock = threading.RLock()
         self.config = config
         self.settings_file: Path = settings_file or config.SETTINGS_FILE
         self.data_dir: Path = (
@@ -30,6 +38,7 @@ class SettingsManager:
             else getattr(config, "DATA_DIR", getattr(config, "BASE_DIR", Path(".")) / "data")
         )
         self._settings: dict[str, Any] = {
+            "schema_version": self.SCHEMA_VERSION,
             "servers": self._detect_default_servers(),
             "trackers": {
                 "trakt": True,
@@ -50,6 +59,8 @@ class SettingsManager:
             "multi_server_mirroring": bool(getattr(self.config, "MULTI_SERVER_MIRRORING", False)),
         }
         self._custom_notifications: dict[str, Any] = {}
+        self._loaded_schema_version = self.SCHEMA_VERSION
+        self._future_schema_version: int | None = None
         self._load_settings()
 
     def _detect_default_notifications(self) -> dict[str, Any]:
@@ -75,6 +86,10 @@ class SettingsManager:
             "notify_on_rate": bool(getattr(self.config, "NOTIFY_ON_RATE", True)),
             "notify_on_collection": bool(getattr(self.config, "NOTIFY_ON_COLLECTION", True)),
             "notify_on_failure": bool(getattr(self.config, "NOTIFY_ON_FAILURE", True)),
+            "notification_routes": {
+                event: {"destinations": sorted(NOTIFICATION_CHANNELS), "severity": "normal", "profiles": []}
+                for event in NOTIFICATION_ROUTE_EVENTS
+            },
         }
 
     def _detect_default_credentials(self) -> dict[str, dict[str, str]]:
@@ -253,11 +268,16 @@ class SettingsManager:
 
     def _load_settings(self) -> None:
         """Loads settings from disk and merges with default environment configurations."""
+        self._future_schema_version = None
         if self.settings_file.exists():
             try:
                 from app.services.crypto_manager import crypto_mgr
                 data = crypto_mgr.read_secure_json(self.settings_file)
                 if isinstance(data, dict):
+                        raw_schema_version = data.get("schema_version", 0)
+                        self._loaded_schema_version = raw_schema_version if type(raw_schema_version) is int else None
+                        if type(raw_schema_version) is int and raw_schema_version > self.SCHEMA_VERSION:
+                            self._future_schema_version = raw_schema_version
                         servers = data.get("servers", {})
                         if isinstance(servers, dict):
                             for k, v in servers.items():
@@ -312,20 +332,31 @@ class SettingsManager:
                         if "multi_server_mirroring" in data:
                             self._settings["multi_server_mirroring"] = bool(data["multi_server_mirroring"])
             except Exception as e:
+                self._loaded_schema_version = None
                 logger.error(f"Error reading settings from {self.settings_file}: {e}")
 
     def _save_settings(self) -> None:
         """Persists current runtime settings to disk atomically."""
+        if self._future_schema_version is not None:
+            raise RuntimeError(
+                "Settings were written by a newer schema; refusing to overwrite them with this version."
+            )
+        if getattr(self, "_mutation_depth", 0) > 1:
+            return
         try:
             from app.services.crypto_manager import crypto_mgr
+            self._settings["schema_version"] = self.SCHEMA_VERSION
             crypto_mgr.write_secure_json(self.settings_file, self._settings)
+            self._loaded_schema_version = self.SCHEMA_VERSION
         except Exception as e:
             logger.error(f"Error saving settings to {self.settings_file}: {e}")
+            raise
 
     def is_multi_server_mirroring_enabled(self) -> bool:
         """Checks if real-time multi-server watched status mirroring is enabled."""
         return bool(self._settings.get("multi_server_mirroring", False))
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def set_multi_server_mirroring(self, enabled: bool) -> dict[str, Any]:
         """Enables or disables real-time multi-server watched status mirroring."""
         self._settings["multi_server_mirroring"] = bool(enabled)
@@ -338,6 +369,7 @@ class SettingsManager:
         key = str(server).strip().lower()
         return self._settings["servers"].get(key, True)
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def set_server_enabled(self, server: str, enabled: bool) -> dict[str, Any]:
         """Updates enablement state for a media server and saves to disk."""
         key = str(server).strip().lower()
@@ -353,6 +385,7 @@ class SettingsManager:
             key = "mal"
         return self._settings["trackers"].get(key, True)
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def set_tracker_enabled(self, tracker: str, enabled: bool) -> dict[str, Any]:
         """Updates enablement state for a tracker and saves to disk."""
         key = str(tracker).strip().lower()
@@ -400,6 +433,7 @@ class SettingsManager:
 
         return recon
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def update_reconciliation_settings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Updates reconciliation settings and persists to disk."""
         recon = self._settings.setdefault("reconciliation", self._detect_default_reconciliation())
@@ -513,6 +547,7 @@ class SettingsManager:
 
         return result
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def update_tracker_credentials(self, tracker: str, data: dict[str, Any]) -> dict[str, Any]:
         """Update tracker credentials and persist to disk."""
         trk = str(tracker).strip().lower()
@@ -563,12 +598,14 @@ class SettingsManager:
         arr = self._settings.get("arr", {})
         return bool(arr.get("overseerr_enabled", getattr(self.config, "OVERSEERR_ENABLED", False)))
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def set_overseerr_enabled(self, enabled: bool) -> None:
         """Enable or disable Overseerr / Jellyseerr request routing."""
         arr = self._settings.setdefault("arr", self._detect_default_arr())
         arr["overseerr_enabled"] = bool(enabled)
         self._save_settings()
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def update_arr_settings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Updates *Arr automation settings and persists to disk."""
         arr = self._settings.setdefault("arr", self._detect_default_arr())
@@ -641,6 +678,7 @@ class SettingsManager:
             res["matrix_access_token"] = self._mask_val(res.get("matrix_access_token", ""))
         return res
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def update_notifications(self, updates: dict[str, Any]) -> dict[str, Any]:
         """Updates notifications settings and persists to disk."""
         allowed_keys = {
@@ -664,6 +702,7 @@ class SettingsManager:
             "notify_on_rate",
             "notify_on_collection",
             "notify_on_failure",
+            "notification_routes",
         }
         boolean_keys = {
             "notify_on_scrobble",
@@ -683,7 +722,28 @@ class SettingsManager:
         }
         for k, v in updates.items():
             if k in allowed_keys:
-                if k in boolean_keys:
+                if k == "notification_routes":
+                    if isinstance(v, dict):
+                        current = self.get_notifications(mask=False).get("notification_routes", {})
+                        clean_routes = dict(current) if isinstance(current, dict) else {}
+                        for event, route in v.items():
+                            if event not in NOTIFICATION_ROUTE_EVENTS or not isinstance(route, dict):
+                                continue
+                            destinations = route.get("destinations", clean_routes.get(event, {}).get("destinations", []))
+                            severity = route.get("severity", clean_routes.get(event, {}).get("severity", "normal"))
+                            profiles = route.get("profiles", clean_routes.get(event, {}).get("profiles", []))
+                            if not isinstance(destinations, list) or severity not in {"low", "normal", "high", "critical"}:
+                                continue
+                            allowed_profiles = set(getattr(self.config, "PLEX_ALLOWED_USERS", []) or [])
+                            if not isinstance(profiles, list):
+                                profiles = []
+                            clean_routes[event] = {
+                                "destinations": list(dict.fromkeys(channel for channel in destinations if channel in NOTIFICATION_CHANNELS)),
+                                "severity": severity,
+                                "profiles": list(dict.fromkeys(profile for profile in profiles if isinstance(profile, str) and profile in allowed_profiles)),
+                            }
+                        self._custom_notifications[k] = clean_routes
+                elif k in boolean_keys:
                     self._custom_notifications[k] = bool(v)
                 elif k in masked_keys:
                     # Ignore if incoming is masked and not empty
@@ -707,6 +767,7 @@ class SettingsManager:
         notif = self._settings.get("notifications", {})
         return bool(notif.get("weekly_digest_enabled", getattr(self.config, "WEEKLY_DIGEST_ENABLED", False)))
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def set_weekly_digest_enabled(self, enabled: bool) -> None:
         """Enable or disable Weekly Activity Digest background dispatch."""
         notif = self._settings.setdefault("notifications", self._detect_default_notifications())
@@ -718,6 +779,7 @@ class SettingsManager:
         """Returns the current dynamic scrobble rules and filters configuration."""
         return dict(self._settings.get("rules", self._detect_default_rules()))
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def update_rules_settings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Updates dynamic scrobble rules and filters and persists to disk."""
         rules = self._settings.setdefault("rules", self._detect_default_rules())
@@ -838,6 +900,7 @@ class SettingsManager:
             "multi_server_mirroring": self.is_multi_server_mirroring_enabled(),
         }
 
+    @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def update_all_settings(self, data: dict[str, Any]) -> dict[str, Any]:
         """Update any subset of settings and persist to disk."""
         if "servers" in data and isinstance(data["servers"], dict):

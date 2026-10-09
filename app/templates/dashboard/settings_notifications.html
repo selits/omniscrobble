@@ -21,6 +21,33 @@
                         </div>
                     </div>
 
+                    <div class="u-background-bg-page u-border-1px-solid-334155 u-border-radius-8px u-padding-12px">
+                        <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-margin-bottom-6px">Event destinations and severity</div>
+                        <p class="u-color-text-muted u-font-size-11px u-margin-top-0">Choose channels for each event. Severity sets push priority on Ntfy, Pushover, and Gotify.</p>
+                        <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-180px-1fr u-gap-8px">
+                            {% for event, label in [('scrobble', 'Scrobbles'), ('rate', 'Ratings'), ('collection', 'Collection'), ('arr_add', 'Acquisitions'), ('playback_start', 'Playback started'), ('queue_recovery', 'Queue recovery'), ('token_expiry', 'Token expiry'), ('digest', 'Weekly digest'), ('failure', 'Sync failures')] %}
+                            <div class="u-display-flex u-flex-direction-column u-gap-4px">
+                                <label for="settings-notif-route-{{ event }}-destinations" class="u-font-size-11px u-color-text-heading">{{ label }} destinations</label>
+                                <select id="settings-notif-route-{{ event }}-destinations" class="notification-route-destinations u-width-100 u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" multiple size="3" aria-label="{{ label }} notification channels">
+                                    {% for channel in ['discord', 'telegram', 'ntfy', 'pushover', 'gotify', 'matrix'] %}<option value="{{ channel }}">{{ channel|capitalize }}</option>{% endfor %}
+                                </select>
+                                <label for="settings-notif-route-{{ event }}-severity" class="u-font-size-11px u-color-text-heading">Severity</label>
+                                <select id="settings-notif-route-{{ event }}-severity" class="u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" aria-label="{{ label }} notification severity">
+                                    <option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option>
+                                </select>
+                                {% if event in ['scrobble', 'rate', 'collection', 'arr_add', 'playback_start', 'queue_recovery', 'failure'] %}
+                                <label for="settings-notif-route-{{ event }}-profiles" class="u-font-size-11px u-color-text-heading">Profiles (empty means all)</label>
+                                <select id="settings-notif-route-{{ event }}-profiles" class="notification-route-profiles u-width-100 u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-4px u-padding-6px-8px u-color-text-main u-font-size-11px" multiple size="2" aria-label="{{ label }} profile subscriptions"></select>
+                                {% endif %}
+                                <button type="button" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-4px-8px" onclick="previewNotificationRoute('{{ event }}')">Preview route</button>
+                                <span id="settings-notif-route-{{ event }}-preview" class="u-color-text-muted u-font-size-11px" aria-live="polite"></span>
+                                <button type="button" class="btn-sm u-background-bg-surface u-border-1px-solid-334155 u-color-text-muted u-padding-4px-8px" onclick="sendNotificationRoutePreview('{{ event }}')">Send sample through saved route</button>
+                                <span id="settings-notif-route-{{ event }}-delivery" class="u-color-text-muted u-font-size-11px" aria-live="polite"></span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
                     <!-- Notification Channels Grid -->
                     <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-280px-1fr u-gap-10px">
                         <!-- Discord -->

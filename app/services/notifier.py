@@ -139,6 +139,59 @@ class Notifier:
     def _get_matrix_room_id(self) -> str:
         return self._get_setting("matrix_room_id", "MATRIX_ROOM_ID", "")
 
+    def _notification_route(self, event: str) -> tuple[set[str], str]:
+        custom = settings_mgr.get_custom_notifications() if settings_mgr is not None else {}
+        routes = custom.get("notification_routes", {}) if isinstance(custom, dict) else {}
+        route = routes.get(event, {}) if isinstance(routes, dict) else {}
+        channels = {"discord", "telegram", "ntfy", "pushover", "gotify", "matrix"}
+        raw = route.get("destinations") if isinstance(route, dict) else None
+        destinations = set(raw) & channels if isinstance(raw, list) else channels
+        severity = route.get("severity", "normal") if isinstance(route, dict) else "normal"
+        if severity not in {"low", "normal", "high", "critical"}:
+            severity = "normal"
+        return destinations, severity
+
+    def _profile_subscribed(self, event: str, username: str) -> bool:
+        custom = settings_mgr.get_custom_notifications() if settings_mgr is not None else {}
+        routes = custom.get("notification_routes", {}) if isinstance(custom, dict) else {}
+        route = routes.get(event, {}) if isinstance(routes, dict) else {}
+        profiles = route.get("profiles", []) if isinstance(route, dict) else []
+        return not profiles or str(username or "").casefold() in {str(profile).casefold() for profile in profiles}
+
+    async def send_operational_notification(
+        self, event: str, title: str, message: str, severity: str = "normal",
+        client: Optional[httpx.AsyncClient] = None,
+    ) -> bool:
+        """Send a concise system event through its configured notification route."""
+        destinations, configured_severity = self._notification_route(event)
+        severity = configured_severity
+        http = client or self.get_client()
+        color = DISCORD_COLOR_FAILURE if severity in {"high", "critical"} else 0xF59E0B
+        priority = {"low": -1, "normal": 0, "high": 1, "critical": 2}[severity]
+        gotify_priority = {"low": 2, "normal": 5, "high": 7, "critical": 10}[severity]
+        tasks = []
+        if "discord" in destinations and self._get_discord_url():
+            tasks.append(http.post(self._get_discord_url(), json={"embeds": [{"title": title, "description": message, "color": color}]}))
+        if "telegram" in destinations and self._get_telegram_token() and self._get_telegram_chat_id():
+            url = f"https://api.telegram.org/bot{self._get_telegram_token()}/sendMessage"
+            tasks.append(http.post(url, json={"chat_id": self._get_telegram_chat_id(), "text": f"<b>{html.escape(title)}</b>\n{html.escape(message)}", "parse_mode": "HTML"}))
+        if "ntfy" in destinations and self._get_ntfy_url():
+            headers = {"Title": title[:120], "Priority": {"low": "2", "normal": "3", "high": "4", "critical": "5"}[severity]}
+            if self._get_ntfy_auth_token(): headers["Authorization"] = f"Bearer {self._get_ntfy_auth_token()}"
+            tasks.append(http.post(self._get_ntfy_url(), content=message.encode(), headers=headers))
+        if "pushover" in destinations and self._get_pushover_user_key() and self._get_pushover_api_token():
+            tasks.append(http.post("https://api.pushover.net/1/messages.json", data={"token": self._get_pushover_api_token(), "user": self._get_pushover_user_key(), "title": title, "message": message, "priority": min(priority, 1)}))
+        if "gotify" in destinations and self._get_gotify_url() and self._get_gotify_token():
+            tasks.append(http.post(f"{self._get_gotify_url()}/message", json={"title": title, "message": message, "priority": gotify_priority}, headers={"X-Gotify-Key": self._get_gotify_token()}))
+        if "matrix" in destinations and self._get_matrix_homeserver_url() and self._get_matrix_access_token() and self._get_matrix_room_id():
+            room = urllib.parse.quote(self._get_matrix_room_id(), safe="")
+            txn = f"event_{int(time.time() * 1000)}"
+            tasks.append(http.put(f"{self._get_matrix_homeserver_url()}/_matrix/client/v3/rooms/{room}/send/m.room.message/{txn}", json={"msgtype": "m.text", "body": f"{title}\n{message}"}, headers={"Authorization": f"Bearer {self._get_matrix_access_token()}"}))
+        if not tasks:
+            return False
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return any(not isinstance(result, Exception) and 200 <= result.status_code < 300 for result in results)
+
     def _is_event_enabled(self, key: str, fallback_config_attr: str, default: bool = True) -> bool:
         """Checks if a notification event type is enabled in runtime settings or Config."""
         if settings_mgr is not None:
@@ -477,6 +530,7 @@ class Notifier:
         cowatch_partner: Optional[str] = None,
         trackers: Optional[list[str]] = None,
         url_override: Optional[str] = None,
+        severity: str = "normal",
     ) -> bool:
         """Sends a push notification via Ntfy."""
         url = url_override or self._get_ntfy_url()
@@ -488,7 +542,7 @@ class Notifier:
         headers: dict[str, str] = {
             "Title": f"Trakt: {title_str}",
             "Click": trakt_url,
-            "Priority": self.config.NTFY_PRIORITY or "default",
+            "Priority": {"low": "2", "normal": "3", "high": "4", "critical": "5"}.get(severity, self.config.NTFY_PRIORITY or "default"),
         }
         ntfy_token = self._get_ntfy_auth_token()
         if ntfy_token:
@@ -525,6 +579,7 @@ class Notifier:
         trackers: Optional[list[str]] = None,
         user_key_override: Optional[str] = None,
         api_token_override: Optional[str] = None,
+        priority_override: Optional[int] = None,
     ) -> bool:
         """Sends a push notification via Pushover API."""
         user_key = user_key_override or self._get_pushover_user_key()
@@ -552,7 +607,7 @@ class Notifier:
             "message": msg,
             "url": trakt_url,
             "url_title": "View on Trakt",
-            "priority": self.config.PUSHOVER_PRIORITY,
+            "priority": min(1, self.config.PUSHOVER_PRIORITY if priority_override is None else priority_override),
         }
 
         http = client or self.get_client()
@@ -743,6 +798,8 @@ class Notifier:
         """Sends a failure alert notification with spam-prevention deduplication."""
         if not self._is_event_enabled("notify_on_failure", "NOTIFY_ON_FAILURE", True):
             return False
+        if not self._profile_subscribed("failure", user):
+            return False
 
         # TTL cache: deduplicate alerts for 30 minutes to prevent spam
         now = time.time()
@@ -755,24 +812,12 @@ class Notifier:
             return False
 
         self._failure_cache[cache_key] = now
-        webhook_url = self._get_discord_url()
-        if not webhook_url:
-            return False
-
-        payload = self.build_failure_discord_payload(
-            media=media,
-            failed_tracker=failed_tracker,
-            error_msg=error_msg,
-            user=user,
-            is_retryable=is_retryable,
+        safe_title = (media.title or "Unknown")[:120]
+        retry_note = " Retry is queued." if is_retryable else ""
+        return await self.send_operational_notification(
+            "failure", f"Sync failed: {safe_title}",
+            f"{failed_tracker} sync failed for {safe_title}.{retry_note}", severity="high", client=client,
         )
-        http = client or self.get_client()
-        try:
-            res = await http.post(webhook_url, json=payload)
-            return 200 <= res.status_code < 300
-        except Exception as e:
-            logger.warning(f"Failed to deliver failure alert notification: {e}")
-            return False
 
     async def dispatch(
         self,
@@ -783,6 +828,16 @@ class Notifier:
         trackers: Optional[list[str]] = None,
     ) -> None:
         """Dispatches notifications across all enabled channels concurrently."""
+        if action == "playback_start":
+            if not self._profile_subscribed("playback_start", media.username):
+                return
+            title = format_media_title(media)
+            await self.send_operational_notification(
+                "playback_start", f"Playback started: {title}",
+                f"{media.username or 'A user'} started {title}.",
+                client=client,
+            )
+            return
         if action in ("mark_watched", "scrobble_stop"):
             if not self._is_event_enabled("notify_on_scrobble", "NOTIFY_ON_SCROBBLE", True):
                 return
@@ -798,38 +853,53 @@ class Notifier:
         else:
             return
 
+        event_key = {"mark_watched": "scrobble", "scrobble_stop": "scrobble", "rate": "rate",
+                     "collection": "collection", "arr_add": "arr_add"}.get(action)
+        if event_key and not self._profile_subscribed(event_key, media.username):
+            return
+        custom_notifications = settings_mgr.get_custom_notifications() if settings_mgr is not None else {}
+        routes = custom_notifications.get("notification_routes", {}) if isinstance(custom_notifications, dict) else {}
+        route = routes.get(event_key, {}) if isinstance(routes, dict) and event_key else {}
+        known_destinations = {"discord", "telegram", "ntfy", "pushover", "gotify", "matrix"}
+        raw_destinations = route.get("destinations") if isinstance(route, dict) else None
+        destinations = set(raw_destinations) & known_destinations if isinstance(raw_destinations, list) else known_destinations
+        raw_severity = route.get("severity") if isinstance(route, dict) else None
+        severity = raw_severity if raw_severity in {"low", "normal", "high", "critical"} else "normal"
+        priority = {"low": -1, "normal": 0, "high": 1, "critical": 2}.get(severity, 0)
+
         tasks = []
-        if self._get_discord_url():
+        if "discord" in destinations and self._get_discord_url():
             tasks.append(
                 self.send_discord(
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
                 )
             )
-        if self._get_telegram_token() and self._get_telegram_chat_id():
+        if "telegram" in destinations and self._get_telegram_token() and self._get_telegram_chat_id():
             tasks.append(
                 self.send_telegram(
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
                 )
             )
-        if self._get_ntfy_url():
+        if "ntfy" in destinations and self._get_ntfy_url():
             tasks.append(
                 self.send_ntfy(
-                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
+                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers, severity=severity
                 )
             )
-        if self._get_pushover_user_key() and self._get_pushover_api_token():
+        if "pushover" in destinations and self._get_pushover_user_key() and self._get_pushover_api_token():
             tasks.append(
                 self.send_pushover(
-                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
+                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers, priority_override=priority
                 )
             )
-        if self._get_gotify_url() and self._get_gotify_token():
+        gotify_priority = {"low": 2, "normal": 5, "high": 7, "critical": 10}.get(severity, 5)
+        if "gotify" in destinations and self._get_gotify_url() and self._get_gotify_token():
             tasks.append(
                 self.send_gotify(
-                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
+                    media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers, priority=gotify_priority
                 )
             )
-        if self._get_matrix_homeserver_url() and self._get_matrix_access_token() and self._get_matrix_room_id():
+        if "matrix" in destinations and self._get_matrix_homeserver_url() and self._get_matrix_access_token() and self._get_matrix_room_id():
             tasks.append(
                 self.send_matrix(
                     media, action, client=client, cowatch_partner=cowatch_partner, trackers=trackers
@@ -1019,10 +1089,11 @@ class Notifier:
 
         http = client or self.get_client()
         delivered = False
+        destinations, severity = self._notification_route("token_expiry")
 
         # 1. Discord
         discord_url = self._get_discord_url()
-        if discord_url:
+        if "discord" in destinations and discord_url:
             payload = {
                 "embeds": [
                     {
@@ -1048,7 +1119,7 @@ class Notifier:
         # 2. Telegram
         t_token = self._get_telegram_token()
         t_chat = self._get_telegram_chat_id()
-        if t_token and t_chat:
+        if "telegram" in destinations and t_token and t_chat:
             tg_url = f"https://api.telegram.org/bot{t_token}/sendMessage"
             payload = {
                 "chat_id": t_chat,
@@ -1064,10 +1135,10 @@ class Notifier:
 
         # 3. Ntfy
         ntfy_url = self._get_ntfy_url()
-        if ntfy_url:
+        if "ntfy" in destinations and ntfy_url:
             headers = {
                 "Title": f"Token Expiry Alert: {service_name}",
-                "Priority": "high",
+                "Priority": {"low": "2", "normal": "3", "high": "4", "critical": "5"}[severity],
                 "Tags": "warning,key,omniscrobble",
                 "Click": reauth_url if reauth_url.startswith("http") else "",
             }
@@ -1084,7 +1155,7 @@ class Notifier:
         # 4. Pushover
         p_user = self._get_pushover_user_key()
         p_token = self._get_pushover_api_token()
-        if p_user and p_token:
+        if "pushover" in destinations and p_user and p_token:
             data = {
                 "token": p_token,
                 "user": p_user,
@@ -1092,7 +1163,7 @@ class Notifier:
                 "message": message,
                 "url": reauth_url if reauth_url.startswith("http") else "",
                 "url_title": f"Re-authorize {service_name}",
-                "priority": 1,
+                "priority": {"low": -1, "normal": 0, "high": 1, "critical": 1}[severity],
             }
             try:
                 r = await http.post("https://api.pushover.net/1/messages.json", data=data)
@@ -1100,6 +1171,22 @@ class Notifier:
                     delivered = True
             except Exception as e:
                 logger.error("Failed to deliver Pushover token alert: %s", e)
+
+        if "gotify" in destinations and self._get_gotify_url() and self._get_gotify_token():
+            try:
+                r = await http.post(f"{self._get_gotify_url()}/message", json={"title": f"Token Expiry Alert: {service_name}", "message": message, "priority": {"low": 2, "normal": 5, "high": 7, "critical": 10}[severity]}, headers={"X-Gotify-Key": self._get_gotify_token()})
+                delivered = delivered or 200 <= r.status_code < 300
+            except Exception as e:
+                logger.error("Failed to deliver Gotify token alert: %s", e)
+
+        if "matrix" in destinations and self._get_matrix_homeserver_url() and self._get_matrix_access_token() and self._get_matrix_room_id():
+            try:
+                room = urllib.parse.quote(self._get_matrix_room_id(), safe="")
+                txn = f"token_{int(time.time() * 1000)}"
+                r = await http.put(f"{self._get_matrix_homeserver_url()}/_matrix/client/v3/rooms/{room}/send/m.room.message/{txn}", json={"msgtype": "m.text", "body": f"Token Expiry Alert: {service_name}\n{message}\n{reauth_url}"}, headers={"Authorization": f"Bearer {self._get_matrix_access_token()}"})
+                delivered = delivered or 200 <= r.status_code < 300
+            except Exception as e:
+                logger.error("Failed to deliver Matrix token alert: %s", e)
 
         if delivered:
             self._failure_cache[cache_key] = now

@@ -43,10 +43,10 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 └──────────────────────────────────────────┬──────────────────────────────────┘
                                            ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 9-Tracker Hub Coordinator (app/services/multi_tracker.py)                   │
+│ 9-Tracker Hub Coordinator & Capability Registry (app/services/multi_tracker.py)│
 │ ├── Primary Trackers: Trakt.tv & Simkl                                      │
 │ ├── Anime Engines: AniList, MyAnimeList & Kitsu                             │
-│ ├── Social Diaries & Ratings: TMDb, Letterboxd, BetaSeries & Serializd      │
+│ ├── Library & Ratings: TMDb, Letterboxd, Serializd & MDBList                │
 │ └── Aggregated Scores: MDBList                                              │
 │                                                                             │
 │ Transient Error Fallback:                                                   │
@@ -72,14 +72,15 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 ### 3. Business Logic & Dispatch Layer
 
-- **`app/services/multi_tracker.py`**: Coordinates simultaneous multi-tracker dispatch across 9 cloud platforms (Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, BetaSeries, Serializd, MDBList). Determines which trackers receive scrobbles, pause signals, or ratings based on media type and runtime enablement states.
+- **`app/services/multi_tracker.py`**: Coordinates dispatch across the nine integrated cloud trackers (Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, Serializd, MDBList). Its shared capability registry describes supported media types and operations, and the coordinator routes work based on media type and runtime enablement.
 - **Rewatch Detection & Scrobbler Fidelity**: Embeds explicit ISO-8601 `watched_at` timestamps on completed scrobbles across Trakt, Simkl, and Letterboxd (`is_rewatch = True`, `"Rewatch": "Yes"`), ensuring accurate play count increments and preserving separate diary entries for repeated viewings rather than dropping duplicates.
 - **`app/services/settings_manager.py`**: Houses the **Dynamic Rules & Filters Engine**. Evaluates granular episode (default: 80%) and movie (default: 90%) scrobble thresholds, minimum playback duration (with episode exemption toggle), dynamic library ignore lists, and error-tolerant regex file path exclusions (`is_media_allowed()`, `get_effective_threshold()`).
+- **`app/services/automation_rules.py`**: Stores ordered event rules with server, library, media type, device/player, user, and timezone-aware time-window conditions. Evaluates safe default-allow policies, explains precedence conflicts, and supports non-mutating sample previews. Suppress and review decisions are applied before tracker dispatch; route rules use the existing multi-tracker and household dispatch paths.
 - **`app/services/cowatch_manager.py`**: Evaluates watch-together eligibility. Checks whether an episode or movie matches configured show whitelists, allowed players, and user profiles. Returns structured `(eligible, reason)` tuples for transparent telemetry.
 - **`app/services/household_manager.py`**: Extends Co-Watch into arbitrary multi-tenant household routing beyond 2 users (`HouseholdManager(CowatchManager)`). Evaluates granular routing rules matching player client devices, media types, and show titles to resolve concurrent scrobble targets across family and roommate profiles while preserving full backward compatibility with legacy 2-user `CO_WATCH_*` environments.
 - **`app/services/loop_prevention.py`**: Thread-safe in-memory cache tracking recently synced rating keys and GUIDs with automated TTL cleanup to prevent infinite ping-pong loops between media servers and trackers.
 - **`app/services/anime_resolver.py`**: Intelligent anime detection using title heuristic scoring, regex normalization, and cached AniList/MAL mappings (`data/anime_cache.json`).
-- **`app/services/watch_list_manager.py`**: Validates and atomically persists private, versioned movie/TV/anime watch lists (`data/watch_lists.json`), including ordering and duplicate-safe JSON/TXT import and export.
+- **`app/services/watch_list_manager.py`**: Validates and atomically persists local movie/TV/anime watch lists (`data/watch_lists.json`), including per-list owner/editor/viewer access and automatic action choice, per-item tags, notes, availability and acquisition snapshots, ordering, and duplicate-safe JSON/TXT import and export. Imports discard local account grants and reset automatic actions to manual.
 
 ### 4. Client Layer
 
@@ -101,15 +102,19 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 - **`app/services/atomic_writer.py`**: Thread-safe, crash-resilient atomic file persistence (`atomic_write_json`, `atomic_write_text`). Writes data to a temporary file in the destination directory and performs `os.fsync` before executing an atomic filesystem rename (`os.replace`), preventing corrupted JSON state or empty OAuth token files during sudden power losses or process interruptions.
 - **`app/services/crypto_manager.py`**: At-rest authenticated encryption service implementing AES-256-GCM symmetric encryption with PBKDF2-HMAC-SHA256 key derivation (100,000 iterations). Transparently secures tokens (`trakt_tokens.json`, `simkl_tokens.json`, `mal_tokens.json`, `anilist_token.json`, and partner accounts) and `data/settings.json` when `CONFIG_ENCRYPTION_KEY` is provided, while guaranteeing seamless fallback for unencrypted JSON stores and passphrase-protected `/api/backup` exports.
-- **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Operates with Write-Ahead Logging (`PRAGMA journal_mode=WAL;`, `PRAGMA synchronous=NORMAL;`, `PRAGMA busy_timeout=5000;`) for high concurrency and non-blocking reads. Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. A background worker drains the queue with exponential backoff and automatically prunes completed records older than 90 days.
+- **`app/services/persistence_guard.py`**: Serializes persisted mutations, rejects unsupported newer schemas before memory changes, and rolls back failed account, rules, watch-list, and settings updates. Nested Settings Hub updates defer persistence to the outer operation.
+- **`app/services/queue_manager.py`**: SQLite-backed persistent retry queue (`data/queue.db`). Operates with Write-Ahead Logging (`PRAGMA journal_mode=WAL;`, `PRAGMA synchronous=NORMAL;`, `PRAGMA busy_timeout=5000;`) for high concurrency and non-blocking reads. Queue entries can retain the originating activity event ID, so retry outcomes and attempt history update the correct event. Automatically enqueues failed upstream tracker calls on network dropouts or 5xx/429 errors. Unsupported newer schemas disable access before journal changes; recovery diagnostics report that incompatibility. New entries preserve the actual selected Trakt account, including ingestion fallback to the default account. A background worker drains the queue with exponential backoff and automatically prunes completed records older than 90 days.
+- **`app/services/result_normalizer.py`**: Shared classifier for tracker response shapes, delivery states, error categories, and retryability. It returns only normalized metadata and does not retain or expose upstream response text.
 - **`app/services/settings_manager.py`**: Thread-safe runtime settings manager (`data/settings.json`). Preserves media server listener states, tracker pause states, dynamic rules & filters, and active servers across reboots without modifying `.env`.
+- **`app/services/compatibility_manager.py`**: Read-only compatibility rules for app/Python versions, local data schemas, and integration versions observed during explicit connection tests. Unknown integration majors remain unclassified unless an official supported range is documented.
 - **`app/services/user_manager.py`**: Manages isolated multi-user profiles and token storage in `data/tokens/{username}_tokens.json` (including partner secondary cloud trackers: `_simkl_tokens.json`, `_anilist_tokens.json`, `_mal_tokens.json`), client caching, and live tracker status matrices.
+- **`app/services/dashboard_auth_manager.py`**: Stores local dashboard account password hashes and security audit records under `data/`, applies admin/member permissions, rate-limits failed logins, and manages revocable in-memory sessions with CSRF tokens.
 
 ### 6. Background Workers & Automation Engines
 
 - **`app/services/cloud_sync_manager.py`**: Orchestrates automated background cloud synchronization, periodic two-way media server diffs, Simkl cross-sync, Letterboxd RFC-4180 CSV watch diary snapshots (`data/exports/letterboxd_diary.csv`), and shared concurrency mutex locks (`asyncio.Lock`) preventing collisions with manual reconciliation.
 - **`app/services/reverse_sync_manager.py`**: Bi-directional reconciliation and real-time mirroring engine. Periodically scans media server libraries and Trakt watched history, identifying discrepancies (`Trakt Only`, `Server Only`, `Rating Mismatch`) and performing batch reconciliation. Features memory-efficient chunked streaming diff generation (`get_chunked_diff`) maintaining sub-50MB RAM footprints. When `MULTI_SERVER_MIRRORING` is active, instantly mirrors scrobbles and ratings across active media servers (Plex ⇄ Jellyfin / Emby) with cross-server item lookup (`find_item`) and echo suppression (`loop_prevention.ignore(key, ttl=180.0)`). Also handles 1-click webhook registration across Plex, Jellyfin, and Emby.
-- **`app/services/cross_tracker_sync.py`**: Cross-tracker reconciliation engine for Trakt and Simkl.
+- **`app/services/cross_tracker_sync.py`**: Cross-tracker reconciliation engine for Trakt and Simkl history/ratings and exact-TMDb-ID two-way Trakt/TMDb movie/TV ratings. TMDb account reads paginate sequentially; selected rating writes use the existing TMDb client or Trakt rating sync. Rating conflicts resolve through manual, source-preference, or timestamp-based newest policies; unresolved bulk conflicts are skipped. Applied conflict decisions are bounded and persisted in `data/cross_sync_provenance.json`.
 - **`app/services/arr_bridge.py`**: Content Bridge manager. Polls Trakt Watchlists and intelligently routes acquisitions to Overseerr/Jellyseerr requests (honoring user quotas and approval flows) or directly to Radarr and Sonarr. Its unified `lookup_media` and `acquire_media` methods also serve the authenticated dashboard `/api/arr/*` routes.
 - **`app/services/digest_manager.py`**: Scheduled weekly activity digest engine. Computes 7-day watch metrics (watch hours, scrobbles, ratings, co-watch sessions, active servers, top clients) and generates rich multi-channel reports.
 - **`app/services/token_health_monitor.py`**: Proactive OAuth lifespan evaluator and self-healing resilience worker. Periodically monitors expiration windows for Trakt, Simkl, MyAnimeList, and partner accounts, proactively attempting automatic renewal within 24 hours of expiration and dispatching rich push notifications with re-authorization links when manual action is needed.
@@ -118,9 +123,10 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 
 ### 7. Observability & UI Layer
 
-- **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, activity feed rows, and per-tracker delivery badges. Asynchronous Simkl/AniList/MAL results update the originating persisted event by its event ID.
-- **`app/services/analytics_manager.py`**: Personal analytics computation engine and "OmniWrapped" annual retrospective generator. Aggregates lifetime and windowed watch telemetry (using playhead offsets for threshold stops and runtime for completed watches, plus completed scrobbles, unique titles, solo vs shared co-watching ratios, multi-server distributions, top binged shows and genres) with viewer personality archetype heuristics.
-- **`app/services/webhook_debugger.py`**: In-memory raw webhook ring buffer and payload debugger. Securely captures incoming payloads across Plex, Jellyfin, Emby, Radarr, Sonarr, and standalone players with automatic token redaction, live in-browser inspection, and interactive dry-run / live replay execution.
+- **Activity event history (`app/main.py`)**: Persists stable operation IDs and per-destination delivery summaries with redacted reasons, timestamps, attempt counts, and bounded outcome history in `data/events.json`. Admin activity responses expose delivery details to the dashboard; public activity responses omit operation IDs and delivery details. Asynchronous Simkl/AniList/MAL results update the originating event.
+- **`app/services/dashboard_renderer.py`**: Decoupled server-side HTML rendering engine. Assembles template contexts, card data structures, active playback stream items, ecosystem health indicators, activity feed rows, and per-tracker delivery badges.
+- **`app/services/analytics_manager.py`**: Personal analytics computation engine and "OmniWrapped" annual retrospective generator. Aggregates lifetime and windowed watch telemetry (using playhead offsets for threshold stops and runtime for completed watches, plus completed scrobbles, unique titles, solo vs shared co-watching ratios, multi-server distributions, top binged shows and genres) with viewer personality archetype heuristics. Shared filter logic powers dashboard summary calculations and the admin analytics export.
+- **`app/services/webhook_debugger.py`**: In-memory raw webhook ring buffer and payload debugger. Securely captures incoming payloads across Plex, Jellyfin, Emby, Radarr, Sonarr, and standalone players with automatic token redaction, live in-browser inspection, and interactive dry-run / live replay execution. Separately retains a bounded, secret-free count of webhook authentication rejections by endpoint for recovery diagnostics.
 - **`app/templates/dashboard.html`**: Responsive dashboard shell with six keyboard-accessible workspaces, an adaptive setup checklist, direct tracker/listener/queue recovery shortcuts, activity filters, shared diagnostics, and mobile bottom navigation. It composes reusable markup from `app/templates/dashboard/`, while theme tokens, layout rules, and interactions are served from `app/static/dashboard-theme.css`, `app/static/dashboard.css`, and `app/static/dashboard.js`.
 - **`app/metrics.py`**: Custom thread-safe Prometheus metrics registry exporting directly on `/metrics`.
 - **`app/services/log_manager.py`**: Real-time log streamer combining `journalctl --user` with an in-memory 1,000-line ring buffer. Features strict privacy redaction for query parameters and authorization headers.
@@ -138,6 +144,9 @@ omniscrobble/
 │   │   ├── dashboard.js             # Generated browser bundle for dashboard interactions
 │   │   └── dashboard_modules/       # Ordered source modules used to build dashboard.js
 │   │       ├── activity.js          # Activity filters, refresh, and delivery indicators
+│   │       ├── automation_rules.js  # Rule editor, simulation, and review decisions
+│   │       ├── accounts.js          # Household accounts and personal tracker connections
+│   │       ├── analytics_export.js  # Filtered admin CSV/JSON analytics downloads
 │   │       ├── api.js               # CSRF protection for state-changing fetch requests
 │   │       ├── arr.js                # Sonarr and Radarr acquisition actions
 │   │       ├── command_palette.js   # Workspace navigation and command palette
@@ -171,14 +180,17 @@ omniscrobble/
 │   │   ├── radarr_client.py         # Radarr REST API client for movies, quality profiles & root folders
 │   │   └── overseerr_client.py      # Overseerr / Jellyseerr REST API client for media request management
 │   ├── services/                    # Core business logic and background services
-│   │   ├── analytics_manager.py     # Personal viewing analytics, watch time calculation, co-watch ratio & OmniWrapped engine
+│   │   ├── dashboard_auth_manager.py # Local household account and session policy
+│   │   ├── compatibility_manager.py # App/runtime and persisted schema compatibility checks
+│   │   ├── automation_rules.py        # Ordered event policy evaluation and preview
+│   │   ├── analytics_manager.py     # Personal viewing analytics, exports, watch time, co-watch ratio & OmniWrapped engine
 │   │   ├── anime_resolver.py        # Anime detection heuristics, title normalization & GUID caching
 │   │   ├── watch_list_manager.py    # Versioned local watch lists and JSON/TXT interchange
 │   │   ├── arr_bridge.py            # Content Bridge manager for Trakt watchlist sync & ecosystem health
 │   │   ├── atomic_writer.py         # Crash-resilient atomic JSON/text file persistence with fsync
 │   │   ├── cloud_sync_manager.py    # Automated background cloud reconciliation, Letterboxd CSV snapshots & mutex locks
 │   │   ├── cowatch_manager.py       # Watch Together whitelist & dual-scrobble rules engine
-│   │   ├── cross_tracker_sync.py    # Trakt <-> Simkl reconciliation & bi-directional sync engine
+│   │   ├── cross_tracker_sync.py    # Trakt/Simkl and two-way Trakt/TMDb reconciliation
 │   │   ├── crypto_manager.py        # At-rest AES-256-GCM symmetric encryption & PBKDF2 key derivation
 │   │   ├── dashboard_renderer.py    # Decoupled SSR dashboard HTML component & card renderer
 │   │   ├── demo_manager.py          # Air-gapped mock playback, stats, and activity generator
@@ -189,12 +201,14 @@ omniscrobble/
 │   │   ├── multi_tracker.py         # Multi-tracker coordinator for dual-dispatch scrobbling and rating sync
 │   │   ├── notifier.py              # Multi-channel notifications (Discord, Telegram, Ntfy, Pushover, Gotify, Matrix)
 │   │   ├── playback_manager.py      # Active streaming sessions & dashboard cards
+│   │   ├── persistence_guard.py    # Rollback on save failure; reject newer schemas before mutations
 │   │   ├── queue_manager.py         # Persistent SQLite offline retry queue with WAL mode & background worker
+│   │   ├── result_normalizer.py     # Shared tracker response, delivery category & retryability classification
 │   │   ├── reverse_sync_manager.py  # Bi-directional library reconciliation & reverse sync engine
 │   │   ├── settings_manager.py      # Persistent runtime media server listeners, tracker pause toggles & rules engine
 │   │   ├── token_health_monitor.py  # Proactive token expiration evaluation, automated renewal & push alerts
 │   │   ├── user_manager.py          # Multi-user account client cache & token persistence
-│   │   └── webhook_debugger.py      # In-memory raw webhook ring buffer, credential redaction & live payload inspector
+│   │   └── webhook_debugger.py      # In-memory webhook ring buffer, credential redaction, auth-rejection counts & payload inspector
 │   ├── templates/                   # Externalized dashboard and authorization views
 │   │   ├── dashboard.html           # Main real-time status dashboard view
 │   │   ├── dashboard/               # Composable dashboard HTML components
@@ -223,7 +237,7 @@ omniscrobble/
 │   └── emby_parser.py               # Emby server webhook parsing & provider ID translation
 ├── docs/                            # Documentation & GitHub Pages static demo
 │   ├── index.html                   # Standalone GitHub Pages demo with client-side API simulator
-│   ├── API.md                       # Full REST API specification (123 endpoints)
+│   ├── API.md                       # REST API specification (133 registered routes)
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling

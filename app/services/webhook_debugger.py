@@ -10,6 +10,7 @@ import collections
 import datetime
 import logging
 import threading
+import time
 import uuid
 from typing import Any, Optional
 
@@ -59,7 +60,36 @@ class WebhookDebugger:
     def __init__(self, maxlen: int = 25):
         self._maxlen = maxlen
         self._buffer: collections.deque[dict[str, Any]] = collections.deque(maxlen=maxlen)
+        self._auth_rejections: collections.deque[dict[str, Any]] = collections.deque(maxlen=100)
         self._lock = threading.Lock()
+
+    def record_auth_rejection(self, source: str, endpoint: str) -> None:
+        """Record an auth failure without retaining request headers, tokens, payloads, or IPs."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        with self._lock:
+            self._auth_rejections.append({
+                "source": str(source).lower(),
+                "endpoint": str(endpoint),
+                "timestamp": now.isoformat(),
+                "recorded_at": now.timestamp(),
+            })
+
+    def get_auth_rejection_summary(self, window_seconds: int = 86400) -> dict[str, Any]:
+        """Summarize recent authentication failures using endpoint counts only."""
+        window_seconds = max(1, int(window_seconds))
+        cutoff = time.time() - window_seconds
+        with self._lock:
+            recent = [item for item in self._auth_rejections if item["recorded_at"] >= cutoff]
+        by_endpoint: dict[str, int] = {}
+        for item in recent:
+            endpoint = item["endpoint"]
+            by_endpoint[endpoint] = by_endpoint.get(endpoint, 0) + 1
+        return {
+            "window_seconds": window_seconds,
+            "count": len(recent),
+            "last_attempt": recent[-1]["timestamp"] if recent else None,
+            "by_endpoint": by_endpoint,
+        }
 
     def record(
         self,
@@ -136,6 +166,7 @@ class WebhookDebugger:
         """Purge the in-memory ring buffer."""
         with self._lock:
             self._buffer.clear()
+            self._auth_rejections.clear()
 
 
 webhook_debugger = WebhookDebugger()

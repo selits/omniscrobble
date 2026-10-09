@@ -34,6 +34,7 @@
 // ---- core.js ----
         const isAdmin = window.dashboardConfig.isAdmin;
         const isDemo = window.dashboardConfig.isDemo;
+        const isMember = window.dashboardConfig.isMember === true;
         let refreshTimer = null;
 
         function copyWebhookUrl() {
@@ -129,6 +130,7 @@
             }
             if (e.key === 'Escape') {
                 closeCommandPalette();
+                if (typeof closeAccountModal === "function") closeAccountModal();
                 closeUnlockModal();
                 closeScrobbleModal();
                 closeLogsModal();
@@ -658,6 +660,144 @@
 
         // Two-Way Reconciliation Settings Modal Logic
 
+// ---- accounts.js ----
+        function closeAccountModal() {
+            document.getElementById('account-modal').style.display = 'none';
+        }
+
+        async function accountRequest(url, method = 'GET', payload) {
+            const options = {method};
+            if (payload !== undefined) {
+                options.headers = {'Content-Type': 'application/json'};
+                options.body = JSON.stringify(payload);
+            }
+            const response = await fetch(url, options);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || 'Account operation failed.');
+            return data;
+        }
+
+        async function logoutDashboardAccount() {
+            try {
+                await accountRequest('/api/account/logout', 'POST');
+                window.location.href = '/login';
+            } catch (error) { alert(error.message); }
+        }
+
+        function accountInput(type, labelText, value = '') {
+            const label = document.createElement('label');
+            label.textContent = labelText;
+            const input = document.createElement('input');
+            input.type = type; input.value = value;
+            input.style.cssText = 'display:block;max-width:100%;box-sizing:border-box;';
+            if (type === 'password') { input.minLength = 12; input.autocomplete = 'new-password'; }
+            label.appendChild(input);
+            return {label, input};
+        }
+
+        function accountRole(value) {
+            const label = document.createElement('label'); label.textContent = 'Role';
+            const select = document.createElement('select');
+            ['member', 'admin'].forEach(role => {
+                const option = document.createElement('option'); option.value = role; option.textContent = role;
+                select.appendChild(option);
+            });
+            select.value = value; label.appendChild(select);
+            return {label, input: select};
+        }
+
+        function accountButton(text, action) {
+            const button = document.createElement('button');
+            button.type = 'button'; button.className = 'btn-sm'; button.textContent = text;
+            button.addEventListener('click', async () => {
+                if (button.disabled) return;
+                button.disabled = true;
+                const status = document.getElementById('account-modal-status');
+                try { await action(); }
+                catch (error) { status.textContent = error.message; }
+                finally { button.disabled = false; }
+            });
+            return button;
+        }
+
+        async function openAccountModal() {
+            const modal = document.getElementById('account-modal');
+            const content = document.getElementById('account-modal-content');
+            const status = document.getElementById('account-modal-status');
+            modal.style.display = 'flex'; content.replaceChildren(); status.textContent = 'Loading account settings…';
+            try {
+                const me = await accountRequest('/api/account/me');
+                document.getElementById('account-modal-title').textContent = me.role === 'admin' ? 'Household accounts' : 'My account';
+                status.textContent = `Signed in as ${me.username} (${me.role}).`;
+                if (me.source === 'local_account') {
+                    const trackers = document.createElement('section');
+                    const heading = document.createElement('h3'); heading.textContent = 'My tracker connections'; trackers.appendChild(heading);
+                    for (const tracker of ['trakt', 'simkl', 'anilist', 'mal']) {
+                        const row = document.createElement('div'); row.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0;';
+                        const name = document.createElement('span'); name.textContent = `${tracker.toUpperCase()}: loading…`;
+                        row.append(name,
+                            accountButton('Connect / reconnect', () => openPartnerTrackerAuth(tracker, me.username)),
+                            accountButton('Disconnect', async () => {
+                                if (!confirm(`Disconnect ${tracker.toUpperCase()} for your profile?`)) return;
+                                await accountRequest(`/api/${tracker}/disconnect?user=${encodeURIComponent(me.username)}`, 'POST');
+                                await openAccountModal();
+                            }));
+                        trackers.appendChild(row);
+                        accountRequest(`/api/${tracker}/status?user=${encodeURIComponent(me.username)}`)
+                            .then(data => { name.textContent = `${tracker.toUpperCase()}: ${data.authenticated ? 'Connected' : 'Not connected'}`; })
+                            .catch(error => { name.textContent = `${tracker.toUpperCase()}: ${error.message}`; });
+                    }
+                    content.appendChild(trackers);
+                }
+                if (me.role !== 'admin') return;
+                const accounts = await accountRequest('/api/admin/accounts');
+                const hint = document.createElement('p');
+                hint.textContent = 'Use the media-server profile username for each member. Passwords must contain at least 12 characters. Changing a password, role, or account access revokes that account’s sessions.';
+                content.appendChild(hint);
+                for (const account of accounts.accounts) {
+                    const form = document.createElement('form');
+                    form.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:end;margin:12px 0;padding:12px;border:1px solid var(--border-color);';
+                    const title = document.createElement('strong'); title.textContent = account.username;
+                    const role = accountRole(account.role);
+                    const password = accountInput('password', 'New password (optional)');
+                    const enabledLabel = document.createElement('label'); enabledLabel.textContent = 'Enabled';
+                    const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.checked = account.enabled; enabledLabel.appendChild(enabled);
+                    form.append(title, role.label, password.label, enabledLabel);
+                    const save = accountButton('Save', async () => {
+                        if (!form.reportValidity()) return;
+                        const payload = {role: role.input.value, enabled: enabled.checked};
+                        if (password.input.value) payload.password = password.input.value;
+                        await accountRequest(`/api/admin/accounts/${encodeURIComponent(account.username)}`, 'PATCH', payload);
+                        password.input.value = '';
+                        if (me.source === 'local_account' && me.username === account.username) { window.location.href = '/login'; return; }
+                        await openAccountModal();
+                    });
+                    form.append(save, accountButton('Delete', async () => {
+                        if (!confirm(`Delete household account ${account.username}?`)) return;
+                        await accountRequest(`/api/admin/accounts/${encodeURIComponent(account.username)}`, 'DELETE');
+                        if (me.source === 'local_account' && me.username === account.username) { window.location.href = '/login'; return; }
+                        await openAccountModal();
+                    }));
+                    form.addEventListener('submit', event => { event.preventDefault(); save.click(); });
+                    content.appendChild(form);
+                }
+                const create = document.createElement('form');
+                create.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:end;margin:16px 0;';
+                const username = accountInput('text', 'New username'); username.input.required = true; username.input.pattern = '[A-Za-z0-9][A-Za-z0-9._-]{2,31}';
+                const password = accountInput('password', 'Password'); password.input.required = true;
+                const role = accountRole('member');
+                const add = accountButton('Create account', async () => {
+                    if (!create.reportValidity()) return;
+                    await accountRequest('/api/admin/accounts', 'POST', {username: username.input.value, password: password.input.value, role: role.input.value});
+                    password.input.value = '';
+                    await openAccountModal();
+                });
+                create.append(username.label, password.label, role.label, add);
+                create.addEventListener('submit', event => { event.preventDefault(); add.click(); });
+                content.appendChild(create);
+            } catch (error) { status.textContent = error.message; }
+        }
+
 // ---- settings.js ----
         let activeReconSettingsTab = 'plex';
 
@@ -700,7 +840,38 @@
         let currentSettingsData = null;
         let activeSettingsServerSubTab = 'plex';
 
+        function previewNotificationRoute(event) {
+            const destinations = Array.from(document.getElementById(`settings-notif-route-${event}-destinations`)?.selectedOptions || []).map(option => option.textContent.trim());
+            const severity = document.getElementById(`settings-notif-route-${event}-severity`)?.value || 'normal';
+            const profiles = Array.from(document.getElementById(`settings-notif-route-${event}-profiles`)?.selectedOptions || []).map(option => option.textContent.trim());
+            const output = document.getElementById(`settings-notif-route-${event}-preview`);
+            if (!output) return;
+            const destinationText = destinations.length ? destinations.join(', ') : 'No channels selected';
+            const profileText = profiles.length ? ` · profiles: ${profiles.join(', ')}` : ' · all profiles';
+            const throttleText = event === 'failure' ? ' Failure alerts deduplicate for 30 minutes per title.' : event === 'token_expiry' ? ' Token expiry alerts are limited to once per service per 24 hours.' : '';
+            output.textContent = `${destinationText}${profileText} · ${severity} severity.${throttleText}`;
+        }
+
+        async function sendNotificationRoutePreview(event) {
+            const status = document.getElementById(`settings-notif-route-${event}-delivery`);
+            const demo = isDemo ? '?demo=true' : '';
+            if (status) status.textContent = 'Sending sample...';
+            try {
+                const response = await fetch(`/api/notifications/preview-route${demo}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event })
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) throw new Error(result.message || 'No selected configured channel delivered the sample.');
+                if (status) status.textContent = result.message || 'Sample delivered.';
+            } catch (error) {
+                if (status) status.textContent = `Preview failed: ${error.message}`;
+            }
+        }
+
         function openSettingsModal(tab = 'servers', section = null) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -1165,6 +1336,25 @@
                 if (rateCheck && notifs.notify_on_rate !== undefined) rateCheck.checked = Boolean(notifs.notify_on_rate);
                 if (colCheck && notifs.notify_on_collection !== undefined) colCheck.checked = Boolean(notifs.notify_on_collection);
                 if (failCheck && notifs.notify_on_failure !== undefined) failCheck.checked = Boolean(notifs.notify_on_failure);
+                const notificationRoutes = notifs.notification_routes || {};
+                const notificationProfiles = data.notification_profiles || [];
+                for (const event of ['scrobble', 'rate', 'collection', 'arr_add', 'playback_start', 'queue_recovery', 'token_expiry', 'digest', 'failure']) {
+                    const destinations = document.getElementById(`settings-notif-route-${event}-destinations`);
+                    const severity = document.getElementById(`settings-notif-route-${event}-severity`);
+                    const profiles = document.getElementById(`settings-notif-route-${event}-profiles`);
+                    const route = notificationRoutes[event] || {};
+                    if (destinations) Array.from(destinations.options).forEach(option => { option.selected = (route.destinations || ['discord', 'telegram', 'ntfy', 'pushover', 'gotify', 'matrix']).includes(option.value); });
+                    if (severity) severity.value = route.severity || 'normal';
+                    if (profiles) {
+                        profiles.replaceChildren(...notificationProfiles.map(name => {
+                            const option = document.createElement('option');
+                            option.value = name;
+                            option.textContent = name;
+                            option.selected = (route.profiles || []).includes(name);
+                            return option;
+                        }));
+                    }
+                }
 
                 const dcUrl = document.getElementById('settings-notif-discord-url');
                 const dcBadge = document.getElementById('settings-notif-discord-badge');
@@ -1363,7 +1553,12 @@
                         notify_on_scrobble: Boolean(document.getElementById('settings-notif-scrobble-check')?.checked),
                         notify_on_rate: Boolean(document.getElementById('settings-notif-rate-check')?.checked),
                         notify_on_collection: Boolean(document.getElementById('settings-notif-collection-check')?.checked),
-                        notify_on_failure: Boolean(document.getElementById('settings-notif-failure-check')?.checked)
+                        notify_on_failure: Boolean(document.getElementById('settings-notif-failure-check')?.checked),
+                        notification_routes: Object.fromEntries(['scrobble', 'rate', 'collection', 'arr_add', 'playback_start', 'queue_recovery', 'token_expiry', 'digest', 'failure'].map(event => [event, {
+                            destinations: Array.from(document.getElementById(`settings-notif-route-${event}-destinations`)?.selectedOptions || []).map(option => option.value),
+                            severity: document.getElementById(`settings-notif-route-${event}-severity`)?.value || 'normal',
+                            profiles: Array.from(document.getElementById(`settings-notif-route-${event}-profiles`)?.selectedOptions || []).map(option => option.value)
+                        }]))
                     },
                     rules: {
                         scrobble_threshold: parseInt(document.getElementById('settings-rules-threshold')?.value, 10) || 80,
@@ -2498,11 +2693,12 @@
                 if (activityFilters.type === 'movie' && !['movie', 'film'].includes(type)) return false;
                 if (activityFilters.type === 'tv' && !['episode', 'show', 'series', 'tv'].includes(type)) return false;
                 if (activityFilters.type === 'anime' && !(ev.is_anime || ev.media_payload?.is_anime || type.includes('anime'))) return false;
+                const deliveryStatus = String(ev.delivery_status || '').toLowerCase();
                 const status = String(ev.result_status || '').toLowerCase();
                 const trackerStates = Object.values(ev.tracker_delivery || {});
-                if (activityFilters.status === 'queued' && status !== 'queued' && !trackerStates.includes('queued')) return false;
-                if (activityFilters.status === 'failed' && !(status === 'error' || status === 'failed' || status === '429' || /^4\d\d$/.test(status) || /^5\d\d$/.test(status) || trackerStates.includes('failed'))) return false;
-                if (activityFilters.status === 'success' && !(status === 'ok' || status === 'success' || status === '200' || status === '201' || trackerStates.includes('success'))) return false;
+                if (activityFilters.status === 'queued' && deliveryStatus !== 'queued' && status !== 'queued' && !trackerStates.includes('queued')) return false;
+                if (activityFilters.status === 'failed' && !(deliveryStatus === 'failed' || deliveryStatus === 'partial' || status === 'error' || status === 'failed' || status === '429' || /^4\d\d$/.test(status) || /^5\d\d$/.test(status) || trackerStates.includes('failed'))) return false;
+                if (activityFilters.status === 'success' && !(deliveryStatus === 'success' || status === 'ok' || status === 'success' || status === '200' || status === '201' || trackerStates.includes('success'))) return false;
                 if (activityFilters.search) {
                     const haystack = `${ev.title || ''} ${ev.user || ''}`.toLowerCase();
                     if (!haystack.includes(activityFilters.search)) return false;
@@ -2548,11 +2744,15 @@
             return act.startsWith('mark_watched') || act.startsWith('scrobble_stop') || act.startsWith('test_webhook') || act === 'scrobble' || act === 'watched';
         }
 
-        function renderStatusBadge(action, resultStatus, progress, cowatchStatus) {
+        function renderStatusBadge(action, resultStatus, progress, cowatchStatus, deliveryStatus) {
             const rawAct = String(action || '').toLowerCase().trim();
             const cleanAct = formatActionLabel(rawAct).toLowerCase();
             const stat = String(resultStatus || '').toLowerCase().trim();
             const cw = cowatchStatus;
+
+            if (deliveryStatus === 'partial') {
+                return '<span class="activity-status-badge activity-status-failed" title="Some destinations succeeded while others failed or remain queued">! Partial delivery</span>';
+            }
 
             if (cw && cw.synced && shouldDisplayCowatchBadge(action, resultStatus, progress)) {
                 const targetTxt = cw.target ? `@${cw.target}` : 'partner';
@@ -2624,6 +2824,39 @@
             return badges ? `<span class="tracker-delivery-badges" aria-label="Tracker delivery">${badges}</span>` : '';
         }
 
+        function toggleEventDetails(eventId) {
+            const row = document.getElementById(`event-details-${eventId}`);
+            const button = document.querySelector(`[data-event-detail-toggle="${eventId}"]`);
+            if (!row || !button) return;
+            const willOpen = row.hidden;
+            row.hidden = !willOpen;
+            button.setAttribute('aria-expanded', String(willOpen));
+            button.textContent = willOpen ? 'Hide details' : 'Details';
+        }
+
+        async function retryEventDelivery(eventId, queueItemId, eventType, button) {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            const duplicateRisk = ['sync_history', 'scrobble_stop'].includes(String(eventType || ''));
+            if (duplicateRisk && !confirm('This retry could create duplicate watch history if the tracker accepted the original request before the connection failed. Retry anyway?')) return;
+            if (button) button.disabled = true;
+            try {
+                const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/retry`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({queue_item_id: queueItemId, confirm_duplicate_history: duplicateRisk}),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Could not retry this destination.');
+                await fetchEvents();
+            } catch (error) {
+                if (button) button.disabled = false;
+                alert(error.message || 'Could not retry this destination.');
+            }
+        }
+
         function renderRows(events) {
             if (events !== undefined && events !== null) {
                 const previous = allEvents || [];
@@ -2680,6 +2913,10 @@
             for (const ev of pageEvents) {
                 let actionBtns = '';
                 if (isAdmin) {
+                    const eventId = String(ev.event_id || '');
+                    if (eventId) {
+                        actionBtns += `<button type="button" data-event-detail-toggle="${escapeHtml(eventId)}" aria-expanded="false" aria-controls="event-details-${escapeHtml(eventId)}" onclick="toggleEventDetails('${escapeHtml(eventId)}')" class="btn-sm activity-row-button" title="View per-destination delivery details">Details</button>`;
+                    }
                     const showTitle = ev.show_title || (ev.type === 'show' ? (ev.media_payload?.title || ev.title) : null);
                     if (showTitle && !ev.is_cowatch_show) {
                         const showEnc = encodeURIComponent(showTitle);
@@ -2704,7 +2941,10 @@
                 }
                 const actionCol = isAdmin ? `<td class="activity-actions-cell"><div class="activity-row-actions">${actionBtns}</div></td>` : '';
 
-                const statusBadgeHtml = renderStatusBadge(ev.action, ev.result_status, ev.progress, ev.cowatch_status);
+                const statusBadgeHtml = renderStatusBadge(ev.action, ev.result_status, ev.progress, ev.cowatch_status, ev.delivery_status);
+                const memberRule = !isAdmin && ev.rule_evaluation
+                    ? `<details class="activity-rule-inline"><summary>Rule: ${escapeHtml(ev.rule_evaluation.decision || 'allow')}</summary><span>${escapeHtml(ev.rule_evaluation.reason || 'No explanation recorded.')}</span></details>`
+                    : '';
 
                 const srv = (ev.server || 'plex').toLowerCase();
                 let serverBadge = '<span class="activity-server-badge activity-server-plex">Plex</span>';
@@ -2729,10 +2969,36 @@
                     <td class="activity-title" data-label="Title">${escapeHtml(ev.title)}</td>
                     <td data-label="Type"><span class="activity-type">${escapeHtml(ev.type)}</span></td>
                     <td class="activity-user" data-label="User"><div class="activity-user-content">${serverBadge}<span>${escapeHtml(ev.user)}</span></div></td>
-                    <td data-label="Action"><span class="activity-action">${escapeHtml(actionText)}</span></td>
+                    <td data-label="Action"><span class="activity-action">${escapeHtml(actionText)}</span>${memberRule}</td>
                     <td data-label="Status"><div class="activity-status-group">${statusBadgeHtml}${renderTrackerDeliveryBadges(ev.tracker_delivery)}</div></td>
                     ${actionCol}
                 </tr>`;
+                if (isAdmin && ev.event_id) {
+                    const eventId = escapeHtml(String(ev.event_id));
+                    const details = ev.tracker_delivery_details || {};
+                    const categoryLabels = {
+                        delivered: 'Delivered', queued: 'Waiting for retry', transient: 'Temporary failure',
+                        authorization_or_configuration: 'Authorization/configuration', permanent: 'Permanent failure',
+                        unsupported: 'Unsupported or unavailable', intentional_skip: 'Intentionally skipped',
+                        partial: 'Partial delivery', unknown_failure: 'Failure',
+                    };
+                    const detailRows = Object.entries(details).map(([tracker, detail]) => {
+                        const history = Array.isArray(detail.history) ? detail.history : [];
+                        const attempts = history.map((attempt) => `${escapeHtml(attempt.timestamp || '')}: ${escapeHtml(attempt.state || '')}${attempt.category ? ` (${escapeHtml(categoryLabels[attempt.category] || attempt.category)})` : ''} — ${escapeHtml(attempt.reason || '')}`).join('<br>');
+                        const category = categoryLabels[detail.category] || detail.category || 'Outcome recorded';
+                        const logsAction = ['failed', 'queued', 'partial'].includes(String(detail.state || '')) ? ' <button type="button" class="btn-sm activity-row-button" onclick="openLogsModal()">View logs</button>' : '';
+                        const eventType = String(detail.queue_event_type || '');
+                        const retryAction = detail.state === 'failed' && detail.category === 'transient' && Number.isInteger(Number(detail.queue_item_id))
+                            ? ` <button type="button" class="btn-sm activity-row-button" onclick="retryEventDelivery('${eventId}', ${Number(detail.queue_item_id)}, '${escapeHtml(eventType)}', this)">Retry</button>`
+                            : '';
+                        return `<li><strong>${escapeHtml(tracker)}</strong>: ${escapeHtml(detail.state || 'unknown')} <span class="activity-detail-category">${escapeHtml(category)}</span> — ${escapeHtml(detail.reason || 'No explanation recorded.')} <span class="activity-detail-attempts">(${Number(detail.attempts || history.length || 0)} attempt${Number(detail.attempts || history.length || 0) === 1 ? '' : 's'})</span>${logsAction}${retryAction}${attempts ? `<div class="activity-detail-history">${attempts}</div>` : ''}</li>`;
+                    }).join('');
+                    const deliveryDetails = detailRows || '<li>No per-destination details were recorded for this event.</li>';
+                    const source = `${ev.server || 'unknown'} · ${ev.event || 'event'} · operation ${eventId}`;
+                    const rule = ev.rule_evaluation;
+                    const ruleDetails = rule ? `<p><strong>Automation:</strong> ${escapeHtml(rule.decision || 'allow')} — ${escapeHtml(rule.reason || 'No explanation recorded.')}${rule.conflicts?.length ? ` <span class="activity-detail-category">${rule.conflicts.length} conflicting rule(s)</span>` : ''}</p>` : '';
+                    html += `<tr id="event-details-${eventId}" class="activity-details-row" hidden><td colspan="${colSpan}"><div class="activity-details-panel"><strong>${escapeHtml(source)}</strong>${ruleDetails}<ul>${deliveryDetails}</ul></div></td></tr>`;
+                }
             }
             tbody.innerHTML = html;
             activityFreshKeys.clear();
@@ -3252,6 +3518,27 @@
             }).join('');
         }
 
+        function downloadBackup() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (isDemo) { alert('Demo mode: backup download simulated.'); return; }
+            window.location.assign('/api/backup');
+        }
+
+        async function createBackupSnapshot() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (isDemo) { alert('Demo mode: local backup snapshot simulated.'); return; }
+            const status = document.getElementById('backup-snapshot-status');
+            if (status) status.textContent = 'Creating local snapshot…';
+            try {
+                const response = await fetch('/api/backup/snapshots', { method: 'POST' });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || 'Snapshot creation failed');
+                if (status) status.textContent = `Saved ${result.created}. ${result.retained} of ${result.retention_count} snapshots retained.`;
+            } catch (error) {
+                if (status) status.textContent = `Snapshot failed: ${error.message}`;
+            }
+        }
+
         async function uploadBackup(input) {
             if (!isAdmin) { openUnlockModal(); return; }
             if (isDemo) {
@@ -3261,26 +3548,67 @@
             }
             if (!input.files || !input.files[0]) return;
             const file = input.files[0];
-            if (!confirm(`Restore system configuration and tokens from "${file.name}"? This will overwrite existing tokens and configuration.`)) {
-                input.value = '';
-                return;
-            }
-            const formData = new FormData();
-            formData.append('backup_file', file);
+            const status = document.getElementById('backup-restore-status');
+            let passphrase = '';
             try {
+                const previewBackup = async () => {
+                    const formData = new FormData();
+                    formData.append('backup_file', file);
+                    if (passphrase) formData.append('passphrase', passphrase);
+                    const response = await fetch('/api/restore/preview', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        if (!passphrase && /requires a passphrase/i.test(data.detail || '')) {
+                            passphrase = window.prompt('Enter the backup passphrase:') || '';
+                            if (!passphrase) throw new Error('Restore preview cancelled.');
+                            return previewBackup();
+                        }
+                        throw new Error(data.detail || 'Could not validate this backup.');
+                    }
+                    return data;
+                };
+                if (status) status.textContent = 'Validating archive…';
+                const preview = await previewBackup();
+                const categorySummary = Object.entries(preview.categories || {}).map(([category, details]) => {
+                    const replace = details.replace.length ? details.replace.join(', ') : 'none';
+                    const preserve = details.preserve.length ? details.preserve.join(', ') : 'none';
+                    return `${category}: replace ${replace}; preserve ${preserve}`;
+                }).join('\n');
+                const warningSummary = (preview.warnings || []).join('\n');
+                const confirmation = [
+                    `Backup preview: ${file.name}`,
+                    `Source version: ${preview.source_version || 'legacy / unknown'}`,
+                    `Files to restore: ${preview.files.length}`,
+                    categorySummary,
+                    warningSummary,
+                    'Apply this restore now?'
+                ].filter(Boolean).join('\n\n');
+                if (!confirm(confirmation)) {
+                    if (status) status.textContent = 'Preview complete. No files were changed.';
+                    input.value = '';
+                    return;
+                }
+                if (status) status.textContent = 'Applying validated backup…';
+                const formData = new FormData();
+                formData.append('backup_file', file);
+                if (passphrase) formData.append('passphrase', passphrase);
                 const res = await fetch('/api/restore', {
                     method: 'POST',
                     body: formData
                 });
                 if (res.ok) {
-                    alert('✓ Backup successfully restored!');
+                    if (status) status.textContent = 'Backup restored. Reloading dashboard…';
                     window.location.reload();
                 } else {
                     const err = await res.json();
-                    alert('Restore failed: ' + (err.detail || 'Error'));
+                    throw new Error(err.detail || 'Restore failed.');
                 }
             } catch (e) {
-                alert('Restore error: ' + e.message);
+                if (status) status.textContent = `Restore stopped: ${e.message}`;
+                else alert('Restore error: ' + e.message);
             }
             input.value = '';
         }
@@ -4229,11 +4557,32 @@
             if (allBtn) allBtn.disabled = true;
 
             try {
+                const previewUrl = isDemo ? '/api/sync/reconcile/preview?demo=true' : '/api/sync/reconcile/preview';
+                const previewResponse = await fetch(previewUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const preview = await previewResponse.json();
+                if (!previewResponse.ok) throw new Error(preview.detail || 'Preview failed');
+                if (!preview.total) {
+                    if (pMsg) pMsg.innerText = 'Preview found no eligible changes.';
+                    if (pBar) pBar.style.width = '100%';
+                    return;
+                }
+                const actionSummary = Object.entries(preview.actions || {}).map(([action, count]) => `${count} ${action.replaceAll('_', ' ')}`).join(', ');
+                const uncertain = (preview.warnings || []).map(item => item.title).filter(Boolean);
+                const caution = uncertain.length ? `\n\n${uncertain.length} item(s) rely on title matching and need careful review: ${uncertain.slice(0, 5).join(', ')}${uncertain.length > 5 ? ', …' : ''}.` : '';
+                if (!confirm(`Review ${preview.total} proposed reconciliation change(s): ${actionSummary}.${caution}\n\nApply this exact preview?`)) {
+                    if (pMsg) pMsg.innerText = 'Preview reviewed; no changes applied.';
+                    if (pBar) pBar.style.width = '100%';
+                    return;
+                }
                 const url = isDemo ? '/api/sync/reconcile?demo=true' : '/api/sync/reconcile';
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
+                    body: JSON.stringify({ preview_id: preview.preview_id, server: payload.server }),
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -4477,6 +4826,7 @@
         let simklPollInterval = null;
 
         function openSimklModal() {
+            if (isMember) { openAccountModal(); return; }
             const modal = document.getElementById('simkl-modal');
             if (modal) modal.style.display = 'flex';
             fetchSimklStatus();
@@ -4551,6 +4901,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function startSimklPinFlow() {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -4644,6 +4995,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function disconnectTrakt(btn) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -4667,6 +5019,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function disconnectSimkl(btn) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -4842,6 +5195,7 @@ SIMKL_ENABLED=true</pre>
         // MyAnimeList (MAL) Integration
         // -------------------------------------------------------------
         function openMalModal() {
+            if (isMember) { openAccountModal(); return; }
             const modal = document.getElementById('mal-modal');
             if (modal) modal.style.display = 'flex';
             fetchMalStatus();
@@ -4916,6 +5270,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function submitMalToken(e) {
+            if (isMember) { openAccountModal(); return; }
             e.preventDefault();
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
@@ -4965,6 +5320,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function disconnectMal(btn) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -5015,7 +5371,7 @@ SIMKL_ENABLED=true</pre>
             const tbody = document.getElementById('cross-sync-tbody');
             const badge = document.getElementById('cross-sync-count-badge');
             if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="6" class="u-text-align-center u-padding-24px u-color-accent-color">Scanning Trakt & Simkl libraries...</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="u-text-align-center u-padding-24px u-color-accent-color">Scanning configured tracker accounts...</td></tr>';
             }
             if (badge) badge.innerText = 'Scanning...';
 
@@ -5043,17 +5399,23 @@ SIMKL_ENABLED=true</pre>
             const allCount = crossSyncDiffItems.length;
             const t2sCount = crossSyncDiffItems.filter(i => i.direction === 'trakt_to_simkl').length;
             const s2tCount = crossSyncDiffItems.filter(i => i.direction === 'simkl_to_trakt').length;
+            const t2tmdbCount = crossSyncDiffItems.filter(i => i.direction === 'trakt_to_tmdb').length;
+            const tmdb2tCount = crossSyncDiffItems.filter(i => i.direction === 'tmdb_to_trakt').length;
             const ratingCount = crossSyncDiffItems.filter(i => i.sync_type === 'rating').length;
 
             const cAll = document.getElementById('cross-count-all');
             const cT2s = document.getElementById('cross-count-t2s');
             const cS2t = document.getElementById('cross-count-s2t');
+            const cT2tmdb = document.getElementById('cross-count-t2tmdb');
+            const cTmdb2t = document.getElementById('cross-count-tmdb2t');
             const cRatings = document.getElementById('cross-count-ratings');
             const badge = document.getElementById('cross-sync-count-badge');
 
             if (cAll) cAll.innerText = allCount;
             if (cT2s) cT2s.innerText = t2sCount;
             if (cS2t) cS2t.innerText = s2tCount;
+            if (cT2tmdb) cT2tmdb.innerText = t2tmdbCount;
+            if (cTmdb2t) cTmdb2t.innerText = tmdb2tCount;
             if (cRatings) cRatings.innerText = ratingCount;
             if (badge) badge.innerText = `${allCount} Discrepanc${allCount === 1 ? 'y' : 'ies'}`;
         }
@@ -5082,6 +5444,10 @@ SIMKL_ENABLED=true</pre>
                 items = items.filter(i => i.direction === 'trakt_to_simkl');
             } else if (crossSyncActiveFilter === 'simkl_to_trakt') {
                 items = items.filter(i => i.direction === 'simkl_to_trakt');
+            } else if (crossSyncActiveFilter === 'trakt_to_tmdb') {
+                items = items.filter(i => i.direction === 'trakt_to_tmdb');
+            } else if (crossSyncActiveFilter === 'tmdb_to_trakt') {
+                items = items.filter(i => i.direction === 'tmdb_to_trakt');
             } else if (crossSyncActiveFilter === 'rating') {
                 items = items.filter(i => i.sync_type === 'rating');
             }
@@ -5098,10 +5464,23 @@ SIMKL_ENABLED=true</pre>
                 const titleStr = item.media_type === 'episode'
                     ? `${escapeHtml(item.show_title || '')} S${String(item.season || 1).padStart(2, '0')}E${String(item.episode || 1).padStart(2, '0')} &bull; ${escapeHtml(item.title || '')}`
                     : `${escapeHtml(item.title || '')} (${item.year || 'N/A'})`;
+                const detailNotes = [];
+                if (item.match_reason) detailNotes.push(`${item.match_reason}; ${item.source_of_truth === 'tmdb' ? 'TMDb' : 'Trakt'} is the source`);
+                if (item.rating_conflict_key) {
+                    const otherTracker = item.rating_conflict_key.includes(':tmdb:') ? 'TMDb' : 'Simkl';
+                    detailNotes.push(`Trakt rated: ${item.trakt_rated_at || 'timestamp unavailable'} · ${otherTracker} rated: ${item[otherTracker.toLowerCase() + '_rated_at'] || 'timestamp unavailable'}`);
+                }
+                const matchNote = detailNotes.length
+                    ? `<div class="u-font-size-10px u-color-text-muted u-margin-top-3px">${detailNotes.map(note => escapeHtml(note)).join('<br>')}</div>`
+                    : '';
 
                 const dirBadge = item.direction === 'trakt_to_simkl'
                     ? '<span class="u-background-1e1b4b u-border-1px-solid-4338ca u-color-a5b4fc u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Trakt &rarr; Simkl</span>'
-                    : '<span class="u-background-064e3b u-border-1px-solid-059669 u-color-a7f3d0 u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Simkl &rarr; Trakt</span>';
+                    : item.direction === 'trakt_to_tmdb'
+                        ? '<span class="u-background-164e63 u-border-1px-solid-0891b2 u-color-a5f3fc u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Trakt &rarr; TMDb</span>'
+                        : item.direction === 'tmdb_to_trakt'
+                            ? '<span class="u-background-164e63 u-border-1px-solid-0891b2 u-color-a5f3fc u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">TMDb &rarr; Trakt</span>'
+                            : '<span class="u-background-064e3b u-border-1px-solid-059669 u-color-a7f3d0 u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Simkl &rarr; Trakt</span>';
 
                 const typeBadge = item.sync_type === 'rating'
                     ? '<span class="u-background-451a03 u-border-1px-solid-b45309 u-color-fde68a u-padding-2px-6px u-border-radius-4px u-font-size-10px u-font-weight-600">Rating</span>'
@@ -5113,7 +5492,7 @@ SIMKL_ENABLED=true</pre>
                             <input type="checkbox" data-id="${escapeHtml(item.id)}" ${isChecked ? 'checked' : ''} onchange="toggleCrossSyncItem(this, '${escapeHtml(item.id)}')" />
                         </td>
                         <td class="u-padding-10px-14px u-white-space-nowrap">${dirBadge}</td>
-                        <td class="u-padding-10px-14px u-color-text-main u-font-weight-500">${titleStr}</td>
+                        <td class="u-padding-10px-14px u-color-text-main u-font-weight-500">${titleStr}${matchNote}</td>
                         <td class="u-padding-10px-14px">${typeBadge}</td>
                         <td class="u-padding-10px-14px u-color-10b981 u-font-weight-600">${escapeHtml(item.source_status || 'watched')}</td>
                         <td class="u-padding-10px-14px u-color-text-muted">${escapeHtml(item.target_status || 'unwatched')}</td>
@@ -5139,6 +5518,10 @@ SIMKL_ENABLED=true</pre>
                 items = items.filter(i => i.direction === 'trakt_to_simkl');
             } else if (crossSyncActiveFilter === 'simkl_to_trakt') {
                 items = items.filter(i => i.direction === 'simkl_to_trakt');
+            } else if (crossSyncActiveFilter === 'trakt_to_tmdb') {
+                items = items.filter(i => i.direction === 'trakt_to_tmdb');
+            } else if (crossSyncActiveFilter === 'tmdb_to_trakt') {
+                items = items.filter(i => i.direction === 'tmdb_to_trakt');
             } else if (crossSyncActiveFilter === 'rating') {
                 items = items.filter(i => i.sync_type === 'rating');
             }
@@ -5182,6 +5565,7 @@ SIMKL_ENABLED=true</pre>
             const pMsg = document.getElementById('cross-sync-progress-msg');
             const pBar = document.getElementById('cross-sync-progress-bar');
             const pStats = document.getElementById('cross-sync-progress-stats');
+            const conflictPolicy = document.getElementById('cross-sync-conflict-policy')?.value || 'manual';
 
             if (pBox) pBox.style.display = 'block';
             if (pMsg) pMsg.innerText = 'Starting cross-tracker synchronization...';
@@ -5193,9 +5577,16 @@ SIMKL_ENABLED=true</pre>
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ ...payload, conflict_policy: conflictPolicy })
                 });
                 const data = await res.json();
+
+                if (!res.ok || data.status === 'error') {
+                    if (pBar) pBar.style.width = '100%';
+                    if (pMsg) pMsg.innerText = data.detail || data.message || 'Cross-tracker synchronization could not start.';
+                    if (pStats) pStats.innerText = 'Needs review';
+                    return;
+                }
 
                 if (isDemo || data.status === 'completed') {
                     if (pBar) pBar.style.width = '100%';
@@ -5242,6 +5633,11 @@ SIMKL_ENABLED=true</pre>
 
         // Dynamically update header subtitle reflecting active media servers -> connected cloud trackers
         async function updateDynamicSubtitle() {
+            if (isMember) {
+                const subtitle = document.getElementById("header-title-sub");
+                if (subtitle) subtitle.textContent = "My activity, tracker connections, and shared watch lists";
+                return;
+            }
             try {
                 const subEl = document.getElementById('header-title-sub');
                 if (!subEl) return;
@@ -5604,10 +6000,60 @@ SIMKL_ENABLED=true</pre>
 
         // Reset scroll position for co-watch chips on load and reload so refresh starts cleanly at top
 
+// ---- analytics_export.js ----
+        async function downloadAnalyticsExport(kind, format) {
+            const status = document.getElementById('analytics-export-status');
+            if (isDemo) {
+                if (status) status.textContent = 'Exports are available in an authenticated Omniscrobble instance.';
+                return;
+            }
+            const params = new URLSearchParams({kind, format});
+            const filters = {
+                start_date: 'analytics-export-start',
+                end_date: 'analytics-export-end',
+                profile: 'analytics-export-profile',
+                media_type: 'analytics-export-media',
+                server: 'analytics-export-server',
+                tracker: 'analytics-export-tracker',
+                viewing: 'analytics-export-viewing',
+            };
+            for (const [name, id] of Object.entries(filters)) {
+                const value = document.getElementById(id)?.value?.trim();
+                if (value) params.set(name, value);
+            }
+            if (status) status.textContent = 'Preparing export…';
+            try {
+                const response = await fetch(`/api/analytics/export?${params.toString()}`);
+                if (!response.ok) {
+                    let message = 'Export failed.';
+                    try { message = (await response.json()).detail || message; } catch (error) {}
+                    throw new Error(message);
+                }
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                const disposition = response.headers.get('Content-Disposition') || '';
+                const match = disposition.match(/filename=([^;]+)/i);
+                link.download = match ? match[1].replaceAll('"', '') : `omniscrobble_${kind}.${format}`;
+                link.href = url;
+                document.body.append(link);
+                link.click();
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+                if (status) status.textContent = 'Export downloaded.';
+            } catch (error) {
+                if (status) status.textContent = error.message || 'Export failed.';
+            }
+        }
+
 // ---- watch_lists.js ----
         let watchLists = [];
         let watchListCowatchShows = [];
         let watchListCowatchAvailable = false;
+        let watchListsCanTransfer = false;
+        let watchListsCanRequest = false;
+        let watchListAutomationOptions = ['manual'];
+        let watchListRequestService = 'Overseerr';
         let watchListCatalogMatches = [];
         function watchListDialog({title, message, value = '', type = 'text', confirmLabel = 'Continue', danger = false, options = []}) {
             return new Promise(resolve => {
@@ -5660,10 +6106,6 @@ SIMKL_ENABLED=true</pre>
             return data;
         }
         async function loadWatchLists() {
-            if (!isAdmin && !isDemo) {
-                watchListMessage('Unlock admin access to view and manage your private watch lists.', true);
-                return;
-            }
             if (isDemo) {
                 watchLists = [{id:'demo-watch-list', name:'Weekend picks', items:[
                     {id:'demo-movie', title:'Arrival', media_type:'movie', year:2016, ids:{}, position:0},
@@ -5671,6 +6113,9 @@ SIMKL_ENABLED=true</pre>
                 ]}];
                 watchListCowatchShows = ['Frieren: Beyond Journey’s End'];
                 watchListCowatchAvailable = true;
+                watchListsCanTransfer = false;
+                watchListsCanRequest = false;
+                watchListAutomationOptions = ['manual'];
                 document.querySelectorAll('#card-watch-lists button, #card-watch-lists input, #card-watch-lists select').forEach(control => { control.disabled = true; });
                 document.getElementById('watch-list-select').innerHTML = '<option value="demo-watch-list">Weekend picks</option>';
                 renderWatchListItems();
@@ -5680,25 +6125,93 @@ SIMKL_ENABLED=true</pre>
             try {
                 const [data, shows] = await Promise.all([
                     watchListRequest('/api/watch-lists'),
-                    watchListRequest('/api/cowatch')
+                    isAdmin ? watchListRequest('/api/cowatch') : Promise.resolve({status:{shows:[]}})
                 ]);
                 watchLists = data.lists || [];
+                watchListsCanTransfer = Boolean(data.can_transfer);
+                watchListsCanRequest = Boolean(data.can_request);
+                watchListAutomationOptions = data.automation_options || ['manual'];
+                watchListRequestService = data.request_service_name || 'Overseerr';
                 watchListCowatchShows = shows.status?.shows || [];
                 watchListCowatchAvailable = Boolean(data.cowatch_available);
                 const select = document.getElementById('watch-list-select');
                 const previous = select.value;
                 select.innerHTML = watchLists.map(list => `<option value="${escapeHtml(list.id)}">${escapeHtml(list.name)}</option>`).join('');
                 if (watchLists.some(list => list.id === previous)) select.value = previous;
+                const transferActions = document.getElementById('watch-list-transfer-actions');
+                if (transferActions) transferActions.hidden = !watchListsCanTransfer;
                 renderWatchListItems();
-                watchListMessage(watchLists.length ? `${watchLists.length} list${watchLists.length === 1 ? '' : 's'} saved locally.` : 'Create a list to get started.');
+                watchListMessage(watchLists.length ? `${watchLists.length} shared or personal list${watchLists.length === 1 ? '' : 's'} available.` : 'Create a list to get started.');
             } catch (error) { watchListMessage(error.message, true); }
         }
         function selectedWatchList() { return watchLists.find(list => list.id === document.getElementById('watch-list-select')?.value); }
+        function updateWatchListControls() {
+            const list = selectedWatchList();
+            const editable = Boolean(list?.can_edit) && !isDemo;
+            const manageable = Boolean(list?.can_manage) && !isDemo;
+            for (const id of ['watch-list-rename', 'watch-list-delete', 'watch-list-share', 'watch-list-automation']) {
+                const button = document.getElementById(id);
+                if (button) button.disabled = !manageable;
+            }
+            const refreshButton = document.getElementById('watch-list-refresh-availability');
+            if (refreshButton) refreshButton.disabled = !list || isDemo;
+            const automationButton = document.getElementById('watch-list-automation');
+            if (automationButton) automationButton.textContent = `On item added: ${{manual:'Manual',request:'Request',acquire:'Acquire'}[list?.auto_action || 'manual']}`;
+            for (const id of ['watch-item-title', 'watch-item-type', 'watch-item-year', 'watch-item-tags', 'watch-item-notes']) {
+                const field = document.getElementById(id);
+                if (field) field.disabled = !editable;
+            }
+            document.querySelectorAll('#card-watch-lists [data-watch-list-edit]').forEach(button => {
+                button.disabled = !editable || (button.dataset.watchListEdit === 'cowatch' && !watchListCowatchAvailable);
+            });
+            document.querySelectorAll('#card-watch-lists [data-watch-list-admin-action]').forEach(button => { button.disabled = !isAdmin || isDemo; });
+            for (const id of ['watch-list-add-item', 'watch-list-search-catalog', 'watch-list-search-anime']) {
+                const button = document.getElementById(id);
+                if (button) button.disabled = !editable;
+            }
+        }
         async function createWatchList() {
             const name = await watchListDialog({title:'Create a watch list', message:'Choose a name for this list.', confirmLabel:'Create list'});
             if (!name?.trim()) return;
             try { await watchListRequest('/api/watch-lists', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})}); await loadWatchLists(); }
             catch (error) { watchListMessage(error.message, true); }
+        }
+        async function shareWatchList() {
+            const list = selectedWatchList(); if (!list?.can_manage) return;
+            const current = Object.entries(list.members || {}).map(([username, role]) => `${username}=${role}`).join('\n');
+            const value = await watchListDialog({title:'Share watch list', message:'Enter one dashboard member per line as username=editor or username=viewer. Clear the field to remove all shared access.', value:current, type:'textarea', confirmLabel:'Save access'});
+            if (value === null) return;
+            const members = {};
+            for (const rawLine of value.split('\n').map(line => line.trim()).filter(Boolean)) {
+                const [username, role, ...extra] = rawLine.split('=').map(part => part.trim());
+                if (!username || !['editor', 'viewer'].includes(role) || extra.length) { watchListMessage('Use one username=editor or username=viewer entry per line.', true); return; }
+                members[username] = role;
+            }
+            try {
+                await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}/access`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({members})});
+                await loadWatchLists(); watchListMessage('Shared list access updated.');
+            } catch (error) { watchListMessage(error.message, true); }
+        }
+        async function configureWatchListAutomation() {
+            const list = selectedWatchList(); if (!list?.can_manage || isDemo) return;
+            const labels = {manual:'Manual — no automatic action', request:'Request through Overseerr/Jellyseerr', acquire:'Add to Sonarr/Radarr and search'};
+            const action = await watchListDialog({title:'Choose what happens when an item is added', message:'Automatic requests or library acquisition can submit downloads. Provider approval settings apply to requests; acquisition uses the configured root folder and quality profile and starts a search.', type:'select', value:list.auto_action || 'manual', confirmLabel:'Save choice', options:watchListAutomationOptions.map(value => ({value, label:labels[value]}))});
+            if (action === null) return;
+            try {
+                await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}/automation`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action})});
+                await loadWatchLists(); watchListMessage(`Automatic action set to ${action}.`);
+            } catch (error) { watchListMessage(error.message, true); }
+        }
+        async function refreshWatchListAvailability() {
+            const list = selectedWatchList(); if (!list || isDemo) return;
+            const button = document.getElementById('watch-list-refresh-availability');
+            if (button) { button.disabled = true; button.textContent = 'Checking…'; }
+            try {
+                const result = await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}/availability`, {method:'POST'});
+                await loadWatchLists();
+                watchListMessage(`Availability refreshed for ${result.checked_count} item${result.checked_count === 1 ? '' : 's'} at ${new Date(result.checked_at).toLocaleString()}.`);
+            } catch (error) { watchListMessage(error.message, true); }
+            finally { if (button) { button.disabled = false; button.textContent = 'Refresh availability'; updateWatchListControls(); } }
         }
         async function renameWatchList() {
             const list = selectedWatchList(); if (!list) return;
@@ -5717,11 +6230,15 @@ SIMKL_ENABLED=true</pre>
             const type = item?.media_type || document.getElementById('watch-item-type').value;
             const yearValue = item?.year || document.getElementById('watch-item-year').value;
             if (!title) { watchListMessage('Enter a title first.', true); return; }
-            const payload = item || {title, media_type:type, year:yearValue ? Number(yearValue) : null};
+            const tags = (document.getElementById('watch-item-tags').value || '').split(',').map(tag => tag.trim()).filter(Boolean);
+            const notes = document.getElementById('watch-item-notes').value.trim();
+            const payload = item ? {...item, tags, notes} : {title, media_type:type, year:yearValue ? Number(yearValue) : null, tags, notes};
             try {
-                await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}/items`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-                document.getElementById('watch-item-title').value = ''; document.getElementById('watch-item-year').value = '';
-                await loadWatchLists(); watchListMessage(`Added ${title}.`);
+                const added = await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}/items`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+                for (const id of ['watch-item-title', 'watch-item-year', 'watch-item-tags', 'watch-item-notes']) document.getElementById(id).value = '';
+                await loadWatchLists();
+                const automation = added.automation;
+                watchListMessage(automation ? `Added ${title}. ${automation.status}: ${automation.reason}.` : `Added ${title}.`, automation?.status === 'failed');
             } catch (error) { watchListMessage(error.message, true); }
         }
         async function searchAnimeForWatchList() {
@@ -5766,20 +6283,28 @@ SIMKL_ENABLED=true</pre>
         function renderWatchListItems() {
             const list = selectedWatchList();
             const box = document.getElementById('watch-list-items'); if (!box) return;
-            if (!list) { box.innerHTML = '<p class="u-color-text-muted">No watch lists yet. Select New list to create one.</p>'; return; }
-            if (!list.items.length) { box.innerHTML = '<div class="watch-list-empty"><p class="u-color-text-muted">This list is empty.</p><button type="button" class="btn-sm" onclick="document.getElementById(\'watch-item-title\').focus()">Add your first movie, show, or anime</button></div>'; return; }
-            const readOnly = isDemo ? 'disabled' : '';
+            if (!list) { updateWatchListControls(); box.innerHTML = '<p class="u-color-text-muted">No watch lists yet. Select New list to create one.</p>'; return; }
+            updateWatchListControls();
+            if (!list.items.length) { box.innerHTML = `<div class="watch-list-empty"><p class="u-color-text-muted">This list is empty.</p>${list.can_edit ? '<button type="button" class="btn-sm" onclick="document.getElementById(\'watch-item-title\').focus()">Add your first movie, show, or anime</button>' : ''}</div>`; return; }
+            const readOnly = isDemo || !list.can_edit ? 'disabled' : '';
             box.innerHTML = list.items.map((item, index) => {
                 const year = item.year ? ` (${item.year})` : '';
+                const availability = item.availability;
+                const availabilityLabel = availability ? `${availability.status.replaceAll('_', ' ')} · checked ${new Date(availability.checked_at).toLocaleString()}` : 'not checked yet';
+                const serviceAvailability = availability?.services ? Object.entries(availability.services).map(([service, state]) => `${service}: ${String(state).replaceAll('_', ' ')}`).join(' · ') : '';
+                const metadata = [...(item.tags || []).map(tag => `<span class="watch-list-tag">${escapeHtml(tag)}</span>`), item.notes ? `<div class="u-color-text-muted u-font-size-11px">Note: ${escapeHtml(item.notes)}</div>` : ''].join('');
+                const autoResult = item.automation ? `<div class="u-color-text-muted u-font-size-11px">On add: ${escapeHtml(item.automation.status)} · ${new Date(item.automation.checked_at).toLocaleString()} · ${escapeHtml(item.automation.reason)}</div>` : '';
                 const cw = item.media_type !== 'movie' && watchListCowatchShows.some(show => show.toLowerCase() === item.title.toLowerCase());
                 const arrType = item.media_type === 'movie' ? 'movie' : 'series';
                 return `<article class="u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-8px u-background-bg-page u-border-1px-solid-var-border-color u-border-radius-8px u-padding-10px-12px">
-                    <div><strong>${escapeHtml(item.title)}${escapeHtml(year)}</strong><div class="u-color-text-muted u-font-size-11px">${escapeHtml(item.media_type.toUpperCase())}${item.ids?.anilist ? ` · AniList #${escapeHtml(item.ids.anilist)}` : ''}</div></div>
+                    <div><strong>${escapeHtml(item.title)}${escapeHtml(year)}</strong><div class="u-color-text-muted u-font-size-11px">${escapeHtml(item.media_type.toUpperCase())}${item.ids?.anilist ? ` · AniList #${escapeHtml(item.ids.anilist)}` : ''}</div>${metadata ? `<div class="u-display-flex u-flex-wrap-wrap u-gap-6px u-margin-top-4px">${metadata}</div>` : ''}<div class="u-color-text-muted u-font-size-11px">Availability: ${escapeHtml(availabilityLabel)}${serviceAvailability ? ` · ${escapeHtml(serviceAvailability)}` : ''}</div>${autoResult}</div>
                     <div class="u-display-flex u-flex-wrap-wrap u-gap-6px">
-                        <button class="btn-sm" aria-label="Move ${escapeHtml(item.title)} up" onclick="moveWatchListItem(${index},-1)" ${readOnly || (index === 0 ? 'disabled' : '')}>↑</button><button class="btn-sm" aria-label="Move ${escapeHtml(item.title)} down" onclick="moveWatchListItem(${index},1)" ${readOnly || (index === list.items.length - 1 ? 'disabled' : '')}>↓</button>
-                        <button class="btn-sm" onclick="sendWatchItemToArr(${index})" ${readOnly}>Add to ${arrType === 'movie' ? 'Radarr' : 'Sonarr'}</button>
-                        ${item.media_type !== 'movie' ? `<button class="btn-sm" onclick="toggleWatchItemCowatch(${index})" ${readOnly || (watchListCowatchAvailable ? '' : 'disabled title="Configure a Co-Watch partner account first"')}>${cw ? 'Remove Co-Watch' : 'Add Co-Watch'}</button>` : ''}
-                        <button class="btn-sm" onclick="removeWatchListItem(${index})" aria-label="Remove ${escapeHtml(item.title)}" ${readOnly}>Remove</button>
+                        <button data-watch-list-edit="order" class="btn-sm" aria-label="Move ${escapeHtml(item.title)} up" onclick="moveWatchListItem(${index},-1)" ${readOnly || (index === 0 ? 'disabled' : '')}>↑</button><button data-watch-list-edit="order" class="btn-sm" aria-label="Move ${escapeHtml(item.title)} down" onclick="moveWatchListItem(${index},1)" ${readOnly || (index === list.items.length - 1 ? 'disabled' : '')}>↓</button>
+                        <button data-watch-list-edit="metadata" class="btn-sm" onclick="editWatchListItem(${index})" ${readOnly}>Tags / note</button>
+                        <button data-watch-list-admin-action class="btn-sm" onclick="sendWatchItemToArr(${index})" ${isAdmin && !isDemo ? '' : 'disabled'}>Add to ${arrType === 'movie' ? 'Radarr' : 'Sonarr'}</button>
+                        ${watchListsCanRequest && item.ids?.tmdb ? `<button data-watch-list-admin-action class="btn-sm" onclick="requestWatchListItem(${index})">Request on ${escapeHtml(watchListRequestService)}</button>` : ''}
+                        ${item.media_type !== 'movie' ? `<button data-watch-list-admin-action class="btn-sm" onclick="toggleWatchItemCowatch(${index})" ${isAdmin && !isDemo && watchListCowatchAvailable ? '' : 'disabled title="Admin access and a Co-Watch partner account are required"'}>${cw ? 'Remove Co-Watch' : 'Add Co-Watch'}</button>` : ''}
+                        <button data-watch-list-edit="remove" class="btn-sm" onclick="removeWatchListItem(${index})" aria-label="Remove ${escapeHtml(item.title)}" ${readOnly}>Remove</button>
                     </div></article>`;
             }).join('');
         }
@@ -5799,6 +6324,28 @@ SIMKL_ENABLED=true</pre>
         function sendWatchItemToArr(index) {
             const item = selectedWatchList()?.items[index]; if (!item) return;
             openAddArrModal(item.media_type === 'movie' ? 'movie' : 'series', item.title);
+        }
+        async function editWatchListItem(index) {
+            const list = selectedWatchList(), item = list?.items[index]; if (!item || !list.can_edit) return;
+            const tagsText = await watchListDialog({title:'Edit item tags', message:'Enter up to 20 comma-separated tags.', value:(item.tags || []).join(', '), confirmLabel:'Continue'});
+            if (tagsText === null) return;
+            const notes = await watchListDialog({title:'Edit item note', message:'Add an optional note (up to 1,000 characters).', value:item.notes || '', type:'textarea', confirmLabel:'Save item'});
+            if (notes === null) return;
+            const tags = tagsText.split(',').map(tag => tag.trim()).filter(Boolean);
+            try {
+                await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}/items/${encodeURIComponent(item.id)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({tags, notes})});
+                await loadWatchLists(); watchListMessage(`Updated ${item.title}.`);
+            } catch (error) { watchListMessage(error.message, true); }
+        }
+        async function requestWatchListItem(index) {
+            const list = selectedWatchList(), item = list?.items[index]; if (!item || !watchListsCanRequest || !item.ids?.tmdb) return;
+            const accepted = await watchListDialog({title:'Submit media request?', message:`Send “${item.title}${item.year ? ` (${item.year})` : ''}” to ${watchListRequestService}? The service may approve it automatically or place it in its approval queue.`, type:'confirm', confirmLabel:'Submit request'});
+            if (!accepted) return;
+            try {
+                const result = await watchListRequest(`/api/watch-lists/${encodeURIComponent(list.id)}/items/${encodeURIComponent(item.id)}/request`, {method:'POST'});
+                watchListMessage(result.status === 'skipped' ? result.reason : `Request submitted to ${result.service}.`);
+                await refreshWatchListAvailability();
+            } catch (error) { watchListMessage(error.message, true); }
         }
         async function toggleWatchItemCowatch(index) {
             const item = selectedWatchList()?.items[index]; if (!item) return;
@@ -5843,6 +6390,250 @@ SIMKL_ENABLED=true</pre>
         }
         document.addEventListener('DOMContentLoaded', loadWatchLists);
 
+// ---- automation_rules.js ----
+        let automationRuleDrafts = [];
+
+        function automationRuleList(value) {
+            return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
+        }
+
+        function automationRuleSummary(rule) {
+            const conditions = rule.conditions || {};
+            const parts = [];
+            for (const key of ['servers', 'libraries', 'media_types', 'devices', 'users']) {
+                if (conditions[key]?.length) parts.push(`${key.replace('_', ' ')}: ${conditions[key].join(', ')}`);
+            }
+            if (conditions.time_window) {
+                const window = conditions.time_window;
+                parts.push(`${window.days.join(', ')} ${window.start}–${window.end} ${window.timezone}`);
+            }
+            const destinations = rule.action === 'route'
+                ? ` → ${(rule.trackers || []).concat(rule.profiles || []).join(', ')}`
+                : '';
+            return `${rule.action} • priority ${rule.priority} • ${parts.join(' · ')}${destinations}`;
+        }
+
+        function renderAutomationRules() {
+            const list = document.getElementById('automation-rules-list');
+            if (!list) return;
+            list.replaceChildren();
+            if (!automationRuleDrafts.length) {
+                const empty = document.createElement('p');
+                empty.className = 'u-color-text-muted';
+                empty.textContent = 'No event rules are configured. Events pass through by default.';
+                list.appendChild(empty);
+                return;
+            }
+            automationRuleDrafts.forEach((rule, index) => {
+                const row = document.createElement('div');
+                row.className = 'automation-rule-row';
+                const description = document.createElement('div');
+                const name = document.createElement('strong');
+                name.textContent = `${rule.enabled ? '' : 'Disabled · '}${rule.name}`;
+                const details = document.createElement('p');
+                details.textContent = automationRuleSummary(rule);
+                description.append(name, details);
+                row.appendChild(description);
+                if (isAdmin && !isDemo) {
+                    const remove = document.createElement('button');
+                    remove.type = 'button';
+                    remove.className = 'btn-sm';
+                    remove.textContent = 'Remove';
+                    remove.setAttribute('aria-label', `Remove rule ${rule.name}`);
+                    remove.addEventListener('click', () => {
+                        automationRuleDrafts.splice(index, 1);
+                        renderAutomationRules();
+                    });
+                    row.appendChild(remove);
+                }
+                list.appendChild(row);
+            });
+        }
+
+        async function loadAutomationRules(force = false) {
+            const admin = document.getElementById('automation-rules-admin');
+            const readonly = document.getElementById('automation-rules-readonly');
+            const status = document.getElementById('automation-rules-status');
+            if (admin) admin.hidden = !isAdmin || isDemo;
+            if (readonly) readonly.hidden = isAdmin && !isDemo;
+            if (isDemo) {
+                automationRuleDrafts = [];
+                renderAutomationRules();
+                if (readonly) readonly.textContent = 'Automation rules are disabled in demo mode.';
+                return;
+            }
+            if (!isAdmin) {
+                if (readonly) readonly.textContent = 'Automation rules can be managed by an administrator.';
+                return;
+            }
+            if (!force && document.getElementById('automation-rules-card')?.dataset.loaded === 'true') return;
+            if (status) status.textContent = 'Loading rules…';
+            try {
+                const response = await fetch('/api/automation/rules');
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Unable to load automation rules.');
+                automationRuleDrafts = data.rules || [];
+                renderAutomationRules();
+                if (status) status.textContent = 'No match means allow. Lower priority numbers run first; saved order breaks ties.';
+                const card = document.getElementById('automation-rules-card');
+                if (card) card.dataset.loaded = 'true';
+                await loadAutomationReviewQueue();
+            } catch (error) {
+                if (status) status.textContent = error.message;
+            }
+        }
+
+        function addAutomationRuleDraft() {
+            const status = document.getElementById('automation-rules-status');
+            const name = document.getElementById('automation-rule-name').value.trim();
+            const conditions = {
+                servers: automationRuleList(document.getElementById('automation-rule-servers').value),
+                libraries: automationRuleList(document.getElementById('automation-rule-libraries').value),
+                media_types: automationRuleList(document.getElementById('automation-rule-media-types').value),
+                devices: automationRuleList(document.getElementById('automation-rule-devices').value),
+                users: automationRuleList(document.getElementById('automation-rule-users').value),
+            };
+            const start = document.getElementById('automation-rule-window-start').value;
+            const end = document.getElementById('automation-rule-window-end').value;
+            const days = automationRuleList(document.getElementById('automation-rule-window-days').value);
+            if (start || end || days.length) {
+                conditions.time_window = {
+                    start,
+                    end,
+                    days,
+                    timezone: document.getElementById('automation-rule-window-timezone').value.trim() || 'UTC',
+                };
+            }
+            const action = document.getElementById('automation-rule-action').value;
+            const rule = {
+                name,
+                enabled: true,
+                priority: Number(document.getElementById('automation-rule-priority').value || 100),
+                conditions,
+                action,
+                trackers: action === 'route' ? automationRuleList(document.getElementById('automation-rule-trackers').value) : [],
+                profiles: action === 'route' ? automationRuleList(document.getElementById('automation-rule-profiles').value) : [],
+            };
+            if (!name) {
+                if (status) status.textContent = 'Enter a rule name first.';
+                return;
+            }
+            if (!Object.values(conditions).some(value => Array.isArray(value) ? value.length : value)) {
+                if (status) status.textContent = 'Add at least one condition. Match-all rules are blocked for safety.';
+                return;
+            }
+            automationRuleDrafts.push(rule);
+            renderAutomationRules();
+            if (status) status.textContent = 'Rule added to the draft. Save rules to activate it.';
+            document.getElementById('automation-rule-name').value = '';
+        }
+
+        async function saveAutomationRules() {
+            const status = document.getElementById('automation-rules-status');
+            if (!isAdmin || isDemo) return;
+            try {
+                const response = await fetch('/api/automation/rules', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(automationRuleDrafts),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Unable to save automation rules.');
+                automationRuleDrafts = data.rules || [];
+                renderAutomationRules();
+                if (status) status.textContent = 'Rules saved. Suppress and review matches will be held before tracker dispatch.';
+            } catch (error) {
+                if (status) status.textContent = error.message;
+            }
+        }
+
+        function automationSampleEvent() {
+            return {
+                server: document.getElementById('automation-sample-server').value.trim(),
+                library: document.getElementById('automation-sample-library').value.trim(),
+                media_type: document.getElementById('automation-sample-media-type').value,
+                device: document.getElementById('automation-sample-device').value.trim(),
+                user: document.getElementById('automation-sample-user').value.trim(),
+            };
+        }
+
+        async function evaluateAutomationSample(previewDrafts) {
+            const output = document.getElementById('automation-rules-preview-result');
+            if (!output) return;
+            if (!isAdmin || isDemo) {
+                output.textContent = 'Sign in as an administrator to evaluate automation rules.';
+                return;
+            }
+            try {
+                const url = previewDrafts ? '/api/automation/rules/preview' : '/api/automation/rules/evaluate';
+                const body = previewDrafts ? {rules: automationRuleDrafts, event: automationSampleEvent()} : {event: automationSampleEvent()};
+                const response = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Evaluation failed.');
+                output.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                output.textContent = error.message;
+            }
+        }
+
+        async function loadAutomationReviewQueue() {
+            const list = document.getElementById('automation-review-list');
+            if (!list || !isAdmin || isDemo) return;
+            list.replaceChildren(Object.assign(document.createElement('p'), {textContent: 'Loading held events…'}));
+            try {
+                const response = await fetch('/api/automation/review');
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Unable to load the review queue.');
+                list.replaceChildren();
+                if (!data.pending?.length) {
+                    list.appendChild(Object.assign(document.createElement('p'), {className: 'u-color-text-muted', textContent: 'No events are waiting for review.'}));
+                    return;
+                }
+                data.pending.forEach((event) => {
+                    const row = document.createElement('article');
+                    row.className = 'automation-review-row';
+                    const title = document.createElement('strong');
+                    title.textContent = `${event.title || 'Untitled'} · ${event.user || 'unknown user'}`;
+                    const reason = document.createElement('p');
+                    reason.textContent = event.rule_evaluation?.reason || 'Held by an automation rule.';
+                    const actions = document.createElement('div');
+                    actions.className = 'u-display-flex u-flex-wrap-wrap u-gap-8px';
+                    const approve = document.createElement('button');
+                    approve.type = 'button'; approve.className = 'btn-sm'; approve.textContent = 'Approve & dispatch';
+                    approve.addEventListener('click', () => decideAutomationReview(event.event_id, 'approve', actions));
+                    const reject = document.createElement('button');
+                    reject.type = 'button'; reject.className = 'btn-sm'; reject.textContent = 'Reject';
+                    reject.addEventListener('click', () => decideAutomationReview(event.event_id, 'reject', actions));
+                    actions.append(approve, reject);
+                    row.append(title, reason, actions);
+                    list.appendChild(row);
+                });
+            } catch (error) {
+                list.replaceChildren(Object.assign(document.createElement('p'), {textContent: error.message}));
+            }
+        }
+
+        async function decideAutomationReview(eventId, decision, actions) {
+            const verb = decision === 'approve' ? 'dispatch this held event' : 'reject this held event';
+            if (!confirm(`Are you sure you want to ${verb}?`)) return;
+            const buttons = actions ? [...actions.querySelectorAll("button")] : [];
+            buttons.forEach(button => { button.disabled = true; });
+            try {
+                const response = await fetch(`/api/automation/review/${encodeURIComponent(eventId)}`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision}),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Unable to resolve held event.');
+                await loadAutomationReviewQueue();
+                if (typeof fetchEvents === 'function') await fetchEvents();
+            } catch (error) {
+                const status = document.getElementById('automation-rules-status');
+                if (status) status.textContent = error.message;
+            } finally {
+                buttons.forEach(button => { button.disabled = false; });
+            }
+        }
+
 // ---- command_palette.js ----
         function resetCowatchScroll() {
             const cwChips = document.getElementById('cowatch-chips-container');
@@ -5854,7 +6645,7 @@ SIMKL_ENABLED=true</pre>
             operations: ['active-playback-card', 'card-activity'],
             'watch-lists': ['card-watch-lists'],
             trackers: ['card-server-config', 'card-ecosystem', 'card-multi-tracker', 'card-reconciliation'],
-            automation: ['card-cowatch', 'card-arr-bridge'],
+            automation: ['automation-rules-card', 'card-cowatch', 'card-arr-bridge'],
             analytics: ['card-analytics'],
             diagnostics: ['card-backup']
         };
@@ -5870,6 +6661,177 @@ SIMKL_ENABLED=true</pre>
                 panel.hidden = panel.id !== `view-${name}`;
             });
             try { localStorage.setItem('omniscrobble_workspace', name); } catch (e) {}
+            if (name === 'diagnostics' && isAdmin && !document.getElementById('recovery-checks-list')?.dataset.loaded) refreshRecoveryChecks();
+            if (name === 'automation') loadAutomationRules();
+        }
+        function openRecoveryAction(action) {
+            if (action === 'compatibility') return;
+            if (action === 'servers') return openSettingsModal('servers');
+            if (action === 'trackers') return openSettingsModal('trackers');
+            if (action === 'notifications') return openSettingsModal('notifications');
+            if (action === 'queue') return openQueueRecovery();
+            if (action === 'logs') return openLogsModal();
+            if (action === 'webhook') return openWebhookDebuggerModal();
+            openSettingsModal('servers');
+        }
+        async function refreshRecoveryChecks() {
+            const list = document.getElementById('recovery-checks-list');
+            const updated = document.getElementById('recovery-checks-updated');
+            if (!list || !updated) return;
+            list.replaceChildren(Object.assign(document.createElement('p'), {textContent: 'Loading checks…'}));
+            try {
+                const response = await fetch('/api/health/recovery');
+                if (!response.ok) throw new Error(response.status === 401 ? 'Admin access is required to view recovery checks.' : 'Could not load recovery checks.');
+                const data = await response.json();
+                list.replaceChildren();
+                (data.checks || []).forEach((check) => {
+                    const item = document.createElement('article');
+                    item.className = `recovery-check recovery-check-${check.status}`;
+                    const heading = document.createElement('div');
+                    heading.className = 'recovery-check-heading';
+                    const title = document.createElement('strong');
+                    title.textContent = check.label;
+                    const badge = document.createElement('span');
+                    badge.className = 'recovery-check-status';
+                    badge.textContent = check.status.replaceAll('_', ' ');
+                    heading.append(title, badge);
+                    const summary = document.createElement('p');
+                    summary.textContent = check.summary;
+                    if (Array.isArray(check.compatibility_items) && check.compatibility_items.length) {
+                        const formatList = document.createElement('ul');
+                        formatList.className = 'recovery-capability-list';
+                        check.compatibility_items.forEach((format) => {
+                            const row = document.createElement('li');
+                            const observed = format.observed_version === null ? 'not present' : `v${format.observed_version}`;
+                            row.textContent = `${format.id.replaceAll('_', ' ')}: ${format.status.replaceAll('_', ' ')} (${observed}; current v${format.current_version}). ${format.action}`;
+                            formatList.append(row);
+                        });
+                        item.append(heading, summary, formatList);
+                    } else if (Array.isArray(check.findings) && check.findings.length) {
+                        const findingsList = document.createElement('ul');
+                        findingsList.className = 'recovery-capability-list';
+                        check.findings.forEach((finding) => {
+                            const row = document.createElement('li');
+                            row.textContent = `${finding.severity.toUpperCase()}: ${finding.message}`;
+                            findingsList.append(row);
+                        });
+                        item.append(heading, summary, findingsList);
+                    } else {
+                        item.append(heading, summary);
+                    }
+                    if (check.id === 'compatibility') {
+                        const details = document.createElement('small');
+                        const integrations = Object.entries(check.integrations || {}).map(([name, value]) => `${name}: ${value.version || 'unknown'} (${value.status}; ${value.compatibility})`);
+                        const ruleset = check.ruleset || {};
+                        details.textContent = `${check.application?.name} ${check.application?.version} · Python ${check.runtime?.python_version} (${check.runtime?.status}) · Integration versions are learned from explicit connection tests${integrations.length ? `: ${integrations.join('; ')}` : ''}. Ruleset v${ruleset.version}, reviewed ${ruleset.last_reviewed}.`;
+                        item.append(details);
+                    }
+                    if (Array.isArray(check.effective_settings) && check.effective_settings.length) {
+                        const details = document.createElement('details');
+                        const detailsHeading = document.createElement('summary');
+                        detailsHeading.textContent = 'Effective settings and sources';
+                        const sourceList = document.createElement('ul');
+                        sourceList.className = 'recovery-capability-list';
+                        check.effective_settings.forEach((setting) => {
+                            const row = document.createElement('li');
+                            row.textContent = `${setting.name}: ${setting.value} (from ${setting.source})`;
+                            sourceList.append(row);
+                        });
+                        details.append(detailsHeading, sourceList);
+                        item.append(details);
+                    }
+                    if (Array.isArray(check.tracker_capabilities) && check.tracker_capabilities.length) {
+                        const capabilityList = document.createElement('ul');
+                        capabilityList.className = 'recovery-capability-list';
+                        check.tracker_capabilities.forEach((tracker) => {
+                            const capabilityLabels = {
+                                realtime_playback: 'live playback', history: 'watched history', progress: 'progress',
+                                ratings: 'ratings', watchlist: 'watch lists', collection: 'collection', search: 'search',
+                            };
+                            const capabilities = (tracker.capabilities || []).map((capability) => capabilityLabels[capability] || capability);
+                            const detail = document.createElement('li');
+                            detail.textContent = `${tracker.name}: ${capabilities.join(', ')} (${tracker.media_types.join(', ')})`;
+                            capabilityList.append(detail);
+                        });
+                        item.append(capabilityList);
+                    }
+                    if (check.auth_rejections?.count) {
+                        const rejectionList = document.createElement('ul');
+                        rejectionList.className = 'recovery-capability-list';
+                        Object.entries(check.auth_rejections.by_endpoint || {}).forEach(([endpoint, count]) => {
+                            const detail = document.createElement('li');
+                            detail.textContent = `${endpoint}: ${count} rejected request${count === 1 ? '' : 's'}`;
+                            rejectionList.append(detail);
+                        });
+                        item.append(rejectionList);
+                    }
+                    const footer = document.createElement('div');
+                    footer.className = 'recovery-check-footer';
+                    const time = document.createElement('small');
+                    time.textContent = `Checked ${new Date(check.last_checked).toLocaleString()}`;
+                    footer.append(time);
+                    if (Array.isArray(check.test_integrations) && check.test_integrations.length) {
+                        const tests = document.createElement('div');
+                        tests.className = 'recovery-check-tests';
+                        check.test_integrations.forEach((integration) => {
+                            const button = document.createElement('button');
+                            button.type = 'button';
+                            button.className = 'btn-sm';
+                            const label = integration.startsWith('notification:') ? integration.split(':')[1] : integration;
+                            button.textContent = `Test ${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+                            button.addEventListener('click', () => runRecoveryConnectionTest(integration, button));
+                            tests.append(button);
+                        });
+                        item.append(tests);
+                    }
+                    const action = document.createElement('button');
+                    action.type = 'button';
+                    action.className = 'btn-sm';
+                    action.textContent = check.id === 'compatibility' ? 'Version report' : (check.status === 'healthy' || check.status === 'optional' ? 'Open settings' : 'Review');
+                    action.disabled = check.id === 'compatibility';
+                    action.addEventListener('click', () => openRecoveryAction(check.next_action));
+                    footer.append(action);
+                    const testResult = document.createElement('p');
+                    testResult.className = 'recovery-test-result';
+                    testResult.setAttribute('aria-live', 'polite');
+                    testResult.dataset.integration = check.id;
+                    item.append(footer, testResult);
+                    list.append(item);
+                });
+                list.dataset.loaded = 'true';
+                updated.textContent = `Last checked ${new Date(data.checked_at).toLocaleString()}. Checks do not contact external services.`;
+            } catch (error) {
+                list.replaceChildren(Object.assign(document.createElement('p'), {textContent: error.message || 'Could not load recovery checks.'}));
+                updated.textContent = 'Recovery checks unavailable.';
+            }
+        }
+        async function runRecoveryConnectionTest(integration, button) {
+            const result = button.closest('.recovery-check')?.querySelector('.recovery-test-result');
+            button.disabled = true;
+            button.textContent = 'Testing…';
+            if (result) result.textContent = `Testing ${integration}…`;
+            try {
+                const response = await fetch('/api/health/recovery/test', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({integration})
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Connection test failed.');
+                if (result) {
+                    result.className = `recovery-test-result recovery-test-${data.status}`;
+                    result.textContent = `${integration}: ${data.message} Checked ${new Date(data.checked_at).toLocaleString()}.`;
+                }
+            } catch (error) {
+                if (result) {
+                    result.className = 'recovery-test-result recovery-test-failed';
+                    result.textContent = error.message || 'Connection test failed.';
+                }
+            } finally {
+                button.disabled = false;
+                const label = integration.startsWith('notification:') ? integration.split(':')[1] : integration;
+                button.textContent = `Test ${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+            }
         }
         function openTrackerRecovery() {
             const text = document.getElementById('health-tracker-status')?.textContent || '';

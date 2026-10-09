@@ -1,17 +1,21 @@
 import asyncio
+import csv
 import datetime
 from datetime import timezone
 import html
 import io
 import json
 import logging
+import os
 import secrets
+import stat
+import sys
 import time
 import urllib.parse
 import zipfile
 from collections import deque
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -39,6 +43,9 @@ from app.plex_parser import ParsedMedia, parse_plex_webhook
 from app.jellyfin_parser import parse_jellyfin_webhook
 from app.emby_parser import parse_emby_webhook
 from app.services.queue_manager import QueueManager, process_queue
+from app.services.result_normalizer import normalize_result
+from app.services.dashboard_auth_manager import DashboardAuthManager, DashboardPrincipal
+from app.services.automation_rules import AutomationRulesManager, AutomationRuleError
 from app.services.user_manager import user_mgr
 from app.services.demo_manager import demo_mgr
 from app.services.log_manager import log_mgr
@@ -61,6 +68,7 @@ from app.services.reverse_sync_manager import reverse_sync_mgr
 from app.services.arr_bridge import arr_bridge
 from app.services.cross_tracker_sync import CrossTrackerSyncManager
 from app.services.settings_manager import settings_mgr
+from app.services.compatibility_manager import CompatibilityManager
 from app.services.cloud_sync_manager import cloud_sync_mgr
 from app.services.webhook_debugger import webhook_debugger
 from app.services.analytics_manager import analytics_mgr
@@ -72,6 +80,7 @@ from app.services.dashboard_renderer import (
     dashboard_renderer,
 )
 from pathlib import Path
+from pathlib import PurePosixPath
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / 'templates'
 COMPONENTS_DIR = TEMPLATES_DIR / 'dashboard'
@@ -136,11 +145,19 @@ multi_tracker = MultiTrackerManager(
     mdblist_client=mdblist,
     anime_resolver=anime_resolver,
 )
-cross_tracker_sync = CrossTrackerSyncManager(trakt_client=trakt, simkl_client=simkl)
+cross_tracker_sync = CrossTrackerSyncManager(
+    trakt_client=trakt,
+    simkl_client=simkl,
+    tmdb_client=tmdb,
+    provenance_file=Config.BASE_DIR / "data" / "cross_sync_provenance.json",
+)
 user_mgr.set_default_client(trakt)
 reverse_sync_mgr.set_trakt_client(trakt)
 arr_bridge.set_trakt_client(trakt)
 queue_mgr = QueueManager(Config.QUEUE_DB_FILE)
+dashboard_auth_mgr = DashboardAuthManager()
+automation_rules_mgr = AutomationRulesManager(Config.BASE_DIR / "data" / "automation_rules.json")
+compatibility_mgr = CompatibilityManager()
 
 SERVER_START_TIME = time.time()
 
@@ -198,12 +215,7 @@ def record_watch_stat(media: ParsedMedia) -> None:
 
 def is_temporary_error(res: dict[str, Any]) -> bool:
     """Detect transient errors (5xx server errors, 429 rate limits, network timeouts)."""
-    status = res.get("status")
-    err = res.get("error")
-    return (
-        status in (500, 502, 503, 504, 429)
-        or (isinstance(err, str) and any(x in err.lower() for x in ("connect", "timeout", "network", "service unavailable", "rate limit")))
-    )
+    return normalize_result(res).retryable
 
 
 def get_uptime_str() -> str:
@@ -244,6 +256,16 @@ def is_admin_request(request: Request) -> bool:
     When authenticated via cookie on state-mutating requests (POST, DELETE, PUT, PATCH),
     validates CSRF protection (X-CSRF-Token header matching csrf_token cookie).
     """
+    session_token = request.cookies.get("dashboard_session", "")
+    local_principal = dashboard_auth_mgr.resolve_session(session_token)
+    if local_principal and local_principal.role == "admin":
+        if request.method in ("POST", "DELETE", "PUT", "PATCH"):
+            csrf_cookie = request.cookies.get("csrf_token", "")
+            csrf_header = request.headers.get("x-csrf-token", "")
+            if request.headers.get("sec-fetch-site") == "cross-site" or not dashboard_auth_mgr.session_has_csrf(session_token, csrf_cookie) or not secrets.compare_digest(csrf_cookie, csrf_header):
+                return False
+        return True
+
     if not Config.WEBHOOK_SECRET:
         return True
 
@@ -277,6 +299,51 @@ def is_admin_request(request: Request) -> bool:
     return False
 
 
+def get_dashboard_principal(request: Request) -> Optional[DashboardPrincipal]:
+    """Resolve the current dashboard identity, preserving legacy admin access."""
+    if not Config.WEBHOOK_SECRET:
+        return DashboardPrincipal("admin", "admin", "legacy_open_mode")
+    session_principal = dashboard_auth_mgr.resolve_session(request.cookies.get("dashboard_session", ""))
+    if session_principal and session_principal.role == "admin":
+        return session_principal
+    if is_admin_request(request):
+        return DashboardPrincipal("admin", "admin", "shared_secret")
+    return session_principal
+
+
+def require_dashboard_permission(request: Request, permission: str, profile_owner: Optional[str] = None) -> DashboardPrincipal:
+    principal = get_dashboard_principal(request)
+    if not principal:
+        raise HTTPException(status_code=401, detail="Authentication is required.")
+    if principal.role == "admin":
+        if principal.source == "local_account" and request.method in ("POST", "DELETE", "PUT", "PATCH") and not is_admin_request(request):
+            raise HTTPException(status_code=403, detail="CSRF validation failed.")
+        return principal
+    if not dashboard_auth_mgr.has_permission(principal.role, permission):
+        raise HTTPException(status_code=403, detail="Your dashboard role does not allow this action.")
+    if profile_owner is not None and profile_owner.strip().lower() != principal.username.lower():
+        raise HTTPException(status_code=403, detail="You can only access your own profile.")
+    if request.method in ("POST", "DELETE", "PUT", "PATCH"):
+        session_token = request.cookies.get("dashboard_session", "")
+        csrf_cookie = request.cookies.get("csrf_token", "")
+        csrf_header = request.headers.get("x-csrf-token", "")
+        if request.headers.get("sec-fetch-site") == "cross-site" or not dashboard_auth_mgr.session_has_csrf(session_token, csrf_cookie) or not secrets.compare_digest(csrf_cookie, csrf_header):
+            raise HTTPException(status_code=403, detail="CSRF validation failed.")
+    return principal
+
+
+def profile_for_request(request: Request, requested_username: Optional[str]) -> Optional[str]:
+    principal = get_dashboard_principal(request)
+    requested = requested_username.strip() if requested_username else None
+    if principal and principal.role == "member":
+        if requested and requested.lower() != principal.username.lower():
+            raise HTTPException(status_code=403, detail="You can only access your own profile.")
+        return principal.username
+    if not principal and requested:
+        raise HTTPException(status_code=401, detail="Authentication is required to select a profile.")
+    return requested
+
+
 queue_worker_task: Optional[asyncio.Task] = None
 reverse_sync_worker_task: Optional[asyncio.Task] = None
 scrobble_heartbeat_worker_task: Optional[asyncio.Task] = None
@@ -298,9 +365,9 @@ async def queue_worker_loop():
                     logger.warning(f"Error during scheduled offline queue pruning: {pe}")
                 last_prune_time = now
 
-            if queue_mgr.get_pending_count() > 0:
+            if not queue_mgr._future_schema_version and queue_mgr.get_pending_count() > 0:
                 logger.info("Background queue worker draining pending offline items...")
-                await process_queue(trakt, queue_mgr, user_mgr=user_mgr)
+                await process_queue(trakt, queue_mgr, user_mgr=user_mgr, on_result=record_queue_delivery)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -682,7 +749,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.3.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -721,7 +788,7 @@ async def security_and_cache_middleware(request: Request, call_next):
 async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: str):
     """Dispatch playback scrobble event asynchronously to Simkl."""
     if not (settings_mgr.is_tracker_enabled("simkl") and simkl.is_enabled() and simkl.is_authenticated()):
-        return "skipped"
+        return {"status": "skipped", "reason": "Simkl is disabled or not configured."}
     responses = []
     try:
         if event in ("media.play", "media.resume"):
@@ -738,68 +805,89 @@ async def execute_simkl_scrobble(parsed: ParsedMedia, action_taken: str, event: 
         elif event == "media.rate":
             responses.append(await simkl.sync_ratings(parsed, rating=int(parsed.rating or 10)))
         else:
-            return "skipped"
+            return {"status": "skipped", "reason": "This event type is not supported by Simkl."}
         response_states = [_tracker_result_state(response) for response in responses]
         if "queued" in response_states:
-            return "queued"
+            return {"status": "queued", "reason": "Saved for retry after a temporary error."}
         if "failed" in response_states:
-            return "failed"
-        return "success" if "success" in response_states else "skipped"
+            failed_response = next((response for response in responses if _tracker_result_state(response) == "failed"), None)
+            return {"status": "failed", "error": _delivery_reason("failed", failed_response)}
+        return {"status": "success" if "success" in response_states else "skipped"}
     except Exception as e:
         logger.warning(f"Simkl dispatch error for {parsed.title}: {e}")
         asyncio.create_task(notifier.send_failure_alert(parsed, "Simkl", str(e), user=parsed.username))
-        return "failed"
+        return {"status": "failed", "error": str(e)}
 
 
 async def execute_multi_tracker_dispatch(parsed: ParsedMedia, action_taken: str, event: str, progress: float, event_id: Optional[str] = None):
     """Dispatch playback scrobble and rating events asynchronously to Simkl, AniList, and MyAnimeList."""
     delivery: dict[str, str] = {}
+    delivery_results: dict[str, Any] = {}
     if settings_mgr.is_tracker_enabled("simkl") and simkl.is_enabled() and simkl.is_authenticated():
-        delivery["simkl"] = await execute_simkl_scrobble(parsed, action_taken, event)
+        simkl_result = await execute_simkl_scrobble(parsed, action_taken, event)
+        delivery["simkl"] = _tracker_result_state(simkl_result)
+        delivery_results["simkl"] = simkl_result
 
     ani_active = settings_mgr.is_tracker_enabled("anilist") and anilist.is_enabled() and anilist.is_authenticated()
     mal_active = settings_mgr.is_tracker_enabled("mal") and mal.is_enabled() and mal.is_authenticated()
     anime_action = event == "media.rate" or event == "media.scrobble" or (action_taken == "scrobble_stop" and progress >= Config.get_threshold(parsed.media_type))
     if ani_active or mal_active:
         if not anime_action:
-            delivery.update({key: "skipped" for key, active in (("anilist", ani_active), ("mal", mal_active)) if active})
+            for key, active in (("anilist", ani_active), ("mal", mal_active)):
+                if not active:
+                    continue
+                delivery[key] = "skipped"
+                delivery_results[key] = {
+                    "reason": multi_tracker.capability_skip_reason(key, "realtime_playback", parsed.media_type)
+                    or "This event does not include an anime progress update."
+                }
         else:
             try:
                 resolved_anime = await anime_resolver.resolve(parsed)
                 if not (resolved_anime and resolved_anime.get("is_anime")):
                     delivery.update({key: "skipped" for key, active in (("anilist", ani_active), ("mal", mal_active)) if active})
+                    for key, active in (("anilist", ani_active), ("mal", mal_active)):
+                        if active:
+                            delivery_results[key] = {"reason": "No matching anime title was resolved."}
                 elif event == "media.rate":
                     if ani_active:
                         ani_res = await anilist.update_rating(resolved_anime["anilist_id"], float(parsed.rating or 10))
                         delivery["anilist"] = _tracker_result_state(ani_res)
+                        delivery_results["anilist"] = ani_res
                         if delivery["anilist"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "AniList", str(ani_res.get("errors", "Error")), user=parsed.username))
                     if mal_active and resolved_anime.get("mal_id"):
                         mal_res = await mal.update_rating(resolved_anime["mal_id"], int(parsed.rating or 10))
                         delivery["mal"] = _tracker_result_state(mal_res)
+                        delivery_results["mal"] = mal_res
                         if delivery["mal"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "MyAnimeList", str(mal_res.get("error", "Error")), user=parsed.username))
                     elif mal_active:
                         delivery["mal"] = "skipped"
+                        delivery_results["mal"] = {"reason": "No MyAnimeList ID was available for the matched anime."}
                 else:
                     if ani_active:
                         ani_res = await anilist.update_progress(resolved_anime["anilist_id"], resolved_anime["episode_number"], resolved_anime.get("episodes"))
                         delivery["anilist"] = _tracker_result_state(ani_res)
+                        delivery_results["anilist"] = ani_res
                         if delivery["anilist"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "AniList", str(ani_res.get("errors", "Error")), user=parsed.username))
                     if mal_active and resolved_anime.get("mal_id"):
                         mal_res = await mal.update_progress(resolved_anime["mal_id"], resolved_anime["episode_number"], resolved_anime.get("episodes"))
                         delivery["mal"] = _tracker_result_state(mal_res)
+                        delivery_results["mal"] = mal_res
                         if delivery["mal"] == "failed":
                             asyncio.create_task(notifier.send_failure_alert(parsed, "MyAnimeList", str(mal_res.get("error", "Error")), user=parsed.username))
                     elif mal_active:
                         delivery["mal"] = "skipped"
+                        delivery_results["mal"] = {"reason": "No MyAnimeList ID was available for the matched anime."}
             except Exception as e:
                 logger.warning(f"Anime multi-tracker dispatch error for {parsed.title}: {e}")
                 delivery.update({key: "failed" for key, active in (("anilist", ani_active), ("mal", mal_active)) if active and key not in delivery})
+                delivery_results.update({key: {"error": str(e)} for key, active in (("anilist", ani_active), ("mal", mal_active)) if active and key not in delivery_results})
 
     if event_id and delivery:
-        update_event_tracker_delivery(event_id, delivery)
+        update_event_tracker_delivery(event_id, delivery, delivery_results)
 
 
 # Persistent log of recent webhook events for the status dashboard
@@ -836,33 +924,7 @@ reload_recent_events_in_place()
 
 def _tracker_result_state(result: Any) -> str:
     """Reduce upstream responses to a small, safe status for activity badges."""
-    if not isinstance(result, dict):
-        return "success" if result else "skipped"
-    if result.get("queued"):
-        return "queued"
-    nested_results = [value for value in result.values() if isinstance(value, dict) and ("status" in value or "error" in value or "queued" in value)]
-    if nested_results:
-        nested_states = [_tracker_result_state(value) for value in nested_results]
-        if "queued" in nested_states:
-            return "queued"
-        if "failed" in nested_states:
-            return "failed"
-        return "success" if "success" in nested_states else "skipped"
-    status = str(result.get("status", "")).lower()
-    if status in {"success", "ok", "200", "201", "202", "204"}:
-        return "success"
-    if status in {"queued", "queue"}:
-        return "queued"
-    if status in {"skipped", "ignored", "disabled", "not_configured"}:
-        return "skipped"
-    if status.isdigit():
-        code = int(status)
-        return "success" if 200 <= code < 300 else "failed"
-    if result.get("reason"):
-        return "skipped"
-    if status in {"error", "failed", "failure"} or result.get("error"):
-        return "failed"
-    return "success"
+    return normalize_result(result).state
 
 
 def _tracker_delivery_from_result(result: dict[str, Any], action: str) -> dict[str, str]:
@@ -878,6 +940,19 @@ def _tracker_delivery_from_result(result: dict[str, Any], action: str) -> dict[s
         delivery.update({aliases.get(str(tracker).lower(), str(tracker).lower()): "success" for tracker in synced})
         delivery.update({aliases.get(str(tracker).lower(), str(tracker).lower()): "failed" for tracker in errors})
         return delivery
+    aliases = {"myanimelist": "mal"}
+    reported_trackers = result.get("trackers", [])
+    if not isinstance(reported_trackers, list):
+        reported_trackers = []
+    for tracker in reported_trackers:
+        tracker_key = aliases.get(str(tracker).lower(), str(tracker).lower())
+        result_key = "myanimelist" if tracker_key == "mal" else tracker_key
+        delivery[tracker_key] = _tracker_result_state(result.get(result_key))
+    skipped = result.get("skipped") if isinstance(result.get("skipped"), dict) else {}
+    for tracker in skipped:
+        delivery[aliases.get(str(tracker).lower(), str(tracker).lower())] = "skipped"
+    if delivery:
+        return delivery
     if action in {"bypassed", "none"} or result.get("status") in {"ignored", "skipped"}:
         delivery["trakt"] = "skipped"
     else:
@@ -885,14 +960,162 @@ def _tracker_delivery_from_result(result: dict[str, Any], action: str) -> dict[s
     return delivery
 
 
-def update_event_tracker_delivery(event_id: str, delivery: dict[str, str]) -> None:
+def update_event_tracker_delivery(
+    event_id: str,
+    delivery: dict[str, str],
+    results: Optional[dict[str, Any]] = None,
+) -> None:
     """Persist asynchronous tracker outcomes onto the originating activity event."""
     for event_entry in recent_events:
-        if event_entry.get("event_id") == event_id:
-            current = event_entry.setdefault("tracker_delivery", {})
-            current.update({key: value for key, value in delivery.items() if value in {"success", "queued", "failed", "skipped"}})
-            save_recent_events()
-            return
+        if event_entry.get("event_id") != event_id:
+            continue
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        current = event_entry.setdefault("tracker_delivery", {})
+        details = event_entry.setdefault("tracker_delivery_details", {})
+        for tracker, state in delivery.items():
+            if state not in {"success", "queued", "failed", "skipped", "partial"}:
+                continue
+            current[tracker] = state
+            detail = details.setdefault(tracker, {"attempts": 0, "history": []})
+            reason = _delivery_reason(state, (results or {}).get(tracker))
+            category = _delivery_category(state, (results or {}).get(tracker))
+            detail.update({"state": state, "reason": reason, "updated_at": now})
+            detail["category"] = category
+            detail["attempts"] = int(detail.get("attempts", 0)) + 1
+            history = detail.setdefault("history", [])
+            history.append({"state": state, "category": category, "reason": reason, "timestamp": now})
+            del history[:-10]
+        event_entry["delivery_status"] = _aggregate_delivery_status(current)
+        save_recent_events()
+        return
+
+
+def _aggregate_delivery_status(delivery: dict[str, str]) -> str:
+    states = set(delivery.values())
+    has_failure = bool(states.intersection({"failed", "partial"}))
+    has_success = "success" in states
+    has_queued = "queued" in states
+    if has_failure and (has_success or has_queued):
+        return "partial"
+    if has_failure:
+        return "failed"
+    if has_queued:
+        return "queued"
+    if has_success:
+        return "success"
+    return "skipped"
+
+
+def _delivery_reason(state: str, result: Any = None) -> str:
+    """Create a concise, redacted explanation for a destination outcome."""
+    if isinstance(result, dict):
+        for key in ("reason", "error", "message", "errors"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return log_mgr.sanitize_line(value.strip())[:240]
+            if isinstance(value, list) and value:
+                return log_mgr.sanitize_line(str(value[0]))[:240]
+        for value in result.values():
+            if isinstance(value, dict):
+                reason = _delivery_reason(state, value)
+                if reason != _delivery_reason(state):
+                    return reason
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        reason = _delivery_reason(state, item)
+                        if reason != _delivery_reason(state):
+                            return reason
+    return {
+        "success": "Delivered successfully.",
+        "queued": "Saved for retry after a temporary error.",
+        "failed": "The destination could not process this operation.",
+        "partial": "Some household destinations did not complete the operation.",
+        "skipped": "The destination did not receive this event.",
+    }.get(state, "Outcome recorded.")
+
+
+def _delivery_category(state: str, result: Any = None) -> str:
+    """Classify an outcome without exposing raw upstream responses."""
+    if state in {"success", "queued", "partial"}:
+        return {"success": "delivered", "queued": "queued", "partial": "partial"}[state]
+    if state == "skipped":
+        reason = _delivery_reason(state, result).lower()
+        return "unsupported" if any(term in reason for term in ("unsupported", "does not support", "not applicable", "not configured", "disabled")) else "intentional_skip"
+
+    return normalize_result(result).category
+
+
+def _initial_delivery_details(result: dict[str, Any], delivery: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Build compact, redacted destination details for a newly recorded event."""
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    details: dict[str, dict[str, Any]] = {}
+    for tracker, state in delivery.items():
+        tracker_result = result.get(tracker)
+        if tracker == "mal":
+            tracker_result = result.get("myanimelist", tracker_result)
+        skipped_result = result.get("skipped", {})
+        if tracker_result is None and isinstance(skipped_result, dict):
+            tracker_result = skipped_result.get(tracker)
+        errors = result.get("errors")
+        if isinstance(errors, dict) and tracker in errors:
+            tracker_result = {"error": errors[tracker]}
+        reason = _delivery_reason(state, tracker_result)
+        category = _delivery_category(state, tracker_result)
+        details[tracker] = {
+            "state": state,
+            "category": category,
+            "reason": reason,
+            "attempts": 1,
+            "updated_at": now,
+            "history": [{"state": state, "category": category, "reason": reason, "timestamp": now}],
+        }
+    return details
+
+
+def record_queue_delivery(
+    event_id: str,
+    event_type: str,
+    queue_item_id: int,
+    state: str,
+    reason: str,
+    attempt: int,
+) -> None:
+    """Attach a queue retry result and aggregate queue state to its source event."""
+    destination = f"Trakt · {event_type.replace('_', ' ')} · queue {queue_item_id}"
+    safe_reason = log_mgr.sanitize_line(reason.strip())[:240] if reason else _delivery_reason(state)
+    category = _delivery_category(state, {"error": safe_reason} if reason else None)
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    for event_entry in recent_events:
+        if event_entry.get("event_id") != event_id:
+            continue
+        detail = event_entry.setdefault("tracker_delivery_details", {}).setdefault(destination, {"attempts": 0, "history": []})
+        previous_state = detail.get("state")
+        history = detail.setdefault("history", [])
+        history.append({"state": state, "category": category, "reason": safe_reason, "timestamp": now})
+        del history[:-10]
+        scheduled_retry = state == "queued" and safe_reason == "Manually queued for retry."
+        updated_attempts = int(detail.get("attempts", 0)) if scheduled_retry else max(attempt, int(detail.get("attempts", 0)) + 1)
+        detail.update({
+            "state": state,
+            "category": category,
+            "reason": safe_reason,
+            "attempts": updated_attempts,
+            "updated_at": now,
+            "history": history,
+            "queue_item_id": queue_item_id,
+            "queue_event_type": event_type,
+        })
+        if state == "success" and previous_state == "queued" and notifier._profile_subscribed("queue_recovery", str(event_entry.get("user", ""))):
+            asyncio.create_task(notifier.send_operational_notification(
+                "queue_recovery", "Queued sync recovered",
+                f"A queued {event_type.replace('_', ' ')} update was delivered successfully.",
+            ))
+        save_recent_events()
+        break
+
+    overall_state = queue_mgr.get_event_queue_state(event_id)
+    update_event_tracker_delivery(event_id, {"trakt": overall_state})
 
 
 def update_event_cowatch_status(event_id: str, status: str) -> None:
@@ -905,11 +1128,39 @@ def update_event_cowatch_status(event_id: str, status: str) -> None:
                 "scheduled": False,
                 "synced": status == "success",
             })
+            update_event_tracker_delivery(event_id, {"household": status})
             save_recent_events()
             return
 
 
-def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_status: Optional[dict[str, Any]] = None) -> str:
+async def record_mirror_delivery(event_id: str, mirror_call: Any) -> None:
+    """Attach a background media-server mirror result to its source activity event."""
+    try:
+        result = await mirror_call
+    except Exception as exc:
+        result = {"status": "failed", "error": str(exc)}
+    mirror_results = result.get("results", {}) if isinstance(result, dict) else {}
+    failures = mirror_results.get("failed", []) if isinstance(mirror_results, dict) else []
+    mirrored = mirror_results.get("mirrored", []) if isinstance(mirror_results, dict) else []
+    if isinstance(result, dict) and result.get("status") in {"failed", "error"}:
+        state = "partial" if mirrored else "failed"
+    elif failures:
+        state = "failed" if not mirrored else "partial"
+    elif mirrored:
+        state = "success"
+    else:
+        state = "skipped"
+    update_event_tracker_delivery(event_id, {"media_servers": state}, {"media_servers": result})
+
+
+def log_event(
+    media: ParsedMedia,
+    action: str,
+    result: dict[str, Any],
+    cowatch_status: Optional[dict[str, Any]] = None,
+    rule_evaluation: Optional[dict[str, Any]] = None,
+    review_payload: Optional[dict[str, Any]] = None,
+) -> str:
     if media.media_type == "episode":
         title_str = f"{media.show_title} S{media.season:02d}E{media.episode:02d} - {media.title}"
     else:
@@ -929,6 +1180,7 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
         event_status = "error"
     entry = {
         "event_id": event_id,
+        "operation_id": event_id,
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "user": media.username,
         "server": getattr(media, "server_type", "plex"),
@@ -952,8 +1204,13 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
         "is_anime": anime_resolver.is_explicit_anime(media),
         "result_status": event_status,
         "tracker_delivery": tracker_delivery,
+        "delivery_status": _aggregate_delivery_status(tracker_delivery),
+        "tracker_delivery_details": _initial_delivery_details(result, tracker_delivery),
         "raw_result": result,
         "cowatch_status": cowatch_status,
+        "rule_evaluation": rule_evaluation,
+        "review_status": "pending" if action == "pending_review" and review_payload else None,
+        "review_payload": review_payload,
     }
     recent_events.appendleft(entry)
     save_recent_events()
@@ -961,7 +1218,12 @@ def log_event(media: ParsedMedia, action: str, result: dict[str, Any], cowatch_s
     return event_id
 
 
-async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Optional[list[str]] = None):
+async def execute_cowatch_sync(
+    parsed: ParsedMedia,
+    action: str,
+    targets: Optional[list[str]] = None,
+    selected_trackers: Optional[list[str]] = None,
+):
     """Dual-scrobble/sync watched history to the partner's or household target profiles' authenticated cloud trackers."""
     if targets is not None:
         target_users = list(targets)
@@ -984,7 +1246,7 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
     for target_user in target_users:
         # 1. Partner/Profile Trakt
         cw_trakt = user_mgr.get_client(target_user)
-        if cw_trakt and cw_trakt.is_authenticated():
+        if (selected_trackers is None or "trakt" in selected_trackers) and cw_trakt and cw_trakt.is_authenticated():
             async def _sync_trakt(u=target_user, client=cw_trakt):
                 try:
                     logger.info(f"Household sync triggering for profile @{u} (Trakt): {parsed.title}")
@@ -1009,7 +1271,7 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
                     metrics_registry.record_cowatch("queued")
                     return "queued"
             tasks.append(_sync_trakt())
-        else:
+        elif selected_trackers is None or "trakt" in selected_trackers:
             history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
             logger.warning(
                 f"Household profile @{target_user} Trakt is not authenticated; queueing watched history for retry."
@@ -1025,7 +1287,7 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
 
         # 2. Partner/Profile Simkl
         cw_simkl = user_mgr.get_tracker_client(target_user, "simkl")
-        if cw_simkl and cw_simkl.is_authenticated():
+        if (selected_trackers is None or "simkl" in selected_trackers) and cw_simkl and cw_simkl.is_authenticated():
             async def _sync_simkl(u=target_user, client=cw_simkl):
                 try:
                     logger.info(f"Household sync triggering for profile @{u} (Simkl): {parsed.title}")
@@ -1048,8 +1310,8 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
         # 3. Partner/Profile Anime Trackers (AniList & MAL)
         cw_anilist = user_mgr.get_tracker_client(target_user, "anilist")
         cw_mal = user_mgr.get_tracker_client(target_user, "mal")
-        ani_auth = bool(cw_anilist and cw_anilist.is_authenticated())
-        mal_auth = bool(cw_mal and cw_mal.is_authenticated())
+        ani_auth = bool((selected_trackers is None or "anilist" in selected_trackers) and cw_anilist and cw_anilist.is_authenticated())
+        mal_auth = bool((selected_trackers is None or "mal" in selected_trackers) and cw_mal and cw_mal.is_authenticated())
 
         if ani_auth or mal_auth:
             async def _sync_anime(u=target_user, a_auth=ani_auth, m_auth=mal_auth, c_ani=cw_anilist, c_mal=cw_mal):
@@ -1102,10 +1364,16 @@ async def execute_cowatch_sync(parsed: ParsedMedia, action: str, targets: Option
     return "failed"
 
 
-async def execute_cowatch_sync_for_event(parsed: ParsedMedia, action: str, targets: list[str], event_id: str) -> None:
+async def execute_cowatch_sync_for_event(
+    parsed: ParsedMedia,
+    action: str,
+    targets: list[str],
+    event_id: str,
+    selected_trackers: Optional[list[str]] = None,
+) -> None:
     """Run Co-Watch delivery and update the originating activity event."""
     try:
-        status = await execute_cowatch_sync(parsed, action, targets=targets)
+        status = await execute_cowatch_sync(parsed, action, targets=targets, selected_trackers=selected_trackers)
     except Exception:
         logger.exception("Unexpected error while executing Co-Watch sync for event %s", event_id)
         status = "failed"
@@ -1130,6 +1398,7 @@ def verify_webhook_token(request: Request, endpoint_name: str = "webhook") -> No
         token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
         if not token or not secrets.compare_digest(token, Config.WEBHOOK_SECRET):
             logger.warning(f"Rejected unauthorized {endpoint_name} request: invalid or missing token.")
+            webhook_debugger.record_auth_rejection(endpoint_name, request.url.path)
             metrics_registry.record_request(endpoint_name, 401)
             raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
 
@@ -1182,7 +1451,178 @@ def get_effective_excluded_libraries() -> list[str]:
     return base
 
 
-async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook") -> dict[str, Any]:
+async def execute_automation_route(parsed: ParsedMedia, evaluation: dict[str, Any], endpoint_name: str) -> dict[str, Any]:
+    """Dispatch one matched route rule through existing tracker and household services."""
+    event = parsed.event
+    requested_trackers = [str(item).lower() for item in evaluation.get("trackers", [])]
+    profiles = [str(item).strip() for item in evaluation.get("profiles", []) if str(item).strip()]
+    aliases = {"myanimelist": "mal"}
+    requested_trackers = list(dict.fromkeys(aliases.get(item, item) for item in requested_trackers))
+    selected = [tracker for tracker in requested_trackers if settings_mgr.is_tracker_enabled(tracker)]
+    disabled_trackers = [tracker for tracker in requested_trackers if tracker not in selected]
+    profiles = list(dict.fromkeys(profile for profile in profiles if profile.lower() != (parsed.username or "").lower()))
+    result: dict[str, Any] = {"status": "success", "automation": evaluation, "trackers": [], "skipped": {}}
+    result["skipped"].update({tracker: {"status": "skipped", "reason": "Tracker is paused in global settings."} for tracker in disabled_trackers})
+    action_taken = "automation_route"
+    queued_item_ids: list[int] = []
+
+    def enqueue_route(event_type: str, payload: dict[str, Any], reason: str) -> None:
+        queued_item_ids.append(queue_mgr.enqueue(event_type, payload, error=reason, username=route_queue_username))
+
+    route_queue_username = parsed.username
+    active_client = user_mgr.get_client(parsed.username)
+    if not active_client.is_authenticated():
+        active_client = trakt
+        route_queue_username = "default"
+    if active_client is trakt:
+        route_queue_username = "default"
+
+    if event in {"media.play", "media.resume"}:
+        action_taken = "scrobble_start"
+        playback_mgr.update_playback(parsed, state="playing")
+        if selected:
+            result = await multi_tracker.dispatch_scrobble("start", parsed, active_client, parsed.progress, selected_trackers=selected)
+    elif event == "media.pause":
+        action_taken = "scrobble_pause"
+        playback_mgr.update_playback(parsed, state="paused")
+        if selected:
+            result = await multi_tracker.dispatch_scrobble("pause", parsed, active_client, parsed.progress, selected_trackers=selected)
+    elif event in {"media.stop", "media.scrobble"}:
+        finished = playback_mgr.stop_playback(parsed)
+        if finished and finished.get("scrobbled"):
+            metrics_registry.record_request(endpoint_name, 200)
+            return {"status": "ignored", "reason": "Watch already recorded for this playback session", "rule": evaluation.get("matched_rule")}
+        if finished:
+            parsed = parsed.model_copy(update={
+                "progress": max(parsed.progress, float(finished.get("progress") or 0.0)),
+                "duration_ms": parsed.duration_ms or finished.get("duration_ms"),
+                "view_offset_ms": parsed.view_offset_ms if parsed.view_offset_ms is not None else finished.get("view_offset_ms"),
+            })
+        if event == "media.scrobble":
+            parsed = parsed.model_copy(update={"progress": 100.0})
+        action = "scrobble" if event == "media.scrobble" else "stop"
+        action_taken = "mark_watched" if event == "media.scrobble" else ("scrobble_stop" if parsed.progress >= settings_mgr.get_effective_threshold(parsed.media_type) else "playback_stopped")
+        if selected:
+            result = await multi_tracker.dispatch_scrobble(action, parsed, active_client, parsed.progress, selected_trackers=selected)
+        threshold = settings_mgr.get_effective_threshold(parsed.media_type)
+        if "trakt" in selected:
+            trakt_result = result.get("trakt")
+            if is_temporary_error(trakt_result):
+                payload = parsed.to_trakt_scrobble_payload()
+                payload["progress"] = 100.0 if event == "media.scrobble" else parsed.progress
+                enqueue_route("scrobble_stop", payload, str(trakt_result.get("error", "")))
+                result["queued"] = True
+            if event == "media.scrobble":
+                watched_at = datetime.datetime.now(timezone.utc).isoformat()
+                history_payload = parsed.to_trakt_history_payload(watched_at=watched_at)
+                history_result = await active_client.sync_history(history_payload)
+                if is_temporary_error(history_result):
+                    enqueue_route("sync_history", history_payload, str(history_result.get("error", "")))
+                    result["queued"] = True
+                result["trakt_history"] = history_result
+        if event == "media.scrobble" or (action == "stop" and parsed.progress >= threshold):
+            record_watch_stat(parsed)
+    elif event == "media.rate":
+        if selected:
+            result = await multi_tracker.dispatch_rating(parsed, active_client, int(parsed.rating or 10), selected_trackers=selected)
+        action_taken = "rate"
+        scrobble_stats["ratings"] = scrobble_stats.get("ratings", 0) + 1
+        if "trakt" in selected and is_temporary_error(result.get("trakt")):
+            enqueue_route("sync_ratings", parsed.to_trakt_rating_payload(), str(result["trakt"].get("error", "")))
+            result["queued"] = True
+    elif event == "library.new":
+        action_taken = "collection"
+        if "trakt" in selected and Config.SYNC_COLLECTION:
+            collection_payload = parsed.to_trakt_collection_payload()
+            collection_result = await active_client.sync_collection(collection_payload)
+            result = {"status": "success", "trackers": ["trakt"], "trakt": collection_result, "automation": evaluation}
+            if is_temporary_error(collection_result):
+                enqueue_route("sync_collection", collection_payload, str(collection_result.get("error", "")))
+                result["queued"] = True
+            else:
+                metrics_registry.record_collection(parsed.media_type, "success")
+            scrobble_stats["collections"] = scrobble_stats.get("collections", 0) + 1
+        elif selected:
+            result = {
+                "status": "skipped",
+                "reason": "Collection routing is currently supported only by Trakt.",
+                "automation": evaluation,
+                "trackers": [],
+                "skipped": {tracker: {"status": "skipped", "reason": "This tracker does not support collection ingestion."} for tracker in selected},
+            }
+        else:
+            result = {"status": "skipped", "reason": "Collection events require Trakt as a selected destination.", "automation": evaluation, "trackers": [], "skipped": {}}
+    else:
+        result = {"status": "pending_review", "reason": f"No live route adapter exists for event '{event}'.", "automation": evaluation}
+        action_taken = "pending_review"
+
+    if disabled_trackers:
+        result.setdefault("skipped", {}).update({tracker: {"status": "skipped", "reason": "Tracker is paused in global settings."} for tracker in disabled_trackers})
+    if not result.get("automation"):
+        result["automation"] = evaluation
+    threshold = settings_mgr.get_effective_threshold(parsed.media_type)
+    profile_sync = bool(profiles) and (
+        event in {"media.scrobble", "media.rate"}
+        or (event == "media.stop" and parsed.progress >= threshold)
+    )
+    if not selected and not profile_sync and result.get("status") == "success":
+        result["status"] = "skipped"
+        result["reason"] = "No selected destination handles this event; profile routes apply to completed watches and ratings."
+    cowatch_info = None
+    if profile_sync:
+        cowatch_info = {
+            "synced": False,
+            "scheduled": True,
+            "status": "scheduled",
+            "reason": f"Automation rule routed this event to {', '.join(profiles)}.",
+            "target": profiles[0],
+            "targets": profiles,
+        }
+    elif profiles:
+        cowatch_info = {"synced": False, "scheduled": False, "status": "skipped", "reason": "Profile routes run only for completed watches and ratings.", "targets": profiles}
+
+    review_payload = parsed.model_dump(exclude={"raw_payload", "file_path", "poster_url", "backdrop_url"}) if action_taken == "pending_review" else None
+    event_id = log_event(parsed, action_taken, result, cowatch_status=cowatch_info, rule_evaluation=evaluation, review_payload=review_payload)
+    queue_mgr.attach_event(queued_item_ids, event_id)
+    delivery = _tracker_delivery_from_result(result, action_taken)
+    if result.get("queued") and "trakt" in delivery:
+        delivery["trakt"] = "queued"
+    update_event_tracker_delivery(event_id, delivery, result)
+    if profile_sync:
+        profile_trackers = selected or [tracker for tracker in ("trakt", "simkl", "anilist", "mal") if settings_mgr.is_tracker_enabled(tracker)]
+        asyncio.create_task(execute_cowatch_sync_for_event(
+            parsed,
+            action_taken,
+            profiles,
+            event_id,
+            selected_trackers=profile_trackers,
+        ))
+    is_sync_trigger = event == "media.scrobble" or (event == "media.stop" and parsed.progress >= threshold)
+    if action_taken in {"mark_watched", "scrobble_stop", "rate"}:
+        asyncio.create_task(notifier.dispatch(parsed, action_taken))
+    if is_sync_trigger and settings_mgr.is_multi_server_mirroring_enabled():
+        source_server = "plex" if endpoint_name == "webhook" else endpoint_name
+        asyncio.create_task(record_mirror_delivery(
+            event_id,
+            reverse_sync_mgr.mirror_watched_status(parsed, source_server=source_server),
+        ))
+    metrics_registry.record_request(endpoint_name, 200)
+    return {"status": result.get("status", "success"), "event_id": event_id, "action": action_taken, "result": result, "rule": evaluation.get("matched_rule")}
+
+
+async def process_media_event(
+    parsed: ParsedMedia,
+    endpoint_name: str = "webhook",
+    skip_automation_rules: bool = False,
+) -> dict[str, Any]:
+    queued_item_ids: list[int] = []
+    queue_username = parsed.username
+
+    def enqueue_for_event(event_type: str, payload: dict[str, Any], error: str = "") -> int:
+        item_id = queue_mgr.enqueue(event_type, payload, error=error, username=queue_username)
+        queued_item_ids.append(item_id)
+        return item_id
+
     # Loop Prevention: suppress bounce-back echo webhooks from media servers
     if parsed.rating_key and loop_prevention.is_ignored(parsed.rating_key):
         logger.info(f"Loop prevention: suppressing echo event '{parsed.event}' for rating_key {parsed.rating_key} ({parsed.title})")
@@ -1194,7 +1634,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             metrics_registry.record_request(endpoint_name, 200)
             return {"status": "ignored", "reason": "loop_prevention", "key": str(id_val)}
 
-    # Dynamic Rules & Filters: check duration, library exclusions, and file path patterns
+    # Existing filters remain the first gate before the ordered automation policy.
     allowed, bypass_reason = settings_mgr.is_media_allowed(parsed)
     if not allowed:
         logger.info(f"Rules filter: bypassing event '{parsed.event}' for '{parsed.title}' ({bypass_reason})")
@@ -1202,9 +1642,42 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
         log_event(parsed, "bypassed", {"reason": bypass_reason})
         return {"status": "ignored", "reason": bypass_reason}
 
+    rule_event = {
+        "server": parsed.server_type or endpoint_name,
+        "library": parsed.library_section_title,
+        "media_type": parsed.media_type,
+        "device": parsed.device,
+        "player": parsed.player,
+        "user": parsed.username,
+    }
+    rule_evaluation = (
+        {"decision": "allow", "reason": "Approved by an administrator.", "matched_rule": None, "conflicts": []}
+        if skip_automation_rules
+        else automation_rules_mgr.evaluate(rule_event)
+    )
+    decision = rule_evaluation.get("decision", "allow")
+    if decision == "route":
+        return await execute_automation_route(parsed, rule_evaluation, endpoint_name)
+    if decision in {"suppress", "review"}:
+        if decision == "suppress":
+            action = "suppressed"
+            status = "ignored"
+            reason = rule_evaluation["reason"]
+        else:
+            action = "pending_review"
+            status = "pending_review"
+            reason = rule_evaluation["reason"]
+        review_payload = parsed.model_dump(exclude={"raw_payload", "file_path", "poster_url", "backdrop_url"}) if decision == "review" else None
+        event_id = log_event(parsed, action, {"status": status, "reason": reason}, rule_evaluation=rule_evaluation, review_payload=review_payload)
+        metrics_registry.record_request(endpoint_name, 200)
+        return {"status": status, "event_id": event_id, "reason": reason, "rule": rule_evaluation.get("matched_rule")}
+
     active_client = user_mgr.get_client(parsed.username)
     if not active_client.is_authenticated():
         active_client = trakt
+        queue_username = "default"
+    if active_client is trakt:
+        queue_username = "default"
 
     if not active_client.is_authenticated():
         logger.warning(
@@ -1230,14 +1703,15 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             col_payload = parsed.to_trakt_collection_payload()
             result = await active_client.sync_collection(col_payload)
             if is_temporary_error(result):
-                queue_mgr.enqueue("sync_collection", col_payload, error=str(result.get("error", "")), username=parsed.username)
+                enqueue_for_event("sync_collection", col_payload, error=str(result.get("error", "")))
                 result["queued"] = True
                 metrics_registry.record_collection(parsed.media_type, "queued")
             else:
                 metrics_registry.record_collection(parsed.media_type, "success")
 
             scrobble_stats["collections"] = scrobble_stats.get("collections", 0) + 1
-            log_event(parsed, action_taken, result)
+            event_id = log_event(parsed, action_taken, result, rule_evaluation=rule_evaluation)
+            queue_mgr.attach_event(queued_item_ids, event_id)
             if Config.NOTIFY_ON_COLLECTION:
                 asyncio.create_task(notifier.dispatch(parsed, "collection"))
             metrics_registry.record_request(endpoint_name, 200)
@@ -1258,14 +1732,14 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             result = {"scrobble": scrobble_res, "history": history_res}
 
             if is_temporary_error(scrobble_res):
-                queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")), username=parsed.username)
+                enqueue_for_event("scrobble_stop", scrobble_payload, error=str(scrobble_res.get("error", "")))
                 result["queued"] = True
                 metrics_registry.record_scrobble(parsed.media_type, "queued")
             else:
                 metrics_registry.record_scrobble(parsed.media_type, "success")
 
             if is_temporary_error(history_res):
-                queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(history_res.get("error", "")), username=parsed.username)
+                enqueue_for_event("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(history_res.get("error", "")))
                 result["queued"] = True
 
             record_watch_stat(parsed)
@@ -1277,7 +1751,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             rating_payload = parsed.to_trakt_rating_payload()
             result = await active_client.sync_ratings(rating_payload)
             if is_temporary_error(result):
-                queue_mgr.enqueue("sync_ratings", rating_payload, error=str(result.get("error", "")), username=parsed.username)
+                enqueue_for_event("sync_ratings", rating_payload, error=str(result.get("error", "")))
                 result["queued"] = True
                 metrics_registry.record_rating("queued")
             else:
@@ -1300,7 +1774,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                     logger.info(f"Scrobble stop (paused past threshold {threshold}%): {parsed.title} ({parsed.progress:.1f}%)")
                     result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
-                        queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
+                        enqueue_for_event("scrobble_stop", scrobble_payload, error=str(result.get("error", "")))
                         result["queued"] = True
                         metrics_registry.record_scrobble(parsed.media_type, "queued")
                     else:
@@ -1330,7 +1804,7 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
                     logger.info(f"Scrobble stop (watched past threshold {threshold}%): {parsed.title} ({parsed.progress:.1f}%)")
                     result = await active_client.scrobble_stop(scrobble_payload)
                     if is_temporary_error(result):
-                        queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(result.get("error", "")), username=parsed.username)
+                        enqueue_for_event("scrobble_stop", scrobble_payload, error=str(result.get("error", "")))
                         result["queued"] = True
                         metrics_registry.record_scrobble(parsed.media_type, "queued")
                     else:
@@ -1377,7 +1851,8 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
             primary_target = targets[0] if targets else Config.CO_WATCH_USER
             cowatch_info = {"synced": False, "in_list": True, "reason": reason, "target": primary_target, "targets": targets}
 
-        event_id = log_event(parsed, action_taken, result, cowatch_status=cowatch_info)
+        event_id = log_event(parsed, action_taken, result, cowatch_status=cowatch_info, rule_evaluation=rule_evaluation)
+        queue_mgr.attach_event(queued_item_ids, event_id)
 
         if cowatch_targets_to_sync:
             asyncio.create_task(execute_cowatch_sync_for_event(parsed, action_taken, cowatch_targets_to_sync, event_id))
@@ -1389,10 +1864,14 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
         # Real-time multi-server watched status and rating mirroring
         if is_sync_trigger and settings_mgr.is_multi_server_mirroring_enabled():
             src_server = "plex" if endpoint_name in ("webhook", "plex") else endpoint_name
-            asyncio.create_task(reverse_sync_mgr.mirror_watched_status(parsed, source_server=src_server))
+            asyncio.create_task(record_mirror_delivery(
+                event_id, reverse_sync_mgr.mirror_watched_status(parsed, source_server=src_server)
+            ))
         elif action_taken == "rate" and settings_mgr.is_multi_server_mirroring_enabled() and parsed.rating:
             src_server = "plex" if endpoint_name in ("webhook", "plex") else endpoint_name
-            asyncio.create_task(reverse_sync_mgr.mirror_rating(parsed, float(parsed.rating), source_server=src_server))
+            asyncio.create_task(record_mirror_delivery(
+                event_id, reverse_sync_mgr.mirror_rating(parsed, float(parsed.rating), source_server=src_server)
+            ))
 
         asyncio.create_task(execute_multi_tracker_dispatch(parsed, action_taken, event, parsed.progress, event_id=event_id))
 
@@ -1402,19 +1881,20 @@ async def process_media_event(parsed: ParsedMedia, endpoint_name: str = "webhook
     except Exception as e:
         logger.error(f"Error executing Trakt action for {parsed.title}: {e}", exc_info=True)
         if event == "library.new":
-            queue_mgr.enqueue("sync_collection", parsed.to_trakt_collection_payload(), error=str(e), username=parsed.username)
+            enqueue_for_event("sync_collection", parsed.to_trakt_collection_payload(), error=str(e))
             metrics_registry.record_collection(parsed.media_type, "queued")
         elif event == "media.scrobble":
-            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e), username=parsed.username)
-            queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(), error=str(e), username=parsed.username)
+            enqueue_for_event("scrobble_stop", scrobble_payload, error=str(e))
+            enqueue_for_event("sync_history", parsed.to_trakt_history_payload(), error=str(e))
             metrics_registry.record_scrobble(parsed.media_type, "queued")
         elif event == "media.rate":
-            queue_mgr.enqueue("sync_ratings", parsed.to_trakt_rating_payload(), error=str(e), username=parsed.username)
+            enqueue_for_event("sync_ratings", parsed.to_trakt_rating_payload(), error=str(e))
             metrics_registry.record_rating("queued")
         elif action_taken == "scrobble_stop":
-            queue_mgr.enqueue("scrobble_stop", scrobble_payload, error=str(e), username=parsed.username)
+            enqueue_for_event("scrobble_stop", scrobble_payload, error=str(e))
             metrics_registry.record_scrobble(parsed.media_type, "queued")
-        log_event(parsed, action_taken, {"error": str(e), "queued": True})
+        event_id = log_event(parsed, action_taken, {"error": str(e), "queued": True})
+        queue_mgr.attach_event(queued_item_ids, event_id)
         metrics_registry.record_request(endpoint_name, 500)
         return {"status": "error", "error": str(e), "queued": True}
 
@@ -1699,12 +2179,7 @@ def sonarr_info():
 @app.post("/sonarr")
 async def sonarr_webhook(request: Request):
     """Receives webhooks from Sonarr for instant Trakt collection sync."""
-    if Config.WEBHOOK_SECRET:
-        token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
-        if not token or not secrets.compare_digest(token, Config.WEBHOOK_SECRET):
-            logger.warning("Rejected unauthorized Sonarr webhook request: invalid or missing token.")
-            metrics_registry.record_request("sonarr", 401)
-            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
+    verify_webhook_token(request, "sonarr")
 
     try:
         payload = await request.json()
@@ -1745,7 +2220,7 @@ async def sonarr_webhook(request: Request):
     try:
         result = await active_client.sync_collection(trakt_payload)
         if is_temporary_error(result):
-            queue_mgr.enqueue("sync_collection", trakt_payload, error=str(result.get("error", "")), username="Sonarr")
+            queue_mgr.enqueue("sync_collection", trakt_payload, error=str(result.get("error", "")), username="default")
             metrics_registry.record_collection("episode", "queued")
         else:
             metrics_registry.record_collection("episode", "success")
@@ -1761,7 +2236,7 @@ async def sonarr_webhook(request: Request):
         return {"status": "success", "event": "sonarr.download", "action": "collection", "result": result}
     except Exception as e:
         logger.error(f"Error processing Sonarr collection sync: {e}")
-        queue_mgr.enqueue("sync_collection", trakt_payload, error=str(e), username="Sonarr")
+        queue_mgr.enqueue("sync_collection", trakt_payload, error=str(e), username="default")
         metrics_registry.record_collection("episode", "queued")
         log_event(parsed, action_taken, {"error": str(e), "queued": True})
         metrics_registry.record_request("sonarr", 500)
@@ -1783,12 +2258,7 @@ def radarr_info():
 @app.post("/radarr")
 async def radarr_webhook(request: Request):
     """Receives webhooks from Radarr for instant Trakt collection sync."""
-    if Config.WEBHOOK_SECRET:
-        token = request.query_params.get("token") or request.headers.get("x-webhook-secret")
-        if not token or not secrets.compare_digest(token, Config.WEBHOOK_SECRET):
-            logger.warning("Rejected unauthorized Radarr webhook request: invalid or missing token.")
-            metrics_registry.record_request("radarr", 401)
-            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing webhook token")
+    verify_webhook_token(request, "radarr")
 
     try:
         payload = await request.json()
@@ -1829,7 +2299,7 @@ async def radarr_webhook(request: Request):
     try:
         result = await active_client.sync_collection(trakt_payload)
         if is_temporary_error(result):
-            queue_mgr.enqueue("sync_collection", trakt_payload, error=str(result.get("error", "")), username="Radarr")
+            queue_mgr.enqueue("sync_collection", trakt_payload, error=str(result.get("error", "")), username="default")
             metrics_registry.record_collection("movie", "queued")
         else:
             metrics_registry.record_collection("movie", "success")
@@ -1845,7 +2315,7 @@ async def radarr_webhook(request: Request):
         return {"status": "success", "event": "radarr.download", "action": "collection", "result": result}
     except Exception as e:
         logger.error(f"Error processing Radarr collection sync: {e}")
-        queue_mgr.enqueue("sync_collection", trakt_payload, error=str(e), username="Radarr")
+        queue_mgr.enqueue("sync_collection", trakt_payload, error=str(e), username="default")
         metrics_registry.record_collection("movie", "queued")
         log_event(parsed, action_taken, {"error": str(e), "queued": True})
         metrics_registry.record_request("radarr", 500)
@@ -1898,7 +2368,8 @@ async def health_check():
         "token_health": token_info,
         "stats": scrobble_stats,
         "queue": {
-            "pending": queue_mgr.get_pending_count(),
+            "pending": None if queue_mgr._future_schema_version else queue_mgr.get_pending_count(),
+            "status": "unsupported" if queue_mgr._future_schema_version else "supported",
         },
         "notifications": notifier.get_status(),
     }
@@ -1916,6 +2387,354 @@ async def get_token_health(request: Request):
         mal_client=mal,
         user_mgr=user_mgr,
     )
+
+
+def _build_configuration_diagnostics(active_trackers: list[str]) -> dict[str, Any]:
+    """Validate effective local settings and report safe source metadata."""
+    all_settings = settings_mgr.get_all_settings(mask_token=False)
+    rules = all_settings.get("rules", {})
+    arr = all_settings.get("arr", {})
+    notifications = all_settings.get("notifications", {})
+    trackers = all_settings.get("trackers", {})
+    persisted: dict[str, Any] = {}
+    try:
+        from app.services.crypto_manager import crypto_mgr
+        persisted = crypto_mgr.read_secure_json(settings_mgr.settings_file) or {}
+    except Exception as exc:
+        logger.debug("Unable to inspect settings source metadata: %s", exc)
+
+    def source(section: str, key: str, env_key: Optional[str | tuple[str, ...]] = None, default: str = "application default") -> str:
+        if key in (persisted.get(section) or {}):
+            return "runtime settings"
+        env_keys = (env_key,) if isinstance(env_key, str) else (env_key or ())
+        if any(os.getenv(name) is not None for name in env_keys):
+            return "environment"
+        return default
+
+    effective_settings = []
+    for name, key, env_key, value in (
+        ("Plex listener", "plex", "PLEX_ENABLED", settings_mgr.is_server_enabled("plex")),
+        ("Jellyfin listener", "jellyfin", "JELLYFIN_ENABLED", settings_mgr.is_server_enabled("jellyfin")),
+        ("Emby listener", "emby", "EMBY_ENABLED", settings_mgr.is_server_enabled("emby")),
+    ):
+        effective_settings.append({"name": name, "value": bool(value), "source": source("servers", key, env_key, "upgrade detection or clean-install default")})
+    for name, key, env_key, value in (
+        ("Episode scrobble threshold", "scrobble_threshold", ("EPISODE_SCROBBLE_THRESHOLD", "SCROBBLE_THRESHOLD"), rules.get("scrobble_threshold")),
+        ("Movie scrobble threshold", "movie_scrobble_threshold", "MOVIE_SCROBBLE_THRESHOLD", rules.get("movie_scrobble_threshold")),
+        ("Minimum playback duration", "min_duration_seconds", "MIN_DURATION_SECONDS", rules.get("min_duration_seconds")),
+    ):
+        effective_settings.append({"name": name, "value": value, "source": source("rules", key, env_key)})
+    effective_settings.append({
+        "name": "Scrobble mode", "value": Config.SCROBBLE_MODE,
+        "source": "environment" if os.getenv("SCROBBLE_MODE") is not None else "application default",
+    })
+
+    findings: list[dict[str, str]] = []
+    def add(severity: str, code: str, message: str, setting: str) -> None:
+        findings.append({"severity": severity, "code": code, "message": message, "setting": setting})
+
+    if Config.SCROBBLE_MODE not in {"scrobble", "watched_only"}:
+        add("error", "invalid_scrobble_mode", "SCROBBLE_MODE must be scrobble or watched_only.", "SCROBBLE_MODE")
+    for key, label in (("scrobble_threshold", "Episode scrobble threshold"), ("movie_scrobble_threshold", "Movie scrobble threshold")):
+        value = rules.get(key)
+        try:
+            if not 0 <= float(value) <= 100:
+                add("error", "threshold_out_of_range", f"{label} must be between 0 and 100 percent.", key)
+        except (TypeError, ValueError):
+            add("error", "invalid_threshold", f"{label} must be a number between 0 and 100 percent.", key)
+    try:
+        if int(rules.get("min_duration_seconds", 0)) < 0:
+            add("error", "negative_min_duration", "Minimum playback duration cannot be negative.", "min_duration_seconds")
+    except (TypeError, ValueError):
+        add("error", "invalid_min_duration", "Minimum playback duration must be a whole number of seconds.", "min_duration_seconds")
+
+    day = str(notifications.get("weekly_digest_day", Config.WEEKLY_DIGEST_DAY)).lower()
+    hour = notifications.get("weekly_digest_hour", Config.WEEKLY_DIGEST_HOUR)
+    if day not in {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}:
+        add("error", "invalid_digest_day", "Weekly digest day must be a weekday name.", "weekly_digest_day")
+    try:
+        if not 0 <= int(hour) <= 23:
+            add("error", "invalid_digest_hour", "Weekly digest hour must be between 0 and 23.", "weekly_digest_hour")
+    except (TypeError, ValueError):
+        add("error", "invalid_digest_hour", "Weekly digest hour must be between 0 and 23.", "weekly_digest_hour")
+
+    channel_pairs = (
+        (("telegram_bot_token", "telegram_chat_id"), "Telegram requires both a bot token and a chat ID."),
+        (("pushover_user_key", "pushover_api_token"), "Pushover requires both a user key and an API token."),
+        (("gotify_url", "gotify_token"), "Gotify requires both a server URL and an app token."),
+        (("matrix_homeserver_url", "matrix_access_token", "matrix_room_id"), "Matrix requires a homeserver, access token, and room ID."),
+    )
+    for keys, message in channel_pairs:
+        present = [bool(str(notifications.get(key) or "").strip()) for key in keys]
+        if any(present) and not all(present):
+            add("warning", "incomplete_notification", message, keys[0])
+    if notifications.get("ntfy_auth_token") and not notifications.get("ntfy_url"):
+        add("warning", "incomplete_notification", "Ntfy authentication is configured without a server URL.", "ntfy_url")
+
+    arr_configured = any(bool(str(arr.get(key) or "").strip()) for key in ("sonarr_api_key", "radarr_api_key", "overseerr_api_key"))
+    for service, url_key, key_key in (("Sonarr", "sonarr_url", "sonarr_api_key"), ("Radarr", "radarr_url", "radarr_api_key")):
+        has_url = bool(str(arr.get(url_key) or "").strip())
+        has_key = bool(str(arr.get(key_key) or "").strip())
+        if has_url != has_key:
+            add("warning", "incomplete_arr_connection", f"{service} requires both a server URL and API key.", url_key)
+    if arr.get("auto_add_from_watchlist") and not arr_configured:
+        add("warning", "arr_automation_unconfigured", "Watch-list acquisition is enabled, but no Sonarr, Radarr, or request-service credentials are configured.", "auto_add_from_watchlist")
+    notification_state = notifier.get_status()
+    if notifications.get("weekly_digest_enabled") and not any(notification_state.get(channel) for channel in ("discord", "telegram", "ntfy", "pushover", "gotify", "matrix")):
+        add("warning", "digest_without_channel", "Weekly digest is enabled, but no notification channel is configured.", "weekly_digest_enabled")
+
+    credential_keys = {
+        "trakt": ("client_id", "client_secret"), "simkl": ("client_id", "client_secret"),
+        "tmdb": ("api_key", "access_token", "session_id"), "anilist": ("client_id", "client_secret"),
+        "mal": ("client_id", "client_secret"), "kitsu": ("api_token",),
+        "letterboxd": ("username",), "serializd": ("token", "username"), "mdblist": ("api_key",),
+    }
+    credentials = all_settings.get("credentials", {})
+    for tracker_id, required_keys in credential_keys.items():
+        configured = any(bool(str(credentials.get(tracker_id, {}).get(key) or "").strip()) for key in required_keys)
+        enabled_key = "mal" if tracker_id == "myanimelist" else tracker_id
+        enabled = trackers.get(enabled_key, True)
+        if configured and not enabled:
+            add("warning", "configured_tracker_disabled", f"{tracker_id} credentials are configured, but this tracker is disabled in runtime settings.", enabled_key)
+        elif configured and enabled and tracker_id != "letterboxd" and tracker_id not in {name.lower().replace("myanimelist", "mal") for name in active_trackers}:
+            add("warning", "tracker_not_authenticated", f"{tracker_id} is enabled and configured, but no authenticated connection is available.", enabled_key)
+
+    return {
+        "status": "warning" if any(item["severity"] in {"warning", "error"} for item in findings) else "healthy",
+        "findings": findings,
+        "effective_settings": effective_settings,
+        "summary": f"{len(findings)} configuration issue(s) found." if findings else "Configuration values and enabled integrations passed local checks.",
+    }
+
+
+@app.get("/api/health/recovery")
+async def get_recovery_health(request: Request):
+    """Return a read-only, secret-free snapshot of local setup and recovery signals."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+
+    checked_at = datetime.datetime.now(timezone.utc).isoformat()
+    queue_unavailable = queue_mgr._future_schema_version is not None
+    queue_counts = {} if queue_unavailable else queue_mgr.get_all_count()
+    active_listeners = [
+        name for name in ("plex", "jellyfin", "emby")
+        if settings_mgr.is_server_enabled(name)
+    ]
+    tracker_clients = {
+        "Trakt": trakt, "Simkl": simkl, "AniList": anilist,
+        "MyAnimeList": mal, "Kitsu": kitsu, "Letterboxd": letterboxd,
+        "Serializd": serializd, "MDBList": mdblist,
+    }
+    active_trackers = [
+        name for name, client in tracker_clients.items()
+        if settings_mgr.is_tracker_enabled(name.lower().replace("myanimelist", "mal"))
+        and callable(getattr(client, "is_authenticated", None))
+        and client.is_authenticated()
+    ]
+    token_ready = bool(active_trackers)
+    configuration_diagnostics = _build_configuration_diagnostics(active_trackers)
+    capability_registry = multi_tracker.get_registered_trackers()
+    enabled_tracker_capabilities = [
+        {
+            "id": tracker_id,
+            "name": details["name"],
+            "media_types": list(details["media_types"]),
+            "capabilities": list(details["capabilities"]),
+            "supports_realtime_scrobble": bool(details["supports_realtime_scrobble"]),
+            "supports_history": bool(details["supports_history"]),
+            "supports_progress": bool(details["supports_progress"]),
+            "supports_ratings": bool(details["supports_ratings"]),
+            "supports_watchlist": bool(details["supports_watchlist"]),
+            "supports_collection": bool(details["supports_collection"]),
+            "supports_search": bool(details["supports_search"]),
+        }
+        for tracker_id, details in capability_registry.items()
+        if settings_mgr.is_tracker_enabled("mal" if tracker_id == "myanimelist" else tracker_id)
+    ]
+    notification_channels = notifier.get_status()
+    channels_configured = [
+        channel for channel in ("discord", "telegram", "ntfy", "pushover", "gotify", "matrix")
+        if notification_channels.get(channel)
+    ]
+    recent_webhooks = webhook_debugger.get_history(limit=25)
+    webhook_processing_errors = sum(1 for item in recent_webhooks if item.get("status") == "error")
+    webhook_auth_rejections = webhook_debugger.get_auth_rejection_summary()
+    worker_names = (
+        "queue_worker_task", "token_monitor_task", "scrobble_heartbeat_worker_task",
+        "weekly_digest_worker_task", "reverse_sync_worker_task",
+    )
+    workers = []
+    for name in worker_names:
+        task = globals().get(name)
+        # A worker that has not been started is inactive; an optional, disabled worker
+        # is reported as optional rather than as a system failure.
+        status = "healthy" if task is not None and not task.done() else "inactive"
+        workers.append({"name": name.removesuffix("_task").replace("_", " ").title(), "status": status})
+    required_workers = [worker for worker in workers if worker["name"] in {"Queue Worker", "Token Monitor", "Scrobble Heartbeat"}]
+    worker_status = "healthy" if all(worker["status"] == "healthy" for worker in required_workers) else "warning"
+    compatibility = compatibility_mgr.inspect(
+        app_version=APP_VERSION,
+        python_version=(sys.version_info.major, sys.version_info.minor),
+        settings_version=settings_mgr._loaded_schema_version,
+        settings_exists=settings_mgr.settings_file.exists(),
+        watch_lists_path=watch_list_mgr.file_path,
+        automation_path=automation_rules_mgr.rules_file,
+        accounts_path=dashboard_auth_mgr.accounts_file,
+        queue_path=queue_mgr.db_path,
+    )
+
+    checks = [
+        {
+            "id": "compatibility", "label": "Version and data compatibility",
+            "status": "warning" if compatibility["status"] in {"warning", "action_required"} else "healthy",
+            "summary": compatibility["summary"],
+            "compatibility_items": compatibility["schemas"],
+            "runtime": compatibility["runtime"],
+            "application": compatibility["application"],
+            "integrations": compatibility["integrations"],
+            "integration_version_policy": compatibility["integration_version_policy"],
+            "ruleset": compatibility["ruleset"],
+            "next_action": "compatibility", "last_checked": checked_at,
+        },
+        {
+            "id": "configuration", "label": "Configuration validation",
+            "status": configuration_diagnostics["status"],
+            "summary": configuration_diagnostics["summary"],
+            "findings": configuration_diagnostics["findings"],
+            "effective_settings": configuration_diagnostics["effective_settings"],
+            "next_action": "servers", "last_checked": checked_at,
+        },
+        {
+            "id": "trackers", "label": "Tracker authentication",
+            "status": "healthy" if token_ready else "action_required",
+            "summary": f"Connected trackers: {', '.join(active_trackers)}." if token_ready else "No enabled tracker account is connected. Link a tracker to deliver playback activity.",
+            "next_action": "trackers", "test_integrations": ["trackers"], "last_checked": checked_at,
+        },
+        {
+            "id": "listeners", "label": "Media server listeners",
+            "status": "healthy" if active_listeners else "optional",
+            "summary": f"Enabled listeners: {', '.join(active_listeners)}." if active_listeners else "No listeners are enabled. Enable one only if you want webhook ingestion.",
+            "next_action": "servers", "last_checked": checked_at,
+        },
+        {
+            "id": "webhook_auth", "label": "Webhook authentication",
+            "status": "healthy" if Config.WEBHOOK_SECRET and not webhook_processing_errors and not webhook_auth_rejections["count"] else "warning",
+            "summary": (f"Webhook secret is configured. {webhook_auth_rejections['count']} authentication rejections were recorded in the last 24 hours; {webhook_processing_errors} captured payloads had processing errors." if Config.WEBHOOK_SECRET else "Set WEBHOOK_SECRET in the environment and restart to require admin and incoming webhook authentication.") + " Failed-auth telemetry stores only bounded counts by endpoint; it does not retain request data, tokens, or client IPs.",
+            "next_action": "webhook", "last_checked": checked_at,
+            "auth_rejections": webhook_auth_rejections,
+        },
+        {
+            "id": "tracker_capabilities", "label": "Tracker capabilities",
+            "status": "healthy" if active_trackers else "optional",
+            "summary": (f"Capabilities are available for {len(enabled_tracker_capabilities)} enabled trackers." if active_trackers else "Enable and connect a tracker to review its supported actions.") + " OAuth permission scopes are not introspected by these checks.",
+            "next_action": "trackers", "tracker_capabilities": enabled_tracker_capabilities,
+            "last_checked": checked_at,
+        },
+        {
+            "id": "queue", "label": "Offline delivery queue",
+            "status": "unsupported" if queue_unavailable else "warning" if queue_counts.get("failed", 0) else "healthy",
+            "summary": "Queue access is disabled: its schema is newer than this application supports." if queue_unavailable else f"{queue_counts.get('pending', 0)} pending, {queue_counts.get('failed', 0)} failed.",
+            "next_action": "queue", "last_checked": checked_at,
+        },
+        {
+            "id": "notifications", "label": "Notification delivery",
+            "status": "healthy" if channels_configured else "optional",
+            "summary": f"Configured channels: {', '.join(channels_configured)}." if channels_configured else "No notification channel is configured; alerts are optional.",
+            "next_action": "notifications",
+            "test_integrations": [f"notification:{channel}" for channel in channels_configured],
+            "last_checked": checked_at,
+        },
+        {
+            "id": "integrations", "label": "Integration reachability",
+            "status": "optional",
+            "summary": "Connection tests contact each service only when you select a test button.",
+            "next_action": "servers",
+            "test_integrations": ["plex", "jellyfin", "emby", "sonarr", "radarr", "overseerr"],
+            "last_checked": checked_at,
+        },
+        {
+            "id": "workers", "label": "Background workers",
+            "status": worker_status,
+            "summary": "Required background workers are running." if worker_status == "healthy" else "One or more required background workers are not running.",
+            "next_action": "logs", "last_checked": checked_at,
+            "workers": workers,
+        },
+    ]
+    return {"checked_at": checked_at, "read_only": True, "checks": checks}
+
+
+class RecoveryConnectionTestRequest(BaseModel):
+    integration: str
+
+
+@app.post("/api/health/recovery/test")
+async def test_recovery_connection(payload: RecoveryConnectionTestRequest, request: Request):
+    """Explicitly test one configured integration and return a redacted result."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    integration = payload.integration.strip().lower()
+    notification_channel = integration.removeprefix("notification:")
+    is_notification_test = integration.startswith("notification:")
+    if not is_notification_test and integration not in {"plex", "jellyfin", "emby", "sonarr", "radarr", "overseerr", "trackers"}:
+        raise HTTPException(status_code=400, detail="Unsupported integration")
+    if is_notification_test and notification_channel not in {"discord", "telegram", "ntfy", "pushover", "gotify", "matrix"}:
+        raise HTTPException(status_code=400, detail="Unsupported notification channel")
+    try:
+        if is_notification_test:
+            if not notifier.get_status().get(notification_channel):
+                return {
+                    "integration": integration,
+                    "status": "failed",
+                    "message": "This notification channel is no longer configured. Review notification settings.",
+                    "checked_at": datetime.datetime.now(timezone.utc).isoformat(),
+                }
+            result = await test_notification_endpoint(NotificationTestRequest(channel=notification_channel), request)
+        elif integration == "trackers":
+            tracker_status = await get_multi_trackers_status(request)
+            tracker_rows = tracker_status.get("trackers", {}) if isinstance(tracker_status, dict) else {}
+            enabled_rows = [row for row in tracker_rows.values() if isinstance(row, dict) and row.get("enabled")]
+            failed_states = {"error", "failed", "unreachable", "unauthorized", "not_authenticated"}
+            tracker_checks_passed = bool(enabled_rows) and all(
+                (row.get("authenticated") is True or row.get("configured") is True or row.get("connected") is True)
+                and str(row.get("status", "")).lower() not in failed_states
+                for row in enabled_rows
+            )
+            result = {"status": "connected" if tracker_checks_passed else "failed", "success": tracker_checks_passed}
+        elif integration in {"plex", "jellyfin", "emby"}:
+            result = await test_sync_connection(MediaServerTestConnectionRequest(server=integration), request)
+        elif integration in {"sonarr", "radarr", "overseerr"}:
+            result = await test_arr_connection(ArrTestConnectionRequest(app=integration), request)
+    except HTTPException:
+        return {
+            "integration": integration,
+            "status": "failed",
+            "message": "Connection test could not complete. Review the integration settings.",
+            "checked_at": datetime.datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception:
+        logger.warning("Recovery connection test failed for %s", integration)
+        return {
+            "integration": integration,
+            "status": "failed",
+            "message": "Connection test could not complete. Review the integration settings.",
+            "checked_at": datetime.datetime.now(timezone.utc).isoformat(),
+        }
+    connected = (
+        isinstance(result, dict) and (
+            result.get("status") == "connected"
+            or ((is_notification_test or integration == "trackers") and result.get("success") is True)
+        )
+    ) or (isinstance(result, JSONResponse) and result.status_code < 300)
+    compatibility_mgr.record_integration_check(
+        integration, "connected" if connected else "failed",
+        result.get("version") if isinstance(result, dict) else None,
+    )
+    return {
+        "integration": integration,
+        "status": "connected" if connected else "failed",
+        "message": "Service responded successfully." if connected else "Service did not respond successfully. Review its address, credentials, and availability.",
+        "checked_at": datetime.datetime.now(timezone.utc).isoformat(),
+    }
 
 
 OMNISCROBBLE_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
@@ -2116,7 +2935,7 @@ def dashboard_script():
 def get_metrics():
     """Prometheus exposition metrics endpoint."""
     uptime_seconds = time.time() - SERVER_START_TIME
-    pending = queue_mgr.get_pending_count()
+    pending = 0 if queue_mgr._future_schema_version else queue_mgr.get_pending_count()
     active_streams = playback_mgr.get_active_count()
     metrics_text = metrics_registry.generate_prometheus_text(
         uptime_seconds=uptime_seconds,
@@ -2127,6 +2946,137 @@ def get_metrics():
         content=metrics_text,
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
+
+
+BACKUP_FORMAT_VERSION = 1
+MAX_BACKUP_ENTRIES = 500
+MAX_BACKUP_ARCHIVE_BYTES = 300 * 1024 * 1024
+MAX_BACKUP_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+BACKUP_CATEGORIES = {
+    "tracker credentials": lambda name: name == "trakt_tokens.json" or name.startswith("data/tokens/"),
+    "settings": lambda name: name == "data/settings.json",
+    "activity history": lambda name: name in {"data/events.json", "data/stats.json"},
+    "offline queue": lambda name: name == "data/queue.db",
+    "watch lists": lambda name: name == "data/watch_lists.json",
+    "automation rules": lambda name: name == "data/automation_rules.json",
+    "household data": lambda name: name in {"data/cowatch_shows.json", "data/cowatch_devices.json", "data/dashboard_accounts.json", "data/dashboard_accounts_audit.json"},
+    "diary data": lambda name: name == "data/letterboxd_diary.json",
+    "reconciliation history": lambda name: name == "data/cross_sync_provenance.json",
+}
+
+
+def _decode_backup_archive(contents: bytes, passphrase: str = "") -> tuple[dict[str, bytes], dict[str, Any] | None, list[str]]:
+    """Decrypt and validate a backup fully before any restore write is attempted."""
+    if len(contents) > MAX_BACKUP_ARCHIVE_BYTES:
+        raise HTTPException(status_code=400, detail="Backup exceeds the maximum upload size.")
+    try:
+        candidate = json.loads(contents.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        candidate = None
+
+    from app.services.crypto_manager import decrypt_bytes, is_encrypted_payload
+    if isinstance(candidate, dict) and is_encrypted_payload(candidate):
+        if not passphrase:
+            raise HTTPException(status_code=400, detail="Encrypted backup requires a passphrase to restore.")
+        try:
+            contents = decrypt_bytes(candidate, passphrase)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Decryption failed - incorrect passphrase or corrupted backup") from exc
+        if len(contents) > MAX_BACKUP_ARCHIVE_BYTES:
+            raise HTTPException(status_code=400, detail="Backup exceeds the maximum expanded size.")
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(contents), "r") as archive:
+            infos = archive.infolist()
+            if len(infos) > MAX_BACKUP_ENTRIES:
+                raise HTTPException(status_code=400, detail="Backup contains too many entries.")
+            if sum(info.file_size for info in infos) > MAX_BACKUP_UNCOMPRESSED_BYTES:
+                raise HTTPException(status_code=400, detail="Backup exceeds the maximum expanded size.")
+            corrupt = archive.testzip()
+            if corrupt:
+                raise HTTPException(status_code=400, detail="Backup archive failed its integrity check.")
+
+            files: dict[str, bytes] = {}
+            manifest: dict[str, Any] | None = None
+            warnings: list[str] = []
+            for info in infos:
+                name = info.filename
+                normalized = name.replace("\\", "/")
+                path = PurePosixPath(normalized)
+                if not normalized or path.is_absolute() or ".." in path.parts or "\\" in name or (path.parts and ":" in path.parts[0]):
+                    raise HTTPException(status_code=400, detail="Backup contains an unsafe file path.")
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    raise HTTPException(status_code=400, detail="Backup contains a symbolic link.")
+                if info.is_dir():
+                    continue
+                if normalized in files:
+                    raise HTTPException(status_code=400, detail="Backup contains duplicate file paths.")
+                if normalized != "manifest.json" and normalized != "trakt_tokens.json" and not normalized.startswith("data/"):
+                    raise HTTPException(status_code=400, detail="Backup contains an unsupported file.")
+                raw = archive.read(info)
+                if normalized.endswith(".json"):
+                    try:
+                        json.loads(raw.decode("utf-8"))
+                    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                        raise HTTPException(status_code=400, detail=f"Backup contains invalid JSON: {normalized}") from exc
+                files[normalized] = raw
+
+            if "manifest.json" in files:
+                manifest = json.loads(files.pop("manifest.json").decode("utf-8"))
+                if not isinstance(manifest, dict) or type(manifest.get("format_version")) is not int or manifest.get("format_version") != BACKUP_FORMAT_VERSION:
+                    raise HTTPException(status_code=400, detail="Backup format version is not supported.")
+                manifest_paths = manifest.get("files")
+                if not isinstance(manifest_paths, list) or not all(isinstance(path, str) for path in manifest_paths) or len(manifest_paths) != len(files) or set(manifest_paths) != set(files):
+                    raise HTTPException(status_code=400, detail="Backup manifest does not match archive contents.")
+            else:
+                warnings.append("Legacy backup has no version manifest; file structure was validated.")
+            if not files:
+                raise HTTPException(status_code=400, detail="Backup contains no restorable files.")
+            return files, manifest, warnings
+    except HTTPException:
+        raise
+    except (zipfile.BadZipFile, OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Backup is not a valid, readable archive.") from exc
+
+
+def _build_backup_restore_preview(files: dict[str, bytes], manifest: dict[str, Any] | None, warnings: list[str]) -> dict[str, Any]:
+    archive_names = set(files)
+    existing: set[str] = set()
+    if Config.TRAKT_TOKENS_FILE.exists():
+        existing.add("trakt_tokens.json")
+    token_dir = Config.BASE_DIR / "data" / "tokens"
+    if token_dir.exists():
+        existing.update(f"data/tokens/{path.name}" for path in token_dir.glob("*.json"))
+    known_targets = (
+        "data/settings.json", "data/events.json", "data/stats.json", "data/queue.db",
+        "data/watch_lists.json", "data/cowatch_shows.json", "data/cowatch_devices.json",
+        "data/letterboxd_diary.json", "data/automation_rules.json",
+        "data/cross_sync_provenance.json",
+    )
+    existing.update(name for name in known_targets if (Config.BASE_DIR / name).exists())
+
+    categories = {}
+    for label, matches in BACKUP_CATEGORIES.items():
+        replacing = sorted(name for name in archive_names if matches(name))
+        preserved = sorted(name for name in existing - archive_names if matches(name))
+        if replacing or preserved:
+            categories[label] = {"replace": replacing, "preserve": preserved}
+
+    source_version = manifest.get("app_version") if manifest else None
+    return {
+        "valid": True,
+        "format_version": manifest.get("format_version") if manifest else None,
+        "source_version": source_version,
+        "source_created_at": manifest.get("created_at") if manifest else None,
+        "current_version": APP_VERSION,
+        "compatibility": "supported" if manifest else "legacy",
+        "files": [
+            {"path": name, "size_bytes": len(raw), "category": next((label for label, matches in BACKUP_CATEGORIES.items() if matches(name)), "other")}
+            for name, raw in sorted(files.items())
+        ],
+        "categories": categories,
+        "warnings": warnings,
+    }
 
 
 @app.get("/api/backup")
@@ -2171,9 +3121,25 @@ async def export_backup(request: Request, passphrase: Optional[str] = None):
         watch_lists_file = Config.BASE_DIR / "data" / "watch_lists.json"
         if watch_lists_file.exists():
             zf.write(watch_lists_file, arcname="data/watch_lists.json")
+        automation_rules_file = Config.BASE_DIR / "data" / "automation_rules.json"
+        if automation_rules_file.exists():
+            zf.write(automation_rules_file, arcname="data/automation_rules.json")
+        for filename in ("dashboard_accounts.json", "dashboard_accounts_audit.json"):
+            account_file = Config.BASE_DIR / "data" / filename
+            if account_file.exists():
+                zf.write(account_file, arcname=f"data/{filename}")
         diary_file = getattr(Config, "LETTERBOXD_DIARY_FILE", None)
         if diary_file and diary_file.exists():
             zf.write(diary_file, arcname="data/letterboxd_diary.json")
+        provenance_file = Config.BASE_DIR / "data" / "cross_sync_provenance.json"
+        if provenance_file.exists():
+            zf.write(provenance_file, arcname="data/cross_sync_provenance.json")
+        zf.writestr("manifest.json", json.dumps({
+            "format_version": BACKUP_FORMAT_VERSION,
+            "app_version": APP_VERSION,
+            "created_at": datetime.datetime.now(timezone.utc).isoformat(),
+            "files": sorted(zf.namelist()),
+        }, indent=2))
 
     buffer.seek(0)
     zip_bytes = buffer.getvalue()
@@ -2198,6 +3164,72 @@ async def export_backup(request: Request, passphrase: Optional[str] = None):
     )
 
 
+@app.get("/api/backup/snapshots")
+async def list_backup_snapshots(request: Request):
+    """List locally retained backup snapshots without exposing their contents."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    directory = Config.BASE_DIR / "data" / "backups"
+    snapshots = []
+    if directory.is_dir():
+        for path in sorted(directory.glob("omniscrobble-backup-*"), key=lambda item: item.stat().st_mtime, reverse=True):
+            if path.is_file() and not path.is_symlink():
+                stat = path.stat()
+                snapshots.append({"filename": path.name, "size_bytes": stat.st_size,
+                                  "created_at": datetime.datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()})
+    return {"snapshots": snapshots, "retention_count": Config.BACKUP_RETENTION_COUNT}
+
+
+@app.post("/api/backup/snapshots")
+async def create_backup_snapshot(request: Request):
+    """Create a local backup and apply the configured bounded retention count."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    response = await export_backup(request)
+    content_disposition = response.headers.get("Content-Disposition", "")
+    filename = content_disposition.split('filename="')[-1].rstrip('"')
+    directory = Config.BASE_DIR / "data" / "backups"
+    directory.mkdir(parents=True, exist_ok=True)
+    if directory.is_symlink():
+        raise HTTPException(status_code=400, detail="Backup directory must not be a symlink")
+    timestamp = datetime.datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    suffix = ".json" if filename.endswith(".json") else ".zip"
+    path = directory / f"omniscrobble-backup-{timestamp}{suffix}"
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as snapshot_file:
+            snapshot_file.write(response.body)
+            snapshot_file.flush()
+            os.fsync(snapshot_file.fileno())
+        os.replace(temporary, path)
+        snapshots = sorted((p for p in directory.glob("omniscrobble-backup-*") if p.is_file() and not p.is_symlink()),
+                           key=lambda item: item.stat().st_mtime, reverse=True)
+        retention_count = Config.BACKUP_RETENTION_COUNT
+        for stale in snapshots[retention_count:]:
+            stale.unlink()
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"created": path.name, "retained": min(len(snapshots), retention_count), "retention_count": retention_count}
+
+
+@app.post("/api/restore/preview")
+async def preview_backup_restore(request: Request):
+    """Validate an uploaded backup and report what would be replaced or preserved."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    form = await request.form()
+    file = form.get("backup_file")
+    passphrase = form.get("passphrase") or request.headers.get("x-backup-passphrase") or getattr(Config, "CONFIG_ENCRYPTION_KEY", "")
+    if not file or not hasattr(file, "read"):
+        raise HTTPException(status_code=400, detail="Missing backup_file in form")
+    contents = await file.read()
+    if isinstance(contents, str):
+        contents = contents.encode("utf-8")
+    files, manifest, warnings = _decode_backup_archive(contents, str(passphrase))
+    return _build_backup_restore_preview(files, manifest, warnings)
+
+
 @app.post("/api/restore")
 async def import_backup(request: Request):
     """Restore server configuration and tokens from an uploaded zip or encrypted backup."""
@@ -2214,39 +3246,24 @@ async def import_backup(request: Request):
     if isinstance(contents, str):
         contents = contents.encode("utf-8")
 
-    # Transparently decrypt if backup is an encrypted JSON envelope
-    try:
-        cand = json.loads(contents.decode("utf-8"))
-        from app.services.crypto_manager import is_encrypted_payload, decrypt_bytes
-        if is_encrypted_payload(cand):
-            if not passphrase:
-                raise HTTPException(status_code=400, detail="Encrypted backup requires a passphrase to restore.")
-            try:
-                contents = decrypt_bytes(cand, str(passphrase))
-            except Exception as e:
-                raise HTTPException(status_code=400, detail="Decryption failed - incorrect passphrase or corrupted backup") from e
-    except HTTPException:
-        raise
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        pass  # Standard zip archive
+    files, _manifest, _warnings = _decode_backup_archive(contents, str(passphrase))
+
+    base_path = Config.BASE_DIR.resolve()
+    target_paths = {}
+    for name in files:
+        target_path = (base_path / name).resolve()
+        if target_path != base_path and base_path not in target_path.parents:
+            raise HTTPException(status_code=400, detail="Restore target resolves outside the application data directory.")
+        target_paths[name] = target_path
 
     restored_files = []
     try:
-        with zipfile.ZipFile(io.BytesIO(contents), "r") as zf:
-            for zip_info in zf.infolist():
-                name = zip_info.filename.replace("\\", "/")
-                # Strict path traversal / zip slip protection
-                if ".." in name or name.startswith("/"):
-                    continue
-                # Only allow specific safe targets
-                if name != "trakt_tokens.json" and not name.startswith("data/"):
-                    continue
-
-                target_path = Config.BASE_DIR / name
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                with zf.open(zip_info) as source, open(target_path, "wb") as target:
-                    target.write(source.read())
-                restored_files.append(name)
+        for name, payload in files.items():
+            target_path = target_paths[name]
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(target_path, "wb") as target:
+                target.write(payload)
+            restored_files.append(name)
 
         # Reload clients and caches
         for c in list(user_mgr._clients.values()):
@@ -2258,6 +3275,11 @@ async def import_backup(request: Request):
         cowatch_mgr._load_shows()
         cowatch_mgr._load_devices()
         settings_mgr._load_settings()
+        automation_rules_mgr._load()
+        dashboard_auth_mgr.reload_accounts()
+        if "data/queue.db" in files:
+            queue_mgr.reload_schema()
+        cross_tracker_sync._provenance = cross_tracker_sync._load_provenance()
         watch_list_mgr._document = watch_list_mgr._load()
         scrobble_stats.clear()
         scrobble_stats.update(load_scrobble_stats())
@@ -2280,10 +3302,40 @@ def get_events(request: Request, limit: Optional[int] = None, offset: int = 0):
         total_demo = len(all_demo)
         paged_demo = all_demo[offset : offset + limit] if limit is not None else all_demo
         return {"events": paged_demo, "total": total_demo}
-    is_admin = is_admin_request(request)
+    principal = get_dashboard_principal(request)
+    is_admin = bool(principal and principal.role == "admin")
     raw_events = list(recent_events)
+    if principal and principal.role == "member":
+        raw_events = [event for event in raw_events if str(event.get("user") or "").strip().lower() == principal.username.lower()]
     total_count = len(raw_events)
-    if not is_admin:
+    if principal and principal.role == "member":
+        events = [
+            {
+                "event_id": ev.get("event_id"),
+                "operation_id": ev.get("operation_id"),
+                "timestamp": ev.get("timestamp"),
+                "user": ev.get("user"),
+                "server": ev.get("server"),
+                "event": ev.get("event"),
+                "action": ev.get("action"),
+                "title": ev.get("title"),
+                "type": ev.get("type"),
+                "show_title": ev.get("show_title"),
+                "progress": ev.get("progress"),
+                "is_anime": bool(ev.get("is_anime", False)),
+                "tracker_delivery": dict(ev.get("tracker_delivery") or {}),
+                "tracker_delivery_details": dict(ev.get("tracker_delivery_details") or {}),
+                "delivery_status": ev.get("delivery_status"),
+                "result_status": ev.get("result_status"),
+                "rule_evaluation": {
+                    key: value
+                    for key, value in (ev.get("rule_evaluation") or {}).items()
+                    if key not in {"profiles", "trackers"}
+                },
+            }
+            for ev in raw_events
+        ]
+    elif not is_admin:
         events = [
             {
                 "timestamp": ev.get("timestamp"),
@@ -2301,6 +3353,7 @@ def get_events(request: Request, limit: Optional[int] = None, offset: int = 0):
                     if tracker in {"trakt", "simkl", "anilist", "mal", "kitsu", "tmdb", "letterboxd", "serializd", "mdblist"}
                     and state in {"success", "queued", "failed", "skipped"}
                 },
+                "delivery_status": ev.get("delivery_status"),
                 "result_status": ev.get("result_status"),
                 "cowatch_status": None,
             }
@@ -2329,6 +3382,43 @@ def clear_events(request: Request):
     return {"status": "cleared"}
 
 
+@app.post("/api/events/{event_id}/retry")
+async def retry_event_delivery(event_id: str, request: Request):
+    """Retry one failed queued destination operation linked to an activity event."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    try:
+        payload = await request.json()
+        queue_item_id = int(payload.get("queue_item_id"))
+        confirm_duplicate_history = payload.get("confirm_duplicate_history") is True
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=400, detail="A valid queue_item_id is required")
+
+    status = queue_mgr.retry_failed_item(queue_item_id, event_id, confirm_duplicate_history)
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail="Failed queue item was not found for this activity event")
+    if status == "not_failed":
+        raise HTTPException(status_code=409, detail="Only failed queue items can be retried")
+    if status == "confirmation_required":
+        raise HTTPException(status_code=409, detail="Retry may duplicate watch history; explicit confirmation is required")
+    if status == "unsupported":
+        raise HTTPException(status_code=400, detail="This queued operation does not support manual retry")
+    if status == "not_retryable":
+        raise HTTPException(status_code=409, detail="This failure is not transient; fix the integration or credentials before retrying")
+
+    item = queue_mgr.get_item(queue_item_id)
+    if item:
+        record_queue_delivery(
+            event_id,
+            item["event_type"],
+            queue_item_id,
+            "queued",
+            "Manually queued for retry.",
+            int(item.get("retry_count", 0)) + 2,
+        )
+    return {"status": "queued", "event_id": event_id, "queue_item_id": queue_item_id}
+
+
 @app.post("/api/stats/reset")
 def reset_stats_endpoint(request: Request):
     """Reset scrobble statistics counters."""
@@ -2348,7 +3438,7 @@ async def trigger_queue_retry(request: Request):
         return {"status": "ok", "result": {}, "pending_count": 0}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    res = await process_queue(trakt, queue_mgr, user_mgr=user_mgr)
+    res = await process_queue(trakt, queue_mgr, user_mgr=user_mgr, on_result=record_queue_delivery)
     return {"status": "ok", "result": res, "pending_count": queue_mgr.get_pending_count()}
 
 
@@ -2386,9 +3476,11 @@ def get_playback_status(request: Request):
             "recently_finished": None,
         }
     is_admin = is_admin_request(request)
+    principal = get_dashboard_principal(request)
+    member_profile = principal.username if principal and principal.role == "member" else None
     return {
-        "active_sessions": playback_mgr.get_active_sessions(is_admin=is_admin),
-        "recently_finished": playback_mgr.get_recently_finished(is_admin=is_admin),
+        "active_sessions": playback_mgr.get_active_sessions(is_admin=is_admin, profile_username=member_profile),
+        "recently_finished": playback_mgr.get_recently_finished(is_admin=is_admin, profile_username=member_profile),
     }
 
 
@@ -2476,6 +3568,10 @@ class NotificationTestRequest(BaseModel):
     matrix_access_token: Optional[str] = None
     matrix_room_id: Optional[str] = None
 
+
+class NotificationRoutePreviewRequest(BaseModel):
+    event: str
+
     model_config = {"extra": "ignore"}
 
 
@@ -2491,6 +3587,8 @@ def get_settings_endpoint(request: Request):
             "trackers": all_s.get("trackers", {}),
             "multi_server_mirroring": all_s.get("multi_server_mirroring", False),
         }
+    else:
+        all_s["notification_profiles"] = list(Config.PLEX_ALLOWED_USERS or [])
     return {
         "status": "success",
         "settings": all_s,
@@ -2586,6 +3684,30 @@ async def test_notification_endpoint(payload: NotificationTestRequest, request: 
     return {"status": "success", "success": True, "message": msg}
 
 
+@app.post("/api/notifications/preview-route")
+async def preview_notification_route_endpoint(payload: NotificationRoutePreviewRequest, request: Request):
+    """Send a sample alert through one saved event route without creating a media event."""
+    if request.query_params.get("demo") == "true":
+        return {"status": "success", "success": True, "message": "Demo route preview delivered."}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    from app.services.settings_manager import NOTIFICATION_ROUTE_EVENTS
+    if payload.event not in NOTIFICATION_ROUTE_EVENTS:
+        raise HTTPException(status_code=400, detail="Unknown notification event")
+    route = settings_mgr.get_notifications(mask=False).get("notification_routes", {}).get(payload.event, {})
+    delivered = await notifier.send_operational_notification(
+        payload.event,
+        f"Omniscrobble route preview: {payload.event.replace('_', ' ').title()}",
+        "Sample notification. This preview used the saved destinations and severity for this event.",
+        severity="normal",
+    )
+    return {
+        "status": "success" if delivered else "warning",
+        "success": delivered,
+        "message": "Route preview delivered." if delivered else "No configured selected channel accepted the route preview.",
+    }
+
+
 @app.post("/api/notifications/digest")
 async def trigger_weekly_digest_endpoint(request: Request):
     """Trigger an immediate dispatch of the weekly activity digest."""
@@ -2595,6 +3717,122 @@ async def trigger_weekly_digest_endpoint(request: Request):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     return await digest_mgr.send_digest()
+
+
+class AutomationEvaluationRequest(BaseModel):
+    event: dict[str, Any]
+
+
+class AutomationRulesPreviewRequest(BaseModel):
+    rules: list[dict[str, Any]]
+    event: dict[str, Any]
+
+
+class AutomationReviewDecision(BaseModel):
+    decision: str
+
+
+@app.get("/api/automation/rules")
+def get_automation_rules(request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to view automation rules.")
+    return {"rules": automation_rules_mgr.list_rules(), "default_action": "allow", "precedence": "lowest numeric priority first; ties use saved order"}
+
+
+@app.put("/api/automation/rules")
+def replace_automation_rules(payload: list[dict[str, Any]], request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to change automation rules.")
+    try:
+        rules = automation_rules_mgr.replace_rules(payload)
+    except AutomationRuleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "saved", "rules": rules, "default_action": "allow"}
+
+
+@app.post("/api/automation/rules/evaluate")
+def evaluate_automation_rules(payload: AutomationEvaluationRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to evaluate automation rules.")
+    return automation_rules_mgr.evaluate(payload.event)
+
+
+@app.post("/api/automation/rules/preview")
+def preview_automation_rules(payload: AutomationRulesPreviewRequest, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to preview automation rules.")
+    try:
+        proposed = AutomationRulesManager.validate_rules(payload.rules)
+    except AutomationRuleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    current_result = automation_rules_mgr.evaluate(payload.event)
+    proposed_result = automation_rules_mgr.evaluate_rules(payload.event, proposed)
+    return {
+        "current": current_result,
+        "proposed": proposed_result,
+        "decision_changes": current_result.get("decision") != proposed_result.get("decision"),
+        "writes_applied": False,
+    }
+
+
+@app.get("/api/automation/review")
+def list_automation_review_events(request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to view the review queue.")
+    pending = [
+        {
+            "event_id": event.get("event_id"),
+            "timestamp": event.get("timestamp"),
+            "user": event.get("user"),
+            "server": event.get("server"),
+            "event": event.get("event"),
+            "title": event.get("title"),
+            "type": event.get("type"),
+            "rule_evaluation": event.get("rule_evaluation"),
+        }
+        for event in recent_events
+        if event.get("review_status") == "pending" and event.get("review_payload")
+    ]
+    return {"pending": pending, "total": len(pending)}
+
+
+@app.post("/api/automation/review/{event_id}")
+async def decide_automation_review(event_id: str, payload: AutomationReviewDecision, request: Request):
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to resolve review events.")
+    decision = str(payload.decision or "").lower().strip()
+    if decision not in {"approve", "reject"}:
+        raise HTTPException(status_code=400, detail="Decision must be approve or reject.")
+    target_event = next((event for event in recent_events if event.get("event_id") == event_id), None)
+    if not target_event or target_event.get("review_status") != "pending" or not target_event.get("review_payload"):
+        raise HTTPException(status_code=404, detail="Pending review event not found.")
+    if decision == "reject":
+        target_event["review_status"] = "rejected"
+        target_event["reviewed_at"] = datetime.datetime.now(timezone.utc).isoformat()
+        target_event["action"] = "review_rejected"
+        target_event["result_status"] = "ignored"
+        save_recent_events()
+        return {"status": "rejected", "event_id": event_id}
+    try:
+        media = ParsedMedia.model_validate(target_event["review_payload"])
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Stored review event cannot be reconstructed safely.") from exc
+    # Claim synchronously before dispatch yields; a second approval cannot pass pending.
+    target_event["review_status"] = "processing"
+    try:
+        atomic_write_json(EVENTS_FILE, list(recent_events))
+        replay_result = await process_media_event(media, endpoint_name=media.server_type, skip_automation_rules=True)
+    except BaseException:
+        target_event["review_status"] = "pending"
+        save_recent_events()
+        raise
+    target_event["review_status"] = "approved"
+    target_event["reviewed_at"] = datetime.datetime.now(timezone.utc).isoformat()
+    target_event["approved_event_id"] = replay_result.get("event_id")
+    target_event["action"] = "review_approved"
+    target_event["result_status"] = "approved"
+    save_recent_events()
+    return {"status": "approved", "event_id": event_id, "result": replay_result}
 
 
 @app.post("/api/settings/save-all")
@@ -2917,6 +4155,18 @@ class WatchListItemRequest(BaseModel):
     year: Optional[int] = None
     ids: dict[str, Any] = Field(default_factory=dict)
     poster_url: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    notes: Optional[str] = None
+
+
+class WatchListItemUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    media_type: Optional[str] = None
+    year: Optional[int] = None
+    ids: Optional[dict[str, Any]] = None
+    poster_url: Optional[str] = None
+    tags: Optional[list[str]] = None
+    notes: Optional[str] = None
 
 
 class WatchListOrderRequest(BaseModel):
@@ -2935,17 +4185,47 @@ def _watch_list_operation(operation):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _watch_list_actor(request: Request, *, mutate: bool = False):
+    permission = "manage_shared_watch_lists" if mutate else "view_shared_watch_lists"
+    principal = require_dashboard_permission(request, permission)
+    if mutate and principal.source == "local_account":
+        session_token = request.cookies.get("dashboard_session", "")
+        csrf_cookie = request.cookies.get("csrf_token", "")
+        csrf_header = request.headers.get("x-csrf-token", "")
+        if (request.headers.get("sec-fetch-site") == "cross-site"
+                or not dashboard_auth_mgr.session_has_csrf(session_token, csrf_cookie)
+                or not csrf_cookie or not secrets.compare_digest(csrf_cookie, csrf_header)):
+            raise HTTPException(status_code=403, detail="CSRF validation failed.")
+    return principal
+
+
+def _require_watch_list_access(list_id: str, principal, *, edit: bool = False, manage: bool = False) -> str:
+    try:
+        role = watch_list_mgr.access_role(list_id, principal.username, is_admin=principal.role == "admin")
+    except WatchListError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    allowed = {"admin", "owner"} if manage else {"admin", "owner", "editor"} if edit else {"admin", "owner", "editor", "viewer"}
+    if role not in allowed:
+        raise HTTPException(status_code=404, detail="Watch list not found")
+    return role
+
+
 @app.get("/api/watch-lists")
 def get_watch_lists(request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return {**watch_list_mgr.get_all(), "cowatch_available": bool(Config.CO_WATCH_USER)}
+    principal = _watch_list_actor(request)
+    return {**watch_list_mgr.get_all_for(principal.username, is_admin=principal.role == "admin"),
+            "can_create": True, "can_transfer": principal.role == "admin",
+            "can_request": bool(principal.role == "admin" and settings_mgr.is_overseerr_enabled() and arr_bridge.overseerr.is_configured),
+            "request_service_name": "Jellyseerr" if "jellyseerr" in arr_bridge.overseerr.base_url.lower() else "Overseerr",
+            "automation_options": ["manual"]
+                + (["request"] if settings_mgr.is_overseerr_enabled() and arr_bridge.overseerr.is_configured else [])
+                + (["acquire"] if arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured else []),
+            "cowatch_available": bool(Config.CO_WATCH_USER)}
 
 
 @app.get("/api/watch-lists/anime-search")
 async def search_watch_list_anime(title: str, request: Request, year: Optional[int] = None):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    _watch_list_actor(request)
     clean_title = title.strip()
     if not clean_title or len(clean_title) > 200:
         raise HTTPException(status_code=400, detail="A title of 1 to 200 characters is required")
@@ -2960,46 +4240,309 @@ async def search_watch_list_anime(title: str, request: Request, year: Optional[i
 
 @app.post("/api/watch-lists")
 def create_watch_list(payload: WatchListCreateRequest, request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return _watch_list_operation(lambda: watch_list_mgr.create_list(payload.name))
+    principal = _watch_list_actor(request, mutate=True)
+    return _watch_list_operation(lambda: watch_list_mgr.create_list(payload.name, owner=principal.username))
 
 
 @app.patch("/api/watch-lists/{list_id}")
 def rename_watch_list(list_id: str, payload: WatchListCreateRequest, request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, manage=True)
     return _watch_list_operation(lambda: watch_list_mgr.rename_list(list_id, payload.name))
 
 
 @app.delete("/api/watch-lists/{list_id}")
 def delete_watch_list(list_id: str, request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, manage=True)
     _watch_list_operation(lambda: watch_list_mgr.delete_list(list_id))
     return {"status": "ok"}
 
 
 @app.post("/api/watch-lists/{list_id}/items")
-def add_watch_list_item(list_id: str, payload: WatchListItemRequest, request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return _watch_list_operation(lambda: watch_list_mgr.add_item(list_id, payload.model_dump()))
+async def add_watch_list_item(list_id: str, payload: WatchListItemRequest, request: Request):
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, edit=True)
+    item = _watch_list_operation(lambda: watch_list_mgr.add_item(list_id, payload.model_dump()))
+    watch_list = watch_list_mgr._find(list_id)
+    if watch_list.get("auto_action", "manual") != "manual":
+        automation = await _run_watch_list_auto_action(watch_list["auto_action"], item)
+        item = _watch_list_operation(lambda: watch_list_mgr.set_item_automation(
+            list_id, item["id"], {**automation, "checked_at": datetime.datetime.now(timezone.utc).isoformat()}
+        ))
+    return item
 
 
 @app.patch("/api/watch-lists/{list_id}/items/order")
 def reorder_watch_list_items(list_id: str, payload: WatchListOrderRequest, request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, edit=True)
     return _watch_list_operation(lambda: watch_list_mgr.reorder(list_id, payload.item_ids))
 
 
 @app.delete("/api/watch-lists/{list_id}/items/{item_id}")
 def delete_watch_list_item(list_id: str, item_id: str, request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, edit=True)
     _watch_list_operation(lambda: watch_list_mgr.remove_item(list_id, item_id))
     return {"status": "ok"}
+
+
+@app.patch("/api/watch-lists/{list_id}/items/{item_id}")
+def update_watch_list_item(list_id: str, item_id: str, payload: WatchListItemUpdateRequest, request: Request):
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, edit=True)
+    return _watch_list_operation(lambda: watch_list_mgr.update_item(list_id, item_id, payload.model_dump(exclude_unset=True)))
+
+
+class WatchListAccessRequest(BaseModel):
+    members: dict[str, str] = Field(default_factory=dict)
+
+
+class WatchListAutomationRequest(BaseModel):
+    action: Literal["manual", "request", "acquire"]
+
+
+@app.put("/api/watch-lists/{list_id}/access")
+def set_watch_list_access(list_id: str, payload: WatchListAccessRequest, request: Request):
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, manage=True)
+    for username in payload.members:
+        account = dashboard_auth_mgr.get_account(username)
+        if not account or not account.get("enabled") or account.get("role") != "member":
+            raise HTTPException(status_code=400, detail=f"'{username}' is not an enabled member account")
+    return _watch_list_operation(lambda: watch_list_mgr.set_members(list_id, payload.members))
+
+
+@app.put("/api/watch-lists/{list_id}/automation")
+def set_watch_list_automation(list_id: str, payload: WatchListAutomationRequest, request: Request):
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal, manage=True)
+    if payload.action == "request" and not (settings_mgr.is_overseerr_enabled() and arr_bridge.overseerr.is_configured):
+        raise HTTPException(status_code=409, detail="Enable and configure Overseerr/Jellyseerr before selecting automatic requests")
+    if payload.action == "acquire" and not (arr_bridge.sonarr.is_configured or arr_bridge.radarr.is_configured):
+        raise HTTPException(status_code=409, detail="Configure Sonarr or Radarr before selecting automatic acquisition")
+    return _watch_list_operation(lambda: watch_list_mgr.set_auto_action(list_id, payload.action))
+
+
+async def _run_watch_list_auto_action(action: str, item: dict[str, Any]) -> dict[str, str]:
+    """Run an explicitly owner-enabled action without undoing a successful list addition."""
+    ids = item.get("ids") or {}
+    if action == "request":
+        try:
+            tmdb_id = int(ids.get("tmdb"))
+            if tmdb_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return {"status": "skipped", "reason": "A TMDb ID is required"}
+        if not (settings_mgr.is_overseerr_enabled() and arr_bridge.overseerr.is_configured):
+            return {"status": "skipped", "reason": "Overseerr/Jellyseerr is not enabled and configured"}
+        media_type = "movie" if item["media_type"] == "movie" else "tv"
+        try:
+            if await arr_bridge.overseerr.has_media(media_type, tmdb_id):
+                return {"status": "skipped", "reason": "Already requested or available"}
+            result = await arr_bridge.overseerr.request_media(media_type, tmdb_id, seasons="all" if media_type == "tv" else None)
+            if result.get("skipped"):
+                return {"status": "skipped", "reason": "Already requested or available"}
+            if result.get("success"):
+                return {"status": "requested", "reason": "Approval is managed by Overseerr/Jellyseerr"}
+            return {"status": "failed", "reason": "The request service did not accept this item"}
+        except Exception:
+            logger.warning("Automatic watch-list request failed")
+            return {"status": "failed", "reason": "The request service could not be reached"}
+
+    if action == "acquire":
+        is_movie = item["media_type"] == "movie"
+        media_type = "movie" if is_movie else "series"
+        client = arr_bridge.radarr if is_movie else arr_bridge.sonarr
+        provider_key = "tmdb" if is_movie else "tvdb"
+        native_key = "tmdbId" if is_movie else "tvdbId"
+        try:
+            target_id = ids.get(provider_key)
+            if target_id is None and ids.get("imdb") is None:
+                return {"status": "skipped", "reason": "A matching provider ID is required"}
+            if not client.is_configured:
+                return {"status": "skipped", "reason": f"{'Radarr' if is_movie else 'Sonarr'} is not configured"}
+            candidates = await arr_bridge.lookup_media(media_type, item["title"])
+            match = next((candidate for candidate in candidates if
+                          (target_id is not None and _id_matches(target_id, candidate.get(native_key)))
+                          or _id_matches(ids.get("imdb"), candidate.get("imdbId"))), None)
+            if not match:
+                return {"status": "skipped", "reason": "No exact catalog match was found"}
+            already_added = await (arr_bridge.radarr.has_movie(tmdb_id=ids.get("tmdb"), imdb_id=ids.get("imdb"))
+                                   if is_movie else arr_bridge.sonarr.has_series(tvdb_id=ids.get("tvdb"), imdb_id=ids.get("imdb")))
+            if already_added:
+                return {"status": "skipped", "reason": "Already in the library"}
+            settings = settings_mgr.get_arr_settings(mask=False)
+            service = "radarr" if is_movie else "sonarr"
+            root = settings.get(f"{service}_root_folder")
+            profile = settings.get(f"{service}_quality_profile_id")
+            if not root or not profile:
+                return {"status": "skipped", "reason": f"Set the {service.title()} root folder and quality profile first"}
+            result = await arr_bridge.acquire_media(
+                media_type, match, root_folder_path=root, quality_profile_id=profile,
+                monitored=True, search_now=bool(settings.get("search_on_add", True)), monitor_option="all",
+            )
+            if result.get("success"):
+                return {"status": "acquired", "reason": f"Added to {service.title()} using its configured defaults"}
+            return {"status": "failed", "reason": f"{service.title()} could not add the item"}
+        except Exception:
+            logger.warning("Automatic watch-list acquisition failed (service=%s)", "Radarr" if is_movie else "Sonarr")
+            return {"status": "failed", "reason": "The library service could not complete the acquisition"}
+    return {"status": "skipped", "reason": "Automatic actions are disabled"}
+
+
+def _id_matches(item_id: Any, library_id: Any) -> bool:
+    return bool(item_id is not None and library_id is not None and str(item_id).strip().casefold() == str(library_id).strip().casefold())
+
+
+@app.post("/api/watch-lists/{list_id}/availability")
+async def refresh_watch_list_availability(list_id: str, request: Request):
+    """Refresh per-item status from configured Sonarr, Radarr, and Overseerr services."""
+    principal = _watch_list_actor(request, mutate=True)
+    _require_watch_list_access(list_id, principal)
+    watch_list = watch_list_mgr._find(list_id)
+    items = watch_list.get("items", [])
+    sonarr_items: list[dict[str, Any]] = []
+    radarr_items: list[dict[str, Any]] = []
+    sonarr_state = "not_configured"
+    radarr_state = "not_configured"
+    if arr_bridge.sonarr.is_configured:
+        sonarr_state = "unavailable"
+        try:
+            if (await arr_bridge.sonarr.check_connection()).get("status") == "connected":
+                sonarr_items = await arr_bridge.sonarr.get_series()
+                sonarr_state = "connected"
+        except Exception:
+            logger.warning("Sonarr availability check failed")
+    if arr_bridge.radarr.is_configured:
+        radarr_state = "unavailable"
+        try:
+            if (await arr_bridge.radarr.check_connection()).get("status") == "connected":
+                radarr_items = await arr_bridge.radarr.get_movies()
+                radarr_state = "connected"
+        except Exception:
+            logger.warning("Radarr availability check failed")
+
+    request_enabled = bool(settings_mgr.is_overseerr_enabled() and arr_bridge.overseerr.is_configured)
+    overseerr_state = "not_configured"
+    if request_enabled:
+        overseerr_state = "unavailable"
+        try:
+            if (await arr_bridge.overseerr.check_connection()).get("status") == "connected":
+                overseerr_state = "connected"
+        except Exception:
+            logger.warning("Overseerr availability check failed")
+
+    async def lookup_request_status(item: dict[str, Any], semaphore: asyncio.Semaphore) -> tuple[str, str]:
+        ids = item.get("ids") or {}
+        try:
+            tmdb_id = int(ids.get("tmdb"))
+            if tmdb_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return item["id"], "unknown"
+        async with semaphore:
+            try:
+                details = await arr_bridge.overseerr.get_media_details(
+                    "movie" if item.get("media_type") == "movie" else "tv", tmdb_id
+                )
+                media_info = (details or {}).get("mediaInfo") or {}
+                status = media_info.get("status")
+                return item["id"], {2: "requested", 3: "requested", 4: "partially_available", 5: "available"}.get(status, "missing")
+            except Exception:
+                logger.warning("Overseerr availability lookup failed for a watch-list item")
+                return item["id"], "unavailable"
+
+    request_results: dict[str, str] = {}
+    if request_enabled and overseerr_state == "connected":
+        request_semaphore = asyncio.Semaphore(5)
+        # Keep both the number of live requests and each gather batch bounded for large lists.
+        for batch_start in range(0, len(items), 100):
+            batch = [item for item in items[batch_start:batch_start + 100] if (item.get("ids") or {}).get("tmdb")]
+            results = await asyncio.gather(*(lookup_request_status(item, request_semaphore) for item in batch))
+            request_results.update(results)
+
+    checked_at = datetime.datetime.now(timezone.utc).isoformat()
+    snapshots: dict[str, dict[str, Any]] = {}
+    for item in items:
+        ids = item.get("ids") or {}
+        media_type = item.get("media_type")
+        is_movie = media_type == "movie"
+        service_name = "radarr" if is_movie else "sonarr"
+        service_state = radarr_state if is_movie else sonarr_state
+        catalog = radarr_items if is_movie else sonarr_items
+        provider_id = "tmdb" if is_movie else "tvdb"
+        native_key = "tmdbId" if is_movie else "tvdbId"
+        matching = next((entry for entry in catalog if
+            (_id_matches(ids.get(provider_id), entry.get(native_key))
+             or _id_matches(ids.get("imdb"), entry.get("imdbId")))), None)
+        if service_state == "not_configured":
+            service_result = "not_configured"
+        elif service_state == "unavailable":
+            service_result = "unavailable"
+        elif matching:
+            stats = matching.get("statistics") or {}
+            has_files = bool(matching.get("hasFile") or stats.get("episodeFileCount", 0))
+            service_result = "available" if has_files else "in_library"
+        else:
+            has_matching_id = bool(ids.get(provider_id) or ids.get("imdb"))
+            service_result = "missing" if has_matching_id else "unknown"
+
+        if not request_enabled:
+            request_result = "not_configured"
+        elif overseerr_state != "connected":
+            request_result = "unavailable"
+        else:
+            request_result = request_results.get(item["id"], "unknown")
+
+        candidates = [service_result, request_result]
+        status = next((state for state in ("available", "partially_available", "requested", "in_library") if state in candidates), None)
+        if status is None:
+            status = "missing" if "missing" in candidates else "unknown"
+        snapshots[item["id"]] = {
+            "status": status,
+            "checked_at": checked_at,
+            "services": {service_name: service_result, "overseerr": request_result},
+        }
+
+    saved = _watch_list_operation(lambda: watch_list_mgr.set_availability(list_id, snapshots))
+    return {"status": "ok", "checked_count": len(snapshots), "checked_at": checked_at,
+            "availability": {item["id"]: item.get("availability") for item in saved["items"]}}
+
+
+@app.post("/api/watch-lists/{list_id}/items/{item_id}/request")
+async def request_watch_list_item(list_id: str, item_id: str, request: Request):
+    """Submit one selected movie/show to the configured Overseerr/Jellyseerr instance."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    csrf_cookie = request.cookies.get("csrf_token", "")
+    csrf_header = request.headers.get("x-csrf-token", "")
+    if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
+        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
+    try:
+        item = next(item for item in watch_list_mgr._find(list_id)["items"] if item["id"] == item_id)
+    except (WatchListError, StopIteration) as exc:
+        raise HTTPException(status_code=404, detail="Watch-list item not found") from exc
+    if not (settings_mgr.is_overseerr_enabled() and arr_bridge.overseerr.is_configured):
+        raise HTTPException(status_code=409, detail="Overseerr/Jellyseerr requests are not enabled and configured")
+    tmdb_id = (item.get("ids") or {}).get("tmdb")
+    try:
+        tmdb_id = int(tmdb_id)
+        if tmdb_id <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="This item needs a TMDb ID before it can be requested")
+    media_type = "movie" if item["media_type"] == "movie" else "tv"
+    if await arr_bridge.overseerr.has_media(media_type, tmdb_id):
+        return {"status": "skipped", "reason": "Already requested, processing, or available"}
+    result = await arr_bridge.overseerr.request_media(media_type, tmdb_id, seasons="all" if media_type == "tv" else None)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail="The request service could not accept this item. Check its status and request permissions.")
+    if result.get("skipped"):
+        return {"status": "skipped", "reason": "Already requested or available"}
+    return {"status": "requested", "service": "Jellyseerr" if "jellyseerr" in arr_bridge.overseerr.base_url.lower() else "Overseerr",
+            "approval_flow": "managed_by_request_service"}
 
 
 @app.post("/api/watch-lists/import/preview")
@@ -3229,6 +4772,8 @@ def get_cowatch_trackers_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return demo_mgr.get_demo_cowatch_trackers()
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to inspect household tracker status.")
     target_user = request.query_params.get("user") or Config.CO_WATCH_USER
     if not target_user:
         return {"configured": False, "user": None, "trackers": {}}
@@ -3333,6 +4878,7 @@ class ReconcileRequest(BaseModel):
     item_ids: Optional[list[str]] = None
     direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt", "trakt_to_server", "server_to_trakt"
     server: Optional[str] = None
+    preview_id: Optional[str] = None
 
 
 class ReconcileSettingsRequest(BaseModel):
@@ -3565,6 +5111,45 @@ async def get_sync_diff(
     return {"status": "ok", "diff": diff, "count": total_cnt}
 
 
+_reconciliation_previews: dict[str, dict[str, Any]] = {}
+
+
+@app.post("/api/sync/reconcile/preview")
+async def preview_reconciliation(payload: ReconcileRequest, request: Request):
+    """Return and retain the exact reconciliation actions eligible for explicit apply."""
+    is_demo = request.query_params.get("demo") == "true"
+    if not is_demo and not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    diff = await reverse_sync_mgr.scan_discrepancies(force=True, demo=is_demo, server=payload.server)
+    selected = set(payload.item_ids or [])
+    proposed = [item for item in diff if not selected or item.get("id") in selected]
+    if payload.direction in ("trakt_to_plex", "trakt_to_server"):
+        proposed = [item for item in proposed if item.get("action_recommended", "").startswith(("mark_", "sync_rating_to_"))]
+    elif payload.direction in ("plex_to_trakt", "server_to_trakt"):
+        proposed = [item for item in proposed if item.get("action_recommended") in ("sync_to_trakt", "sync_rating_to_trakt")]
+    warnings = []
+    for item in proposed:
+        ids = item.get("ids") or {}
+        stable_ids = any(str(ids.get(key) or "").strip() for key in ("imdb", "tmdb", "tvdb"))
+        item["match_confidence"] = "high" if stable_ids else "title-based"
+        if not stable_ids:
+            warnings.append({"id": item.get("id"), "title": item.get("title"), "reason": "No IMDb, TMDB, or TVDB ID; match relies on title and year/episode details."})
+    now = time.monotonic()
+    for key, entry in list(_reconciliation_previews.items()):
+        if now - entry["created"] > 600:
+            _reconciliation_previews.pop(key, None)
+    preview_id = secrets.token_urlsafe(24)
+    _reconciliation_previews[preview_id] = {"created": now, "items": proposed, "demo": is_demo}
+    action_counts: dict[str, int] = {}
+    for item in proposed:
+        action = item.get("action_recommended", "unknown")
+        action_counts[action] = action_counts.get(action, 0) + 1
+    return {"preview_id": preview_id, "server": payload.server, "direction": payload.direction,
+            "total": len(proposed), "actions": action_counts, "items": proposed, "warnings": warnings,
+            "unresolved": [], "created_at": datetime.datetime.now(timezone.utc).isoformat(),
+            "expires_in_seconds": 600}
+
+
 @app.post("/api/sync/reconcile")
 async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
     """Execute two-way reconciliation for discrepancies."""
@@ -3573,6 +5158,11 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
         return await reverse_sync_mgr.execute_reconciliation(demo=True, server=payload.server)
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    preview = None
+    if payload.preview_id:
+        preview = _reconciliation_previews.pop(payload.preview_id, None)
+        if not preview or time.monotonic() - preview["created"] > 600:
+            raise HTTPException(status_code=409, detail="Reconciliation preview expired or was already applied. Run a new preview.")
     if cloud_sync_mgr.sync_mutex.locked():
         raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
     async with cloud_sync_mgr.sync_mutex:
@@ -3580,6 +5170,7 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
             item_ids=payload.item_ids,
             direction=payload.direction,
             server=payload.server,
+            preview_items=preview["items"] if preview else None,
         )
         return res
 
@@ -3691,8 +5282,7 @@ async def lookup_arr_media(request: Request, type: str, term: str):
     """Search Sonarr/Radarr catalog and mark items already in the local library."""
     if request.query_params.get("demo") == "true":
         return {"results": []}
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    _watch_list_actor(request)
     kind = type.strip().lower()
     search = term.strip()[:120]
     if kind not in {"series", "movie"}:
@@ -3879,12 +5469,13 @@ async def get_ecosystem_status(request: Request):
 
 class CrossSyncExecuteRequest(BaseModel):
     item_ids: Optional[list[str]] = None
-    direction: str = "both"  # "both", "trakt_to_simkl", "simkl_to_trakt"
+    direction: str = "both"  # Also accepts either direction of TMDb rating actions.
+    conflict_policy: Literal["manual", "trakt", "simkl", "tmdb", "newest"] = "manual"
 
 
 @app.get("/api/cross-sync/status")
 async def get_cross_sync_status(request: Request):
-    """Return operational status and reconciliation metrics for Trakt <-> Simkl."""
+    """Return status for Trakt–Simkl reconciliation and Trakt/TMDb ratings."""
     is_demo = request.query_params.get("demo") == "true"
     return await cross_tracker_sync.get_status(demo=is_demo)
 
@@ -3920,19 +5511,29 @@ async def execute_cross_sync(payload: CrossSyncExecuteRequest, request: Request)
     """Execute cross-tracker reconciliation for selected items or all in a direction."""
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
-        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, demo=True)
+        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, conflict_policy=payload.conflict_policy, demo=True)
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     if cloud_sync_mgr.sync_mutex.locked():
         raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
     async with cloud_sync_mgr.sync_mutex:
-        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction)
+        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, conflict_policy=payload.conflict_policy)
 
 
 @app.get("/api/cross-sync/progress")
 async def get_cross_sync_progress(request: Request):
     """Poll live cross-tracker sync progress."""
     return cross_tracker_sync._sync_progress
+
+
+@app.get("/api/cross-sync/provenance")
+async def get_cross_sync_provenance(request: Request, limit: int = 100):
+    """Return recent admin-only rating conflict decisions that were applied."""
+    if request.query_params.get("demo") == "true":
+        return {"records": []}
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    return {"records": cross_tracker_sync.get_provenance(limit)}
 
 
 class TestWebhookRequest(BaseModel):
@@ -4078,6 +5679,112 @@ class AdminUnlockRequest(BaseModel):
     token: str
 
 
+class DashboardAccountLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class DashboardAccountCreateRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "member"
+
+
+class DashboardAccountUpdateRequest(BaseModel):
+    role: Optional[str] = None
+    password: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+def require_local_account_admin(request: Request) -> None:
+    if not Config.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Local accounts require WEBHOOK_SECRET to be configured.")
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Admin access is required to manage dashboard accounts.")
+
+
+@app.post("/api/account/login")
+def dashboard_account_login(payload: DashboardAccountLoginRequest, request: Request, response: Response):
+    if not Config.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Local accounts require WEBHOOK_SECRET to be configured.")
+    client_key = request.client.host if request.client else "unknown"
+    session = dashboard_auth_mgr.authenticate(payload.username, payload.password, client_key=client_key)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    same_site = getattr(Config, "COOKIE_SAMESITE", "lax") or "lax"
+    response.set_cookie("dashboard_session", session.session_token, httponly=True, secure=is_https_request(request), samesite=same_site, path="/", max_age=dashboard_auth_mgr.session_lifetime_seconds)
+    response.set_cookie("csrf_token", session.csrf_token, httponly=False, secure=is_https_request(request), samesite=same_site, path="/", max_age=dashboard_auth_mgr.session_lifetime_seconds)
+    return {"status": "ok", "username": session.principal.username, "role": session.principal.role, "csrf_token": session.csrf_token}
+
+
+@app.post("/api/account/logout")
+def dashboard_account_logout(request: Request, response: Response):
+    session_token = request.cookies.get("dashboard_session", "")
+    principal = dashboard_auth_mgr.resolve_session(session_token)
+    if not principal and not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Authentication is required.")
+    if principal:
+        require_dashboard_permission(request, "view_activity")
+        dashboard_auth_mgr.record_audit(principal.username, "logout", principal.username)
+    dashboard_auth_mgr.revoke_session(session_token)
+    response.delete_cookie("dashboard_session", path="/")
+    response.delete_cookie("csrf_token", path="/")
+    return {"status": "ok"}
+
+
+@app.get("/api/account/me")
+def dashboard_account_me(request: Request):
+    principal = get_dashboard_principal(request)
+    if not principal:
+        raise HTTPException(status_code=401, detail="Authentication is required.")
+    return {"username": principal.username, "role": principal.role, "source": principal.source}
+
+
+@app.get("/api/admin/accounts")
+def list_dashboard_accounts(request: Request):
+    require_local_account_admin(request)
+    return {"accounts": dashboard_auth_mgr.list_accounts()}
+
+
+@app.post("/api/admin/accounts")
+def create_dashboard_account(payload: DashboardAccountCreateRequest, request: Request):
+    require_local_account_admin(request)
+    actor = get_dashboard_principal(request)
+    try:
+        account = dashboard_auth_mgr.create_account(payload.username, payload.password, payload.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    dashboard_auth_mgr.record_audit(actor.username if actor else "admin", "account_created", account["username"])
+    logger.info("Dashboard account created: %s (role=%s)", account["username"], account["role"])
+    return {"status": "created", "account": account}
+
+
+@app.patch("/api/admin/accounts/{username}")
+def update_dashboard_account(username: str, payload: DashboardAccountUpdateRequest, request: Request):
+    require_local_account_admin(request)
+    actor = get_dashboard_principal(request)
+    try:
+        account = dashboard_auth_mgr.update_account(username, role=payload.role, password=payload.password, enabled=payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not account:
+        raise HTTPException(status_code=404, detail="Dashboard account not found.")
+    dashboard_auth_mgr.record_audit(actor.username if actor else "admin", "account_updated", account["username"])
+    logger.info("Dashboard account updated: %s (role=%s, enabled=%s)", account["username"], account["role"], account["enabled"])
+    return {"status": "updated", "account": account}
+
+
+@app.delete("/api/admin/accounts/{username}")
+def delete_dashboard_account(username: str, request: Request):
+    require_local_account_admin(request)
+    actor = get_dashboard_principal(request)
+    if not dashboard_auth_mgr.delete_account(username):
+        raise HTTPException(status_code=404, detail="Dashboard account not found.")
+    dashboard_auth_mgr.record_audit(actor.username if actor else "admin", "account_deleted", username.lower())
+    logger.info("Dashboard account deleted: %s", username.lower())
+    return {"status": "deleted"}
+
+
 @app.post("/api/admin/unlock")
 def admin_unlock(payload: AdminUnlockRequest, request: Request, response: Response):
     if not Config.WEBHOOK_SECRET:
@@ -4115,8 +5822,10 @@ def admin_unlock(payload: AdminUnlockRequest, request: Request, response: Respon
 
 
 @app.post("/api/admin/lock")
-def admin_lock(response: Response):
+def admin_lock(request: Request, response: Response):
+    dashboard_auth_mgr.revoke_session(request.cookies.get("dashboard_session", ""))
     response.delete_cookie(key="admin_token")
+    response.delete_cookie(key="dashboard_session", path="/")
     response.delete_cookie(key="csrf_token")
     return {"status": "ok", "message": "Admin mode locked"}
 
@@ -4128,9 +5837,8 @@ class DevicePollRequest(BaseModel):
 
 @app.post("/api/auth/start")
 async def auth_start(request: Request, user: Optional[str] = None):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    query_user = request.query_params.get("user") or user
+    query_user = profile_for_request(request, request.query_params.get("user") or user)
+    require_dashboard_permission(request, "manage_personal_trackers", query_user)
     target_client = user_mgr.get_client(query_user)
     try:
         data = await target_client.generate_device_code()
@@ -4142,18 +5850,18 @@ async def auth_start(request: Request, user: Optional[str] = None):
 
 @app.post("/api/auth/poll")
 async def auth_poll(payload: DevicePollRequest, request: Request):
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = profile_for_request(request, payload.user)
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     if not payload.device_code or not str(payload.device_code).strip() or payload.device_code == "undefined":
         return {"status": "error", "message": "Missing device_code"}
     global trakt_user_profile
-    target_client = user_mgr.get_client(payload.user)
+    target_client = user_mgr.get_client(target_user)
     try:
         res = await target_client.poll_for_token(payload.device_code)
         if "access_token" in res:
-            if not payload.user or payload.user == "default":
+            if not target_user or target_user == "default":
                 trakt_user_profile = None  # Invalidate cached profile on default login
-            return {"status": "success", "user": payload.user or "default"}
+            return {"status": "success", "user": target_user or "default"}
         elif res.get("status") in ("pending", "slow_down"):
             return res
         return {"status": "pending"}
@@ -4172,7 +5880,11 @@ async def get_trakt_status(request: Request, user: Optional[str] = None):
             "authenticated": True,
             "user": "demo_viewer",
         }
-    query_user = request.query_params.get("user") or user
+    query_user = profile_for_request(request, request.query_params.get("user") or user)
+    if not get_dashboard_principal(request) and not query_user:
+        target_client = user_mgr.get_client(None)
+        return {"enabled": target_client.is_enabled(), "configured": bool(target_client.effective_client_id), "authenticated": target_client.is_authenticated()}
+    require_dashboard_permission(request, "manage_personal_trackers", query_user)
     target_client = user_mgr.get_client(query_user)
     auth = target_client.is_authenticated()
     username = None
@@ -4194,9 +5906,8 @@ async def get_trakt_status(request: Request, user: Optional[str] = None):
 @app.post("/api/trakt/disconnect")
 async def disconnect_trakt(request: Request, user: Optional[str] = None):
     """Disconnect Trakt account and delete saved tokens."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    query_user = request.query_params.get("user") or user
+    query_user = profile_for_request(request, request.query_params.get("user") or user)
+    require_dashboard_permission(request, "manage_personal_trackers", query_user)
     target_client = user_mgr.get_client(query_user)
     target_client.delete_tokens()
     global trakt_user_profile
@@ -4224,7 +5935,10 @@ async def get_simkl_status(request: Request):
             "account_id": 123456,
             "timezone": "America/New_York",
         }
-    target_user = request.query_params.get("user")
+    target_user = profile_for_request(request, request.query_params.get("user"))
+    if not get_dashboard_principal(request) and not target_user:
+        return {"enabled": simkl.is_enabled(), "configured": bool(simkl.effective_client_id), "authenticated": simkl.is_authenticated()}
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
     status = await target_client.check_connection()
     status["enabled"] = target_client.is_enabled()
@@ -4235,9 +5949,8 @@ async def get_simkl_status(request: Request):
 @app.post("/api/simkl/pin")
 async def get_simkl_pin(request: Request):
     """Obtain a new Device PIN / user_code to authorize Simkl via browser."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    target_user = request.query_params.get("user")
+    target_user = profile_for_request(request, request.query_params.get("user"))
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
     try:
         data = await target_client.get_device_pin()
@@ -4257,11 +5970,10 @@ async def get_simkl_pin(request: Request):
 @app.post("/api/simkl/poll")
 async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
     """Poll Simkl to check if the user authorized the device PIN."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     if not payload.user_code or not str(payload.user_code).strip() or payload.user_code == "undefined":
         return {"status": "error", "result": "error", "message": "Missing user_code"}
-    target_user = payload.user or request.query_params.get("user")
     target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
     try:
         res = await target_client.poll_device_pin(payload.user_code, device_code=payload.device_code)
@@ -4273,9 +5985,8 @@ async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
 @app.post("/api/simkl/disconnect")
 async def disconnect_simkl(request: Request):
     """Disconnect Simkl account and delete saved tokens."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    target_user = request.query_params.get("user")
+    target_user = profile_for_request(request, request.query_params.get("user"))
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     if target_user:
         user_mgr.disconnect_user_tracker(target_user, "simkl")
         return {"status": "ok", "message": f"Simkl disconnected for {target_user}"}
@@ -4303,7 +6014,10 @@ async def get_anilist_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return demo_mgr.get_demo_anilist_status()
-    target_user = request.query_params.get("user")
+    target_user = profile_for_request(request, request.query_params.get("user"))
+    if not get_dashboard_principal(request) and not target_user:
+        return {"enabled": anilist.is_enabled(), "configured": bool(getattr(Config, "ANILIST_CLIENT_ID", "") or anilist.is_authenticated()), "authenticated": anilist.is_authenticated()}
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
     status = await target_client.check_connection()
     status["enabled"] = target_client.is_enabled()
@@ -4314,12 +6028,11 @@ async def get_anilist_status(request: Request):
 @app.post("/api/anilist/token")
 async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
     """Save an AniList personal access token and test connectivity."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     token_str = payload.token.strip()
     if not token_str:
         raise HTTPException(status_code=400, detail="Token cannot be empty")
-    target_user = payload.user or request.query_params.get("user")
     target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
     target_client.access_token = token_str
     conn = await target_client.check_connection()
@@ -4339,9 +6052,8 @@ async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
 @app.post("/api/anilist/disconnect")
 async def disconnect_anilist(request: Request):
     """Disconnect AniList account and delete stored tokens."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    target_user = request.query_params.get("user")
+    target_user = profile_for_request(request, request.query_params.get("user"))
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     if target_user:
         user_mgr.disconnect_user_tracker(target_user, "anilist")
         return {"status": "ok", "message": f"AniList disconnected for {target_user}"}
@@ -4376,7 +6088,10 @@ async def get_mal_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     if is_demo:
         return demo_mgr.get_demo_mal_status()
-    target_user = request.query_params.get("user")
+    target_user = profile_for_request(request, request.query_params.get("user"))
+    if not get_dashboard_principal(request) and not target_user:
+        return {"enabled": mal.is_enabled(), "configured": bool(mal.effective_client_id or mal.is_authenticated()), "authenticated": mal.is_authenticated()}
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
     status = await target_client.check_connection()
     status["enabled"] = target_client.is_enabled()
@@ -4387,12 +6102,11 @@ async def get_mal_status(request: Request):
 @app.post("/api/mal/token")
 async def save_mal_token(payload: TokenSubmitRequest, request: Request):
     """Save a MyAnimeList access token and test connectivity."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
+    target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     token_str = payload.token.strip()
     if not token_str:
         raise HTTPException(status_code=400, detail="Token cannot be empty")
-    target_user = payload.user or request.query_params.get("user")
     target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
     target_client.access_token = token_str
     conn = await target_client.check_connection()
@@ -4412,9 +6126,8 @@ async def save_mal_token(payload: TokenSubmitRequest, request: Request):
 @app.post("/api/mal/disconnect")
 async def disconnect_mal(request: Request):
     """Disconnect MyAnimeList account and delete stored tokens."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    target_user = request.query_params.get("user")
+    target_user = profile_for_request(request, request.query_params.get("user"))
+    require_dashboard_permission(request, "manage_personal_trackers", target_user)
     if target_user:
         user_mgr.disconnect_user_tracker(target_user, "mal")
         return {"status": "ok", "message": f"MyAnimeList disconnected for {target_user}"}
@@ -4808,11 +6521,39 @@ async def replay_debug_webhook(request: Request, body: ReplayWebhookRequest):
 
 
 @app.get("/api/analytics/summary")
-async def get_analytics_summary(request: Request, period: str = "all", demo: bool = False):
+async def get_analytics_summary(
+    request: Request, period: str = "all", demo: bool = False,
+    start_date: Optional[str] = None, end_date: Optional[str] = None,
+    profile: Optional[str] = None, media_type: Optional[str] = None,
+    server: Optional[str] = None, tracker: Optional[str] = None,
+    viewing: Optional[str] = None,
+):
     """Retrieve viewing analytics metrics across a given time window (all, year, month, week)."""
     is_demo = demo or request.query_params.get("demo") == "true"
-    is_admin = is_admin_request(request)
-    summary = analytics_mgr.get_summary(period=period, demo=is_demo, is_admin=is_admin)
+    principal = get_dashboard_principal(request)
+    is_admin = bool(principal and principal.role == "admin")
+    profile_username = principal.username if principal and principal.role == "member" else None
+    if is_admin and profile:
+        configured = {name.casefold(): name for name in Config.PLEX_ALLOWED_USERS}
+        if configured and profile.casefold() not in configured:
+            raise HTTPException(status_code=400, detail="profile must be one of the configured media profiles.")
+        profile_username = configured.get(profile.casefold(), profile) if configured else profile
+    def parse_summary_date(value: Optional[str], field: str) -> Optional[datetime.date]:
+        if not value:
+            return None
+        try:
+            return datetime.date.fromisoformat(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"{field} must use YYYY-MM-DD.") from exc
+    summary_start = parse_summary_date(start_date, "start_date")
+    summary_end = parse_summary_date(end_date, "end_date")
+    if summary_start and summary_end and summary_start > summary_end:
+        raise HTTPException(status_code=400, detail="start_date must not be after end_date.")
+    summary = analytics_mgr.get_summary(
+        period=period, demo=is_demo, is_admin=is_admin, profile_username=profile_username,
+        start_date=summary_start, end_date=summary_end, media_type_filter=media_type,
+        server_filter=server, tracker_filter=tracker, viewing_filter=viewing,
+    )
     return summary
 
 
@@ -4820,17 +6561,137 @@ async def get_analytics_summary(request: Request, period: str = "all", demo: boo
 async def get_analytics_wrapped(request: Request, year: Optional[int] = None, demo: bool = False):
     """Retrieve the OmniWrapped annual viewing retrospective and archetype summary."""
     is_demo = demo or request.query_params.get("demo") == "true"
-    is_admin = is_admin_request(request)
-    wrapped = analytics_mgr.get_omniwrapped(year=year, demo=is_demo, is_admin=is_admin)
+    principal = get_dashboard_principal(request)
+    is_admin = bool(principal and principal.role == "admin")
+    profile_username = principal.username if principal and principal.role == "member" else None
+    wrapped = analytics_mgr.get_omniwrapped(year=year, demo=is_demo, is_admin=is_admin, profile_username=profile_username)
     return wrapped
+
+
+@app.get("/api/analytics/export")
+async def export_analytics(
+    request: Request, format: str = "json", kind: str = "activity",
+    start_date: Optional[str] = None, end_date: Optional[str] = None,
+    profile: Optional[str] = None, media_type: Optional[str] = None,
+    server: Optional[str] = None, tracker: Optional[str] = None,
+    viewing: Optional[str] = None,
+):
+    """Export filtered activity or dashboard-consistent analytics as CSV or versioned JSON."""
+    if not is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required to export analytics")
+    export_format = str(format).strip().lower()
+    export_kind = str(kind).strip().lower()
+    if export_format not in {"csv", "json"} or export_kind not in {"activity", "summary"}:
+        raise HTTPException(status_code=400, detail="Choose format csv/json and kind activity/summary.")
+
+    def parse_filter_date(value: Optional[str], field: str) -> Optional[datetime.date]:
+        if not value:
+            return None
+        try:
+            return datetime.date.fromisoformat(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"{field} must use YYYY-MM-DD.") from exc
+
+    start = parse_filter_date(start_date, "start_date")
+    end = parse_filter_date(end_date, "end_date")
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="start_date must not be after end_date.")
+    clean_profile = str(profile or "").strip()
+    if clean_profile and Config.PLEX_ALLOWED_USERS:
+        canonical_profiles = {name.casefold(): name for name in Config.PLEX_ALLOWED_USERS}
+        if clean_profile.casefold() not in canonical_profiles:
+            raise HTTPException(status_code=400, detail="profile must be one of the configured media profiles.")
+        clean_profile = canonical_profiles[clean_profile.casefold()]
+    clean_media_type = str(media_type or "").strip().lower() or None
+    if clean_media_type and clean_media_type not in {"movie", "episode", "show", "tv", "anime"}:
+        raise HTTPException(status_code=400, detail="Unsupported media_type filter.")
+    clean_viewing = str(viewing or "").strip().lower() or None
+    if clean_viewing and clean_viewing not in {"solo", "shared"}:
+        raise HTTPException(status_code=400, detail="viewing must be solo or shared.")
+    clean_server = str(server or "").strip() or None
+    clean_tracker = str(tracker or "").strip().lower() or None
+    filter_values = {
+        "start_date": start.isoformat() if start else None,
+        "end_date": end.isoformat() if end else None,
+        "profile": clean_profile or None,
+        "media_type": clean_media_type,
+        "server": clean_server,
+        "tracker": clean_tracker,
+        "viewing": clean_viewing,
+    }
+    local_zone = datetime.datetime.now().astimezone().tzname() or "server local time"
+    timestamp_semantics = "Original event timestamp text is preserved. Naive event timestamps use server local time; date filters compare offset-aware timestamps in server local time while retaining their original offset in the export."
+    generated_at = datetime.datetime.now(timezone.utc).isoformat()
+    if export_kind == "activity":
+        rows = analytics_mgr.get_activity_export_rows(
+            start_date=start, end_date=end, profile=clean_profile,
+            media_type=clean_media_type, server=clean_server, tracker=clean_tracker, viewing=clean_viewing,
+        )
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "generated_at": generated_at,
+            "timezone": local_zone,
+            "timestamp_semantics": timestamp_semantics,
+            "filters": filter_values,
+            "records": rows,
+        }
+    else:
+        summary = analytics_mgr.get_summary(
+            period="all", is_admin=True, profile_username=clean_profile,
+            start_date=start, end_date=end, media_type_filter=clean_media_type,
+            server_filter=clean_server, tracker_filter=clean_tracker, viewing_filter=clean_viewing,
+        )
+        payload = {
+            "schema_version": 1,
+            "generated_at": generated_at,
+            "timezone": local_zone,
+            "timestamp_semantics": timestamp_semantics,
+            "filters": filter_values,
+            "summary": summary,
+        }
+
+    filename = f"omniscrobble_{export_kind}_{datetime.datetime.now().strftime('%Y%m%d')}.{export_format}"
+    if export_format == "json":
+        return Response(
+            content=json.dumps(payload, ensure_ascii=False, indent=2),
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    buffer = io.StringIO(newline="")
+    if export_kind == "activity":
+        fields = ["operation_id", "timestamp", "profile", "server", "action", "title", "media_type", "progress", "delivery_status", "tracker_delivery", "viewing", "player"]
+        writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction="ignore", lineterminator="\r\n")
+        writer.writeheader()
+        for row in payload["records"]:
+            safe_row = {}
+            for field in fields:
+                raw_value = row.get(field, "")
+                value = json.dumps(raw_value, ensure_ascii=False, sort_keys=True) if isinstance(raw_value, (dict, list)) else str(raw_value)
+                safe_row[field] = f"'{value}" if value.startswith(("=", "+", "-", "@", "\t", "\r")) else value
+            writer.writerow(safe_row)
+    else:
+        writer = csv.writer(buffer, lineterminator="\r\n")
+        writer.writerow(["metric", "value"])
+        for name, value in payload["summary"].items():
+            serialized = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+            safe_name = f"'{name}" if name.startswith(("=", "+", "-", "@", "\t", "\r")) else name
+            safe_value = f"'{serialized}" if serialized.startswith(("=", "+", "-", "@", "\t", "\r")) else serialized
+            writer.writerow([safe_name, safe_value])
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.get('/auth', response_class=HTMLResponse)
 async def auth_page(request: Request, user: Optional[str] = None):
-    if not is_admin_request(request):
+    principal = get_dashboard_principal(request)
+    if not principal or (principal.role != "admin" and user and user.strip().lower() != principal.username.lower()):
         return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
 
-    target_uname = user.strip() if user else ''
+    target_uname = profile_for_request(request, user) or ''
     target_client = user_mgr.get_client(target_uname)
     already_connected = target_client.is_authenticated()
 
@@ -4864,6 +6725,18 @@ async def auth_page(request: Request, user: Optional[str] = None):
     )
     return HTMLResponse(content=rendered)
 
+
+@app.get("/login", response_class=HTMLResponse)
+async def dashboard_login_page(request: Request):
+    principal = get_dashboard_principal(request)
+    if principal:
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(content="""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in • Omniscrobble</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1220;color:#e2e8f0;font:16px system-ui,sans-serif}.card{width:min(420px,calc(100% - 40px));box-sizing:border-box;padding:28px;border:1px solid #263449;border-radius:14px;background:#111c2e}h1{margin:0 0 8px;font-size:24px}p{color:#94a3b8;line-height:1.5}label{display:block;margin:16px 0 6px}input,button{width:100%;box-sizing:border-box;padding:12px;border:1px solid #334155;border-radius:7px;font:inherit}input{background:#0b1220;color:#f8fafc}button{margin-top:20px;background:#2563eb;color:white;border:0;font-weight:650;cursor:pointer}#error{color:#fca5a5;min-height:1.4em}.back{color:#93c5fd;text-decoration:none}</style></head>
+<body><main class="card"><h1>Sign in</h1><p>Use the household account created for you by the administrator.</p><form id="login"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required><div id="error" role="alert"></div><button type="submit">Sign in</button></form><a class="back" href="/">Back to dashboard</a></main>
+<script>document.getElementById('login').addEventListener('submit',async e=>{e.preventDefault();const error=document.getElementById('error');error.textContent='';const form=new FormData(e.currentTarget);try{const response=await fetch('/api/account/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:form.get('username'),password:form.get('password')})});const data=await response.json();if(!response.ok){error.textContent=data.detail||'Sign in failed.';return}location.assign('/') }catch(_){error.textContent='Unable to sign in right now.'}});</script></body></html>""")
+
 @app.get("/demo", response_class=HTMLResponse)
 async def demo_dashboard(request: Request, response: Response):
     return await render_dashboard_response(request, response, is_demo=True)
@@ -4876,6 +6749,8 @@ async def dashboard(request: Request, response: Response):
 
 
 async def render_dashboard_response(request: Request, response: Response, is_demo: bool = False) -> HTMLResponse:
+    principal = None if is_demo else get_dashboard_principal(request)
+    member_profile = principal.username if principal and principal.role == "member" else None
     if is_demo:
         is_admin = True
         auth_status = True
@@ -4915,12 +6790,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             )
 
         is_admin = is_admin_request(request)
-        auth_status = trakt.is_authenticated()
-        profile = await get_cached_trakt_profile() if auth_status else None
-        raw_username = profile.get("username") if profile else None
+        dashboard_trakt = user_mgr.get_client(member_profile) if member_profile else trakt
+        auth_status = dashboard_trakt.is_authenticated()
+        profile = await get_cached_trakt_profile() if auth_status and not member_profile else None
+        raw_username = member_profile or (profile.get("username") if profile else None)
 
         display_username = raw_username if is_admin else mask_username(raw_username)
-        pending_queue = queue_mgr.get_pending_count()
+        pending_queue = 0 if member_profile or queue_mgr._future_schema_version else queue_mgr.get_pending_count()
 
         notif_status = notifier.get_status()
         enabled_notifs = []
@@ -4945,7 +6821,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         sync_collection_display = "On" if Config.SYNC_COLLECTION else "Off"
 
         # Token health calculation
-        token_info = trakt.get_token_info()
+        token_info = dashboard_trakt.get_token_info()
         if auth_status:
             if token_info.get("healthy"):
                 days = token_info.get("days_remaining", 0)
@@ -5023,8 +6899,19 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         'title="Configure Media Servers, Trackers, and Automation"><span>⚙️</span><span>Settings Hub</span></button>'
     )
 
+    if member_profile:
+        raw_username = member_profile
+        display_username = member_profile
+        status_badge = '<button onclick="openAccountModal()" class="btn-sm">My trackers</button>'
+    if not is_demo and Config.WEBHOOK_SECRET and principal:
+        admin_btn += '<button onclick="openAccountModal()" class="btn-sm">Accounts</button>' if is_admin else '<button onclick="openAccountModal()" class="btn-sm">My account</button>'
+        if principal.source == "local_account":
+            admin_btn += '<button onclick="logoutDashboardAccount()" class="btn-sm">Sign out</button>'
+
     # Events rows & pagination metadata
     events_list = demo_mgr.get_demo_events() if is_demo else list(recent_events)
+    if member_profile:
+        events_list = [ev for ev in events_list if str(ev.get("user") or "").strip().lower() == member_profile.lower()]
     rows, events_page_info, events_page_num, events_next_disabled = dashboard_renderer.render_activity_table_rows(
         events_list=events_list,
         is_admin=is_admin,
@@ -5049,8 +6936,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         active_sessions = [demo_mgr.get_demo_playback()]
         recently_finished = None
     else:
-        active_sessions = playback_mgr.get_active_sessions(is_admin=is_admin)
-        recently_finished = playback_mgr.get_recently_finished(is_admin=is_admin)
+        active_sessions = playback_mgr.get_active_sessions(is_admin=is_admin, profile_username=member_profile)
+        recently_finished = playback_mgr.get_recently_finished(is_admin=is_admin, profile_username=member_profile)
 
     active_playback_card_html = dashboard_renderer.render_active_playback_card(
         active_sessions=active_sessions,
@@ -5075,6 +6962,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         configured_users = user_mgr.list_configured_users()
         cw_trackers = user_mgr.get_user_trackers_status(cw_user) if cw_user else {}
         household_rules = household_mgr.get_rules()
+
+    if member_profile:
+        cw_user, cw_user_display = "", ""
+        cw_shows, cw_devices, configured_users, household_rules = [], [], [], []
+        cw_trackers = {}
 
     cowatch_card_html = dashboard_renderer.render_cowatch_card(
         cw_user=cw_user,
@@ -5120,7 +7012,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     if is_demo:
         analytics_data = demo_mgr.get_demo_analytics_summary()
     else:
-        analytics_data = analytics_mgr.get_summary(period="all")
+        analytics_data = analytics_mgr.get_summary(period="all", is_admin=is_admin, profile_username=member_profile)
     analytics_card_html = dashboard_renderer.render_analytics_card(analytics_data, is_admin=is_admin)
 
     # Multi-Server Ecosystem Health Card
@@ -5161,6 +7053,13 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         repo_url=REPO_URL,
     )
 
+    if member_profile:
+        cowatch_card_html = ""
+        reconcile_card_html = ""
+        backup_card_html = ""
+        ecosystem_card_html = ""
+        arr_bridge_card_html = ""
+        simkl_card_html = '<section class="card" id="card-multi-tracker"><h2>My trackers</h2><p>Manage tracker connections for your profile.</p><button onclick="openAccountModal()" class="btn-sm">Manage my connections</button></section>'
     trackers_dict = trk_status_all.get("trackers", {})
     simkl_status = trackers_dict.get("simkl", {})
     simkl_auth = simkl_status.get("authenticated", False)
@@ -5170,6 +7069,14 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
     mal_auth = mal_status.get("authenticated", False)
 
     stats_data = demo_mgr.get_demo_stats() if is_demo else scrobble_stats
+    if member_profile:
+        stats_data = {
+            "total": analytics_data.get("total_scrobbles", 0),
+            "movies": analytics_data.get("movies_watched", 0),
+            "episodes": analytics_data.get("episodes_watched", 0),
+            "ratings": analytics_data.get("ratings_submitted", 0),
+            "collections": sum(ev.get("action") == "collection" for ev in events_list),
+        }
 
     if is_demo:
         trakt_configured = True
@@ -5192,7 +7099,14 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         serializd_configured = bool(serializd.is_configured() and settings_mgr.is_tracker_enabled("serializd"))
         mdblist_configured = bool(mdblist.is_configured() and settings_mgr.is_tracker_enabled("mdblist"))
 
-    cowatch_user = Config.CO_WATCH_USER
+    if member_profile:
+        tmdb_configured = kitsu_configured = letterboxd_configured = serializd_configured = mdblist_configured = False
+        own_trackers = user_mgr.get_user_trackers_status(member_profile)
+        simkl_configured = bool(own_trackers.get("simkl", {}).get("authenticated"))
+        anilist_configured = bool(own_trackers.get("anilist", {}).get("authenticated"))
+        mal_configured = bool(own_trackers.get("mal", {}).get("authenticated"))
+
+    cowatch_user = "" if member_profile else Config.CO_WATCH_USER
     cowatch_disp = (cowatch_user if is_admin else mask_username(cowatch_user)) if cowatch_user else ""
     has_cowatch_partner = bool(cowatch_user and (is_demo or user_mgr.is_user_authenticated(cowatch_user)))
 
@@ -5238,6 +7152,8 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
         '{{EVENTS_NEXT_DISABLED}}': events_next_disabled,
         '{{IS_ADMIN_JS}}': ('true' if is_admin else 'false'),
         '{{IS_DEMO_JS}}': ('true' if is_demo else 'false'),
+        '{{IS_MEMBER_JS}}': ('true' if member_profile else 'false'),
+        '{{ACCOUNT_USERNAME_JS}}': json.dumps(principal.username if principal and principal.source == 'local_account' else None),
         '{{APP_VERSION}}': APP_VERSION,
         '{{REPO_URL}}': REPO_URL,
         '{{SCROBBLE_CHECKED_TRAKT}}': ('checked' if trakt_configured else ''),

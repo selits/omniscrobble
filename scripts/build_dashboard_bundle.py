@@ -13,6 +13,7 @@ OUTPUT = ROOT / "app" / "static" / "dashboard.js"
 MODULES = (
     "api.js",
     "core.js",
+    "accounts.js",
     "settings.js",
     "reconciliation.js",
     "playback.js",
@@ -24,7 +25,9 @@ MODULES = (
     "tracker_auth.js",
     "webhook_inspector.js",
     "wrapped.js",
+    "analytics_export.js",
     "watch_lists.js",
+    "automation_rules.js",
     "command_palette.js",
 )
 

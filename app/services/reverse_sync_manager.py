@@ -657,6 +657,7 @@ class ReverseSyncManager:
         direction: str = "all",
         demo: bool = False,
         server: Optional[str] = None,
+        preview_items: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         """Execute reconciliation actions for selected or all discrepancies."""
         if demo:
@@ -688,7 +689,9 @@ class ReverseSyncManager:
             return {"status": "in_progress", "message": "Reconciliation already in progress"}
 
         target_items = []
-        if item_ids:
+        if preview_items is not None:
+            target_items = list(preview_items)
+        elif item_ids:
             target_set = set(item_ids)
             target_items = [item for item in self._last_diff if item["id"] in target_set]
         else:

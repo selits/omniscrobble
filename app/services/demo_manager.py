@@ -894,6 +894,27 @@ class DemoManager:
                 "user": "demo_collector",
             },
         }
+        capability_map = {
+            "trakt": ["realtime_playback", "history", "progress", "ratings", "watchlist", "collection", "search"],
+            "simkl": ["realtime_playback", "history", "progress", "ratings"],
+            "tmdb": ["ratings", "watchlist"],
+            "anilist": ["progress", "ratings", "search"],
+            "myanimelist": ["progress", "ratings", "search"],
+            "kitsu": ["progress", "ratings", "search"],
+            "letterboxd": ["history", "ratings"],
+            "serializd": ["history", "ratings"],
+            "mdblist": ["watchlist"],
+        }
+        for tracker_id, details in trackers.items():
+            capabilities = capability_map[tracker_id]
+            details["capabilities"] = capabilities
+            details["supports_realtime_scrobble"] = "realtime_playback" in capabilities
+            details["supports_history"] = "history" in capabilities
+            details["supports_progress"] = "progress" in capabilities
+            details["supports_ratings"] = "ratings" in capabilities
+            details["supports_watchlist"] = "watchlist" in capabilities
+            details["supports_collection"] = "collection" in capabilities
+            details["supports_search"] = "search" in capabilities
         return {
             "categories": {
                 "universal": ["trakt", "simkl", "tmdb"],

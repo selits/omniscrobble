@@ -27,6 +27,7 @@
                 </div>
             </form>
             <div class="u-margin-top-16px u-padding-top-14px u-border-top-1px-solid-334155 u-font-size-12px u-color-text-muted u-text-align-center">
+                Household account? <a href="/login" class="u-color-accent-color u-text-decoration-none u-font-weight-600">Sign in</a><br><br>
                 Just exploring? <a href="/demo" class="u-color-accent-color u-text-decoration-none u-font-weight-600">Try Demo Mode &rarr;</a>
             </div>
         </div>
@@ -846,7 +847,7 @@
                 </div>
             </div>
             <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
-                Compare your Trakt and Simkl libraries to reconcile watch history and sync user ratings bi-directionally across Movies, TV Shows, and Anime.
+                Compare Trakt and Simkl watch history and ratings, plus reconcile Trakt and TMDb ratings. TMDb matches require a shared TMDb ID.
             </p>
 
             <!-- Filter tabs -->
@@ -854,6 +855,8 @@
                 <button type="button" class="btn-sm cross-sync-tab u-background-accent-color u-color-fff" onclick="filterCrossSync('all', this)">All (<span id="cross-count-all">0</span>)</button>
                 <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('trakt_to_simkl', this)">Trakt &rarr; Simkl (<span id="cross-count-t2s">0</span>)</button>
                 <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('simkl_to_trakt', this)">Simkl &rarr; Trakt (<span id="cross-count-s2t">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('trakt_to_tmdb', this)">Trakt &rarr; TMDb ratings (<span id="cross-count-t2tmdb">0</span>)</button>
+                <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('tmdb_to_trakt', this)">TMDb &rarr; Trakt ratings (<span id="cross-count-tmdb2t">0</span>)</button>
                 <button type="button" class="btn-sm cross-sync-tab u-background-bg-surface u-border-1px-solid-334155" onclick="filterCrossSync('rating', this)">Ratings (<span id="cross-count-ratings">0</span>)</button>
             </div>
 
@@ -892,6 +895,16 @@
                 <div class="u-font-size-12px u-color-text-muted">
                     <span id="cross-sync-selected-count">0</span> items selected
                 </div>
+                <label class="u-display-flex u-align-items-center u-gap-6px u-font-size-12px u-color-text-muted">
+                    Rating conflict policy
+                    <select id="cross-sync-conflict-policy" class="u-background-bg-surface u-border-1px-solid-475569 u-border-radius-6px u-padding-6px u-color-text-main">
+                        <option value="manual">Manual selection</option>
+                        <option value="trakt">Prefer Trakt</option>
+                        <option value="simkl">Prefer Simkl</option>
+                        <option value="tmdb">Prefer TMDb</option>
+                        <option value="newest">Newest rating</option>
+                    </select>
+                </label>
                 <div class="u-display-flex u-gap-8px">
                     <button type="button" onclick="closeCrossSyncModal()" class="btn-sm u-background-334155 u-color-text-heading">Cancel</button>
                     <button type="button" id="cross-sync-selected-btn" onclick="executeSelectedCrossSync()" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600" disabled>⚡ Sync Selected</button>
@@ -1008,5 +1021,16 @@
                 <button type="button" id="watch-list-dialog-cancel" class="btn-sm">Cancel</button>
                 <button type="button" id="watch-list-dialog-confirm" class="btn-sm watch-list-dialog-confirm">Continue</button>
             </div>
+        </div>
+    </div>
+
+    <div id="account-modal" class="modal">
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="account-modal-title" style="max-width:760px;width:calc(100% - 24px);max-height:90vh;overflow:auto;">
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:space-between;">
+                <h2 id="account-modal-title">Household accounts</h2>
+                <button type="button" class="btn-sm" onclick="closeAccountModal()" aria-label="Close account settings">Close</button>
+            </div>
+            <p id="account-modal-status" role="status" aria-live="polite"></p>
+            <div id="account-modal-content"></div>
         </div>
     </div>

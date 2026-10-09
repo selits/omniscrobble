@@ -165,13 +165,15 @@ class PlaybackManager:
         self.recently_finished = finished_entry
         return finished_entry
 
-    def get_active_sessions(self, is_admin: bool = True) -> list[dict[str, Any]]:
+    def get_active_sessions(self, is_admin: bool = True, profile_username: Optional[str] = None) -> list[dict[str, Any]]:
         """Return non-stale active streaming sessions, applying privacy masking if needed."""
         now = time.time()
         active = []
         for key, s in list(self.sessions.items()):
             if now - s.get("updated_at", 0) > self.stale_timeout_seconds:
                 self.sessions.pop(key, None)
+                continue
+            if profile_username is not None and str(s.get("username") or "").strip().lower() != profile_username.lower():
                 continue
             item = dict(s)
             item.pop("parsed_media", None)
@@ -224,7 +226,7 @@ class PlaybackManager:
         return len(self.get_active_sessions(is_admin=True))
 
 
-    def get_recently_finished(self, is_admin: bool = True) -> Optional[dict[str, Any]]:
+    def get_recently_finished(self, is_admin: bool = True, profile_username: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Return recently finished media item if within 24h, applying privacy masking if needed."""
         if not self.recently_finished:
             return None
@@ -232,6 +234,8 @@ class PlaybackManager:
             self.recently_finished = None
             return None
 
+        if profile_username is not None and str(self.recently_finished.get("username") or "").strip().lower() != profile_username.lower():
+            return None
         entry = dict(self.recently_finished)
         if not is_admin:
             entry["username"] = mask_username_simple(entry["username"])

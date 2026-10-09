@@ -282,10 +282,11 @@ class DigestManager:
         http = client or notifier.get_client()
         tasks = []
         dispatched: list[str] = []
+        destinations, _ = notifier._notification_route("digest")
 
         # 1. Discord
         discord_url = notifier._get_discord_url()
-        if discord_url:
+        if "discord" in destinations and discord_url:
             payload = self.format_discord_digest(stats)
             tasks.append(("discord", http.post(discord_url, json=payload)))
             dispatched.append("discord")
@@ -293,7 +294,7 @@ class DigestManager:
         # 2. Telegram
         tg_token = notifier._get_telegram_token()
         tg_chat = notifier._get_telegram_chat_id()
-        if tg_token and tg_chat:
+        if "telegram" in destinations and tg_token and tg_chat:
             tg_url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
             html_text = self.format_html_digest(stats).replace("<br>", "\n")
             tg_payload = {
@@ -306,7 +307,7 @@ class DigestManager:
 
         # 3. Ntfy
         ntfy_url = notifier._get_ntfy_url()
-        if ntfy_url:
+        if "ntfy" in destinations and ntfy_url:
             plain_text = self.format_plain_digest(stats)
             headers = {
                 "Title": "Omniscrobble Weekly Activity Digest",
@@ -322,7 +323,7 @@ class DigestManager:
         # 4. Pushover
         p_user = notifier._get_pushover_user_key()
         p_token = notifier._get_pushover_api_token()
-        if p_user and p_token:
+        if "pushover" in destinations and p_user and p_token:
             plain_text = self.format_plain_digest(stats)
             p_payload = {
                 "token": p_token,
@@ -337,7 +338,7 @@ class DigestManager:
         # 5. Gotify
         g_url = notifier._get_gotify_url()
         g_token = notifier._get_gotify_token()
-        if g_url and g_token:
+        if "gotify" in destinations and g_url and g_token:
             plain_text = self.format_plain_digest(stats)
             g_payload = {
                 "title": "Omniscrobble Weekly Activity Digest",
@@ -353,7 +354,7 @@ class DigestManager:
         m_hs = notifier._get_matrix_homeserver_url()
         m_tok = notifier._get_matrix_access_token()
         m_rm = notifier._get_matrix_room_id()
-        if m_hs and m_tok and m_rm:
+        if "matrix" in destinations and m_hs and m_tok and m_rm:
             txn_id = f"digest_{int(time.time() * 1000)}"
             encoded_room = urllib.parse.quote(m_rm, safe="") if hasattr(urllib, "parse") else m_rm
             m_url = f"{m_hs}//_matrix/client/v3/rooms/{encoded_room}/send/m.room.message/{txn_id}".replace("///", "/")

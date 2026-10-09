@@ -8,9 +8,11 @@ from typing import Any, Optional
 try:
     from app.config import Config
     from app.clients.trakt_client import TraktClient
+    from app.services.result_normalizer import normalize_result
 except ImportError:
     from config import Config
     from trakt_client import TraktClient
+    from services.result_normalizer import normalize_result
 
 logger = logging.getLogger("queue_manager")
 
@@ -18,20 +20,45 @@ logger = logging.getLogger("queue_manager")
 class QueueManager:
     def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or Config.QUEUE_DB_FILE
+        self._future_schema_version: int | None = None
         self.init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
+        if self._future_schema_version is not None:
+            raise RuntimeError("Offline queue uses a newer schema; access is disabled with this version.")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self.db_path), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version > 1:
+            self._future_schema_version = version
+            conn.close()
+            raise RuntimeError("Offline queue uses a newer schema; access is disabled with this version.")
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         return conn
 
+    def reload_schema(self) -> None:
+        """Reinspect a restored database before any queue access resumes."""
+        self._future_schema_version = None
+        self.init_db()
+
     def init_db(self) -> None:
         """Create the queued_events table and indexes if they do not exist."""
+        if self.db_path.exists():
+            with sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True) as probe:
+                version = int(probe.execute("PRAGMA user_version").fetchone()[0])
+            if version > 1:
+                self._future_schema_version = version
+                logger.error("Offline queue schema %s is newer than supported; access is disabled.", version)
+                return
         with self._get_connection() as conn:
+            schema_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            if schema_version > 1:
+                self._future_schema_version = schema_version
+                logger.error("Offline queue schema %s is newer than supported; leaving it unchanged.", schema_version)
+                return
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS queued_events (
@@ -43,7 +70,8 @@ class QueueManager:
                     retry_count INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT DEFAULT '',
                     status TEXT NOT NULL DEFAULT 'pending',
-                    completed_at INTEGER DEFAULT NULL
+                    completed_at INTEGER DEFAULT NULL,
+                    event_id TEXT DEFAULT NULL
                 )
                 """
             )
@@ -55,37 +83,118 @@ class QueueManager:
                 conn.execute("ALTER TABLE queued_events ADD COLUMN completed_at INTEGER DEFAULT NULL")
             except Exception:
                 pass
+            try:
+                conn.execute("ALTER TABLE queued_events ADD COLUMN event_id TEXT DEFAULT NULL")
+            except Exception:
+                pass
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_queued_events_status ON queued_events(status)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_queued_events_completed_at ON queued_events(completed_at)"
             )
+            conn.execute("PRAGMA user_version = 1")
             conn.commit()
 
-    def enqueue(self, event_type: str, payload: dict[str, Any], error: str = "", username: str = "default") -> int:
+    def enqueue(
+        self,
+        event_type: str,
+        payload: dict[str, Any],
+        error: str = "",
+        username: str = "default",
+        event_id: Optional[str] = None,
+    ) -> int:
         """Insert a failed event into the offline retry queue."""
         payload_str = json.dumps(payload)
         now = int(time.time())
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO queued_events (username, event_type, payload, created_at, retry_count, last_error, status)
-                VALUES (?, ?, ?, ?, 0, ?, 'pending')
+                INSERT INTO queued_events (username, event_type, payload, created_at, retry_count, last_error, status, event_id)
+                VALUES (?, ?, ?, ?, 0, ?, 'pending', ?)
                 """,
-                (username or "default", event_type, payload_str, now, error),
+                (username or "default", event_type, payload_str, now, error, event_id),
             )
             conn.commit()
             item_id = cursor.lastrowid or 0
         logger.info(f"Enqueued {event_type} event (id: {item_id}) for offline retry")
         return item_id
 
+    def attach_event(self, item_ids: list[int], event_id: str) -> None:
+        """Associate queued operations created before their source event was persisted."""
+        if not item_ids or not event_id:
+            return
+        with self._get_connection() as conn:
+            conn.executemany(
+                "UPDATE queued_events SET event_id = ? WHERE id = ?",
+                [(event_id, item_id) for item_id in item_ids],
+            )
+            conn.commit()
+
+    def get_event_queue_state(self, event_id: str) -> str:
+        """Summarize linked queue items for one source activity event."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT status FROM queued_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchall()
+        if not rows:
+            return "success"
+        statuses = {str(row["status"]) for row in rows}
+        has_pending = "pending" in statuses
+        has_failed = "failed" in statuses
+        has_completed = "completed" in statuses
+        if has_failed and (has_pending or has_completed):
+            return "partial"
+        if has_pending:
+            return "queued"
+        if has_failed:
+            return "failed"
+        return "success"
+
+    def retry_failed_item(
+        self,
+        item_id: int,
+        event_id: str,
+        confirm_duplicate_history: bool = False,
+    ) -> str:
+        """Requeue one failed operation linked to an event, with explicit duplicate-risk approval."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT event_type, status, event_id, last_error FROM queued_events WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            if not row or row["event_id"] != event_id:
+                return "not_found"
+            if row["status"] != "failed":
+                return "not_failed"
+            event_type = str(row["event_type"])
+            if event_type not in {"sync_collection", "sync_ratings", "sync_watchlist", "sync_history", "scrobble_stop"}:
+                return "unsupported"
+            last_error = str(row["last_error"] or "").lower()
+            if any(term in last_error for term in ("unauthorized", "forbidden", "invalid token", "not authenticated", "http 400", "http 401", "http 403", "http 404")):
+                return "not_retryable"
+            retryable_hint = any(term in last_error for term in (
+                "timeout", "network", "connect", "unavailable", "temporarily", "http 429",
+                "http 500", "http 502", "http 503", "http 504", "service busy",
+            ))
+            if not retryable_hint:
+                return "not_retryable"
+            if event_type in {"sync_history", "scrobble_stop"} and not confirm_duplicate_history:
+                return "confirmation_required"
+            conn.execute(
+                "UPDATE queued_events SET status = 'pending', retry_count = 0, last_error = '' WHERE id = ?",
+                (item_id,),
+            )
+            conn.commit()
+        return "queued"
+
     def get_pending(self, limit: int = 20) -> list[dict[str, Any]]:
         """Retrieve pending events sorted by created_at ascending."""
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT id, username, event_type, payload, created_at, retry_count, last_error, status
+                SELECT id, username, event_type, payload, created_at, retry_count, last_error, status, event_id
                 FROM queued_events
                 WHERE status = 'pending'
                 ORDER BY created_at ASC
@@ -110,6 +219,7 @@ class QueueManager:
                 "retry_count": r["retry_count"],
                 "last_error": r["last_error"],
                 "status": r["status"],
+                "event_id": r["event_id"],
             })
         return items
 
@@ -123,7 +233,7 @@ class QueueManager:
             )
             conn.commit()
 
-    def mark_failure(self, item_id: int, error: str = "", max_retries: int = 5) -> None:
+    def mark_failure(self, item_id: int, error: str = "", max_retries: int = 5) -> str:
         """Increment retry count, and transition to 'failed' if max_retries reached."""
         with self._get_connection() as conn:
             cursor = conn.execute(
@@ -131,7 +241,7 @@ class QueueManager:
             )
             row = cursor.fetchone()
             if not row:
-                return
+                return "missing"
 
             new_count = row["retry_count"] + 1
             new_status = "failed" if new_count >= max_retries else "pending"
@@ -144,6 +254,7 @@ class QueueManager:
                 (new_count, error, new_status, item_id),
             )
             conn.commit()
+            return new_status
 
     def get_pending_count(self) -> int:
         """Return count of items currently in 'pending' status."""
@@ -153,6 +264,31 @@ class QueueManager:
             )
             row = cursor.fetchone()
             return int(row["cnt"]) if row else 0
+
+    def get_item(self, item_id: int) -> Optional[dict[str, Any]]:
+        """Return one queue item by ID, independent of its current status."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, username, event_type, payload, created_at, retry_count, last_error, status, event_id FROM queued_events WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except Exception:
+            payload = {}
+        return {
+            "id": row["id"],
+            "username": row["username"],
+            "event_type": row["event_type"],
+            "payload": payload,
+            "created_at": row["created_at"],
+            "retry_count": row["retry_count"],
+            "last_error": row["last_error"],
+            "status": row["status"],
+            "event_id": row["event_id"],
+        }
 
     def get_all_count(self) -> dict[str, int]:
         """Return total counts by status."""
@@ -207,6 +343,7 @@ async def process_queue(
     queue_mgr: QueueManager,
     max_items: int = 20,
     user_mgr: Optional[Any] = None,
+    on_result: Optional[Any] = None,
 ) -> dict[str, int]:
     """Drain pending items from the offline queue and dispatch to Trakt."""
     pending = queue_mgr.get_pending(limit=max_items)
@@ -221,6 +358,13 @@ async def process_queue(
         username = item.get("username", "default")
         event_type = item["event_type"]
         payload = item["payload"]
+
+        def report(state: str, reason: str = "") -> None:
+            if on_result and item.get("event_id"):
+                try:
+                    on_result(item["event_id"], event_type, item_id, state, reason, item.get("retry_count", 0) + 2)
+                except Exception as callback_error:
+                    logger.warning("Could not attach queue result to activity event %s: %s", item.get("event_id"), callback_error)
 
         client = user_mgr.get_client(username) if user_mgr else trakt_client
 
@@ -249,40 +393,52 @@ async def process_queue(
                 res = await client.scrobble_pause(payload)
             else:
                 logger.warning(f"Unknown queued event type: {event_type}")
-                queue_mgr.mark_failure(item_id, f"Unknown event type: {event_type}")
+                reason = f"Unknown event type: {event_type}"
+                queue_mgr.mark_failure(item_id, reason, max_retries=1)
+                report("failed", reason)
                 failed += 1
                 continue
 
+            normalized = normalize_result(res)
             status = res.get("status")
             error_val = res.get("error")
-
-            if status == "error":
+            if normalized.state == "failed":
                 logger.warning(f"Queued event {item_id} ({event_type}) returned an error: {error_val or res}")
-                queue_mgr.mark_failure(item_id, str(error_val or res))
+                reason = str(error_val or res)
+                if normalized.retryable:
+                    queue_status = queue_mgr.mark_failure(item_id, reason, max_retries=5)
+                    report("queued" if queue_status == "pending" else "failed", reason)
+                    failed += 1
+                    logger.warning(f"Queued event {item_id} ({event_type}) failed temporarily")
+                    break
+                queue_mgr.mark_failure(item_id, reason, max_retries=1)
+                report("failed", reason)
                 failed += 1
                 continue
 
-            # Check if Trakt responded with temporary error (5xx, 429, or connection error)
-            is_temp_error = (
-                status in (500, 502, 503, 504, 429)
-                or (isinstance(error_val, str) and any(e in error_val.lower() for e in ("connect", "timeout", "network", "service unavailable")))
-            )
-
-            if is_temp_error:
-                logger.warning(f"Queued event {item_id} ({event_type}) failed with temporary error: {res}")
-                queue_mgr.mark_failure(item_id, str(error_val or f"HTTP {status}"))
+            if normalized.state == "queued":
+                report("queued", str(error_val or "Saved for retry."))
                 failed += 1
-                # Stop processing the remainder of this batch to prevent hammering unreachable server
-                break
+                continue
+
+            # A 409 is an idempotent conflict from Trakt and counts as delivered.
+            if not normalized.state == "success" and status != 409:
+                reason = str(error_val or "The tracker did not confirm this operation.")
+                queue_mgr.mark_failure(item_id, reason, max_retries=1)
+                report("failed", reason)
+                failed += 1
+                continue
             else:
-                # Success or non-retryable response (e.g. 200, 201, 409 conflict)
+                # Success or idempotent response.
                 queue_mgr.mark_success(item_id)
+                report("success")
                 succeeded += 1
                 logger.info(f"Successfully processed queued event {item_id} ({event_type})")
 
         except Exception as e:
             logger.error(f"Error processing queued event {item_id}: {e}")
-            queue_mgr.mark_failure(item_id, str(e))
+            queue_status = queue_mgr.mark_failure(item_id, str(e))
+            report("queued" if queue_status == "pending" else "failed", str(e))
             failed += 1
             break
 

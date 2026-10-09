@@ -45,11 +45,12 @@
                 if (activityFilters.type === 'movie' && !['movie', 'film'].includes(type)) return false;
                 if (activityFilters.type === 'tv' && !['episode', 'show', 'series', 'tv'].includes(type)) return false;
                 if (activityFilters.type === 'anime' && !(ev.is_anime || ev.media_payload?.is_anime || type.includes('anime'))) return false;
+                const deliveryStatus = String(ev.delivery_status || '').toLowerCase();
                 const status = String(ev.result_status || '').toLowerCase();
                 const trackerStates = Object.values(ev.tracker_delivery || {});
-                if (activityFilters.status === 'queued' && status !== 'queued' && !trackerStates.includes('queued')) return false;
-                if (activityFilters.status === 'failed' && !(status === 'error' || status === 'failed' || status === '429' || /^4\d\d$/.test(status) || /^5\d\d$/.test(status) || trackerStates.includes('failed'))) return false;
-                if (activityFilters.status === 'success' && !(status === 'ok' || status === 'success' || status === '200' || status === '201' || trackerStates.includes('success'))) return false;
+                if (activityFilters.status === 'queued' && deliveryStatus !== 'queued' && status !== 'queued' && !trackerStates.includes('queued')) return false;
+                if (activityFilters.status === 'failed' && !(deliveryStatus === 'failed' || deliveryStatus === 'partial' || status === 'error' || status === 'failed' || status === '429' || /^4\d\d$/.test(status) || /^5\d\d$/.test(status) || trackerStates.includes('failed'))) return false;
+                if (activityFilters.status === 'success' && !(deliveryStatus === 'success' || status === 'ok' || status === 'success' || status === '200' || status === '201' || trackerStates.includes('success'))) return false;
                 if (activityFilters.search) {
                     const haystack = `${ev.title || ''} ${ev.user || ''}`.toLowerCase();
                     if (!haystack.includes(activityFilters.search)) return false;
@@ -95,11 +96,15 @@
             return act.startsWith('mark_watched') || act.startsWith('scrobble_stop') || act.startsWith('test_webhook') || act === 'scrobble' || act === 'watched';
         }
 
-        function renderStatusBadge(action, resultStatus, progress, cowatchStatus) {
+        function renderStatusBadge(action, resultStatus, progress, cowatchStatus, deliveryStatus) {
             const rawAct = String(action || '').toLowerCase().trim();
             const cleanAct = formatActionLabel(rawAct).toLowerCase();
             const stat = String(resultStatus || '').toLowerCase().trim();
             const cw = cowatchStatus;
+
+            if (deliveryStatus === 'partial') {
+                return '<span class="activity-status-badge activity-status-failed" title="Some destinations succeeded while others failed or remain queued">! Partial delivery</span>';
+            }
 
             if (cw && cw.synced && shouldDisplayCowatchBadge(action, resultStatus, progress)) {
                 const targetTxt = cw.target ? `@${cw.target}` : 'partner';
@@ -171,6 +176,39 @@
             return badges ? `<span class="tracker-delivery-badges" aria-label="Tracker delivery">${badges}</span>` : '';
         }
 
+        function toggleEventDetails(eventId) {
+            const row = document.getElementById(`event-details-${eventId}`);
+            const button = document.querySelector(`[data-event-detail-toggle="${eventId}"]`);
+            if (!row || !button) return;
+            const willOpen = row.hidden;
+            row.hidden = !willOpen;
+            button.setAttribute('aria-expanded', String(willOpen));
+            button.textContent = willOpen ? 'Hide details' : 'Details';
+        }
+
+        async function retryEventDelivery(eventId, queueItemId, eventType, button) {
+            if (!isAdmin) {
+                openUnlockModal();
+                return;
+            }
+            const duplicateRisk = ['sync_history', 'scrobble_stop'].includes(String(eventType || ''));
+            if (duplicateRisk && !confirm('This retry could create duplicate watch history if the tracker accepted the original request before the connection failed. Retry anyway?')) return;
+            if (button) button.disabled = true;
+            try {
+                const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/retry`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({queue_item_id: queueItemId, confirm_duplicate_history: duplicateRisk}),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Could not retry this destination.');
+                await fetchEvents();
+            } catch (error) {
+                if (button) button.disabled = false;
+                alert(error.message || 'Could not retry this destination.');
+            }
+        }
+
         function renderRows(events) {
             if (events !== undefined && events !== null) {
                 const previous = allEvents || [];
@@ -227,6 +265,10 @@
             for (const ev of pageEvents) {
                 let actionBtns = '';
                 if (isAdmin) {
+                    const eventId = String(ev.event_id || '');
+                    if (eventId) {
+                        actionBtns += `<button type="button" data-event-detail-toggle="${escapeHtml(eventId)}" aria-expanded="false" aria-controls="event-details-${escapeHtml(eventId)}" onclick="toggleEventDetails('${escapeHtml(eventId)}')" class="btn-sm activity-row-button" title="View per-destination delivery details">Details</button>`;
+                    }
                     const showTitle = ev.show_title || (ev.type === 'show' ? (ev.media_payload?.title || ev.title) : null);
                     if (showTitle && !ev.is_cowatch_show) {
                         const showEnc = encodeURIComponent(showTitle);
@@ -251,7 +293,10 @@
                 }
                 const actionCol = isAdmin ? `<td class="activity-actions-cell"><div class="activity-row-actions">${actionBtns}</div></td>` : '';
 
-                const statusBadgeHtml = renderStatusBadge(ev.action, ev.result_status, ev.progress, ev.cowatch_status);
+                const statusBadgeHtml = renderStatusBadge(ev.action, ev.result_status, ev.progress, ev.cowatch_status, ev.delivery_status);
+                const memberRule = !isAdmin && ev.rule_evaluation
+                    ? `<details class="activity-rule-inline"><summary>Rule: ${escapeHtml(ev.rule_evaluation.decision || 'allow')}</summary><span>${escapeHtml(ev.rule_evaluation.reason || 'No explanation recorded.')}</span></details>`
+                    : '';
 
                 const srv = (ev.server || 'plex').toLowerCase();
                 let serverBadge = '<span class="activity-server-badge activity-server-plex">Plex</span>';
@@ -276,10 +321,36 @@
                     <td class="activity-title" data-label="Title">${escapeHtml(ev.title)}</td>
                     <td data-label="Type"><span class="activity-type">${escapeHtml(ev.type)}</span></td>
                     <td class="activity-user" data-label="User"><div class="activity-user-content">${serverBadge}<span>${escapeHtml(ev.user)}</span></div></td>
-                    <td data-label="Action"><span class="activity-action">${escapeHtml(actionText)}</span></td>
+                    <td data-label="Action"><span class="activity-action">${escapeHtml(actionText)}</span>${memberRule}</td>
                     <td data-label="Status"><div class="activity-status-group">${statusBadgeHtml}${renderTrackerDeliveryBadges(ev.tracker_delivery)}</div></td>
                     ${actionCol}
                 </tr>`;
+                if (isAdmin && ev.event_id) {
+                    const eventId = escapeHtml(String(ev.event_id));
+                    const details = ev.tracker_delivery_details || {};
+                    const categoryLabels = {
+                        delivered: 'Delivered', queued: 'Waiting for retry', transient: 'Temporary failure',
+                        authorization_or_configuration: 'Authorization/configuration', permanent: 'Permanent failure',
+                        unsupported: 'Unsupported or unavailable', intentional_skip: 'Intentionally skipped',
+                        partial: 'Partial delivery', unknown_failure: 'Failure',
+                    };
+                    const detailRows = Object.entries(details).map(([tracker, detail]) => {
+                        const history = Array.isArray(detail.history) ? detail.history : [];
+                        const attempts = history.map((attempt) => `${escapeHtml(attempt.timestamp || '')}: ${escapeHtml(attempt.state || '')}${attempt.category ? ` (${escapeHtml(categoryLabels[attempt.category] || attempt.category)})` : ''} — ${escapeHtml(attempt.reason || '')}`).join('<br>');
+                        const category = categoryLabels[detail.category] || detail.category || 'Outcome recorded';
+                        const logsAction = ['failed', 'queued', 'partial'].includes(String(detail.state || '')) ? ' <button type="button" class="btn-sm activity-row-button" onclick="openLogsModal()">View logs</button>' : '';
+                        const eventType = String(detail.queue_event_type || '');
+                        const retryAction = detail.state === 'failed' && detail.category === 'transient' && Number.isInteger(Number(detail.queue_item_id))
+                            ? ` <button type="button" class="btn-sm activity-row-button" onclick="retryEventDelivery('${eventId}', ${Number(detail.queue_item_id)}, '${escapeHtml(eventType)}', this)">Retry</button>`
+                            : '';
+                        return `<li><strong>${escapeHtml(tracker)}</strong>: ${escapeHtml(detail.state || 'unknown')} <span class="activity-detail-category">${escapeHtml(category)}</span> — ${escapeHtml(detail.reason || 'No explanation recorded.')} <span class="activity-detail-attempts">(${Number(detail.attempts || history.length || 0)} attempt${Number(detail.attempts || history.length || 0) === 1 ? '' : 's'})</span>${logsAction}${retryAction}${attempts ? `<div class="activity-detail-history">${attempts}</div>` : ''}</li>`;
+                    }).join('');
+                    const deliveryDetails = detailRows || '<li>No per-destination details were recorded for this event.</li>';
+                    const source = `${ev.server || 'unknown'} · ${ev.event || 'event'} · operation ${eventId}`;
+                    const rule = ev.rule_evaluation;
+                    const ruleDetails = rule ? `<p><strong>Automation:</strong> ${escapeHtml(rule.decision || 'allow')} — ${escapeHtml(rule.reason || 'No explanation recorded.')}${rule.conflicts?.length ? ` <span class="activity-detail-category">${rule.conflicts.length} conflicting rule(s)</span>` : ''}</p>` : '';
+                    html += `<tr id="event-details-${eventId}" class="activity-details-row" hidden><td colspan="${colSpan}"><div class="activity-details-panel"><strong>${escapeHtml(source)}</strong>${ruleDetails}<ul>${deliveryDetails}</ul></div></td></tr>`;
+                }
             }
             tbody.innerHTML = html;
             activityFreshKeys.clear();
