@@ -813,6 +813,8 @@ def generate_static_demo(output_dir: Path = None) -> Path:
         '{{EVENTS_PAGE_NUM}}': demo_page_num,
         '{{EVENTS_NEXT_DISABLED}}': demo_next_disabled,
         '{{IS_ADMIN_JS}}': 'true',
+        '{{IS_MEMBER_JS}}': 'false',
+        '{{ACCOUNT_USERNAME_JS}}': 'null',
         '{{IS_DEMO_JS}}': 'true',
         '{{APP_VERSION}}': APP_VERSION,
         '{{REPO_URL}}': REPO_URL,
@@ -848,6 +850,8 @@ def generate_static_demo(output_dir: Path = None) -> Path:
 
     for k, v in replacements.items():
         rendered = rendered.replace(k, v)
+
+    rendered = "\n".join(line.rstrip() for line in rendered.splitlines()) + "\n"
 
     # Rewrite asset links to relative paths for GitHub Pages (handles subpaths and custom domains)
     rendered = rendered.replace(

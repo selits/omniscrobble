@@ -39,7 +39,38 @@
         let currentSettingsData = null;
         let activeSettingsServerSubTab = 'plex';
 
+        function previewNotificationRoute(event) {
+            const destinations = Array.from(document.getElementById(`settings-notif-route-${event}-destinations`)?.selectedOptions || []).map(option => option.textContent.trim());
+            const severity = document.getElementById(`settings-notif-route-${event}-severity`)?.value || 'normal';
+            const profiles = Array.from(document.getElementById(`settings-notif-route-${event}-profiles`)?.selectedOptions || []).map(option => option.textContent.trim());
+            const output = document.getElementById(`settings-notif-route-${event}-preview`);
+            if (!output) return;
+            const destinationText = destinations.length ? destinations.join(', ') : 'No channels selected';
+            const profileText = profiles.length ? ` · profiles: ${profiles.join(', ')}` : ' · all profiles';
+            const throttleText = event === 'failure' ? ' Failure alerts deduplicate for 30 minutes per title.' : event === 'token_expiry' ? ' Token expiry alerts are limited to once per service per 24 hours.' : '';
+            output.textContent = `${destinationText}${profileText} · ${severity} severity.${throttleText}`;
+        }
+
+        async function sendNotificationRoutePreview(event) {
+            const status = document.getElementById(`settings-notif-route-${event}-delivery`);
+            const demo = isDemo ? '?demo=true' : '';
+            if (status) status.textContent = 'Sending sample...';
+            try {
+                const response = await fetch(`/api/notifications/preview-route${demo}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event })
+                });
+                const result = await response.json();
+                if (!response.ok || !result.success) throw new Error(result.message || 'No selected configured channel delivered the sample.');
+                if (status) status.textContent = result.message || 'Sample delivered.';
+            } catch (error) {
+                if (status) status.textContent = `Preview failed: ${error.message}`;
+            }
+        }
+
         function openSettingsModal(tab = 'servers', section = null) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -504,6 +535,25 @@
                 if (rateCheck && notifs.notify_on_rate !== undefined) rateCheck.checked = Boolean(notifs.notify_on_rate);
                 if (colCheck && notifs.notify_on_collection !== undefined) colCheck.checked = Boolean(notifs.notify_on_collection);
                 if (failCheck && notifs.notify_on_failure !== undefined) failCheck.checked = Boolean(notifs.notify_on_failure);
+                const notificationRoutes = notifs.notification_routes || {};
+                const notificationProfiles = data.notification_profiles || [];
+                for (const event of ['scrobble', 'rate', 'collection', 'arr_add', 'playback_start', 'queue_recovery', 'token_expiry', 'digest', 'failure']) {
+                    const destinations = document.getElementById(`settings-notif-route-${event}-destinations`);
+                    const severity = document.getElementById(`settings-notif-route-${event}-severity`);
+                    const profiles = document.getElementById(`settings-notif-route-${event}-profiles`);
+                    const route = notificationRoutes[event] || {};
+                    if (destinations) Array.from(destinations.options).forEach(option => { option.selected = (route.destinations || ['discord', 'telegram', 'ntfy', 'pushover', 'gotify', 'matrix']).includes(option.value); });
+                    if (severity) severity.value = route.severity || 'normal';
+                    if (profiles) {
+                        profiles.replaceChildren(...notificationProfiles.map(name => {
+                            const option = document.createElement('option');
+                            option.value = name;
+                            option.textContent = name;
+                            option.selected = (route.profiles || []).includes(name);
+                            return option;
+                        }));
+                    }
+                }
 
                 const dcUrl = document.getElementById('settings-notif-discord-url');
                 const dcBadge = document.getElementById('settings-notif-discord-badge');
@@ -702,7 +752,12 @@
                         notify_on_scrobble: Boolean(document.getElementById('settings-notif-scrobble-check')?.checked),
                         notify_on_rate: Boolean(document.getElementById('settings-notif-rate-check')?.checked),
                         notify_on_collection: Boolean(document.getElementById('settings-notif-collection-check')?.checked),
-                        notify_on_failure: Boolean(document.getElementById('settings-notif-failure-check')?.checked)
+                        notify_on_failure: Boolean(document.getElementById('settings-notif-failure-check')?.checked),
+                        notification_routes: Object.fromEntries(['scrobble', 'rate', 'collection', 'arr_add', 'playback_start', 'queue_recovery', 'token_expiry', 'digest', 'failure'].map(event => [event, {
+                            destinations: Array.from(document.getElementById(`settings-notif-route-${event}-destinations`)?.selectedOptions || []).map(option => option.value),
+                            severity: document.getElementById(`settings-notif-route-${event}-severity`)?.value || 'normal',
+                            profiles: Array.from(document.getElementById(`settings-notif-route-${event}-profiles`)?.selectedOptions || []).map(option => option.value)
+                        }]))
                     },
                     rules: {
                         scrobble_threshold: parseInt(document.getElementById('settings-rules-threshold')?.value, 10) || 80,

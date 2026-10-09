@@ -429,6 +429,27 @@
             }).join('');
         }
 
+        function downloadBackup() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (isDemo) { alert('Demo mode: backup download simulated.'); return; }
+            window.location.assign('/api/backup');
+        }
+
+        async function createBackupSnapshot() {
+            if (!isAdmin) { openUnlockModal(); return; }
+            if (isDemo) { alert('Demo mode: local backup snapshot simulated.'); return; }
+            const status = document.getElementById('backup-snapshot-status');
+            if (status) status.textContent = 'Creating local snapshot…';
+            try {
+                const response = await fetch('/api/backup/snapshots', { method: 'POST' });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || 'Snapshot creation failed');
+                if (status) status.textContent = `Saved ${result.created}. ${result.retained} of ${result.retention_count} snapshots retained.`;
+            } catch (error) {
+                if (status) status.textContent = `Snapshot failed: ${error.message}`;
+            }
+        }
+
         async function uploadBackup(input) {
             if (!isAdmin) { openUnlockModal(); return; }
             if (isDemo) {
@@ -438,26 +459,67 @@
             }
             if (!input.files || !input.files[0]) return;
             const file = input.files[0];
-            if (!confirm(`Restore system configuration and tokens from "${file.name}"? This will overwrite existing tokens and configuration.`)) {
-                input.value = '';
-                return;
-            }
-            const formData = new FormData();
-            formData.append('backup_file', file);
+            const status = document.getElementById('backup-restore-status');
+            let passphrase = '';
             try {
+                const previewBackup = async () => {
+                    const formData = new FormData();
+                    formData.append('backup_file', file);
+                    if (passphrase) formData.append('passphrase', passphrase);
+                    const response = await fetch('/api/restore/preview', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await response.json();
+                    if (!response.ok) {
+                        if (!passphrase && /requires a passphrase/i.test(data.detail || '')) {
+                            passphrase = window.prompt('Enter the backup passphrase:') || '';
+                            if (!passphrase) throw new Error('Restore preview cancelled.');
+                            return previewBackup();
+                        }
+                        throw new Error(data.detail || 'Could not validate this backup.');
+                    }
+                    return data;
+                };
+                if (status) status.textContent = 'Validating archive…';
+                const preview = await previewBackup();
+                const categorySummary = Object.entries(preview.categories || {}).map(([category, details]) => {
+                    const replace = details.replace.length ? details.replace.join(', ') : 'none';
+                    const preserve = details.preserve.length ? details.preserve.join(', ') : 'none';
+                    return `${category}: replace ${replace}; preserve ${preserve}`;
+                }).join('\n');
+                const warningSummary = (preview.warnings || []).join('\n');
+                const confirmation = [
+                    `Backup preview: ${file.name}`,
+                    `Source version: ${preview.source_version || 'legacy / unknown'}`,
+                    `Files to restore: ${preview.files.length}`,
+                    categorySummary,
+                    warningSummary,
+                    'Apply this restore now?'
+                ].filter(Boolean).join('\n\n');
+                if (!confirm(confirmation)) {
+                    if (status) status.textContent = 'Preview complete. No files were changed.';
+                    input.value = '';
+                    return;
+                }
+                if (status) status.textContent = 'Applying validated backup…';
+                const formData = new FormData();
+                formData.append('backup_file', file);
+                if (passphrase) formData.append('passphrase', passphrase);
                 const res = await fetch('/api/restore', {
                     method: 'POST',
                     body: formData
                 });
                 if (res.ok) {
-                    alert('✓ Backup successfully restored!');
+                    if (status) status.textContent = 'Backup restored. Reloading dashboard…';
                     window.location.reload();
                 } else {
                     const err = await res.json();
-                    alert('Restore failed: ' + (err.detail || 'Error'));
+                    throw new Error(err.detail || 'Restore failed.');
                 }
             } catch (e) {
-                alert('Restore error: ' + e.message);
+                if (status) status.textContent = `Restore stopped: ${e.message}`;
+                else alert('Restore error: ' + e.message);
             }
             input.value = '';
         }

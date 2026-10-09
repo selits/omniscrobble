@@ -6,6 +6,7 @@ for movies and TV series.
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Any, Optional
 import httpx
 
@@ -178,6 +179,45 @@ class TMDbClient:
         except Exception as e:
             logger.error("TMDb sync_rating failed: %s", e)
             return {"status": "error", "error": str(e)}
+
+    async def get_rated_items(self, media_type: str, max_pages: int = 500) -> list[dict[str, Any]]:
+        """Fetch account-rated movies or TV shows, following TMDb pagination.
+
+        TMDb documents account-rated movie and TV lists as paginated endpoints.
+        The API's pagination is capped at 500 pages; requests stay sequential and
+        abort on errors (including 429) so callers never mistake a partial scan
+        for a complete library.
+        """
+        if media_type not in {"movie", "tv"}:
+            raise ValueError("TMDb rated items support only movie and tv media types")
+        if not self.is_authenticated():
+            raise RuntimeError("TMDb account authentication is required to read personal ratings")
+        if not self.account_id:
+            account = await self.check_connection()
+            if account.get("status") != "connected" or not self.account_id:
+                raise RuntimeError("TMDb account ID is unavailable; reconnect TMDb and try again")
+
+        client = self.get_client()
+        results: list[dict[str, Any]] = []
+        page = 1
+        endpoint = "movies" if media_type == "movie" else "tv"
+        page_limit = min(max(1, max_pages), 500)
+        while page <= page_limit:
+            if page > 1:
+                await asyncio.sleep(0.05)
+            url = f"{self.BASE_URL}/account/{self.account_id}/rated/{endpoint}"
+            response = await client.get(url, headers=self._get_headers(), params={**self._get_params(), "page": page})
+            if response.status_code != 200:
+                raise RuntimeError(f"TMDb rated {media_type} request failed with HTTP {response.status_code}")
+            data = response.json()
+            results.extend(item for item in data.get("results", []) if isinstance(item, dict))
+            total_pages = max(1, int(data.get("total_pages", 1) or 1))
+            if total_pages > page_limit:
+                raise RuntimeError(f"TMDb rated {media_type} list exceeds the {page_limit}-page scan limit")
+            if page >= total_pages:
+                return results
+            page += 1
+        raise RuntimeError(f"TMDb rated {media_type} list exceeded the {page_limit}-page scan limit")
 
     async def sync_watchlist(self, media_type: str, tmdb_id: int | str, watchlist: bool = True) -> dict[str, Any]:
         """Add or remove an item from the user's TMDb Watchlist."""

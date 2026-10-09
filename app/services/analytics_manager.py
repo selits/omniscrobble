@@ -56,6 +56,109 @@ class AnalyticsManager:
         return {k: 0 for k in keys}
 
     @staticmethod
+    def _event_datetime(event: dict[str, Any]) -> Optional[datetime.datetime]:
+        raw = event.get("timestamp")
+        if not raw:
+            return None
+        try:
+            value = datetime.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                value = datetime.datetime.strptime(str(raw).split(".")[0], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+        if value.tzinfo:
+            value = value.astimezone().replace(tzinfo=None)
+        return value
+
+    @staticmethod
+    def _event_media_type(event: dict[str, Any]) -> str:
+        media = event.get("media_payload") if isinstance(event.get("media_payload"), dict) else {}
+        value = str(event.get("type") or event.get("media_type") or media.get("media_type") or "").lower()
+        if value:
+            return value
+        title = str(event.get("title", ""))
+        return "episode" if event.get("show_title") or re.search(r"\s+[Ss]\d+([Ee]\d+)?", title) else "movie"
+
+    @staticmethod
+    def _event_is_cowatch(event: dict[str, Any]) -> bool:
+        value = event.get("cowatch_status")
+        if isinstance(value, dict):
+            return value.get("synced") is True or ("eligible" in str(value.get("reason", "")).lower() and "ineligible" not in str(value.get("reason", "")).lower())
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return "eligible" in value.lower() and "ineligible" not in value.lower()
+        reason = str(event.get("cowatch_reason", "")).lower()
+        return "eligible" in reason and "ineligible" not in reason
+
+    @classmethod
+    def _matches_export_filters(
+        cls, event: dict[str, Any], *, start_date: Optional[datetime.date] = None,
+        end_date: Optional[datetime.date] = None, profile: Optional[str] = None,
+        media_type: Optional[str] = None, server: Optional[str] = None,
+        tracker: Optional[str] = None, viewing: Optional[str] = None,
+    ) -> bool:
+        if profile and str(event.get("user") or "").casefold() != profile.casefold():
+            return False
+        if media_type and cls._event_media_type(event) != media_type.casefold():
+            return False
+        if server and str(event.get("server") or "").casefold() != server.casefold():
+            return False
+        if tracker:
+            delivery = event.get("tracker_delivery")
+            details = event.get("tracker_delivery_details")
+            names = set(delivery) if isinstance(delivery, dict) else set()
+            if isinstance(details, dict):
+                names.update(str(name).split(" · ")[0].casefold() for name in details)
+            if tracker.casefold() not in {str(name).casefold() for name in names}:
+                return False
+        if viewing:
+            action = str(event.get("action", "")).lower().split(" (")[0].strip()
+            if action not in cls.COMPLETED_WATCH_ACTIONS:
+                return False
+            if cls._event_is_cowatch(event) != (viewing.casefold() == "shared"):
+                return False
+        if start_date or end_date:
+            timestamp = cls._event_datetime(event)
+            if timestamp is None:
+                return False
+            if start_date and timestamp.date() < start_date:
+                return False
+            if end_date and timestamp.date() > end_date:
+                return False
+        return True
+
+    def get_activity_export_rows(
+        self, *, start_date: Optional[datetime.date] = None, end_date: Optional[datetime.date] = None,
+        profile: Optional[str] = None, media_type: Optional[str] = None, server: Optional[str] = None,
+        tracker: Optional[str] = None, viewing: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Return privacy-limited, normalized activity rows for export."""
+        rows = []
+        for event in self._load_events():
+            if not isinstance(event, dict) or not self._matches_export_filters(
+                event, start_date=start_date, end_date=end_date, profile=profile,
+                media_type=media_type, server=server, tracker=tracker, viewing=viewing,
+            ):
+                continue
+            rows.append({
+                "operation_id": event.get("operation_id") or event.get("event_id") or "",
+                "timestamp": event.get("timestamp") or "",
+                "profile": event.get("user") or "",
+                "server": event.get("server") or "",
+                "action": event.get("action") or "",
+                "title": event.get("title") or "",
+                "media_type": self._event_media_type(event),
+                "progress": event.get("progress") or "",
+                "delivery_status": event.get("delivery_status") or "",
+                "tracker_delivery": event.get("tracker_delivery") or {},
+                "viewing": "shared" if self._event_is_cowatch(event) else "solo",
+                "player": event.get("player") or "",
+            })
+        return rows
+
+    @staticmethod
     def _extract_item_minutes(ev: dict[str, Any], media_type: str, action: str = "") -> int:
         """Extract actual watch minutes from event metadata or fall back to sensible averages."""
         media_payload = ev.get("media_payload") if isinstance(ev.get("media_payload"), dict) else {}
@@ -113,6 +216,13 @@ class AnalyticsManager:
         year: Optional[int] = None,
         demo: bool = False,
         is_admin: bool = True,
+        profile_username: Optional[str] = None,
+        start_date: Optional[datetime.date] = None,
+        end_date: Optional[datetime.date] = None,
+        media_type_filter: Optional[str] = None,
+        server_filter: Optional[str] = None,
+        tracker_filter: Optional[str] = None,
+        viewing_filter: Optional[str] = None,
     ) -> dict[str, Any]:
         """Compute aggregated watch analytics across a given time window or calendar year."""
         if demo:
@@ -159,6 +269,15 @@ class AnalyticsManager:
         now = datetime.datetime.now()
         events = self._load_events()
         stats = self._load_stats()
+        filters_active = bool(profile_username or start_date or end_date or media_type_filter or server_filter or tracker_filter or viewing_filter)
+        if filters_active:
+            events = [event for event in events if isinstance(event, dict) and self._matches_export_filters(
+                event, start_date=start_date, end_date=end_date, profile=profile_username,
+                media_type=media_type_filter, server=server_filter, tracker=tracker_filter, viewing=viewing_filter,
+            )]
+        if filters_active:
+            # Lifetime counters are global and cannot represent any filtered subset.
+            stats = {key: 0 for key in stats}
 
         start_cutoff: Optional[datetime.datetime] = None
         if year is None:
@@ -324,7 +443,7 @@ class AnalyticsManager:
                         genres_counter[g.strip()] += 1
 
         # Fallback to lifetime stats if events empty and period is all
-        if period == "all" and year is None and total_scrobbles == 0 and stats.get("total", 0) > 0:
+        if not filters_active and period == "all" and year is None and total_scrobbles == 0 and stats.get("total", 0) > 0:
             movies_watched = stats.get("movies", 0)
             episodes_watched = stats.get("episodes", 0)
             total_scrobbles = movies_watched + episodes_watched
@@ -374,10 +493,11 @@ class AnalyticsManager:
         year: Optional[int] = None,
         demo: bool = False,
         is_admin: bool = True,
+        profile_username: Optional[str] = None,
     ) -> dict[str, Any]:
         """Generate an annual 'OmniWrapped' retrospective summary for a given calendar year."""
         target_year = year if year is not None else datetime.datetime.now().year
-        summary = self.get_summary(period="all", year=target_year, demo=demo, is_admin=is_admin)
+        summary = self.get_summary(period="all", year=target_year, demo=demo, is_admin=is_admin, profile_username=profile_username)
 
         # Determine personality archetype based on metrics
         cowatch_pct = summary["cowatch_ratio_percent"]

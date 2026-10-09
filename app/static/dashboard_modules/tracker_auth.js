@@ -1,6 +1,7 @@
         let simklPollInterval = null;
 
         function openSimklModal() {
+            if (isMember) { openAccountModal(); return; }
             const modal = document.getElementById('simkl-modal');
             if (modal) modal.style.display = 'flex';
             fetchSimklStatus();
@@ -75,6 +76,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function startSimklPinFlow() {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -168,6 +170,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function disconnectTrakt(btn) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -191,6 +194,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function disconnectSimkl(btn) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -366,6 +370,7 @@ SIMKL_ENABLED=true</pre>
         // MyAnimeList (MAL) Integration
         // -------------------------------------------------------------
         function openMalModal() {
+            if (isMember) { openAccountModal(); return; }
             const modal = document.getElementById('mal-modal');
             if (modal) modal.style.display = 'flex';
             fetchMalStatus();
@@ -440,6 +445,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function submitMalToken(e) {
+            if (isMember) { openAccountModal(); return; }
             e.preventDefault();
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
@@ -489,6 +495,7 @@ SIMKL_ENABLED=true</pre>
         }
 
         async function disconnectMal(btn) {
+            if (isMember) { openAccountModal(); return; }
             if (!isAdmin && !isDemo) {
                 openUnlockModal();
                 return;
@@ -539,7 +546,7 @@ SIMKL_ENABLED=true</pre>
             const tbody = document.getElementById('cross-sync-tbody');
             const badge = document.getElementById('cross-sync-count-badge');
             if (tbody) {
-                tbody.innerHTML = '<tr><td colspan="6" class="u-text-align-center u-padding-24px u-color-accent-color">Scanning Trakt & Simkl libraries...</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="u-text-align-center u-padding-24px u-color-accent-color">Scanning configured tracker accounts...</td></tr>';
             }
             if (badge) badge.innerText = 'Scanning...';
 
@@ -567,17 +574,23 @@ SIMKL_ENABLED=true</pre>
             const allCount = crossSyncDiffItems.length;
             const t2sCount = crossSyncDiffItems.filter(i => i.direction === 'trakt_to_simkl').length;
             const s2tCount = crossSyncDiffItems.filter(i => i.direction === 'simkl_to_trakt').length;
+            const t2tmdbCount = crossSyncDiffItems.filter(i => i.direction === 'trakt_to_tmdb').length;
+            const tmdb2tCount = crossSyncDiffItems.filter(i => i.direction === 'tmdb_to_trakt').length;
             const ratingCount = crossSyncDiffItems.filter(i => i.sync_type === 'rating').length;
 
             const cAll = document.getElementById('cross-count-all');
             const cT2s = document.getElementById('cross-count-t2s');
             const cS2t = document.getElementById('cross-count-s2t');
+            const cT2tmdb = document.getElementById('cross-count-t2tmdb');
+            const cTmdb2t = document.getElementById('cross-count-tmdb2t');
             const cRatings = document.getElementById('cross-count-ratings');
             const badge = document.getElementById('cross-sync-count-badge');
 
             if (cAll) cAll.innerText = allCount;
             if (cT2s) cT2s.innerText = t2sCount;
             if (cS2t) cS2t.innerText = s2tCount;
+            if (cT2tmdb) cT2tmdb.innerText = t2tmdbCount;
+            if (cTmdb2t) cTmdb2t.innerText = tmdb2tCount;
             if (cRatings) cRatings.innerText = ratingCount;
             if (badge) badge.innerText = `${allCount} Discrepanc${allCount === 1 ? 'y' : 'ies'}`;
         }
@@ -606,6 +619,10 @@ SIMKL_ENABLED=true</pre>
                 items = items.filter(i => i.direction === 'trakt_to_simkl');
             } else if (crossSyncActiveFilter === 'simkl_to_trakt') {
                 items = items.filter(i => i.direction === 'simkl_to_trakt');
+            } else if (crossSyncActiveFilter === 'trakt_to_tmdb') {
+                items = items.filter(i => i.direction === 'trakt_to_tmdb');
+            } else if (crossSyncActiveFilter === 'tmdb_to_trakt') {
+                items = items.filter(i => i.direction === 'tmdb_to_trakt');
             } else if (crossSyncActiveFilter === 'rating') {
                 items = items.filter(i => i.sync_type === 'rating');
             }
@@ -622,10 +639,23 @@ SIMKL_ENABLED=true</pre>
                 const titleStr = item.media_type === 'episode'
                     ? `${escapeHtml(item.show_title || '')} S${String(item.season || 1).padStart(2, '0')}E${String(item.episode || 1).padStart(2, '0')} &bull; ${escapeHtml(item.title || '')}`
                     : `${escapeHtml(item.title || '')} (${item.year || 'N/A'})`;
+                const detailNotes = [];
+                if (item.match_reason) detailNotes.push(`${item.match_reason}; ${item.source_of_truth === 'tmdb' ? 'TMDb' : 'Trakt'} is the source`);
+                if (item.rating_conflict_key) {
+                    const otherTracker = item.rating_conflict_key.includes(':tmdb:') ? 'TMDb' : 'Simkl';
+                    detailNotes.push(`Trakt rated: ${item.trakt_rated_at || 'timestamp unavailable'} · ${otherTracker} rated: ${item[otherTracker.toLowerCase() + '_rated_at'] || 'timestamp unavailable'}`);
+                }
+                const matchNote = detailNotes.length
+                    ? `<div class="u-font-size-10px u-color-text-muted u-margin-top-3px">${detailNotes.map(note => escapeHtml(note)).join('<br>')}</div>`
+                    : '';
 
                 const dirBadge = item.direction === 'trakt_to_simkl'
                     ? '<span class="u-background-1e1b4b u-border-1px-solid-4338ca u-color-a5b4fc u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Trakt &rarr; Simkl</span>'
-                    : '<span class="u-background-064e3b u-border-1px-solid-059669 u-color-a7f3d0 u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Simkl &rarr; Trakt</span>';
+                    : item.direction === 'trakt_to_tmdb'
+                        ? '<span class="u-background-164e63 u-border-1px-solid-0891b2 u-color-a5f3fc u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Trakt &rarr; TMDb</span>'
+                        : item.direction === 'tmdb_to_trakt'
+                            ? '<span class="u-background-164e63 u-border-1px-solid-0891b2 u-color-a5f3fc u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">TMDb &rarr; Trakt</span>'
+                            : '<span class="u-background-064e3b u-border-1px-solid-059669 u-color-a7f3d0 u-padding-2px-8px u-border-radius-4px u-font-size-11px u-font-weight-600">Simkl &rarr; Trakt</span>';
 
                 const typeBadge = item.sync_type === 'rating'
                     ? '<span class="u-background-451a03 u-border-1px-solid-b45309 u-color-fde68a u-padding-2px-6px u-border-radius-4px u-font-size-10px u-font-weight-600">Rating</span>'
@@ -637,7 +667,7 @@ SIMKL_ENABLED=true</pre>
                             <input type="checkbox" data-id="${escapeHtml(item.id)}" ${isChecked ? 'checked' : ''} onchange="toggleCrossSyncItem(this, '${escapeHtml(item.id)}')" />
                         </td>
                         <td class="u-padding-10px-14px u-white-space-nowrap">${dirBadge}</td>
-                        <td class="u-padding-10px-14px u-color-text-main u-font-weight-500">${titleStr}</td>
+                        <td class="u-padding-10px-14px u-color-text-main u-font-weight-500">${titleStr}${matchNote}</td>
                         <td class="u-padding-10px-14px">${typeBadge}</td>
                         <td class="u-padding-10px-14px u-color-10b981 u-font-weight-600">${escapeHtml(item.source_status || 'watched')}</td>
                         <td class="u-padding-10px-14px u-color-text-muted">${escapeHtml(item.target_status || 'unwatched')}</td>
@@ -663,6 +693,10 @@ SIMKL_ENABLED=true</pre>
                 items = items.filter(i => i.direction === 'trakt_to_simkl');
             } else if (crossSyncActiveFilter === 'simkl_to_trakt') {
                 items = items.filter(i => i.direction === 'simkl_to_trakt');
+            } else if (crossSyncActiveFilter === 'trakt_to_tmdb') {
+                items = items.filter(i => i.direction === 'trakt_to_tmdb');
+            } else if (crossSyncActiveFilter === 'tmdb_to_trakt') {
+                items = items.filter(i => i.direction === 'tmdb_to_trakt');
             } else if (crossSyncActiveFilter === 'rating') {
                 items = items.filter(i => i.sync_type === 'rating');
             }
@@ -706,6 +740,7 @@ SIMKL_ENABLED=true</pre>
             const pMsg = document.getElementById('cross-sync-progress-msg');
             const pBar = document.getElementById('cross-sync-progress-bar');
             const pStats = document.getElementById('cross-sync-progress-stats');
+            const conflictPolicy = document.getElementById('cross-sync-conflict-policy')?.value || 'manual';
 
             if (pBox) pBox.style.display = 'block';
             if (pMsg) pMsg.innerText = 'Starting cross-tracker synchronization...';
@@ -717,9 +752,16 @@ SIMKL_ENABLED=true</pre>
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ ...payload, conflict_policy: conflictPolicy })
                 });
                 const data = await res.json();
+
+                if (!res.ok || data.status === 'error') {
+                    if (pBar) pBar.style.width = '100%';
+                    if (pMsg) pMsg.innerText = data.detail || data.message || 'Cross-tracker synchronization could not start.';
+                    if (pStats) pStats.innerText = 'Needs review';
+                    return;
+                }
 
                 if (isDemo || data.status === 'completed') {
                     if (pBar) pBar.style.width = '100%';
@@ -766,6 +808,11 @@ SIMKL_ENABLED=true</pre>
 
         // Dynamically update header subtitle reflecting active media servers -> connected cloud trackers
         async function updateDynamicSubtitle() {
+            if (isMember) {
+                const subtitle = document.getElementById("header-title-sub");
+                if (subtitle) subtitle.textContent = "My activity, tracker connections, and shared watch lists";
+                return;
+            }
             try {
                 const subEl = document.getElementById('header-title-sub');
                 if (!subEl) return;

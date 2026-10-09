@@ -13,6 +13,7 @@ With decoupled resilience, dynamic enablement toggles, domain isolation, and fai
 from __future__ import annotations
 
 import asyncio
+import copy
 from datetime import datetime, timezone
 import logging
 from typing import Any, Optional
@@ -43,6 +44,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": True,
         "supports_ratings": True,
         "supports_watchlist": True,
+        "capabilities": ["realtime_playback", "history", "progress", "ratings", "watchlist", "collection", "search"],
         "badge_color": "#ed1c24",
         "description": "Primary cloud tracker for movies and TV series with real-time playback states.",
     },
@@ -54,6 +56,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": True,
         "supports_ratings": True,
         "supports_watchlist": True,
+        "capabilities": ["realtime_playback", "history", "progress", "ratings"],
         "badge_color": "#00aaff",
         "description": "Cross-tracker hub covering movies, TV shows, and anime with real-time sync.",
     },
@@ -65,6 +68,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": False,
         "supports_ratings": True,
         "supports_watchlist": True,
+        "capabilities": ["ratings", "watchlist"],
         "badge_color": "#01d277",
         "description": "The Movie Database native user watchlist, favorites, and 1-10 star ratings.",
     },
@@ -76,6 +80,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": False,
         "supports_ratings": True,
         "supports_watchlist": False,
+        "capabilities": ["progress", "ratings", "search"],
         "badge_color": "#02a9ff",
         "description": "GraphQL-powered anime tracker with automated title matching and progress sync.",
     },
@@ -87,6 +92,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": False,
         "supports_ratings": True,
         "supports_watchlist": False,
+        "capabilities": ["progress", "ratings", "search"],
         "badge_color": "#2e51a2",
         "description": "REST v2 anime tracking and rating sync for the premier anime community.",
     },
@@ -98,6 +104,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": False,
         "supports_ratings": True,
         "supports_watchlist": False,
+        "capabilities": ["progress", "ratings", "search"],
         "badge_color": "#fd755c",
         "description": "JSON:API v1 anime library tracker completing the anime Big Three.",
     },
@@ -109,6 +116,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": False,
         "supports_ratings": True,
         "supports_watchlist": False,
+        "capabilities": ["history", "ratings"],
         "badge_color": "#00e054",
         "description": "Social film diary with 1-click import CSV generation for completed films.",
     },
@@ -120,6 +128,7 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": False,
         "supports_ratings": True,
         "supports_watchlist": False,
+        "capabilities": ["history", "ratings"],
         "badge_color": "#ffbe1a",
         "description": "Social TV diary logging completed episodes and episode ratings.",
     },
@@ -131,10 +140,23 @@ TRACKER_REGISTRY: dict[str, dict[str, Any]] = {
         "supports_realtime_scrobble": False,
         "supports_ratings": True,
         "supports_watchlist": True,
+        "supports_ratings": False,
+        "capabilities": ["watchlist"],
         "badge_color": "#8b5cf6",
         "description": "Multi-source rating aggregator (Rotten Tomatoes, Metacritic, Letterboxd) and lists.",
     },
 }
+
+# Keep legacy Boolean fields aligned with the richer capability registry.
+for _tracker_details in TRACKER_REGISTRY.values():
+    _capabilities = set(_tracker_details["capabilities"])
+    _tracker_details["supports_realtime_scrobble"] = "realtime_playback" in _capabilities
+    _tracker_details["supports_ratings"] = "ratings" in _capabilities
+    _tracker_details["supports_watchlist"] = "watchlist" in _capabilities
+    _tracker_details["supports_history"] = "history" in _capabilities
+    _tracker_details["supports_progress"] = "progress" in _capabilities
+    _tracker_details["supports_collection"] = "collection" in _capabilities
+    _tracker_details["supports_search"] = "search" in _capabilities
 
 
 class MultiTrackerManager:
@@ -171,7 +193,29 @@ class MultiTrackerManager:
 
     def get_registered_trackers(self) -> dict[str, dict[str, Any]]:
         """Return the capability registry of all supported trackers."""
-        return dict(TRACKER_REGISTRY)
+        return copy.deepcopy(TRACKER_REGISTRY)
+
+    @staticmethod
+    def capability_skip_reason(tracker_id: str, capability: str, media_type: Optional[str] = None) -> Optional[str]:
+        """Explain why a tracker cannot receive a requested operation."""
+        tracker_id = "myanimelist" if tracker_id.lower() == "mal" else tracker_id.lower()
+        details = TRACKER_REGISTRY.get(tracker_id)
+        if not details:
+            return "This destination is not registered."
+        if media_type and media_type not in details["media_types"]:
+            return f"This tracker does not support {media_type} media."
+        if capability not in details["capabilities"]:
+            labels = {
+                "realtime_playback": "live playback updates",
+                "history": "watched history",
+                "progress": "progress updates",
+                "ratings": "rating updates",
+                "watchlist": "watch-list updates",
+                "collection": "collection updates",
+                "search": "search",
+            }
+            return f"This tracker does not support {labels.get(capability, capability)}."
+        return None
 
     async def dispatch_scrobble(
         self,
@@ -210,7 +254,36 @@ class MultiTrackerManager:
             "serializd": None,
             "mdblist": None,
             "is_anime": False,
+            "skipped": {},
         }
+
+        if action in ("start", "pause"):
+            for target in targets:
+                reason = self.capability_skip_reason(target, "realtime_playback", media.media_type)
+                if reason:
+                    results["skipped"]["mal" if target == "myanimelist" else target] = {"status": "skipped", "reason": reason}
+        elif action == "rate":
+            for target in targets:
+                reason = self.capability_skip_reason(target, "ratings", media.media_type)
+                if reason:
+                    results["skipped"]["mal" if target == "myanimelist" else target] = {"status": "skipped", "reason": reason}
+        elif action == "stop" and progress < threshold:
+            for target in targets:
+                if target not in ("trakt", "simkl"):
+                    results["skipped"]["mal" if target == "myanimelist" else target] = {
+                        "status": "skipped", "reason": "Playback is below the completion threshold; no watched history was sent."
+                    }
+        elif action in ("scrobble", "stop"):
+            operation_by_tracker = {
+                "trakt": "history", "simkl": "history", "tmdb": "watchlist", "anilist": "progress",
+                "mal": "progress", "myanimelist": "progress", "kitsu": "progress",
+                "letterboxd": "history", "serializd": "history", "mdblist": "watchlist",
+            }
+            for target in targets:
+                required = operation_by_tracker.get(target)
+                reason = self.capability_skip_reason(target, required, media.media_type) if required else None
+                if reason:
+                    results["skipped"]["mal" if target == "myanimelist" else target] = {"status": "skipped", "reason": reason}
 
         # -------------------------------------------------------------
         # 1. Universal Real-Time Trackers: Trakt
@@ -713,7 +786,13 @@ class MultiTrackerManager:
             "letterboxd": None,
             "serializd": None,
             "is_anime": False,
+            "skipped": {},
         }
+
+        for target in targets:
+            reason = self.capability_skip_reason(target, "ratings", media.media_type)
+            if reason:
+                results["skipped"]["mal" if target == "myanimelist" else target] = {"status": "skipped", "reason": reason}
 
         # 1. Trakt Rating
         if (

@@ -9,6 +9,7 @@ load_dotenv(BASE_DIR / ".env")
 
 class Config:
     BASE_DIR: Path = BASE_DIR
+    BACKUP_RETENTION_COUNT: int = max(1, min(50, int(os.getenv("BACKUP_RETENTION_COUNT", "5"))))
     TRAKT_CLIENT_ID: str = os.getenv("TRAKT_CLIENT_ID", "")
     TRAKT_CLIENT_SECRET: str = os.getenv("TRAKT_CLIENT_SECRET", "")
     TRAKT_API_URL: str = os.getenv("TRAKT_API_URL", "https://api.trakt.tv").rstrip("/")

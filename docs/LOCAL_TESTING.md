@@ -35,6 +35,15 @@ npm ci
 
 The regular CI workflow installs axe-core, Chromium, Firefox, WebKit, and their host dependencies automatically and runs the same browser checks with the full pytest suite. Layout and accessibility cases load the demo dashboard; watch-list write flows use a temporary file so local user data is not touched. Locally, cases for browsers that are missing or cannot launch because the operating system lacks their dependencies are skipped with a reason.
 
+Install only the browser engine you need while developing; install all three before checking the full UI matrix. Playwright's browser binaries must match the installed Python package, so use its installer rather than downloading a browser manually. On Linux, add `--with-deps` if the browser launches fail because operating-system libraries are missing. See the [Playwright browser installation guide](https://playwright.dev/python/docs/browsers) for platform-specific details.
+
+For a quick iteration, run the focused test file or one test node instead of the full suite:
+
+```bash
+.venv/bin/pytest tests/test_result_normalizer.py -q
+.venv/bin/pytest 'tests/test_dashboard_playwright.py::test_settings_modal_traps_and_returns_keyboard_focus[chromium]' -q
+```
+
 ### 1.3 Local Configuration (`.env`)
 
 Copy the example configuration or create a minimal `.env`:
@@ -147,7 +156,7 @@ Or make it executable:
 
 ## 3. Local Quality Gate Runner (`scripts/test_local.sh`)
 
-Omniscrobble includes a one-command quality gate runner that executes all required verification checks before opening a pull request or pushing to git:
+Omniscrobble includes a one-command local quality gate runner. CI additionally runs the dependency audit and full three-browser matrix:
 
 ```bash
 ./scripts/test_local.sh
@@ -159,12 +168,14 @@ Omniscrobble includes a one-command quality gate runner that executes all requir
    - Asserts that `git config user.email` is set to the GitHub privacy email (`selits@users.noreply.github.com`).
 2. **Gate 2: State Isolation**
    - Verifies that no sensitive files (`.env`, `trakt_tokens.json`, `data/`) are tracked by git.
-3. **Gate 3: Unit Tests**
+3. **Gate 3: Unit and Browser Tests**
    - Runs `.venv/bin/pytest -v` across the entire test suite. All tests must pass with 0 failures.
 4. **Gate 4: Secret Scanning (Gitleaks)**
    - Runs `gitleaks detect` across repository commits using Docker or local binary to block accidental credential leaks.
 5. **Gate 5: Static Demo Generation**
    - Runs `scripts/generate_static_demo.py` and verifies `docs/index.html` is generated successfully so the GitHub Pages live preview stays in sync.
+
+CI also runs `pip-audit -r requirements.txt` to check declared Python dependencies against known vulnerability advisories.
 
 ---
 

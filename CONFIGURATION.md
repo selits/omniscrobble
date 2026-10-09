@@ -90,6 +90,7 @@ flowchart TD
 Omniscrobble incorporates defense-in-depth security mechanisms to safeguard OAuth tokens, administrative sessions, and sensitive server configurations:
 
 - **At-Rest AES-256-GCM Encryption (`CONFIG_ENCRYPTION_KEY`)**: When configured, Omniscrobble transparently encrypts all token files (`trakt_tokens.json`, `simkl_tokens.json`, `mal_tokens.json`, `anilist_token.json`, and partner accounts) and runtime settings (`data/settings.json`) at rest using authenticated symmetric AES-256-GCM. Keys are derived via PBKDF2-HMAC-SHA256 (100,000 iterations) with cryptographic 16-byte random salts. When unconfigured, state files remain readable plain JSON. Passphrase protection is also supported on `/api/backup` and `/api/restore`.
+- **Local Backup Retention (`BACKUP_RETENTION_COUNT`)**: Admin-created snapshots are stored in `data/backups/` with owner-only file permissions. The newest snapshot count is retained (default `5`, bounded to `1`–`50`); older snapshots are removed after a new snapshot is safely written.
 - **Double-Submit Cookie CSRF Protection**: State-mutating administrative endpoints (`POST`, `DELETE`, `PUT`, `PATCH`) authenticated via ambient browser cookies (`admin_token`) require a cryptographically matching `X-CSRF-Token` header. Omniscrobble automatically issues and rotates the `csrf_token` cookie upon admin unlock and dashboard access.
 - **Cookie SameSite Enforcement (`COOKIE_SAMESITE`)**: Configurable policy (default: `lax`) applied to session and CSRF cookies, blocking cross-origin browser credential leakage.
 - **Sliding-Window Unlock Rate Limiting**: The `/api/admin/unlock` endpoint limits failed login attempts to a maximum of 5 attempts within a rolling 60-second window. Exceeding this threshold triggers an immediate `HTTP 429 Too Many Requests` response with a `Retry-After` header and sanitized security event logging.
@@ -657,6 +658,7 @@ Omniscrobble can send instant notifications when media is scrobbled, rated, adde
    ```ini
    PUSHOVER_USER_KEY=your_pushover_user_key_here
    PUSHOVER_API_TOKEN=your_pushover_api_token_here
+   # Values above 1 are capped at high priority; emergency retry/expiry is not configured.
    PUSHOVER_PRIORITY=0
    ```
 
@@ -718,6 +720,7 @@ WEEKLY_DIGEST_HOUR=20
 | **`DEBUG`** | `false` | Boolean | No | Enables verbose debug logging and traceback outputs. |
 | **`WEBHOOK_SECRET`** | `""` | String | No | Secret token protecting endpoints (`?token=...`) and locking the admin dashboard. |
 | **`CONFIG_ENCRYPTION_KEY`** | `""` | String | No | Passphrase for AES-256-GCM authenticated encryption of tokens, credentials, and settings at rest. |
+| **`BACKUP_RETENTION_COUNT`** | `5` | Integer | No | Number of newest local backup snapshots to retain in `data/backups/`; values are bounded to `1`–`50`. |
 | **`COOKIE_SAMESITE`** | `lax` | String | No | Cookie SameSite policy (`lax`, `strict`, or `none`) for admin and CSRF session cookies. |
 | **`PLEX_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Plex webhooks (`/webhook`). |
 | **`JELLYFIN_ENABLED`** | `false` | Boolean | **Yes** | Enables ingestion of incoming Jellyfin webhooks (`/webhook/jellyfin`). |
@@ -796,6 +799,7 @@ WEEKLY_DIGEST_HOUR=20
 | **`NTFY_URL`** | `""` | String | **Yes** | Ntfy server URL and topic name. |
 | **`PUSHOVER_USER_KEY`** | `""` | String | **Yes** | Pushover User Key. |
 | **`PUSHOVER_API_TOKEN`** | `""` | String | **Yes** | Pushover Application API Token. |
+| **`PUSHOVER_PRIORITY`** | `0` | Integer | **No** | Delivery priority; values above 1 are capped at high priority because emergency retry/expiry is not configured. |
 | **`GOTIFY_URL`** | `""` | String | **Yes** | Gotify push server base URL (e.g., `http://192.168.1.50:8080`). |
 | **`GOTIFY_TOKEN`** | `""` | String | **Yes** | Gotify application token for push notifications. |
 | **`GOTIFY_PRIORITY`** | `5` | Integer | **Yes** | Gotify notification delivery priority (0–10). |

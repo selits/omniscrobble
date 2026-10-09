@@ -1203,6 +1203,29 @@ class DashboardRenderer:
                 <span>🔍</span><span>Webhook Inspector</span>
             </button>
             """
+        analytics_export_html = ""
+        if is_admin:
+            analytics_export_html = f"""
+            <details class="analytics-export-controls u-background-bg-page u-border-1px-solid-334155 u-border-radius-6px u-padding-8px">
+                <summary class="u-font-size-11px u-color-text-heading u-cursor-pointer">Export filtered activity or summary</summary>
+                <div class="u-display-grid u-grid-template-columns-repeat-auto-fit-minmax-140px-1fr u-gap-6px u-margin-top-8px">
+                    <label class="u-font-size-10px u-color-text-muted">From <input id="analytics-export-start" type="date" /></label>
+                    <label class="u-font-size-10px u-color-text-muted">Through <input id="analytics-export-end" type="date" /></label>
+                    <label class="u-font-size-10px u-color-text-muted">Profile <input id="analytics-export-profile" type="text" maxlength="100" placeholder="All profiles" /></label>
+                    <label class="u-font-size-10px u-color-text-muted">Media type <select id="analytics-export-media"><option value="">All</option><option value="movie">Movie</option><option value="episode">Episode</option><option value="show">Show</option></select></label>
+                    <label class="u-font-size-10px u-color-text-muted">Server <select id="analytics-export-server"><option value="">All</option><option>Plex</option><option>Jellyfin</option><option>Emby</option></select></label>
+                    <label class="u-font-size-10px u-color-text-muted">Tracker <select id="analytics-export-tracker"><option value="">All</option><option value="trakt">Trakt</option><option value="simkl">Simkl</option><option value="anilist">AniList</option><option value="mal">MyAnimeList</option><option value="tmdb">TMDb</option><option value="kitsu">Kitsu</option><option value="letterboxd">Letterboxd</option><option value="serializd">Serializd</option><option value="mdblist">MDBList</option></select></label>
+                    <label class="u-font-size-10px u-color-text-muted">Viewing <select id="analytics-export-viewing"><option value="">All</option><option value="solo">Solo</option><option value="shared">Shared</option></select></label>
+                </div>
+                <div class="u-display-flex u-flex-wrap-wrap u-gap-6px u-margin-top-8px">
+                    <button type="button" class="btn-sm" onclick="downloadAnalyticsExport('activity','csv')">Activity CSV</button>
+                    <button type="button" class="btn-sm" onclick="downloadAnalyticsExport('activity','json')">Activity JSON</button>
+                    <button type="button" class="btn-sm" onclick="downloadAnalyticsExport('summary','csv')">Summary CSV</button>
+                    <button type="button" class="btn-sm" onclick="downloadAnalyticsExport('summary','json')">Summary JSON</button>
+                </div>
+                <p id="analytics-export-status" class="u-color-text-muted u-font-size-10px" aria-live="polite"></p>
+            </details>
+            """
 
         if unique_titles > 0 and unique_titles != total_scrobbles:
             scrobbles_sub = f"{movies} movies &bull; {episodes} eps ({unique_titles} unique)"
@@ -1219,6 +1242,7 @@ class DashboardRenderer:
                 </div>
                 <div class="u-display-flex u-gap-6px u-align-items-center u-flex-wrap-wrap">
                     {admin_debugger_btn}
+                    {analytics_export_html}
                     <button onclick="openOmniWrappedModal()" class="btn-sm u-background-linear-gradient-135deg-8b5cf6-3b82f6 u-color-fff u-border-none u-padding-5px-12px u-font-size-11px u-font-weight-600 u-cursor-pointer u-display-inline-flex u-align-items-center u-gap-5px u-box-shadow-0-2px-4px-rgba-139-92-246-0-3">
                         <span>✨</span><span>OmniWrapped</span>
                     </button>

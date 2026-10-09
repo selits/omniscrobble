@@ -807,7 +807,7 @@ def test_queue_manager_crud(tmp_path):
     assert qm.get_pending() == []
 
     # 2. Enqueue items
-    id1 = qm.enqueue("scrobble_stop", {"movie": {"title": "Matrix"}}, error="Timeout")
+    id1 = qm.enqueue("scrobble_stop", {"movie": {"title": "Matrix"}}, error="Timeout", event_id="event-1")
     id2 = qm.enqueue("sync_ratings", {"shows": [{"title": "Dark"}]}, error="503 Service Unavailable")
     assert id1 > 0
     assert id2 > 0
@@ -819,6 +819,7 @@ def test_queue_manager_crud(tmp_path):
     assert items[0]["id"] == id1
     assert items[0]["event_type"] == "scrobble_stop"
     assert items[0]["payload"]["movie"]["title"] == "Matrix"
+    assert items[0]["event_id"] == "event-1"
     assert items[1]["id"] == id2
     assert items[1]["event_type"] == "sync_ratings"
 
@@ -832,6 +833,7 @@ def test_queue_manager_crud(tmp_path):
     # Second failure triggers status="failed"
     qm.mark_failure(id1, error="Permanent fail", max_retries=2)
     assert qm.get_pending_count() == 1  # Only id2 is still pending
+    assert qm.get_event_queue_state("event-1") == "failed"
 
     # 5. Retry all failed
     reset_count = qm.retry_all_failed()
@@ -845,6 +847,21 @@ def test_queue_manager_crud(tmp_path):
     # 7. Clear queue
     qm.clear_queue()
     assert qm.get_pending_count() == 0
+
+
+def test_queue_manager_scoped_retry_requires_event_and_duplicate_confirmation(tmp_path):
+    qm = QueueManager(tmp_path / "scoped_retry.db")
+    risky_id = qm.enqueue("sync_history", {"movies": []}, event_id="event-1")
+    qm.mark_failure(risky_id, "HTTP 503", max_retries=1)
+
+    assert qm.retry_failed_item(risky_id, "wrong-event", confirm_duplicate_history=True) == "not_found"
+    assert qm.retry_failed_item(risky_id, "event-1") == "confirmation_required"
+    assert qm.retry_failed_item(risky_id, "event-1", confirm_duplicate_history=True) == "queued"
+    assert qm.get_pending_count() == 1
+
+    auth_id = qm.enqueue("sync_ratings", {"movies": []}, error="Unauthorized", event_id="event-2")
+    qm.mark_failure(auth_id, "Unauthorized", max_retries=1)
+    assert qm.retry_failed_item(auth_id, "event-2") == "not_retryable"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -863,6 +880,37 @@ async def test_process_queue_success(tmp_path):
     assert stats["succeeded"] == 2
     assert stats["failed"] == 0
     assert qm.get_pending_count() == 0
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_process_queue_reports_linked_event_outcome(tmp_path):
+    qm = QueueManager(tmp_path / "process_queue_linked.db")
+    qm.enqueue("sync_ratings", {"movies": []}, event_id="event-linked")
+    mock_client = MagicMock(spec=TraktClient)
+    mock_client.sync_ratings = AsyncMock(return_value={"status": 201})
+    reported = []
+
+    stats = await process_queue(mock_client, qm, on_result=lambda *args: reported.append(args))
+
+    assert stats["succeeded"] == 1
+    assert reported == [("event-linked", "sync_ratings", 1, "success", "", 2)]
+    assert qm.get_event_queue_state("event-linked") == "success"
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_process_queue_marks_permanent_http_errors_failed(tmp_path):
+    qm = QueueManager(tmp_path / "process_queue_permanent.db")
+    qm.enqueue("sync_ratings", {"movies": []}, event_id="event-permanent")
+    mock_client = MagicMock(spec=TraktClient)
+    mock_client.sync_ratings = AsyncMock(return_value={"status": 401, "error": "Unauthorized"})
+    reported = []
+
+    stats = await process_queue(mock_client, qm, on_result=lambda *args: reported.append(args))
+
+    assert stats["failed"] == 1
+    assert qm.get_pending_count() == 0
+    assert qm.get_event_queue_state("event-permanent") == "failed"
+    assert reported[0][3:5] == ("failed", "Unauthorized")
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -918,6 +966,7 @@ async def test_webhook_automatic_enqueue_on_failure():
     }
 
     initial_pending = queue_mgr.get_pending_count()
+    initial_queue_ids = {item["id"] for item in queue_mgr.get_pending(limit=1000)}
 
     with patch.object(trakt, "is_authenticated", return_value=True), \
          patch.object(trakt, "scrobble_stop", new_callable=AsyncMock) as mock_stop, \
@@ -931,6 +980,109 @@ async def test_webhook_automatic_enqueue_on_failure():
         assert res.status_code == 200
         # Check that both stop and history events were enqueued
         assert queue_mgr.get_pending_count() >= initial_pending + 2
+        linked_items = [item for item in queue_mgr.get_pending(limit=1000) if item["id"] not in initial_queue_ids]
+        assert len(linked_items) >= 2
+        assert all(item["event_id"] == recent_events[0]["event_id"] for item in linked_items)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_filter_dispatch_and_queue_retry_end_to_end(tmp_path, monkeypatch):
+    """A parsed webhook is filtered or recorded, dispatched, queued on outage, then retried."""
+    import asyncio
+    import copy
+    import app.main as main_mod
+
+    original_stats = dict(main_mod.scrobble_stats)
+    original_events = list(main_mod.recent_events)
+    original_sessions = copy.deepcopy(main_mod.playback_mgr.sessions)
+    original_finished = copy.deepcopy(main_mod.playback_mgr.recently_finished)
+    test_queue = QueueManager(tmp_path / "webhook-pipeline-queue.db")
+    monkeypatch.setattr(main_mod, "queue_mgr", test_queue)
+    monkeypatch.setattr(main_mod, "save_recent_events", lambda: None)
+    monkeypatch.setattr(main_mod, "save_scrobble_stats", lambda: None)
+
+    filter_titles: list[str] = []
+    original_filter = main_mod.settings_mgr.is_media_allowed
+
+    def filter_media(media):
+        filter_titles.append(media.title)
+        if media.title == "Filtered Film":
+            return False, "excluded by integration test"
+        return original_filter(media)
+
+    monkeypatch.setattr(main_mod.settings_mgr, "is_media_allowed", filter_media)
+    monkeypatch.setattr(main_mod.settings_mgr, "is_tracker_enabled", lambda tracker: tracker == "simkl")
+    dispatch_finished = asyncio.Event()
+    original_dispatch = main_mod.execute_multi_tracker_dispatch
+
+    async def dispatch_and_signal(*args, **kwargs):
+        await original_dispatch(*args, **kwargs)
+        dispatch_finished.set()
+
+    monkeypatch.setattr(main_mod, "execute_multi_tracker_dispatch", dispatch_and_signal)
+    client = make_async_test_client(app)
+    base_payload = {
+        "event": "media.scrobble", "user": True,
+        "Account": {"id": 192, "title": "pipeline-viewer"},
+        "Metadata": {
+            "librarySectionType": "movie", "type": "movie", "year": 2025,
+            "duration": 9_000_000, "viewOffset": 8_500_000,
+            "Guid": [{"id": "imdb://tt1234567"}],
+        },
+    }
+
+    try:
+        with patch.object(main_mod.trakt, "is_authenticated", return_value=True), \
+             patch.object(main_mod.trakt, "scrobble_stop", new_callable=AsyncMock, return_value={"status": 503, "error": "Service Unavailable"}) as trakt_stop, \
+             patch.object(main_mod.trakt, "sync_history", new_callable=AsyncMock, return_value={"status": 503, "error": "Service Unavailable"}) as trakt_history, \
+             patch.object(main_mod.simkl, "is_enabled", return_value=True), \
+             patch.object(main_mod.simkl, "is_authenticated", return_value=True), \
+             patch.object(main_mod.simkl, "scrobble_stop", new_callable=AsyncMock, return_value={"status": "success"}) as simkl_stop, \
+             patch.object(main_mod.simkl, "sync_history", new_callable=AsyncMock, return_value={"status": "success"}) as simkl_history:
+            filtered_payload = {**base_payload, "Metadata": {**base_payload["Metadata"], "title": "Filtered Film"}}
+            filtered = await client.post("/webhook", data={"payload": json.dumps(filtered_payload)})
+            assert filtered.json()["status"] == "ignored"
+            assert "excluded by integration test" in filtered.json()["reason"]
+            assert trakt_stop.await_count == 0
+
+            accepted_payload = {**base_payload, "Metadata": {**base_payload["Metadata"], "title": "Queued Film"}}
+            accepted = await client.post("/webhook", data={"payload": json.dumps(accepted_payload)})
+            assert accepted.status_code == 200
+            assert accepted.json()["status"] == "success"
+            event = main_mod.recent_events[0]
+            event_id = event["event_id"]
+            assert event["title"] == "Queued Film (2025)"
+            assert event["media_payload"]["ids"]["imdb"] == "tt1234567"
+            assert event["tracker_delivery"]["trakt"] == "queued"
+            assert test_queue.get_event_queue_state(event_id) == "queued"
+            assert [row["event_id"] for row in test_queue.get_pending(limit=10)] == [event_id, event_id]
+            await asyncio.wait_for(dispatch_finished.wait(), timeout=2)
+            simkl_stop.assert_awaited_once()
+            simkl_history.assert_awaited_once()
+            assert main_mod.recent_events[0]["tracker_delivery"]["simkl"] == "success"
+
+        retry_client = MagicMock(spec=TraktClient)
+        retry_client.scrobble_stop = AsyncMock(return_value={"status": 201})
+        retry_client.sync_history = AsyncMock(return_value={"status": 201})
+        retry_result = await process_queue(retry_client, test_queue, on_result=main_mod.record_queue_delivery)
+
+        assert retry_result == {"processed": 2, "succeeded": 2, "failed": 0}
+        final_event = next(item for item in main_mod.recent_events if item["event_id"] == event_id)
+        assert final_event["delivery_status"] == "success"
+        assert final_event["tracker_delivery"]["trakt"] == "success"
+        assert final_event["tracker_delivery"]["simkl"] == "success"
+        assert test_queue.get_event_queue_state(event_id) == "success"
+        assert filter_titles == ["Filtered Film", "Queued Film"]
+        assert trakt_stop.await_count == trakt_history.await_count == 1
+    finally:
+        await client.aclose()
+        main_mod.playback_mgr.sessions.clear()
+        main_mod.playback_mgr.sessions.update(original_sessions)
+        main_mod.playback_mgr.recently_finished = original_finished
+        main_mod.scrobble_stats.clear()
+        main_mod.scrobble_stats.update(original_stats)
+        main_mod.recent_events.clear()
+        main_mod.recent_events.extend(original_events)
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -2086,25 +2238,46 @@ async def test_backup_and_restore_endpoints():
         zf = zipfile.ZipFile(io.BytesIO(res_backup.content))
         namelist = zf.namelist()
         assert isinstance(namelist, list)
+        exported_preview = await client.post(
+            "/api/restore/preview",
+            files={"backup_file": ("exported.zip", res_backup.content, "application/zip")},
+        )
+        assert exported_preview.status_code == 200
+        assert exported_preview.json()["format_version"] == 1
 
-        # 3. Restore test: create a zip and upload
+        # 3. Preview a valid archive before applying it.
         test_zip_buf = io.BytesIO()
         with zipfile.ZipFile(test_zip_buf, "w") as test_zf:
             test_zf.writestr("data/cowatch_shows.json", json.dumps(["Severance", "Succession"]))
             test_zf.writestr("data/cowatch_devices.json", json.dumps(["Living Room Apple TV"]))
-            # Zip slip attack attempt (must be skipped safely)
-            test_zf.writestr("../evil_file.txt", "evil")
 
         test_zip_buf.seek(0)
         files = {"backup_file": ("backup.zip", test_zip_buf.getvalue(), "application/zip")}
+        prior_shows = Config.CO_WATCH_DATA_FILE.read_bytes() if Config.CO_WATCH_DATA_FILE.exists() else None
+        preview = await client.post("/api/restore/preview", files=files)
+        assert preview.status_code == 200
+        preview_data = preview.json()
+        assert preview_data["valid"] is True
+        assert preview_data["compatibility"] == "legacy"
+        assert "data/cowatch_shows.json" in preview_data["categories"]["household data"]["replace"]
+        assert (Config.CO_WATCH_DATA_FILE.read_bytes() if Config.CO_WATCH_DATA_FILE.exists() else None) == prior_shows
+
         res_restore = await client.post("/api/restore", files=files)
         assert res_restore.status_code == 200
         restore_data = res_restore.json()
         assert restore_data["status"] == "success"
         assert "data/cowatch_shows.json" in restore_data["restored"]
         assert "data/cowatch_devices.json" in restore_data["restored"]
-        # Malicious path was ignored
-        assert "../evil_file.txt" not in restore_data["restored"]
+
+        # Unsafe paths are rejected during preview and restore without being written.
+        malicious_zip = io.BytesIO()
+        with zipfile.ZipFile(malicious_zip, "w") as malicious_archive:
+            malicious_archive.writestr("../evil_file.txt", "evil")
+        malicious_file = {"backup_file": ("unsafe.zip", malicious_zip.getvalue(), "application/zip")}
+        preview_unsafe = await client.post("/api/restore/preview", files=malicious_file)
+        assert preview_unsafe.status_code == 400
+        restore_unsafe = await client.post("/api/restore", files=malicious_file)
+        assert restore_unsafe.status_code == 400
 
         # 4. Unauthenticated restore request -> 401
         client.cookies.clear()
@@ -2475,7 +2648,7 @@ async def test_dashboard_footer_and_repo_link():
     assert resp.status_code == 200
     html = resp.text
     assert "https://github.com/selits/omniscrobble" in html
-    assert "v3.2.0" in html
+    assert "v3.3.0" in html
     assert "https://github.com/selits/omniscrobble/releases" in html
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
@@ -2599,7 +2772,7 @@ async def test_demo_dashboard_page():
     assert "Severance" in html
     assert "demo_viewer" in html
     assert "demo_partner" in html
-    assert "View Logs" in html
+    assert "Live Logs" in html
     assert "Exit Demo" in html
     assert "✕ Exit Demo" in html
     assert "1,428" in html or "1428" in html
@@ -2779,7 +2952,8 @@ async def test_dashboard_mobile_responsiveness():
         assert "@media (min-width: 1200px)" in css
         assert "scroll-snap-type: x proximity" in css
         assert "#card-activity .activity-row td::before" in css
-        assert "grid-template-columns: minmax(0, 1fr) auto" in css
+        assert "display: flex; flex-direction: column" in css
+        assert "grid-template-columns: 62px minmax(0, 1fr)" in css
         assert "@media (max-height: 520px) and (max-width: 900px)" in css
         assert "@media (prefers-reduced-motion: reduce)" in css
         assert "@media (prefers-contrast: more)" in css
@@ -3114,6 +3288,61 @@ async def test_pause_then_stop_counts_a_playback_once(monkeypatch):
             result = await main_mod.process_media_event(stopped)
             assert result["status"] == "ignored"
             assert stop.await_count == 1
+    finally:
+        main_mod.playback_mgr.sessions.clear()
+        main_mod.playback_mgr.sessions.update(original_sessions)
+        main_mod.playback_mgr.recently_finished = original_finished
+        main_mod.scrobble_stats.clear()
+        main_mod.scrobble_stats.update(original_stats)
+        main_mod.recent_events.clear()
+        main_mod.recent_events.extend(original_events)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_duplicate_pause_webhook_does_not_duplicate_completed_watch(monkeypatch):
+    """A repeated completion webhook for one active playback session records only one watch."""
+    import copy
+    import app.main as main_mod
+
+    original_stats = dict(main_mod.scrobble_stats)
+    original_events = list(main_mod.recent_events)
+    original_sessions = copy.deepcopy(main_mod.playback_mgr.sessions)
+    original_finished = copy.deepcopy(main_mod.playback_mgr.recently_finished)
+    main_mod.playback_mgr.clear()
+    monkeypatch.setattr(main_mod, "save_recent_events", lambda: None)
+    monkeypatch.setattr(main_mod, "save_scrobble_stats", lambda: None)
+    monkeypatch.setattr(main_mod, "execute_multi_tracker_dispatch", AsyncMock())
+    client = make_async_test_client(app)
+    play_payload = {
+        "event": "media.play", "user": True,
+        "Account": {"id": 809, "title": "duplicate-test"},
+        "Player": {"title": "Duplicate Test Player"},
+        "Metadata": {
+            "librarySectionType": "movie", "type": "movie", "title": "One Session Only",
+            "year": 2025, "duration": 7_200_000, "viewOffset": 1_440_000,
+        },
+    }
+    pause_payload = {
+        **play_payload,
+        "event": "media.pause",
+        "Metadata": {**play_payload["Metadata"], "viewOffset": 6_840_000},
+    }
+
+    try:
+        with patch.object(main_mod.trakt, "is_authenticated", return_value=True), \
+             patch.object(main_mod.trakt, "scrobble_start", new_callable=AsyncMock, return_value={"status": "ok"}), \
+             patch.object(main_mod.trakt, "scrobble_stop", new_callable=AsyncMock, return_value={"status": "ok"}) as stop:
+            started = await client.post("/webhook", data={"payload": json.dumps(play_payload)})
+            first_pause = await client.post("/webhook", data={"payload": json.dumps(pause_payload)})
+            duplicate_pause = await client.post("/webhook", data={"payload": json.dumps(pause_payload)})
+
+        assert started.status_code == 200
+        assert first_pause.json()["status"] == "success"
+        assert duplicate_pause.json() == {
+            "status": "ignored", "reason": "Watch already recorded for this playback session"
+        }
+        assert stop.await_count == 1
+        assert sum(event.get("title") == "One Session Only (2025)" for event in main_mod.recent_events) == 2
     finally:
         main_mod.playback_mgr.sessions.clear()
         main_mod.playback_mgr.sessions.update(original_sessions)
@@ -3462,6 +3691,8 @@ async def test_webhook_records_cowatch_status_and_privacy():
         assert unauth_ev["cowatch_status"] is None
         assert unauth_ev["show_title"] is None
         assert unauth_ev["user"] == "se****"
+        assert "tracker_delivery_details" not in unauth_ev
+        assert "operation_id" not in unauth_ev
 
         # 2. Admin request to /api/events reveals cowatch_status and show_title
         client.cookies.set("admin_token", "privacy_token")
@@ -3471,6 +3702,8 @@ async def test_webhook_records_cowatch_status_and_privacy():
         assert admin_ev["cowatch_status"] is not None
         assert admin_ev["cowatch_status"]["synced"] is True
         assert admin_ev["is_cowatch_show"] is True
+        assert admin_ev["operation_id"] == admin_ev["event_id"]
+        assert isinstance(admin_ev["tracker_delivery_details"], dict)
         client.cookies.clear()
 
 
@@ -3507,7 +3740,7 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert (tmp_path / "assets" / "dashboard.css").is_file()
     assert (tmp_path / "assets" / "dashboard-theme.css").is_file()
     assert (tmp_path / "assets" / "dashboard.js").is_file()
-    assert len(MODULES) == 15
+    assert "analytics_export.js" in MODULES
     assert OUTPUT.read_text(encoding="utf-8") == build_bundle()
 
     content = demo_file.read_text(encoding="utf-8")
@@ -4143,7 +4376,7 @@ async def test_jellyfin_and_emby_offline_queue_on_trakt_temporary_error():
         # Verify offline queue preserved the event
         assert queue_mgr.get_pending_count() == initial_queue_count + 1
         pending = queue_mgr.get_pending()
-        assert any(item["event_type"] == "scrobble_stop" and item.get("username") == "selits" for item in pending)
+        assert any(item["event_type"] == "scrobble_stop" and item.get("username") == "default" for item in pending)
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -6441,6 +6674,7 @@ async def test_cross_tracker_sync_manager_scan_and_execution():
     assert len(s2t_ratings) == 1
     assert s2t_ratings[0]["source_rating"] == 8
     assert s2t_ratings[0]["target_rating"] == 10
+    assert t2s_ratings[0]["rating_conflict_key"] == s2t_ratings[0]["rating_conflict_key"]
 
     # Simkl Movie Only -> Simkl to Trakt
     s2t_movies = [d for d in diff if d["direction"] == "simkl_to_trakt" and d["sync_type"] == "watched" and d["title"] == "Simkl Movie Only"]
@@ -6500,6 +6734,13 @@ async def test_cross_sync_api_endpoints():
     assert prog.status_code == 200
     assert "status" in prog.json()
 
+    provenance = await client.get("/api/cross-sync/provenance?demo=true")
+    assert provenance.status_code == 200
+    assert provenance.json() == {"records": []}
+    if Config.WEBHOOK_SECRET:
+        private_provenance = await client.get("/api/cross-sync/provenance")
+        assert private_provenance.status_code == 401
+
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_dashboard_renders_cross_sync_modal():
@@ -6510,6 +6751,7 @@ async def test_dashboard_renders_cross_sync_modal():
     html = resp.text + await dashboard_asset_text(client)
 
     assert "cross-sync-modal" in html
+    assert "Trakt &rarr; TMDb ratings" in html
     assert "openCrossSyncModal" in html
     assert "closeCrossSyncModal" in html
     assert "Cross-Tracker Reconciliation" in html
@@ -7494,7 +7736,7 @@ async def test_settings_hub_endpoints_and_masking(tmp_path, monkeypatch):
         "credentials": {
             "simkl": {
                 "client_id": "test_simkl_client_id_999",
-                "client_secret": "simkl_secret_raw_pass_8888",
+                "client_secret": "simkl_secret_raw_pass_8888",  # gitleaks:allow -- synthetic redaction fixture
             }
         },
         "reconciliation": {
@@ -8087,13 +8329,16 @@ async def test_activity_table_ui_polish():
 
 def test_async_tracker_delivery_updates_existing_event(monkeypatch):
     """Async tracker outcomes update and persist the originating activity event."""
-    from app.main import _tracker_result_state, log_event, recent_events, update_event_tracker_delivery
+    from app.main import _delivery_category, _tracker_result_state, log_event, recent_events, update_event_tracker_delivery
 
     assert _tracker_result_state({"status": 503, "error": "upstream unavailable"}) == "failed"
     assert _tracker_result_state({"scrobble": {"status": 201}, "history": {"status": 503}}) == "failed"
     assert _tracker_result_state({"status": "error", "error": "network timeout"}) == "failed"
     assert _tracker_result_state({"status": "error", "error": "network timeout", "queued": True}) == "queued"
     assert _tracker_result_state({"status": 400, "error": "invalid payload"}) == "failed"
+    assert _delivery_category("failed", {"status": 503}) == "transient"
+    assert _delivery_category("failed", {"status": 401}) == "authorization_or_configuration"
+    assert _delivery_category("skipped", {"reason": "unsupported media type"}) == "unsupported"
 
     original_events = list(recent_events)
     monkeypatch.setattr("app.main.save_recent_events", lambda: None)
@@ -8103,11 +8348,112 @@ def test_async_tracker_delivery_updates_existing_event(monkeypatch):
     try:
         event_id = log_event(media, "mark_watched", {"status": "success"})
         assert recent_events[0]["tracker_delivery"] == {"trakt": "success"}
+        assert recent_events[0]["operation_id"] == event_id
+        assert recent_events[0]["tracker_delivery_details"]["trakt"]["attempts"] == 1
 
         update_event_tracker_delivery(event_id, {"simkl": "success", "anilist": "failed"})
         assert recent_events[0]["tracker_delivery"] == {
             "trakt": "success", "simkl": "success", "anilist": "failed"
         }
+        assert recent_events[0]["delivery_status"] == "partial"
+        update_event_tracker_delivery(event_id, {"simkl": "queued"})
+        simkl_detail = recent_events[0]["tracker_delivery_details"]["simkl"]
+        assert simkl_detail["attempts"] == 2
+        assert [entry["state"] for entry in simkl_detail["history"]] == ["success", "queued"]
+        assert "retry" in simkl_detail["reason"]
+    finally:
+        recent_events.clear()
+        recent_events.extend(original_events)
+
+
+@pytest.mark.asyncio
+async def test_mirror_delivery_is_recorded_on_originating_event(monkeypatch):
+    import asyncio
+
+    from app.main import log_event, recent_events, record_mirror_delivery
+
+    original_events = list(recent_events)
+    monkeypatch.setattr("app.main.save_recent_events", lambda: None)
+    monkeypatch.setattr("app.main.save_scrobble_stats", lambda: None)
+    media = ParsedMedia(event="media.scrobble", username="mirror-test", media_type="movie", title="Mirror Test", progress=100)
+    recent_events.clear()
+    try:
+        event_id = log_event(media, "mark_watched", {"status": "success"})
+        await record_mirror_delivery(event_id, asyncio.sleep(0, result={
+            "status": "completed",
+            "results": {
+                "mirrored": [{"server": "jellyfin"}],
+                "failed": [{"server": "emby", "error": "api_call_failed"}],
+                "skipped": [],
+            },
+        }))
+        mirror = recent_events[0]["tracker_delivery_details"]["media_servers"]
+        assert mirror["state"] == "partial"
+        assert "api_call_failed" in mirror["reason"]
+    finally:
+        recent_events.clear()
+        recent_events.extend(original_events)
+
+
+def test_queue_delivery_updates_originating_event(monkeypatch):
+    from app.main import log_event, recent_events, record_queue_delivery
+
+    original_events = list(recent_events)
+    monkeypatch.setattr("app.main.save_recent_events", lambda: None)
+    monkeypatch.setattr("app.main.save_scrobble_stats", lambda: None)
+    monkeypatch.setattr("app.main.queue_mgr.get_event_queue_state", lambda _event_id: "success")
+    media = ParsedMedia(event="media.scrobble", username="queue-test", media_type="movie", title="Queue Link Test", progress=100)
+    recent_events.clear()
+    try:
+        event_id = log_event(media, "mark_watched", {"status": 503, "error": "HTTP 503"})
+        record_queue_delivery(event_id, "sync_history", 42, "success", "", 2)
+        details = recent_events[0]["tracker_delivery_details"]
+        assert details["Trakt · sync history · queue 42"]["attempts"] == 2
+        assert details["Trakt · sync history · queue 42"]["history"][-1]["state"] == "success"
+        assert recent_events[0]["tracker_delivery"]["trakt"] == "success"
+    finally:
+        recent_events.clear()
+        recent_events.extend(original_events)
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_event_delivery_retry_endpoint_requires_admin_and_duplicate_confirmation(tmp_path, monkeypatch):
+    import app.main as main_mod
+
+    client = make_async_test_client(app)
+    qm = QueueManager(tmp_path / "event_retry.db")
+    original_events = list(recent_events)
+    monkeypatch.setattr(main_mod, "queue_mgr", qm)
+    monkeypatch.setattr(main_mod, "save_recent_events", lambda: None)
+    monkeypatch.setattr(main_mod, "save_scrobble_stats", lambda: None)
+    media = ParsedMedia(event="media.scrobble", username="retry-test", media_type="movie", title="Retry Test", progress=100)
+    recent_events.clear()
+    try:
+        event_id = main_mod.log_event(media, "mark_watched", {"status": 503, "error": "HTTP 503"})
+        queue_id = qm.enqueue("sync_history", {"movies": []}, event_id=event_id)
+        qm.mark_failure(queue_id, "HTTP 503", max_retries=1)
+
+        with patch.object(Config, "WEBHOOK_SECRET", "retry-secret"):
+            denied = await client.post(f"/api/events/{event_id}/retry", json={"queue_item_id": queue_id})
+            assert denied.status_code == 401
+
+            confirmation_required = await client.post(
+                f"/api/events/{event_id}/retry",
+                json={"queue_item_id": queue_id},
+                headers={"x-webhook-secret": "retry-secret"},
+            )
+            assert confirmation_required.status_code == 409
+
+            retried = await client.post(
+                f"/api/events/{event_id}/retry",
+                json={"queue_item_id": queue_id, "confirm_duplicate_history": True},
+                headers={"x-webhook-secret": "retry-secret"},
+            )
+            assert retried.status_code == 200
+            assert retried.json()["status"] == "queued"
+            assert qm.get_pending_count() == 1
+            details = recent_events[0]["tracker_delivery_details"]
+            assert details[f"Trakt · sync history · queue {queue_id}"]["state"] == "queued"
     finally:
         recent_events.clear()
         recent_events.extend(original_events)
@@ -8950,6 +9296,12 @@ async def test_multi_tracker_categorized_status_and_capabilities(tmp_path):
     assert reg["letterboxd"]["category"] == "social_diary"
     assert reg["serializd"]["category"] == "social_diary"
     assert reg["mdblist"]["category"] == "lists_ratings"
+    assert reg["trakt"]["capabilities"] == ["realtime_playback", "history", "progress", "ratings", "watchlist", "collection", "search"]
+    assert reg["simkl"]["supports_watchlist"] is False
+    assert reg["mdblist"]["supports_ratings"] is False
+    assert reg["anilist"]["supports_progress"] is True
+    reg["trakt"]["capabilities"].clear()
+    assert "history" in mt.get_registered_trackers()["trakt"]["capabilities"]
 
     status = await mt.get_status()
     assert "categories" in status
@@ -8959,8 +9311,30 @@ async def test_multi_tracker_categorized_status_and_capabilities(tmp_path):
     assert status["categories"]["lists_ratings"] == ["mdblist"]
     assert "trackers" in status
     assert len(status["trackers"]) == 9
+    assert "collection" in status["trackers"]["trakt"]["capabilities"]
+    assert status["trackers"]["simkl"]["supports_watchlist"] is False
+    assert status["trackers"]["mdblist"]["supports_ratings"] is False
 
     await mt.close()
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_tracker_capability_skip_reason_is_recorded_in_delivery_details():
+    from app.main import _delivery_category, _initial_delivery_details, _tracker_delivery_from_result
+    from app.services.multi_tracker import MultiTrackerManager
+    manager = MultiTrackerManager()
+    media = ParsedMedia(event="media.play", media_type="movie", title="Capability Test", username="tester", progress=1)
+    result = await manager.dispatch_scrobble(
+        action="start", media=media, trakt_client=MagicMock(), progress=1,
+        selected_trackers=["letterboxd"],
+    )
+    assert result["skipped"]["letterboxd"]["reason"] == "This tracker does not support live playback updates."
+    delivery = _tracker_delivery_from_result(result, "manual_start")
+    assert delivery["letterboxd"] == "skipped"
+    details = _initial_delivery_details(result, delivery)
+    assert details["letterboxd"]["reason"] == result["skipped"]["letterboxd"]["reason"]
+    assert _delivery_category("skipped", result["skipped"]["letterboxd"]) == "unsupported"
+    await manager.close()
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -9102,12 +9476,25 @@ async def test_cloud_tracker_security_and_privacy(monkeypatch, tmp_path):
     monkeypatch.setattr(Config, "LETTERBOXD_DIARY_FILE", diary_file)
     monkeypatch.setattr(Config, "LETTERBOXD_DATA_FILE", diary_file)
 
+    backup_data_dir = tmp_path / "backup-data"
+    backup_data_dir.mkdir()
+    rules_file = backup_data_dir / "automation_rules.json"
+    rules_file.write_text('[{"id":"rule-1","name":"Pause anime","action":"suppress"}]', encoding="utf-8")
+    provenance_file = backup_data_dir / "cross_sync_provenance.json"
+    provenance_file.write_text('{"version":1,"records":[]}', encoding="utf-8")
+    monkeypatch.setattr(Config, "BASE_DIR", tmp_path)
+    (tmp_path / "data").mkdir(exist_ok=True)
+    rules_file.rename(tmp_path / "data" / "automation_rules.json")
+    provenance_file.rename(tmp_path / "data" / "cross_sync_provenance.json")
+
     res_backup = await client.get("/api/backup?token=super_secret_webhook_key_123")
     assert res_backup.status_code == 200
     import io, zipfile
     with zipfile.ZipFile(io.BytesIO(res_backup.content), "r") as zf:
         names = zf.namelist()
         assert "data/letterboxd_diary.json" in names
+        assert "data/automation_rules.json" in names
+        assert "data/cross_sync_provenance.json" in names
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -10329,6 +10716,9 @@ async def test_encrypted_backup_and_restore_workflow(tmp_path):
 
         files = {"backup_file": ("backup.enc.json", enc_payload_bytes, "application/json")}
         data = {"passphrase": passphrase}
+        preview_res = await client.post("/api/restore/preview?token=admin_secret", files=files, data=data)
+        assert preview_res.status_code == 200
+        assert preview_res.json()["valid"] is True
         restore_res = await client.post("/api/restore?token=admin_secret", files=files, data=data)
         assert restore_res.status_code == 200
         assert restore_res.json().get("status") == "success"
@@ -10340,6 +10730,8 @@ async def test_encrypted_backup_and_restore_workflow(tmp_path):
         restore_bad = await client.post("/api/restore?token=admin_secret", files=files_bad, data=data_bad)
         assert restore_bad.status_code == 400
         assert "Decryption failed" in restore_bad.json().get("detail", "")
+        preview_bad = await client.post("/api/restore/preview?token=admin_secret", files=files_bad, data=data_bad)
+        assert preview_bad.status_code == 400
 
         # 4. Standard unencrypted backup when no passphrase is given
         with patch.object(Config, "CONFIG_ENCRYPTION_KEY", ""):
@@ -10352,6 +10744,59 @@ async def test_encrypted_backup_and_restore_workflow(tmp_path):
     if Config.CO_WATCH_DEVICES_DATA_FILE.exists():
         Config.CO_WATCH_DEVICES_DATA_FILE.unlink()
     cowatch_mgr._devices.clear()
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_local_backup_snapshot_retention(tmp_path):
+    client = make_async_test_client(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"), \
+         patch.object(Config, "BASE_DIR", tmp_path), \
+         patch.object(Config, "BACKUP_RETENTION_COUNT", 2), \
+         patch.object(Config, "CONFIG_ENCRYPTION_KEY", ""):
+        denied = await client.post("/api/backup/snapshots")
+        assert denied.status_code == 401
+        client.cookies.set("admin_token", "admin_secret")
+        for _ in range(3):
+            created = await client.post("/api/backup/snapshots")
+            assert created.status_code == 200
+        listed = await client.get("/api/backup/snapshots")
+        assert listed.status_code == 200
+        data = listed.json()
+        assert data["retention_count"] == 2
+        assert len(data["snapshots"]) == 2
+        assert all(item["filename"].endswith(".zip") for item in data["snapshots"])
+        assert all(not {"contents", "token", "passphrase"}.intersection(item) for item in data["snapshots"])
+        assert all((tmp_path / "data" / "backups" / item["filename"]).stat().st_mode & 0o777 == 0o600
+                   for item in data["snapshots"])
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_reconciliation_preview_is_read_only_and_apply_uses_preview():
+    from app.main import reverse_sync_mgr
+    client = make_async_test_client(app)
+    discrepancy = {
+        "id": "plex:movie:42", "server": "plex", "type": "movie", "title": "Example",
+        "year": 2020, "ids": {}, "status": "plex_only", "action_recommended": "sync_to_trakt",
+        "server_watched": True, "trakt_watched": False, "server_rating": None,
+    }
+    with patch.object(Config, "WEBHOOK_SECRET", "preview_secret"), \
+         patch.object(reverse_sync_mgr, "scan_discrepancies", new_callable=AsyncMock, return_value=[discrepancy]) as scan, \
+         patch.object(reverse_sync_mgr, "execute_reconciliation", new_callable=AsyncMock,
+                      return_value={"status": "success", "reconciled": 1, "failed": 0}) as execute:
+        denied = await client.post("/api/sync/reconcile/preview", json={"direction": "all"})
+        assert denied.status_code == 401
+        client.cookies.set("admin_token", "preview_secret")
+        preview_response = await client.post("/api/sync/reconcile/preview", json={"direction": "all", "server": "plex"})
+        assert preview_response.status_code == 200
+        preview = preview_response.json()
+        assert preview["total"] == 1
+        assert preview["items"][0]["match_confidence"] == "title-based"
+        assert len(preview["warnings"]) == 1
+        execute.assert_not_awaited()
+        assert scan.await_args.kwargs["force"] is True
+        applied = await client.post("/api/sync/reconcile", json={"preview_id": preview["preview_id"], "server": "plex"})
+        assert applied.status_code == 200
+        assert execute.await_args.kwargs["preview_items"] == preview["items"]
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -10415,6 +10860,145 @@ async def test_token_health_monitor_and_alerts():
         assert "trakt" in data
         assert "service" in data["trakt"]
         assert "mal" in data
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_recovery_health_is_admin_only_read_only_and_secret_free():
+    client = make_async_test_client(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        unauthenticated = await client.get("/api/health/recovery")
+        assert unauthenticated.status_code == 401
+
+        authenticated = await client.get("/api/health/recovery?token=admin_secret")
+        assert authenticated.status_code == 200
+        data = authenticated.json()
+
+    assert data["read_only"] is True
+    assert data["checks"]
+    assert all({"id", "label", "status", "summary", "next_action", "last_checked"} <= check.keys() for check in data["checks"])
+    serialized = json.dumps(data)
+    assert "admin_secret" not in serialized
+    assert "access_token" not in serialized
+    capability_check = next(check for check in data["checks"] if check["id"] == "tracker_capabilities")
+    assert "tracker_capabilities" in capability_check
+    assert "OAuth permission scopes are not introspected" in capability_check["summary"]
+    config_check = next(check for check in data["checks"] if check["id"] == "configuration")
+    assert "effective_settings" in config_check
+    assert all("source" in setting and "value" in setting for setting in config_check["effective_settings"])
+    assert "access_token" not in json.dumps(config_check)
+    compatibility_check = next(check for check in data["checks"] if check["id"] == "compatibility")
+    assert compatibility_check["application"]["version"]
+    assert compatibility_check["runtime"]["minimum_supported"] == "3.10"
+    assert {row["id"] for row in compatibility_check["compatibility_items"]} >= {
+        "settings", "watch_lists", "automation_rules", "dashboard_accounts", "offline_queue"
+    }
+    assert compatibility_check["ruleset"]["last_reviewed"]
+
+
+def test_configuration_diagnostics_find_issues_without_returning_secrets(tmp_path):
+    from app.main import _build_configuration_diagnostics
+    from app.services.settings_manager import settings_mgr
+    settings = {
+        "rules": {"scrobble_threshold": 120, "movie_scrobble_threshold": 90, "min_duration_seconds": -5},
+        "arr": {"auto_add_from_watchlist": True, "sonarr_url": "http://private-host", "sonarr_api_key": ""},
+        "notifications": {"telegram_bot_token": "private-telegram-secret", "telegram_chat_id": "", "weekly_digest_enabled": True, "weekly_digest_day": "funday", "weekly_digest_hour": 27},
+        "trackers": {"trakt": False},
+        "credentials": {"trakt": {"client_id": "private-id", "client_secret": "private-secret"}},
+    }
+    with patch.object(settings_mgr, "settings_file", tmp_path / "no-settings.json"), \
+         patch.object(settings_mgr, "get_all_settings", return_value=settings), \
+         patch.object(settings_mgr, "is_server_enabled", return_value=False), \
+         patch.object(Config, "SCROBBLE_MODE", "invalid-mode"), \
+         patch.object(notifier, "get_status", return_value={"telegram": False, "matrix": False}):
+        result = _build_configuration_diagnostics([])
+    codes = {finding["code"] for finding in result["findings"]}
+    assert {"invalid_scrobble_mode", "threshold_out_of_range", "negative_min_duration", "invalid_digest_day", "invalid_digest_hour", "incomplete_notification", "incomplete_arr_connection", "arr_automation_unconfigured", "configured_tracker_disabled", "digest_without_channel"} <= codes
+    serialized = json.dumps(result)
+    assert "private-secret" not in serialized
+    assert "private-telegram-secret" not in serialized
+    assert "private-host" not in serialized
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_recovery_connection_test_is_admin_gated_and_redacts_results():
+    client = make_async_test_client(app)
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        unauthenticated = await client.post("/api/health/recovery/test", json={"integration": "plex"})
+        assert unauthenticated.status_code == 401
+
+        with patch("app.main.test_sync_connection", new_callable=AsyncMock, return_value={
+            "status": "connected", "server_name": "private-host", "token": "private-token"
+        }) as connection_test:
+            response = await client.post("/api/health/recovery/test?token=admin_secret", json={"integration": "plex"})
+            connection_test.assert_awaited_once()
+        assert response.status_code == 200
+        assert response.json()["status"] == "connected"
+        assert "private-host" not in response.text
+        assert "private-token" not in response.text
+
+        with patch("app.main.test_arr_connection", new_callable=AsyncMock, side_effect=RuntimeError("private failure")):
+            failed = await client.post("/api/health/recovery/test?token=admin_secret", json={"integration": "sonarr"})
+        assert failed.status_code == 200
+        assert failed.json()["status"] == "failed"
+        assert "private failure" not in failed.text
+
+        with patch("app.main.notifier.get_status", return_value={"discord": True}), patch(
+            "app.main.test_notification_endpoint",
+            new_callable=AsyncMock,
+            return_value={"success": True, "message": "delivered to private destination"},
+        ) as notification_test:
+            notification = await client.post(
+                "/api/health/recovery/test?token=admin_secret",
+                json={"integration": "notification:discord"},
+            )
+            notification_test.assert_awaited_once()
+        assert notification.status_code == 200
+        assert notification.json()["status"] == "connected"
+        assert "private destination" not in notification.text
+
+        with patch("app.main.get_multi_trackers_status", new_callable=AsyncMock, return_value={
+            "trackers": {"trakt": {"enabled": True, "authenticated": True, "status": "healthy"}}
+        }) as tracker_test:
+            tracker_response = await client.post(
+                "/api/health/recovery/test?token=admin_secret",
+                json={"integration": "trackers"},
+            )
+            tracker_test.assert_awaited_once()
+        assert tracker_response.status_code == 200
+        assert tracker_response.json()["status"] == "connected"
+
+        invalid = await client.post("/api/health/recovery/test?token=admin_secret", json={"integration": "unknown"})
+        assert invalid.status_code == 400
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_webhook_auth_rejections_are_counted_without_retaining_request_data():
+    from app.services.webhook_debugger import webhook_debugger
+
+    client = make_async_test_client(app)
+    webhook_debugger.clear()
+    paths = ("/webhook", "/webhook/jellyfin", "/webhook/emby", "/api/scrobble", "/sonarr", "/radarr")
+    supplied_secret = "untrusted-request-secret"
+    with patch.object(Config, "WEBHOOK_SECRET", "admin_secret"):
+        for path in paths:
+            request_options = {"headers": {"x-webhook-secret": supplied_secret}}
+            if path == "/api/scrobble":
+                request_options["json"] = {"title": "Synthetic diagnostic"}
+            response = await client.post(path, **request_options)
+            assert response.status_code == 401
+
+        health = await client.get("/api/health/recovery?token=admin_secret")
+        assert health.status_code == 200
+        webhook_check = next(check for check in health.json()["checks"] if check["id"] == "webhook_auth")
+        assert webhook_check["auth_rejections"]["count"] == len(paths)
+        assert set(webhook_check["auth_rejections"]["by_endpoint"]) == set(paths)
+        assert supplied_secret not in health.text
+
+    assert webhook_debugger.get_history() == []
+    for _ in range(105):
+        webhook_debugger.record_auth_rejection("plex", "/webhook")
+    assert webhook_debugger.get_auth_rejection_summary()["count"] == 100
+    webhook_debugger.clear()
 
 
 # ==============================================================================
