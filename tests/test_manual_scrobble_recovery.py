@@ -22,6 +22,7 @@ async def test_manual_scrobble_retains_tracker_failures_for_recovery(
 
     queue = QueueManager(tmp_path / f"manual-{status_code}.db")
     monkeypatch.setattr(main, "queue_mgr", queue)
+    monkeypatch.setattr(main.activity_delivery_mgr, "queue", queue)
     client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://testserver",

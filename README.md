@@ -217,6 +217,8 @@ This automated script fetches the latest code from GitHub, updates dependencies 
 
 Omniscrobble includes a complete local testing framework featuring a CLI webhook simulator and a unified quality gate runner.
 
+For a development environment, install runtime and test dependencies with `pip install -r requirements-dev.txt`. Production installs use `requirements.txt` only.
+
 ```bash
 # 1. Run all quality gates (Pytest, Gitleaks, demo validation, git privacy audit)
 ./scripts/test_local.sh

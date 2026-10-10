@@ -19,8 +19,8 @@ cd omniscrobble
 python3.12 -m venv .venv
 source .venv/bin/activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install runtime and test dependencies
+pip install -r requirements-dev.txt
 ```
 
 ### 1.2 Browser UI Tests
@@ -175,7 +175,7 @@ Omniscrobble includes a one-command local quality gate runner. CI additionally r
 5. **Gate 5: Static Demo Generation**
    - Runs `scripts/generate_static_demo.py` and verifies `docs/index.html` is generated successfully so the GitHub Pages live preview stays in sync.
 
-CI also runs `pip-audit -r requirements.txt` to check declared Python dependencies against known vulnerability advisories.
+CI also runs `pip-audit -r requirements-dev.txt` to check runtime and development dependencies against known vulnerability advisories. The Docker image installs only `requirements.txt`.
 
 ---
 
@@ -219,7 +219,7 @@ These services are part of the maintainer's active homelab setup. They have been
 
 ### 6.2 Tier 2: Community Beta (Unit-Tested & Simulated)
 
-These services are built against official platform API specifications and tested with automated unit test suites (`tests/test_scrobbler.py`) using mocked HTTP responses and synthetic webhook simulator payloads (`scripts/simulate_webhook.py`). **They have not yet been live-tested with active user accounts in production**:
+These services are built against official platform API specifications and tested with focused unit and integration modules under `tests/`, using mocked HTTP responses and synthetic webhook simulator payloads (`scripts/simulate_webhook.py`). **They have not yet been live-tested with active user accounts in production**:
 
 | Platform | Capability | Testing Status |
 | :--- | :--- | :--- |

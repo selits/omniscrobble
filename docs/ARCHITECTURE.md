@@ -79,7 +79,7 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 | Tracker and acquisition integrations | `app/routes/integrations.py` (route declarations), `app/main.py` (typed handlers and orchestration) | Tracker authorization/status, exports, anime resolution, and Sonarr/Radarr/Overseerr operations. |
 | Server and cross-tracker reconciliation | `app/routes/reconciliation.py` (route declarations), `app/main.py` (typed handlers and orchestration) | Configuration, diff, preview, execution, background sync, and provenance. |
 | Webhooks and direct scrobbling | `app/main.py` | Media-server/player ingestion and dispatch. |
-| Dashboard, activity, and administration | `app/main.py` | Server-rendered dashboard and authenticated operational APIs. |
+| Dashboard, activity, and administration | `app/main.py`; activity outcomes in `app/services/activity_delivery.py` | Server-rendered dashboard, authenticated operational APIs, and persisted destination status. |
 | Household and co-watch | `app/main.py` | Household access and shared playback controls. |
 | Activity, settings, queue, backup, automation, and notifications | `app/main.py` | Operational controls and application data workflows. |
 | Static assets and health/metrics | `app/main.py` | Browser assets and process-level probes/metrics. |
@@ -95,6 +95,7 @@ The map records current ownership, not a target architecture. Phase 2 moves cohe
 ### 3. Business Logic & Dispatch Layer
 
 - **`app/services/multi_tracker.py`**: Coordinates dispatch across the nine integrated cloud trackers (Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, Serializd, MDBList). Its shared capability registry describes supported media types and operations, and the coordinator routes work based on media type and runtime enablement.
+- **`app/services/activity_delivery.py`**: `ActivityDeliveryManager` classifies tracker outcomes, redacts explanations, aggregates destination status, and records queue, household, and media-server delivery updates against the originating event. The event store, persistence callback, queue, log manager, and notifier are explicit constructor dependencies.
 - **Rewatch Detection & Scrobbler Fidelity**: Embeds explicit ISO-8601 `watched_at` timestamps on completed scrobbles across Trakt, Simkl, and Letterboxd (`is_rewatch = True`, `"Rewatch": "Yes"`), ensuring accurate play count increments and preserving separate diary entries for repeated viewings rather than dropping duplicates.
 - **`app/services/settings_manager.py`**: Houses the **Dynamic Rules & Filters Engine**. Evaluates granular episode (default: 80%) and movie (default: 90%) scrobble thresholds, minimum playback duration (with episode exemption toggle), dynamic library ignore lists, and error-tolerant regex file path exclusions (`is_media_allowed()`, `get_effective_threshold()`).
 - **`app/services/automation_rules.py`**: Stores ordered event rules with server, library, media type, device/player, user, and timezone-aware time-window conditions. Evaluates safe default-allow policies, explains precedence conflicts, and supports non-mutating sample previews. Suppress and review decisions are applied before tracker dispatch; route rules use the existing multi-tracker and household dispatch paths.
@@ -113,7 +114,6 @@ The map records current ownership, not a target architecture. Phase 2 moves cohe
 - **`app/clients/kitsu_client.py`**: Kitsu JSON:API v1 client for anime episode progress, ratings, and library updates.
 - **`app/clients/tmdb_client.py`**: The Movie Database (TMDb) API v3/v4 client for watchlist synchronization, movie/TV ratings, and metadata enrichment.
 - **`app/clients/letterboxd_client.py`**: Letterboxd client and CSV diary exporter for watched history, ratings, and list synchronization.
-- **`app/clients/betaseries_client.py`**: BetaSeries / TV Time REST API client for TV episode scrobbles, movie logs, and user ratings.
 - **`app/clients/serializd_client.py`**: Serializd client for episode logging and TV diary management.
 - **`app/clients/mdblist_client.py`**: MDBList client for aggregated scores and rating synchronization.
 - **`app/clients/plex_api_client.py`**, **`jellyfin_api_client.py`**, **`emby_api_client.py`**: Direct REST clients for media servers supporting library section discovery, watch status toggling, rating management, and 1-click webhook auto-registration.
@@ -155,7 +155,7 @@ The map records current ownership, not a target architecture. Phase 2 moves cohe
 
 ---
 
-## 📂 Complete Codebase Directory Manifest
+## 📂 Core Codebase Directory Manifest
 
 ```text
 omniscrobble/
@@ -198,7 +198,6 @@ omniscrobble/
 │   │   ├── kitsu_client.py          # Kitsu JSON:API v1 client for anime progress & rating sync
 │   │   ├── tmdb_client.py           # TMDb API v3/v4 client for watchlist & rating synchronization
 │   │   ├── letterboxd_client.py     # Letterboxd CSV diary exporter & history synchronization
-│   │   ├── betaseries_client.py     # BetaSeries / TV Time client for episode scrobbles & ratings
 │   │   ├── serializd_client.py      # Serializd diary & episode scrobbling client
 │   │   ├── mdblist_client.py        # MDBList aggregated score & rating synchronization
 │   │   ├── plex_api_client.py       # Direct Plex Media Server REST API client
@@ -213,6 +212,7 @@ omniscrobble/
 │   │   ├── compatibility_manager.py # App/runtime and persisted schema compatibility checks
 │   │   ├── automation_rules.py        # Ordered event policy evaluation and preview
 │   │   ├── analytics_manager.py     # Personal viewing analytics, exports, watch time, co-watch ratio & OmniWrapped engine
+│   │   ├── activity_delivery.py      # Delivery classification and activity event outcome persistence
 │   │   ├── anime_resolver.py        # Anime detection heuristics, title normalization & GUID caching
 │   │   ├── watch_list_manager.py    # Versioned local watch lists and JSON/TXT interchange
 │   │   ├── arr_bridge.py            # Content Bridge manager for Trakt watchlist sync & ecosystem health
@@ -270,6 +270,9 @@ omniscrobble/
 │   ├── ARCHITECTURE.md              # Architectural blueprint & component design (this file)
 │   ├── FEATURES.md                  # In-depth feature guides (Co-Watch, Reconciliation, Content Bridge)
 │   ├── TROUBLESHOOTING.md           # FAQ, webhook diagnostics, networking & error handling
+│   ├── LOCAL_TESTING.md             # Development environment, browser testing, and quality gates
+│   ├── APP_BLOAT_REVIEW.md          # Phase 4 maintainability findings and staged recommendations
+│   ├── ROADMAP_RELIABILITY.md       # Reliability phases and project follow-up plan
 │   └── .nojekyll                    # Bypass Jekyll processing on GitHub Pages
 ├── scripts/                         # Maintenance, test & asset generation scripts
 │   ├── build_dashboard_bundle.py    # Bundles ordered dashboard JavaScript source modules
@@ -279,9 +282,42 @@ omniscrobble/
 │   ├── unraid-omniscrobble.xml      # Official Unraid Community Applications template
 │   └── docker-compose.portainer.yml # Portainer stack & TrueNAS SCALE compose specification
 ├── tests/                           # Unit, integration, and browser regression tests
-│   ├── test_scrobbler.py            # End-to-end integration and service unit tests with pytest
+│   ├── test_activity_delivery_service.py # Activity outcome classification and event persistence
+│   ├── test_analytics_export.py     # Analytics download and export behavior
+│   ├── test_analytics_debugger.py   # Watch analytics, webhook diagnostics, and replay behavior
+│   ├── test_anime.py                # Anime clients, resolution, and multi-tracker dispatch
+│   ├── test_arr_acquisition.py      # Sonarr, Radarr, and Overseerr acquisition workflows
+│   ├── test_automation_rules.py     # Event automation rule evaluation and preview
+│   ├── test_cloud_trackers.py       # Cloud tracker clients and sync behavior
+│   ├── test_compatibility_manager.py # Runtime and persisted-data compatibility checks
+│   ├── test_core_integrations.py    # Cross-cutting application integration checks
+│   ├── test_cross_tracker_tmdb.py   # Cross-tracker and TMDb reconciliation behavior
+│   ├── test_cowatch_household.py    # Co-Watch rules, household sharing, and delivery
+│   ├── test_cowatch_sync.py         # Co-Watch partner tracker configuration and delivery
+│   ├── test_dashboard_auth_manager.py # Dashboard sessions, accounts, and permissions
+│   ├── test_dashboard_demo.py       # Dashboard rendering, accessibility, and demo behavior
+│   ├── test_dashboard_playwright.py # Cross-browser UI, accessibility, and watch-list flows
+│   ├── test_log_manager.py          # Log source selection and credential redaction
+│   ├── test_manual_scrobble_recovery.py # Manual scrobble delivery and recovery
+│   ├── test_media_server_webhooks.py # Jellyfin/Emby parsing and webhook integration
+│   ├── test_notifications.py        # Notification channels, delivery, and digests
+│   ├── test_notification_preferences.py # Notification configuration and preferences
+│   ├── test_playback.py             # Playback APIs, thresholds, and heartbeat behavior
+│   ├── test_playback_sessions.py    # Playback session tracking and completion behavior
+│   ├── test_queue_delivery.py       # Queue processing and webhook queue integration
+│   ├── test_queue_recovery.py       # Persistent queue recovery and retry behavior
+│   ├── test_recovery_routes.py      # Recovery route behavior and authorization
+│   ├── test_reverse_sync.py         # Media-server reverse sync and reconciliation
+│   ├── test_result_normalizer.py    # External delivery result classification
+│   ├── test_route_modules.py        # Route registration and access control
+│   ├── test_settings_security.py    # Settings, credentials, authorization, and privacy
+│   ├── test_simkl.py                # Simkl client and API integration behavior
+│   ├── test_trakt.py                # Trakt client resilience, authentication, and search
 │   ├── test_watch_list_manager.py   # Watch-list persistence and API tests
-│   └── test_dashboard_playwright.py # Cross-browser UI, accessibility, and watch-list flows
+│   ├── test_watch_lists.py          # Watch-list API and sync behavior
+│   ├── test_webhook_media.py        # Webhook parsing, collection, and synthetic events
+│   ├── helpers.py                   # Shared integration-test client and settings fixture
+│   └── __init__.py                  # Test package marker
 ├── package.json                     # axe-core browser accessibility test dependency
 ├── package-lock.json                # Reproducible JavaScript test dependency lockfile
 ├── main.py                          # Backward-compatible service entrypoint (Uvicorn launcher)
@@ -291,6 +327,8 @@ omniscrobble/
 ├── upgrade.sh                       # 1-click automated upgrade script
 ├── Dockerfile                       # Multi-stage hardened non-root container image
 ├── docker-compose.yml               # Container deployment specification
+├── requirements.txt                 # Runtime Python dependencies
+├── requirements-dev.txt             # Runtime dependencies plus Python test tools
 ├── CONFIGURATION.md                 # Complete configuration, credentials, and network guide
 ├── DEPLOYMENT.md                    # 24/7 server & container deployment guide
 └── README.md                        # Project overview and quick start guide

@@ -22,7 +22,7 @@ Omniscrobble uses Python 3.10+ and a local virtual environment:
 # Set up virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # Install Git pre-commit hook (runs unit tests and Gitleaks)
 cp scripts/pre-commit-hook.sh .git/hooks/pre-commit
@@ -62,7 +62,7 @@ This script verifies:
 
 1. **Git Privacy Verification**: Asserts that `git config user.email` uses the privacy email `selits@users.noreply.github.com`.
 2. **State Isolation**: Asserts no `.env` or files under `data/` are tracked by git.
-3. **Dependency Audit**: CI separately runs `pip-audit -r requirements.txt` against known Python dependency advisories.
+3. **Dependency Audit**: CI runs `pip-audit -r requirements-dev.txt` against runtime and development dependencies.
 4. **Unit and Browser Tests**: Runs `.venv/bin/pytest -v` (0 failures allowed).
 5. **Secret Scanning**: Runs Gitleaks across git history.
 6. **Static Demo Validation**: Regenerates and validates `docs/index.html`.

@@ -52,7 +52,7 @@ The checklist and navigation were reviewed for admin-only access and narrow mobi
 
 Inventory route groups in `app/main.py` and identify cohesive boundaries. Candidate groups include accounts and authentication, watch lists, reconciliation, and integrations. Move one group at a time into focused route modules while preserving URLs, request and response formats, dependency behavior, and authorization checks.
 
-As each route group moves, split the corresponding coverage out of `tests/test_scrobbler.py` into feature-focused test modules. Keep shared fixtures where they make setup clearer. Update `docs/ARCHITECTURE.md` when files or component boundaries change.
+As each route group moves, keep its coverage in feature-focused test modules. Keep shared fixtures where they make setup clearer. Update `docs/ARCHITECTURE.md` when files or component boundaries change.
 
 ### Phase 2 deliverables
 
@@ -99,7 +99,7 @@ Review duplicate and concurrency handling for repeated retry requests, process r
 
 ## Phase 4: Application bloat and maintainability review
 
-**Status: Planned.** Complete this review before starting P2P sync discovery or adding another major feature.
+**Status: Discovery and Stages 1–3 complete.** Findings and staged recommendations are in `docs/APP_BLOAT_REVIEW.md`; Stage 4 feature support remains evidence-dependent. Complete this review before starting P2P sync discovery or adding another major feature.
 
 ### Phase 4 scope
 
@@ -108,6 +108,8 @@ Build an evidence-based picture of where application size creates real maintenan
 Identify options that reduce complexity while preserving important user workflows. Consider focused module extraction, consolidation of duplicate logic, clearer feature boundaries, dependency removal, and retirement only where usage and maintenance evidence support it. Estimate the change risk and ongoing savings for each option.
 
 ### Phase 4 deliverables
+
+The repository and feature-surface discovery is documented in [`APP_BLOAT_REVIEW.md`](./APP_BLOAT_REVIEW.md). Its ranked stages are proposals; choose an implementation priority before starting code reduction.
 
 - A concise inventory of complexity hotspots, distinguishing source code from generated or copied assets.
 - A feature and integration map that identifies overlap, support burden, and available usage evidence.

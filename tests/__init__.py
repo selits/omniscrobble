@@ -1,0 +1,1 @@
+"""Omniscrobble test package."""
