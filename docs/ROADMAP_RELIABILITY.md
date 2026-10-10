@@ -99,7 +99,7 @@ Review duplicate and concurrency handling for repeated retry requests, process r
 
 ## Phase 4: Application bloat and maintainability review
 
-**Status: Discovery and Stages 1–3 complete.** Findings and staged recommendations are in `docs/APP_BLOAT_REVIEW.md`; Stage 4 feature support remains evidence-dependent. Complete this review before starting P2P sync discovery or adding another major feature.
+**Status: Complete.** Stages 1–3 are implemented, and Stage 4's evidence-based keep/simplify/defer/retire decisions are documented in `docs/APP_BLOAT_REVIEW.md`. The review recommends no integration retirements on current evidence and ranks follow-up maintainability work. Phase 5 P2P sync discovery may now begin as a separate decision phase.
 
 ### Phase 4 scope
 
@@ -109,7 +109,7 @@ Identify options that reduce complexity while preserving important user workflow
 
 ### Phase 4 deliverables
 
-The repository and feature-surface discovery is documented in [`APP_BLOAT_REVIEW.md`](./APP_BLOAT_REVIEW.md). Its ranked stages are proposals; choose an implementation priority before starting code reduction.
+The repository and feature-surface discovery, ranked work, and integration support decisions are documented in [`APP_BLOAT_REVIEW.md`](./APP_BLOAT_REVIEW.md).
 
 - A concise inventory of complexity hotspots, distinguishing source code from generated or copied assets.
 - A feature and integration map that identifies overlap, support burden, and available usage evidence.
@@ -124,7 +124,9 @@ The repository and feature-surface discovery is documented in [`APP_BLOAT_REVIEW
 - No broad rewrite or feature removal begins as part of discovery; implementation follows the agreed plan.
 - The review is complete before Phase 5 begins.
 
-## Phase 5: P2P sync discovery and decision
+## Phase 5: P2P sync discovery and decision — deferred
+
+**Status: Deferred by maintainer.** There is no confirmed use case for sharing data between separate Omniscrobble installations. Do not start discovery or implementation unless a concrete user need is raised.
 
 ### Phase 5 scope
 
@@ -150,9 +152,9 @@ Proceed to a limited prototype only if the design identifies a clear user need, 
 2. Extract the route group needed to support those improvements, then continue modularization incrementally.
 3. Map retry safety and implement the recovery changes with focused coverage.
 4. Review application bloat and agree on a staged maintainability plan.
-5. Reassess P2P using the discovery deliverables and decision gate, after the bloat review is complete.
+5. Keep P2P deferred unless a concrete cross-installation use case is identified.
 
-Phases 1–3 are complete reliability and maintainability work. Phase 4 sets the maintainability priorities before new major feature discovery. Phase 5 is intentionally exploratory and does not commit the project to shipping P2P sync.
+Phases 1–3 are complete reliability and maintainability work. Phase 4 sets the maintainability priorities. Phase 5 remains deferred because its user problem is unconfirmed.
 
 ## Risks to manage
 

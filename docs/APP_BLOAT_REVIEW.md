@@ -1,12 +1,12 @@
 # Application Bloat and Maintainability Review
 
-**Review status:** Discovery and Stage 1 complete; Stage 2 is the next proposed step.
+**Review status:** Phase 4 complete. Stages 1–3 are implemented; Stage 4 decisions are documented below.
 
 ## Summary
 
-Omniscrobble has a broad feature surface, but the main maintenance cost is concentrated in a few places: application orchestration remains centralized in `app/main.py`, most API tests remain in one large module, and the production Docker image installs browser and test dependencies. Generated dashboard files add repository bytes, but they are built outputs needed by the app and GitHub Pages; removing them would move complexity into deployment without reducing maintained source.
+Omniscrobble has a broad feature surface. The main maintenance cost is concentrated in application orchestration in `app/main.py`, route behavior still resolved through globals, and a wide integration surface with differing verification levels. The API tests are now split into focused modules, and production dependencies are separated from development tools. Generated dashboard files add repository bytes, but they are built outputs needed by the app and GitHub Pages; removing them would move complexity into deployment without reducing maintained source.
 
-There is not enough feature-level usage evidence to recommend retiring integrations. The project has local request and scrobble counters, but they do not report adoption by tracker or feature across installations. Keep the current feature set until the maintainer identifies unwanted support burden or a privacy-preserving way to assess local use.
+There is not enough feature-level usage evidence to recommend retiring integrations. The project has local request and scrobble counters, but they do not report adoption by tracker or feature across installations. Repository evidence does establish that Plex, Trakt, Simkl, Sonarr, and Radarr are the maintainer's live daily-driver integrations; the other integrations are explicitly labeled as community beta in the integration matrix. Preserve the current feature set, keep those support labels accurate, and use concrete support burden or maintainer priorities to guide later changes.
 
 ## Evidence and hotspots
 
@@ -44,7 +44,28 @@ As a result, the review can rank engineering cost but cannot responsibly decide 
 | 1. Reduce runtime install surface — complete | Split runtime dependencies from `requirements-dev.txt`; Docker installs runtime dependencies, while CI and local setup install the development set. `requests` was removed after a repository-wide import check. | Smaller production environment and clearer separation between app and test tooling. | Low | Verified by a successful runtime image build/import check, absence of test packages from the image, clean `pip-audit`, and 405 passed tests (28 skipped). |
 | 2. Split the API test monolith — complete | Moved all 282 tests from `tests/test_scrobbler.py` into 21 domain-focused modules covering analytics/debugging, anime and tracker integrations, acquisition, Co-Watch/households, dashboards, notifications, playback, queue delivery, reverse sync, settings/security, watch lists, and webhooks. Consolidated shared setup in `tests/helpers.py`. | Easier navigation, ownership, and focused local test runs; less merge contention. | Medium | Full suite passes with test names and assertions preserved. Queue collection retry now uses a temporary database to avoid depending on stale shared queue state. |
 | 3. Move behavior behind real domain boundaries — complete | Extracted delivery classification, redaction, status aggregation, and event outcome persistence from `app/main.py` into `ActivityDeliveryManager`. Its event store, persistence callback, queue, log manager, and notifier are explicit dependencies. The existing HTTP endpoints and response contracts remain in place. | Reduced orchestration size and a focused, directly testable delivery boundary. | High | Focused service tests and the full suite pass; endpoint, privacy, queue linkage, and delivery behavior are covered. |
-| 4. Reassess feature support only with evidence | Review integration upkeep against actual maintainer priorities and support burden before considering a retirement or replacement. | Potentially reduces long-term support work if a feature is truly unwanted. | Unknown | Do not remove features based on directory size, test count, or absent cross-installation telemetry. Require a specific decision and migration impact review. |
+| 4. Reassess feature support only with evidence — complete | Reviewed integration upkeep against documented maintainer priorities, workflow coverage, and available support evidence. No integration retirement is justified; keep primary integrations and retain accurate beta labels for the rest. | Establishes a defensible support baseline and avoids carrying unsupported assumptions into feature decisions. | Low | Revisit only with a concrete maintenance burden or product priority; any removal needs workflow impact and migration review. |
+
+## Stage 4 decisions
+
+This review closes Stage 4 with the following decisions. They use the integration support matrix in `README.md`, the documented user workflows in `docs/FEATURES.md`, existing tests, and the maintainability evidence above. There is no representative adoption dataset across installations, so a low test count or lack of live verification is not treated as evidence that a feature is unused.
+
+| Decision | Scope | Evidence and reason | User impact / guardrail |
+| --- | --- | --- | --- |
+| **Keep** | Plex, Trakt, Simkl, Sonarr, and Radarr | `README.md` identifies these as the maintainer's live daily-driver integrations. Recent reliability work also exercised Trakt Co-Watch delivery and playback recovery. | Preserve the tested primary workflows and reliability coverage. |
+| **Keep with beta status** | Jellyfin, Emby, AniList, MyAnimeList, Kitsu, Letterboxd, Serializd, TMDb, MDBList, and SeriesGuide/Showly relay | The integration matrix labels these as community beta or mock/simulation verified; there is no cross-installation adoption evidence to justify removal. | Keep support claims scoped to the verification actually performed. Require live compatibility evidence before promoting beta integrations to verified status. |
+| **Simplify** | Route behavior and workflow entry points | Several route modules still resolve handlers through `globals()` in `app/main.py`; watch-list, acquisition, and Co-Watch workflows have multiple entry points but reuse existing dialogs/services. These are concrete maintainability and discoverability costs. | Move cohesive behavior behind explicit service dependencies in small steps. Keep shared acquisition and Co-Watch workflows intact; avoid adding parallel implementations. |
+| **Defer** | Additional integrations, broad feature-use telemetry, and generated dashboard asset removal | No maintainer priority or representative usage evidence supports more integrations or pruning. Existing bundles serve the running app and Pages demo. Broad telemetry would introduce privacy and operations cost without being necessary to preserve current behavior. | Revisit when a named user need, support burden, or deployment issue exists. Keep generated artifacts synchronized with their sources. |
+| **Retire** | None recommended | The available evidence does not establish that any integration is unused or disproportionately costly to maintain. | Any future retirement proposal must name the integration, show specific support or maintenance cost, identify affected workflows, and include a migration/deprecation plan. |
+
+### Ranked follow-up options
+
+| Rank | Option | Expected benefit | Effort | Risk and user impact |
+| --- | --- | --- | --- | --- |
+| 1 | Extract one cohesive route behavior area from `app/main.py` at a time, replacing name lookup through `globals()` with explicit dependencies. | Reduces coupling and makes ownership and focused tests clearer. | Medium to high | Medium. Preserve endpoint paths, response shapes, admin checks, and queue behavior; verify with focused tests and the full suite. |
+| 2 | Audit overlapping dashboard entry points for shared workflows, starting with acquisition and watch-list actions. | Makes the dashboard easier to navigate and reduces duplicate orchestration. | Medium | Medium. Keep all current actions available through a clear shared flow; update feature docs and static demo if templates change. |
+| 3 | Add generation and consistency checks for maintained dashboard modules and generated bundles. | Prevents drift without deleting required app and Pages outputs. | Low to medium | Low. Generated outputs remain required artifacts; verify the build/check command in CI. |
+| 4 | Reassess an individual integration only when a concrete support issue or maintainer priority is identified. | Could reduce upkeep for an integration that is demonstrably unwanted or costly. | Unknown | High if done without migration planning. Review actual configuration locally with the maintainer; do not collect viewing history or add cross-installation telemetry for this decision. |
 
 ## Not recommended in this review
 
@@ -53,6 +74,6 @@ As a result, the review can rank engineering cost but cannot responsibly decide 
 - Do not rewrite the application or retire integrations as part of discovery.
 - Do not add broad behavioral analytics just to justify pruning. If feature-use evidence is needed, first assess whether installation-local counts can answer the question without collecting titles, usernames, or cross-installation data.
 
-## Suggested first implementation
+## Review completion
 
-Stages 1–3 are complete. Stage 4 remains an evidence-based review of feature support. The current review found no representative cross-installation usage data, so it recommends keeping integrations until maintainers identify a specific support burden or product priority to assess.
+Phase 4 is complete. Stages 1–3 reduced the runtime install surface, split the API test monolith, and extracted an activity-delivery service boundary. Stage 4 found no evidence that supports retiring an integration, documented which integrations are live-verified versus beta, and ranked the next small maintainability steps. P2P discovery is deferred because there is no confirmed cross-installation use case; use this review as a baseline if that changes or before another major feature.
