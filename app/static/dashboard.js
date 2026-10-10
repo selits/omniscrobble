@@ -3744,11 +3744,19 @@
         function copyLogsToClipboard() {
             const btn = document.getElementById('copy-logs-btn');
             const text = allRawLogs.join('\n');
-            if (!navigator.clipboard) {
-                alert('Clipboard API not available');
-                return;
-            }
-            navigator.clipboard.writeText(text).then(() => {
+            const legacyCopy = () => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                const copied = document.execCommand('copy');
+                textarea.remove();
+                return copied;
+            };
+            const showCopied = () => {
                 if (!btn) return;
                 const orig = btn.innerHTML;
                 btn.innerHTML = '✓ Copied!';
@@ -3757,9 +3765,16 @@
                     btn.innerHTML = orig;
                     btn.style.background = 'var(--accent-color)';
                 }, 2000);
-            }).catch(err => {
-                alert('Failed to copy: ' + err);
-            });
+            };
+            const fallbackOrFail = () => {
+                if (legacyCopy()) showCopied();
+                else alert('Unable to copy logs. Select and copy them manually.');
+            };
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                fallbackOrFail();
+                return;
+            }
+            navigator.clipboard.writeText(text).then(showCopied).catch(fallbackOrFail);
         }
 
 // ---- webhook_tests.js ----

@@ -97,15 +97,40 @@ Review duplicate and concurrency handling for repeated retry requests, process r
 - Concurrent or repeated retry requests cannot silently dispatch the same operation twice.
 - Retry outcomes remain linked to the originating activity record.
 
-## Phase 4: P2P sync discovery and decision
+## Phase 4: Application bloat and maintainability review
+
+**Status: Planned.** Complete this review before starting P2P sync discovery or adding another major feature.
 
 ### Phase 4 scope
+
+Build an evidence-based picture of where application size creates real maintenance or user costs. Separate maintained source from generated bundles and demo copies. Review the largest modules, overlapping services, dashboard feature surface, dependency footprint, and the cost of supporting less-used integrations. Use repository structure and code ownership, tests, and available usage or support evidence; do not treat line count alone as a reason to remove or rewrite code.
+
+Identify options that reduce complexity while preserving important user workflows. Consider focused module extraction, consolidation of duplicate logic, clearer feature boundaries, dependency removal, and retirement only where usage and maintenance evidence support it. Estimate the change risk and ongoing savings for each option.
+
+### Phase 4 deliverables
+
+- A concise inventory of complexity hotspots, distinguishing source code from generated or copied assets.
+- A feature and integration map that identifies overlap, support burden, and available usage evidence.
+- A ranked set of improvement options with expected benefit, effort, risk, and user impact.
+- An agreed staged bloat reduction plan, including explicit decisions about what to keep, simplify, defer, or consider retiring.
+
+### Phase 4 acceptance criteria
+
+- The review identifies concrete maintenance costs and supporting evidence rather than relying on size metrics alone.
+- Each proposed change preserves named user workflows or explains the effect of changing them.
+- The plan favors small, reversible steps and includes verification and documentation needs.
+- No broad rewrite or feature removal begins as part of discovery; implementation follows the agreed plan.
+- The review is complete before Phase 5 begins.
+
+## Phase 5: P2P sync discovery and decision
+
+### Phase 5 scope
 
 Begin with a design and user-problem review, not implementation. Define the target scenarios and the data that would move between instances. Assess peer identity, authentication, discovery or connection setup, unavailable peers, conflict resolution, duplicate handling, retry behavior, and backup or restore interactions.
 
 Compare direct P2P communication with simpler options such as scheduled export/import or a shared relay. Assess privacy and operational burden for self-hosted installations.
 
-### Phase 4 deliverables
+### Phase 5 deliverables
 
 - A concise problem statement and target-user description.
 - A data-flow and trust-boundary design.
@@ -113,7 +138,7 @@ Compare direct P2P communication with simpler options such as scheduled export/i
 - A comparison with simpler alternatives, including maintenance and deployment costs.
 - A written go/no-go recommendation.
 
-### Decision gate
+### Phase 5 decision gate
 
 Proceed to a limited prototype only if the design identifies a clear user need, defines safe conflict and retry behavior, and offers a meaningful advantage over simpler alternatives. Otherwise, document the decision and defer P2P implementation.
 
@@ -122,9 +147,10 @@ Proceed to a limited prototype only if the design identifies a clear user need, 
 1. Inventory high-friction user flows and select reliability improvements.
 2. Extract the route group needed to support those improvements, then continue modularization incrementally.
 3. Map retry safety and implement the recovery changes with focused coverage.
-4. Reassess P2P using the discovery deliverables and decision gate.
+4. Review application bloat and agree on a staged maintainability plan.
+5. Reassess P2P using the discovery deliverables and decision gate, after the bloat review is complete.
 
-Phases 1–3 are the near-term reliability and maintainability work. Phase 4 is intentionally exploratory and does not commit the project to shipping P2P sync.
+Phases 1–3 are complete reliability and maintainability work. Phase 4 sets the maintainability priorities before new major feature discovery. Phase 5 is intentionally exploratory and does not commit the project to shipping P2P sync.
 
 ## Risks to manage
 

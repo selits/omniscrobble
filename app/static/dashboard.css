@@ -25,8 +25,10 @@
         .playback-state-line { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
         .playback-state-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--status-playing); }
         .playback-user-device { font-size: 12px; color: var(--text-muted); }
-        .playback-state-paused .playback-state-label, .playback-state-paused .pulse-indicator { color: var(--status-paused); background-color: var(--status-paused); }
-        .playback-state-finished .playback-state-label, .playback-state-finished .pulse-indicator { color: var(--status-finished); background-color: var(--status-finished); }
+        .playback-state-paused .playback-state-label { color: var(--status-paused); }
+        .playback-state-paused .pulse-indicator { color: var(--status-paused); background-color: var(--status-paused); }
+        .playback-state-finished .playback-state-label { color: var(--status-finished); }
+        .playback-state-finished .pulse-indicator { color: var(--status-finished); background-color: var(--status-finished); }
         .playback-title { margin: 4px 0 8px; font-size: 18px; color: var(--text-main); }
         .playback-link { background: var(--bg-subtle); border: 1px solid var(--border-color); color: var(--accent-color); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
         .playback-progress { margin-top: 8px; }

@@ -234,6 +234,56 @@ async def test_mobile_activity_fields_do_not_overlap_and_controls_have_consisten
 
 
 @pytest.mark.asyncio(loop_scope="function")
+async def test_logs_copy_uses_legacy_fallback_when_clipboard_api_is_unavailable(dashboard_page: Page) -> None:
+    page = dashboard_page
+    await page.evaluate("""() => {
+        Object.defineProperty(navigator, 'clipboard', {configurable: true, value: undefined});
+        window.copyFallbackText = '';
+        document.execCommand = command => {
+            if (command === 'copy') window.copyFallbackText = document.activeElement.value;
+            return command === 'copy';
+        };
+    }""")
+    await page.evaluate("openLogsModal()")
+    await page.locator("#copy-logs-btn").wait_for(state="visible")
+    await page.wait_for_function("document.querySelector('#logs-count-label')?.textContent !== 'Loading...' ")
+
+    await page.locator("#copy-logs-btn").click()
+
+    assert await page.locator("#copy-logs-btn").inner_text() == "✓ Copied!"
+    assert await page.evaluate("window.copyFallbackText.length > 0")
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_playback_state_label_keeps_text_background_transparent(dashboard_page: Page) -> None:
+    page = dashboard_page
+    styles = await page.evaluate("""() => {
+        return ['paused', 'finished'].map(state => {
+            const card = document.createElement('div');
+            card.className = `playback-card playback-state-${state}`;
+            const label = document.createElement('span');
+            label.className = 'playback-state-label';
+            label.textContent = state === 'finished' ? 'Recently Finished' : 'Paused';
+            const indicator = document.createElement('span');
+            indicator.className = 'pulse-indicator';
+            card.append(label, indicator);
+            document.body.appendChild(card);
+            return {
+                state,
+                text: getComputedStyle(label).color,
+                background: getComputedStyle(label).backgroundColor,
+                indicatorBackground: getComputedStyle(indicator).backgroundColor
+            };
+        });
+    }""")
+
+    for state in styles:
+        assert state["background"] == "rgba(0, 0, 0, 0)"
+        assert state["text"] != "rgba(0, 0, 0, 0)"
+        assert state["indicatorBackground"] != "rgba(0, 0, 0, 0)"
+
+
+@pytest.mark.asyncio(loop_scope="function")
 async def test_quick_mark_modal_scrolls_to_bottom_on_mobile(dashboard_page: Page) -> None:
     """Keep the direct-entry fields reachable inside a phone-sized modal."""
     page = dashboard_page

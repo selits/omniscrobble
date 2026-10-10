@@ -34,6 +34,21 @@ class RingBufferLogHandler(logging.Handler):
             self.handleError(record)
 
 
+class SecretRedactionFilter(logging.Filter):
+    """Redact credentials before access records reach either journald or the UI."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        message = _QUERY_TOKEN_RE.sub(r"\1●●●●●●●●", message)
+        message = _WEBHOOK_HEADER_RE.sub(r"\1●●●●●●●●", message)
+        message = _BEARER_TOKEN_RE.sub(r"\1●●●●●●●●", message)
+        if Config.WEBHOOK_SECRET and Config.WEBHOOK_SECRET in message:
+            message = message.replace(Config.WEBHOOK_SECRET, "●●●●●●●●")
+        record.msg = message
+        record.args = ()
+        return True
+
+
 class LogManager:
     """Manages application log capture, systemd journalctl integration, and secret redaction."""
 
@@ -42,7 +57,11 @@ class LogManager:
         formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
         self.handler.setFormatter(formatter)
         # Attach to the root logger to capture all application & framework logs
-        logging.getLogger().addHandler(self.handler)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(self.handler)
+        if root_logger.level > logging.INFO:
+            root_logger.setLevel(logging.INFO)
+        logging.getLogger("uvicorn.access").addFilter(SecretRedactionFilter())
 
     def sanitize_line(self, line: str) -> str:
         """Mask secrets, tokens, and authorization headers from a log line."""
@@ -63,29 +82,26 @@ class LogManager:
         """Fetch sanitized logs from journalctl (if available) or fallback to in-memory buffer."""
         lines = max(10, min(lines, 500))
 
+        # Auto mode should show this process's application records first. Journald may
+        # contain only Uvicorn access lines, which hides the sync diagnostics we need.
+        if source == "auto":
+            buffered = self.get_buffer_logs(lines=lines)
+            if buffered:
+                return {"source": "app_buffer", "lines": buffered}
+
         # Attempt journalctl read if requested or in auto mode
         if source in ("auto", "journalctl") and shutil.which("journalctl"):
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    "journalctl",
-                    "--user",
-                    "-u",
-                    "plex-trakt",
-                    "-n",
-                    str(lines),
-                    "--no-pager",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.5)
-                if proc.returncode == 0 and stdout:
-                    raw_lines = stdout.decode("utf-8", errors="replace").splitlines()
-                    if raw_lines:
-                        sanitized = [self.sanitize_line(line) for line in raw_lines]
-                        return {
-                            "source": "journalctl",
-                            "lines": sanitized,
-                        }
+                for unit in ("omniscrobble.service", "plex-trakt.service", "plex-trakt"):
+                    proc = await asyncio.create_subprocess_exec(
+                        "journalctl", "--user", "-u", unit, "-n", str(lines), "--no-pager",
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.5)
+                    if proc.returncode == 0 and stdout:
+                        raw_lines = stdout.decode("utf-8", errors="replace").splitlines()
+                        if raw_lines:
+                            return {"source": "journalctl", "lines": [self.sanitize_line(line) for line in raw_lines]}
             except Exception:
                 pass
 

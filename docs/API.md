@@ -120,7 +120,7 @@ Local household accounts are enabled only when `WEBHOOK_SECRET` is configured. C
 | **`/api/events/{event_id}/retry`** | `POST` | Admin | **Retry Failed Delivery**: Requeues one failed transient queue operation associated with the activity event. Request JSON: `{"queue_item_id": 42, "confirm_duplicate_history": false}`. Authorization, configuration, and permanent client errors must be corrected before retrying. Trakt and Simkl history writes require `confirm_duplicate_history: true` because an upstream timeout can leave the original outcome uncertain. Returns the event and queue item IDs. |
 | **`/api/playback`** | `GET` | Public | **Active Playback**: Returns active streams, calculated progress, and recently finished media. |
 | **`/api/stats/reset`** | `POST` | Admin | **Reset Stats**: Resets lifetime counters (movies, episodes, scrobbles, ratings) in `data/stats.json`. |
-| **`/api/logs`** | `GET` | Admin | **System Log Viewer**: Reads live logs from `journalctl` (or ring buffer fallback) with automatic secret redaction. Supports `?level=ALL \| ERROR \| WARNING \| INFO` and `?limit=500`. |
+| **`/api/logs`** | `GET` | Admin | **System Log Viewer**: Auto mode prefers the in-process application log buffer, with `journalctl` used when the buffer is empty or explicitly requested; all displayed lines are redacted. Supports `?level=ALL \| ERROR \| WARNING \| INFO` and `?limit=500`. |
 
 ---
 

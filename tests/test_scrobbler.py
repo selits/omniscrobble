@@ -10128,6 +10128,83 @@ async def test_execute_cowatch_sync_queues_history_for_unauthenticated_partner()
 
 
 @pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_trakt_retries_unmatched_episode_id_with_show_coordinates():
+    from app.main import execute_cowatch_sync
+    from app.plex_parser import ParsedMedia
+    from app.services.user_manager import user_mgr
+    from app.config import Config
+
+    parsed = ParsedMedia(
+        event="media.scrobble", username="viewer", media_type="episode",
+        title="Carrie S01E02", show_title="Carrie", season=1, episode=2,
+        show_year=1976, ids={"tvdb": "episode-id"}, progress=100,
+    )
+    trakt = MagicMock()
+    trakt.is_authenticated.return_value = True
+    trakt.sync_history = AsyncMock(side_effect=[
+        {"added": {"episodes": 0}, "not_found": {"episodes": [{"ids": {"tvdb": "episode-id"}}]}},
+        {"added": {"episodes": 1}, "not_found": {"episodes": []}},
+    ])
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(user_mgr, "get_client", return_value=trakt), \
+         patch.object(user_mgr, "get_tracker_client", return_value=None):
+        result = await execute_cowatch_sync(parsed, "mark_watched", targets=["partner"], selected_trackers=["trakt"])
+
+    assert result == "success"
+    assert trakt.sync_history.await_count == 2
+    fallback_payload = trakt.sync_history.await_args_list[1].args[0]
+    assert fallback_payload["shows"][0]["title"] == "Carrie"
+    assert fallback_payload["shows"][0]["seasons"][0]["episodes"][0]["number"] == 2
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_trakt_reports_unmatched_episode_instead_of_success():
+    from app.main import execute_cowatch_sync
+    from app.plex_parser import ParsedMedia
+    from app.services.user_manager import user_mgr
+    from app.config import Config
+
+    parsed = ParsedMedia(
+        event="media.scrobble", username="viewer", media_type="episode",
+        title="Carrie S01E02", show_title="Carrie", season=1, episode=2,
+        ids={"tvdb": "episode-id"}, progress=100,
+    )
+    trakt = MagicMock()
+    trakt.is_authenticated.return_value = True
+    unmatched = {"added": {"episodes": 0}, "not_found": {"episodes": [{"ids": {"tvdb": "episode-id"}}]}}
+    trakt.sync_history = AsyncMock(return_value=unmatched)
+    details = []
+    with patch.object(Config, "CO_WATCH_USER", "partner"), \
+         patch.object(user_mgr, "get_client", return_value=trakt), \
+         patch.object(user_mgr, "get_tracker_client", return_value=None):
+        result = await execute_cowatch_sync(
+            parsed, "mark_watched", targets=["partner"], selected_trackers=["trakt"], outcome_details=details,
+        )
+
+    assert result == "failed"
+    assert trakt.sync_history.await_count == 2
+    assert "could not match" in details[0]
+
+
+def test_cowatch_failed_delivery_reason_is_saved_for_activity_details():
+    from app import main as main_module
+
+    event = {"event_id": "cowatch-failed-event"}
+    with patch.object(main_module, "recent_events", [event]), \
+         patch.object(main_module, "save_recent_events"):
+        main_module.update_event_cowatch_status(
+            "cowatch-failed-event", "failed", "Trakt could not match this episode."
+        )
+
+    assert event["cowatch_status"]["status"] == "failed"
+    assert event["cowatch_status"]["synced"] is False
+    assert event["cowatch_status"]["reason"] == "Trakt could not match this episode."
+    household_details = event["tracker_delivery_details"]["household"]
+    assert household_details["state"] == "failed"
+    assert household_details["reason"] == "Trakt could not match this episode."
+
+
+@pytest.mark.asyncio(loop_scope="module")
 async def test_execute_cowatch_sync_uses_anilist_client_for_anilist_progress():
     from app.main import execute_cowatch_sync
     from app.plex_parser import ParsedMedia

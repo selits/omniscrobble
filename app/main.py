@@ -1129,7 +1129,7 @@ def record_queue_delivery(
     update_event_tracker_delivery(event_id, {tracker: overall_state})
 
 
-def update_event_cowatch_status(event_id: str, status: str) -> None:
+def update_event_cowatch_status(event_id: str, status: str, reason: Optional[str] = None) -> None:
     """Persist the completed outcome of a background Co-Watch sync."""
     for event_entry in recent_events:
         if event_entry.get("event_id") == event_id:
@@ -1139,7 +1139,13 @@ def update_event_cowatch_status(event_id: str, status: str) -> None:
                 "scheduled": False,
                 "synced": status == "success",
             })
-            update_event_tracker_delivery(event_id, {"household": status})
+            if reason:
+                current["reason"] = reason
+            update_event_tracker_delivery(
+                event_id,
+                {"household": status},
+                {"household": {"error": reason} if reason else {}},
+            )
             save_recent_events()
             return
 
@@ -1234,6 +1240,7 @@ async def execute_cowatch_sync(
     action: str,
     targets: Optional[list[str]] = None,
     selected_trackers: Optional[list[str]] = None,
+    outcome_details: Optional[list[str]] = None,
 ):
     """Dual-scrobble/sync watched history to the partner's or household target profiles' authenticated cloud trackers."""
     if targets is not None:
@@ -1263,12 +1270,28 @@ async def execute_cowatch_sync(
                     logger.info(f"Household sync triggering for profile @{u} (Trakt): {parsed.title}")
                     history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
                     res = await client.sync_history(history_payload)
+                    if isinstance(res, dict) and isinstance(res.get("not_found"), dict) and any(res["not_found"].values()):
+                        if parsed.media_type == "episode" and parsed.ids:
+                            # Some upstream IDs resolve the show but not its episode. Retry with
+                            # Trakt's show/season/episode matcher before reporting delivery failure.
+                            fallback_media = parsed.model_copy(update={"ids": {}})
+                            history_payload = fallback_media.to_trakt_history_payload(watched_at=watched_at_ts)
+                            res = await client.sync_history(history_payload)
+                        if isinstance(res, dict) and isinstance(res.get("not_found"), dict) and any(res["not_found"].values()):
+                            reason = "Trakt could not match this episode by ID or show/season/episode."
+                            logger.warning("Household Trakt did not match episode for @%s: %s", u, parsed.title)
+                            if outcome_details is not None:
+                                outcome_details.append(reason)
+                            metrics_registry.record_cowatch("failed")
+                            return "failed"
                     if is_temporary_error(res):
                         queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=u)
                         metrics_registry.record_cowatch("queued")
                         return "queued"
                     elif isinstance(res, dict) and res.get("status") == "error":
                         logger.warning(f"Household Trakt error for @{u}: {res.get('error')}")
+                        if outcome_details is not None:
+                            outcome_details.append(str(res.get("error", "Trakt sync failed")))
                         queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "Trakt sync failed")), username=u)
                         metrics_registry.record_cowatch("queued")
                         return "queued"
@@ -1278,6 +1301,8 @@ async def execute_cowatch_sync(
                         return "success"
                 except Exception as e:
                     logger.error(f"Error during household Trakt sync for @{u}: {e}")
+                    if outcome_details is not None:
+                        outcome_details.append(str(e))
                     queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(e), username=u)
                     metrics_registry.record_cowatch("queued")
                     return "queued"
@@ -1384,14 +1409,18 @@ async def execute_cowatch_sync_for_event(
 ) -> None:
     """Run Co-Watch delivery and update the originating activity event."""
     try:
-        status = await execute_cowatch_sync(parsed, action, targets=targets, selected_trackers=selected_trackers)
+        outcome_details: list[str] = []
+        status = await execute_cowatch_sync(
+            parsed, action, targets=targets, selected_trackers=selected_trackers,
+            outcome_details=outcome_details,
+        )
     except Exception:
         logger.exception("Unexpected error while executing Co-Watch sync for event %s", event_id)
         status = "failed"
     if status not in {"success", "queued", "partial", "failed", "skipped"}:
         logger.error("Co-Watch sync for event %s returned an invalid status: %r", event_id, status)
         status = "failed"
-    update_event_cowatch_status(event_id, status)
+    update_event_cowatch_status(event_id, status, "; ".join(outcome_details) or None)
 
 
 @app.get("/webhook")
