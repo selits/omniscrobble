@@ -74,6 +74,8 @@ Prefer extracting the group that most directly supports Phase 1 improvements fir
 
 ## Phase 3: Safer sync recovery and duplicate protection
 
+**Status: Complete.** Queue items use an atomic claim with an expiry lease to prevent overlapping workers from dispatching the same item. Uncertain history writes are held for item-level confirmation, retry behavior is documented in the feature guide, and focused coverage covers concurrency, interrupted delivery, transient failures, and schema migration. Existing activity tests cover linked and partial delivery outcomes.
+
 ### Phase 3 scope
 
 Trace an event through ingestion, tracker dispatch, queue persistence, activity history, and manual retry. Classify operations by retry safety, especially where a timeout leaves the remote outcome uncertain. Ensure retry details preserve the original account and destination and make uncertainty visible before an action is taken.
@@ -130,3 +132,8 @@ Phases 1–3 are the near-term reliability and maintainability work. Phase 4 is 
 - **Unsafe retry assumptions:** treat ambiguous upstream outcomes as uncertain unless the integration provides a reliable way to verify success.
 - **Scope growth:** prioritize the most common or costly failure states; defer broad dashboard redesign and unrelated feature additions.
 - **P2P complexity:** keep discovery bounded and use the decision gate before prototyping distributed state or peer authentication.
+
+## Follow-up discussion
+
+- **App size and maintainability:** Review which parts of the app have grown hardest to understand or change, identify practical boundaries for reducing that complexity, and agree on a staged approach that fits alongside feature work.
+- **Bugs to discuss:** Collect the bugs the user wants to review, reproduce each one, and prioritize fixes by impact and frequency. Details will be added after that discussion.

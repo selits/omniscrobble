@@ -141,8 +141,8 @@ Local household accounts are enabled only when `WEBHOOK_SECRET` is configured. C
 
 | Endpoint | Method | Auth | Description |
 | --- | :---: | :---: | --- |
-| **`/api/queue`** | `GET` | Public | **Offline Queue Status**: Returns pending queue item count and database path. |
-| **`/api/queue/retry`** | `POST` | Admin | **Flush Queue**: Immediately drains and retries all pending offline items against Trakt. |
+| **`/api/queue`** | `GET` | Public | **Offline Queue Status**: Returns pending and in-progress queue item count and database path. In-progress items use a temporary worker lease and are recovered if the worker stops. |
+| **`/api/queue/retry`** | `POST` | Admin | **Flush Queue**: Immediately drains pending offline items against Trakt. Uncertain `sync_history` and `scrobble_stop` outcomes are held as failed for item-level retry with duplicate-history confirmation; definite rate-limit responses remain eligible for automatic retry. |
 | **`/api/queue/clear`** | `POST` | Admin | **Purge Queue**: Clears all pending and failed offline items from the SQLite database. |
 | **`/api/queue/prune`** | `POST` | Admin | **Prune Queue Retention**: Prunes completed and expired offline queue records older than configured retention period (default 90 days). Accepts optional JSON body `{"days": <int>}`. |
 | **`/api/backup`** | `GET` | Admin | **Download Backup**: Exports a timestamped archive containing OAuth tokens, settings, SQLite queue, private watch lists, household account hashes and audit records with a versioned manifest. Sessions are not archived; restore reloads accounts and revokes active sessions. Supports AES-256-GCM encryption via `?passphrase=`, `x-backup-passphrase` header, or `CONFIG_ENCRYPTION_KEY`. |

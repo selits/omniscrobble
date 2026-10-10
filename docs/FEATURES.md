@@ -196,6 +196,14 @@ stateDiagram-v2
 - **Automatic Buffering**: If Trakt or Simkl return transient 5xx server errors or 429 rate limit responses, events are immediately enqueued into an ACID-compliant SQLite database.
 - **Intelligent Classification**: Differentiates between recoverable transient errors (HTTP 500/502/503/504, 429, timeouts) and permanent errors (HTTP 400/404), discarding malformed requests to prevent queue poisoning.
 - **Exponential Backoff Worker**: A background worker drains pending queue items as soon as connectivity recovers, honoring upstream `Retry-After` headers.
+- **Concurrent Worker Safety**: Queue items are atomically claimed with a five-minute lease so a background worker and an administrator-triggered retry do not dispatch the same item at once. Expired claims are recovered after a worker stops.
+- **Retry Safety**: `sync_history` and `scrobble_stop` results that may have reached Trakt are held for item-level retry and explicit duplicate-history confirmation. Definite HTTP 429 rate-limit responses remain eligible for automatic retry. Other queued operations use the existing automatic transient retry policy.
+
+| Queued operation | Ambiguous timeout or server error | Definite HTTP 429 |
+| --- | --- | --- |
+| `sync_history`, `scrobble_stop` | Mark failed and require explicit confirmation before retry, since Trakt may have accepted the write. | Keep eligible for automatic retry. |
+| Other supported queue operations | Follow the existing automatic transient retry policy. | Keep eligible for automatic retry. |
+
 - **Automated Retention & Pruning (`POST /api/queue/prune`)**: To prevent unbounded SQLite disk growth over years of operation, the background worker automatically prunes successfully completed and expired offline queue records older than 90 days during its daily maintenance sweep. Administrators can also trigger on-demand queue pruning via the REST API.
 
 ### 1-Click System Backup & Restore

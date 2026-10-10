@@ -835,10 +835,11 @@ def test_queue_manager_crud(tmp_path):
     assert qm.get_pending_count() == 1  # Only id2 is still pending
     assert qm.get_event_queue_state("event-1") == "failed"
 
-    # 5. Retry all failed
+    # 5. Bulk retry leaves history writes failed for duplicate-aware recovery.
     reset_count = qm.retry_all_failed()
-    assert reset_count == 1
-    assert qm.get_pending_count() == 2
+    assert reset_count == 0
+    assert qm.get_pending_count() == 1
+    assert qm.get_item(id1)["status"] == "failed"
 
     # 6. Mark success
     qm.mark_success(id1)
@@ -945,8 +946,10 @@ async def test_process_queue_transient_failure(tmp_path):
     stats = await process_queue(mock_client, qm)
     assert stats["succeeded"] == 0
     assert stats["failed"] == 1
-    # Stops processing batch on transient failure; 2 items remain in queue
-    assert qm.get_pending_count() == 2
+    # Ambiguous history delivery becomes failed for manual confirmation; the
+    # following item remains pending and was not dispatched in this pass.
+    assert qm.get_pending_count() == 1
+    assert qm.get_item(1)["status"] == "failed"
 
 
 @pytest.mark.asyncio(loop_scope="module")
