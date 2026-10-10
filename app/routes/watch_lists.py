@@ -1,5 +1,8 @@
 """HTTP route registration for personal and shared watch lists."""
 
+from collections.abc import Callable, Mapping
+from typing import Any
+
 from fastapi import APIRouter
 
 
@@ -23,8 +26,13 @@ _ROUTES = (
 )
 
 
-def create_router(handlers):
-    """Register the existing typed handlers under this route family's router."""
+def create_router(handlers: Mapping[str, Callable[..., Any]]):
+    """Register explicitly supplied handlers under this route family's router."""
+    required = {handler_name for _, handler_name, _ in _ROUTES}
+    missing = sorted(required - handlers.keys())
+    if missing:
+        raise ValueError(f"Missing watch-list route handlers: {', '.join(missing)}")
+
     router = APIRouter(tags=["Watch Lists"])
     for path, handler_name, methods in _ROUTES:
         router.add_api_route(path, handlers[handler_name], methods=methods, name=handler_name)

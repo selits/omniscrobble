@@ -334,6 +334,14 @@ def test_static_github_pages_demo_generation(tmp_path):
     assert not re.findall(r"\{\{[A-Z_]+\}\}", repo_content)
     assert 'href="/static/icons/icon-192.svg"' not in repo_content
 
+    # Checked-in Pages assets must mirror app assets. CI checks that dashboard.js
+    # itself matches the ordered source modules before running this test.
+    repo_root = Path(__file__).resolve().parent.parent
+    for asset_name in ("dashboard.js", "dashboard.css", "dashboard-theme.css"):
+        app_asset = repo_root / "app" / "static" / asset_name
+        pages_asset = repo_root / "docs" / "assets" / asset_name
+        assert pages_asset.read_bytes() == app_asset.read_bytes(), f"docs/assets/{asset_name} is out of sync"
+
 @pytest.mark.asyncio(loop_scope="module")
 async def test_pwa_and_static_assets():
     client = make_async_test_client(app)

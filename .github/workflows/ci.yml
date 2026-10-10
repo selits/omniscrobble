@@ -52,6 +52,9 @@ jobs:
       - name: Install Playwright browsers
         run: python -m playwright install --with-deps chromium firefox webkit
 
+      - name: Check dashboard source bundle
+        run: python scripts/build_dashboard_bundle.py --check
+
       - name: Run test suite
         run: |
           pytest -v

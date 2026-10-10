@@ -48,6 +48,15 @@ You do not need an active media server to test changes. Omniscrobble provides a 
 
 For complete CLI options and simulation scenarios, see [**`docs/LOCAL_TESTING.md`**](./docs/LOCAL_TESTING.md).
 
+Dashboard JavaScript is maintained in ordered modules under `app/static/dashboard_modules/`. After editing a module, rebuild and verify the served bundle:
+
+```bash
+.venv/bin/python scripts/build_dashboard_bundle.py
+.venv/bin/python scripts/build_dashboard_bundle.py --check
+```
+
+CI runs the check, and the static-demo test verifies that the Pages JavaScript and CSS copies match the application assets.
+
 ---
 
 ## 4. Quality Gates & Verification

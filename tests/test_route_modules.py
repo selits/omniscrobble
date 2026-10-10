@@ -2,6 +2,7 @@
 
 import httpx
 import pytest
+from app.routes.watch_lists import create_router as create_watch_lists_router
 
 from app.config import Config
 from app.main import app
@@ -22,6 +23,11 @@ def test_route_modules_preserve_representative_paths_and_methods():
     }
     for path, methods in expected.items():
         assert {method.lower() for method in paths[path]} == methods
+
+
+def test_watch_list_router_requires_explicit_handler_bindings():
+    with pytest.raises(ValueError, match="Missing watch-list route handlers: add_watch_list_item"):
+        create_watch_lists_router({"get_watch_lists": lambda: None})
 
 
 @pytest.mark.asyncio

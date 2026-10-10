@@ -168,12 +168,16 @@ Omniscrobble includes a one-command local quality gate runner. CI additionally r
    - Asserts that `git config user.email` is set to the GitHub privacy email (`selits@users.noreply.github.com`).
 2. **Gate 2: State Isolation**
    - Verifies that no sensitive files (`.env`, `trakt_tokens.json`, `data/`) are tracked by git.
-3. **Gate 3: Unit and Browser Tests**
+3. **Gate 3: Dashboard Bundle Consistency**
+   - Checks that `app/static/dashboard.js` matches the ordered source modules. CI runs the same check before pytest; the dashboard demo test verifies that checked-in GitHub Pages JavaScript and CSS match application assets.
+4. **Gate 4: Unit and Browser Tests**
    - Runs `.venv/bin/pytest -v` across the entire test suite. All tests must pass with 0 failures.
-4. **Gate 4: Secret Scanning (Gitleaks)**
+5. **Gate 5: Secret Scanning (Gitleaks)**
    - Runs `gitleaks detect` across repository commits using Docker or local binary to block accidental credential leaks.
-5. **Gate 5: Static Demo Generation**
-   - Runs `scripts/generate_static_demo.py` and verifies `docs/index.html` is generated successfully so the GitHub Pages live preview stays in sync.
+6. **Gate 6: Static Demo Generation**
+   - The dashboard demo test generates into a temporary directory and verifies `docs/index.html` remains a valid standalone live preview.
+7. **Gate 7: Markdown Lint**
+   - Runs `scripts/lint_markdown.sh` to check project documentation.
 
 CI also runs `pip-audit -r requirements-dev.txt` to check runtime and development dependencies against known vulnerability advisories. The Docker image installs only `requirements.txt`.
 
