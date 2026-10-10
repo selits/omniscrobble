@@ -191,9 +191,13 @@ class ActivityDeliveryManager:
         safe_reason = self.log_manager.sanitize_line(reason.strip())[:240] if reason else self._delivery_reason(state)
         category = self._delivery_category(state, {"error": safe_reason} if reason else None)
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        household_destination = None
         for event_entry in self.events:
             if event_entry.get("event_id") != event_id:
                 continue
+            household_destination = event_entry.get("cowatch_queue_destinations", {}).get(str(queue_item_id))
+            if household_destination:
+                destination = f"Household · {destination}"
             detail = event_entry.setdefault("tracker_delivery_details", {}).setdefault(destination, {"attempts": 0, "history": []})
             previous_state = detail.get("state")
             history = detail.setdefault("history", [])
@@ -219,8 +223,38 @@ class ActivityDeliveryManager:
             self.save_events()
             break
 
-        overall_state = self.queue.get_event_queue_state(event_id, tracker=tracker)
-        self.update_event_tracker_delivery(event_id, {tracker: overall_state})
+        if household_destination:
+            self.update_cowatch_destination(event_id, household_destination, state)
+        else:
+            # Partner queue entries must not replace the owner's tracker result.
+            household_ids = set()
+            for event_entry in self.events:
+                if event_entry.get("event_id") == event_id:
+                    household_ids = {int(key) for key in event_entry.get("cowatch_queue_destinations", {})}
+                    break
+            overall_state = self.queue.get_event_queue_state(event_id, tracker=tracker, exclude_ids=household_ids)
+            self.update_event_tracker_delivery(event_id, {tracker: overall_state})
+
+    def register_cowatch_queue(self, event_id: str, queue_item_id: int, destination: str) -> None:
+        """Retain the household destination so retry results survive a restart."""
+        for event_entry in self.events:
+            if event_entry.get("event_id") == event_id:
+                event_entry.setdefault("cowatch_queue_destinations", {})[str(queue_item_id)] = destination
+                self.save_events()
+                return
+
+    def update_cowatch_destination(self, event_id: str, destination: str, state: str) -> None:
+        """Aggregate household outcomes without losing other profiles' failures."""
+        for event_entry in self.events:
+            if event_entry.get("event_id") == event_id:
+                delivery = event_entry.setdefault("cowatch_delivery", {})
+                delivery[destination] = state
+                states = set(delivery.values()) - {"skipped"}
+                status = self._aggregate_delivery_status(delivery)
+                if "success" in states and len(states) > 1:
+                    status = "partial"
+                self.update_event_cowatch_status(event_id, status, self._delivery_reason(status))
+                return
 
     def update_event_cowatch_status(self, event_id: str, status: str, reason: Optional[str] = None) -> None:
         """Persist the completed outcome of a background Co-Watch sync."""

@@ -1030,6 +1030,7 @@ async def execute_cowatch_sync(
     targets: Optional[list[str]] = None,
     selected_trackers: Optional[list[str]] = None,
     outcome_details: Optional[list[str]] = None,
+    event_id: Optional[str] = None,
 ):
     """Dual-scrobble/sync watched history to the partner's or household target profiles' authenticated cloud trackers."""
     if targets is not None:
@@ -1050,14 +1051,31 @@ async def execute_cowatch_sync(
     immediate_outcomes: list[str] = []
     watched_at_ts = datetime.datetime.now(timezone.utc).isoformat()
 
+    def enqueue_household(payload: dict[str, Any], reason: str, user: str) -> None:
+        item_id = queue_mgr.enqueue("sync_history", payload, error=reason, username=user, event_id=event_id)
+        if event_id:
+            activity_delivery_mgr.register_cowatch_queue(event_id, item_id, f"{user}:trakt")
+            record_queue_delivery(event_id, "sync_history", item_id, "queued", reason, 1)
+
+    async def track_outcome(call, user: str, tracker: str):
+        try:
+            status = await call
+        except Exception:
+            if event_id:
+                activity_delivery_mgr.update_cowatch_destination(event_id, f"{user}:{tracker}", "failed")
+            raise
+        if event_id:
+            activity_delivery_mgr.update_cowatch_destination(event_id, f"{user}:{tracker}", status)
+        return status
+
     for target_user in target_users:
         # 1. Partner/Profile Trakt
         cw_trakt = user_mgr.get_client(target_user)
         if (selected_trackers is None or "trakt" in selected_trackers) and cw_trakt and cw_trakt.is_authenticated():
             async def _sync_trakt(u=target_user, client=cw_trakt):
+                history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
                 try:
                     logger.info(f"Household sync triggering for profile @{u} (Trakt): {parsed.title}")
-                    history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
                     res = await client.sync_history(history_payload)
                     if isinstance(res, dict) and isinstance(res.get("not_found"), dict) and any(res["not_found"].values()):
                         if parsed.media_type == "episode" and parsed.ids:
@@ -1074,14 +1092,14 @@ async def execute_cowatch_sync(
                             metrics_registry.record_cowatch("failed")
                             return "failed"
                     if is_temporary_error(res):
-                        queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "")), username=u)
+                        enqueue_household(history_payload, str(res.get("error", "")), u)
                         metrics_registry.record_cowatch("queued")
                         return "queued"
                     elif isinstance(res, dict) and res.get("status") == "error":
                         logger.warning(f"Household Trakt error for @{u}: {res.get('error')}")
                         if outcome_details is not None:
                             outcome_details.append(str(res.get("error", "Trakt sync failed")))
-                        queue_mgr.enqueue("sync_history", history_payload, error=str(res.get("error", "Trakt sync failed")), username=u)
+                        enqueue_household(history_payload, str(res.get("error", "Trakt sync failed")), u)
                         metrics_registry.record_cowatch("queued")
                         return "queued"
                     else:
@@ -1092,21 +1110,16 @@ async def execute_cowatch_sync(
                     logger.error(f"Error during household Trakt sync for @{u}: {e}")
                     if outcome_details is not None:
                         outcome_details.append(str(e))
-                    queue_mgr.enqueue("sync_history", parsed.to_trakt_history_payload(watched_at=watched_at_ts), error=str(e), username=u)
+                    enqueue_household(history_payload, str(e), u)
                     metrics_registry.record_cowatch("queued")
                     return "queued"
-            tasks.append(_sync_trakt())
+            tasks.append(track_outcome(_sync_trakt(), target_user, "trakt"))
         elif selected_trackers is None or "trakt" in selected_trackers:
             history_payload = parsed.to_trakt_history_payload(watched_at=watched_at_ts)
             logger.warning(
                 f"Household profile @{target_user} Trakt is not authenticated; queueing watched history for retry."
             )
-            queue_mgr.enqueue(
-                "sync_history",
-                history_payload,
-                error="Co-Watch target Trakt profile is not authenticated",
-                username=target_user,
-            )
+            enqueue_household(history_payload, "Co-Watch target Trakt profile is not authenticated", target_user)
             metrics_registry.record_cowatch("queued")
             immediate_outcomes.append("queued")
 
@@ -1130,7 +1143,7 @@ async def execute_cowatch_sync(
                 except Exception as e:
                     logger.warning(f"Error during household Simkl sync for @{u}: {e}")
                     return "failed"
-            tasks.append(_sync_simkl())
+            tasks.append(track_outcome(_sync_simkl(), target_user, "simkl"))
 
         # 3. Partner/Profile Anime Trackers (AniList & MAL)
         cw_anilist = user_mgr.get_tracker_client(target_user, "anilist")
@@ -1166,7 +1179,7 @@ async def execute_cowatch_sync(
                 except Exception as e:
                     logger.warning(f"Error during household anime sync for @{u}: {e}")
                     return "failed"
-            tasks.append(_sync_anime())
+            tasks.append(track_outcome(_sync_anime(), target_user, "anime"))
 
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -1202,6 +1215,7 @@ async def execute_cowatch_sync_for_event(
         status = await execute_cowatch_sync(
             parsed, action, targets=targets, selected_trackers=selected_trackers,
             outcome_details=outcome_details,
+            event_id=event_id,
         )
     except Exception:
         logger.exception("Unexpected error while executing Co-Watch sync for event %s", event_id)
@@ -3849,6 +3863,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
             watched_at=watched_at,
         )
 
+        retry_payloads = dispatch_res.pop("retry_payloads", {})
         retryable_trackers = set(dispatch_res.get("retryable_trackers") or [])
         error_codes = dispatch_res.get("tracker_error_codes") or {}
         queued_trackers = list(dispatch_res.get("queued_trackers") or [])
@@ -3897,7 +3912,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
         for tracker in retryable_trackers:
             if tracker == "trakt":
                 event_type = "sync_history"
-                queue_payload = media_obj.to_trakt_history_payload(watched_at=watched_at)
+                queue_payload = retry_payloads["trakt"]
             elif tracker == "simkl":
                 event_type = "simkl_sync_history"
                 queue_payload = {"media": media_obj.model_dump(mode="json"), "watched_at": watched_at}

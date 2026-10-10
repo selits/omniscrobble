@@ -144,7 +144,8 @@ class QueueManager:
             )
             conn.commit()
 
-    def get_event_queue_state(self, event_id: str, tracker: Optional[str] = None) -> str:
+    def get_event_queue_state(self, event_id: str, tracker: Optional[str] = None,
+                              exclude_ids: Optional[set[int]] = None) -> str:
         """Summarize linked queue items for one source activity event."""
         if tracker == "simkl":
             event_filter = "AND event_type = 'simkl_sync_history'"
@@ -152,10 +153,13 @@ class QueueManager:
             event_filter = "AND event_type != 'simkl_sync_history'"
         else:
             event_filter = ""
+        excluded = sorted(exclude_ids or ())
+        if excluded:
+            event_filter += f" AND id NOT IN ({', '.join('?' for _ in excluded)})"
         with self._get_connection() as conn:
             rows = conn.execute(
                 f"SELECT status FROM queued_events WHERE event_id = ? {event_filter}",
-                (event_id,),
+                (event_id, *excluded),
             ).fetchall()
         if not rows:
             return "success"
@@ -209,35 +213,46 @@ class QueueManager:
             conn.commit()
         return "queued"
 
-    def claim_pending(self, limit: int = 20, lease_seconds: int = QUEUE_CLAIM_LEASE_SECONDS) -> list[dict[str, Any]]:
+    def claim_pending(self, limit: int = 20, lease_seconds: int = QUEUE_CLAIM_LEASE_SECONDS,
+                      exclude_ids: Optional[set[int]] = None, on_expired: Optional[Any] = None) -> list[dict[str, Any]]:
         """Atomically lease pending work so concurrent workers cannot dispatch it twice."""
         now = int(time.time())
         cutoff = now - max(1, int(lease_seconds))
+        history_types = sorted(DUPLICATE_SENSITIVE_EVENT_TYPES)
+        history_placeholders = ", ".join("?" for _ in history_types)
+        excluded = sorted(exclude_ids or ())
+        exclusion = f"AND id NOT IN ({', '.join('?' for _ in excluded)})" if excluded else ""
         with self._get_connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            # An interrupted history write may already have reached Trakt. Keep it
+            expired_history = conn.execute(
+                f"""SELECT id, event_id, event_type, retry_count FROM queued_events
+                WHERE status = 'processing' AND (claimed_at IS NULL OR claimed_at <= ?)
+                    AND event_type IN ({history_placeholders})""",
+                (cutoff, *history_types),
+            ).fetchall()
+            # An interrupted history write may already have reached its tracker. Keep it
             # failed for explicit, duplicate-aware manual recovery. Other queue
             # operations can safely return to pending.
             conn.execute(
-                """
+                f"""
                 UPDATE queued_events
-                SET status = CASE WHEN event_type IN ('sync_history', 'scrobble_stop') THEN 'failed' ELSE 'pending' END,
-                    last_error = CASE WHEN event_type IN ('sync_history', 'scrobble_stop')
+                SET status = CASE WHEN event_type IN ({history_placeholders}) THEN 'failed' ELSE 'pending' END,
+                    last_error = CASE WHEN event_type IN ({history_placeholders})
                         THEN 'Outcome uncertain after interrupted delivery; retry may duplicate history.'
                         ELSE last_error END,
                     claimed_at = NULL
                 WHERE status = 'processing' AND (claimed_at IS NULL OR claimed_at <= ?)
                 """,
-                (cutoff,),
+                (*history_types, *history_types, cutoff),
             )
             rows = conn.execute(
-                """
+                f"""
                 SELECT id FROM queued_events
-                WHERE status = 'pending'
+                WHERE status = 'pending' {exclusion}
                 ORDER BY created_at ASC, id ASC
                 LIMIT ?
                 """,
-                (max(0, int(limit)),),
+                (*excluded, max(0, int(limit))),
             ).fetchall()
             item_ids = [int(row["id"]) for row in rows]
             if item_ids:
@@ -246,6 +261,16 @@ class QueueManager:
                     [(now, item_id) for item_id in item_ids],
                 )
             conn.commit()
+        # Report after committing so Activity sees the recovered queue state.
+        if on_expired:
+            for item in expired_history:
+                if item["event_id"]:
+                    try:
+                        on_expired(item["event_id"], item["event_type"], item["id"], "failed",
+                                   "Outcome uncertain after interrupted delivery; retry may duplicate history.",
+                                   item["retry_count"] + 2)
+                    except Exception as exc:
+                        logger.warning("Could not record expired queue item %s: %s", item["id"], exc)
         return [item for item_id in item_ids if (item := self.get_item(item_id)) is not None]
 
     def release_claim(self, item_id: int) -> bool:
@@ -425,14 +450,15 @@ async def process_queue(
     succeeded = 0
     failed = 0
     processed = 0
+    examined_ids: set[int] = set()
 
-    for _ in range(max(0, max_items)):
-        pending = queue_mgr.claim_pending(limit=1)
+    while processed < max(0, max_items):
+        pending = queue_mgr.claim_pending(limit=1, exclude_ids=examined_ids, on_expired=on_result)
         if not pending:
             break
         item = pending[0]
-        processed += 1
         item_id = item["id"]
+        examined_ids.add(item_id)
         username = item.get("username", "default")
         event_type = item["event_type"]
         payload = item["payload"]
@@ -462,6 +488,7 @@ async def process_queue(
             queue_mgr.release_claim(item_id)
             continue
 
+        processed += 1
         try:
             res: dict[str, Any] = {}
             if event_type == "simkl_sync_history":

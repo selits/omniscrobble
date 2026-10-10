@@ -9,6 +9,34 @@ import pytest
 
 from app.clients.trakt_client import TraktClient
 from app.services.queue_manager import QueueManager, process_queue
+from app.services.activity_delivery import ActivityDeliveryManager
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["sync_history", "scrobble_stop", "simkl_sync_history"])
+async def test_expired_history_claim_updates_activity_for_manual_recovery(tmp_path, event_type):
+    queue = QueueManager(tmp_path / "expired-activity.db")
+    event = {"event_id": "expired-event"}
+    log = MagicMock()
+    log.sanitize_line.side_effect = lambda text: text
+    delivery = ActivityDeliveryManager(events=[event], save_events=MagicMock(), queue=queue,
+                                      log_manager=log, notifier=MagicMock())
+    item_id = queue.enqueue(event_type, {}, event_id="expired-event")
+    delivery.record_queue_delivery("expired-event", event_type, item_id, "queued", "HTTP 429", 1)
+    queue.claim_pending(limit=1)
+    with queue._get_connection() as conn:
+        conn.execute("UPDATE queued_events SET claimed_at = ? WHERE id = ?", (int(time.time()) - 301, item_id))
+    callback = MagicMock(side_effect=delivery.record_queue_delivery)
+    result = await process_queue(MagicMock(), queue, on_result=callback)
+    assert result["processed"] == 0
+    callback.assert_called_once()
+    assert queue.get_item(item_id)["status"] == "failed"
+    assert event["delivery_status"] == "failed"
+    detail = next(d for d in event["tracker_delivery_details"].values() if d.get("queue_item_id") == item_id)
+    assert detail["state"] == "failed" and detail["category"] == "transient"
+    assert queue.retry_failed_item(item_id, "expired-event") == "confirmation_required"
+    await process_queue(MagicMock(), queue, on_result=callback)
+    callback.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -123,9 +151,10 @@ async def test_manual_simkl_rate_limit_stays_queued_for_automatic_retry(tmp_path
     assert queue.get_pending_count() == 1
 
 
-def test_stale_history_claim_is_failed_for_manual_recovery(tmp_path):
+@pytest.mark.parametrize("event_type", ["sync_history", "scrobble_stop", "simkl_sync_history"])
+def test_stale_history_claim_is_failed_for_manual_recovery(tmp_path, event_type):
     queue = QueueManager(tmp_path / "stale_history.db")
-    item_id = queue.enqueue("scrobble_stop", {"movie": {"title": "Example"}}, event_id="event-3")
+    item_id = queue.enqueue(event_type, {"movie": {"title": "Example"}}, event_id="event-3")
     assert queue.claim_pending()[0]["status"] == "processing"
 
     with queue._get_connection() as connection:
@@ -140,6 +169,32 @@ def test_stale_history_claim_is_failed_for_manual_recovery(tmp_path):
     stale = queue.get_item(item_id)
     assert stale["status"] == "failed"
     assert queue.retry_failed_item(item_id, "event-3") == "confirmation_required"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_tracker", ["trakt", "simkl"])
+async def test_disconnected_destination_does_not_starve_other_queued_work(tmp_path, blocked_tracker):
+    queue = QueueManager(tmp_path / "disconnected.db")
+    blocked_id = queue.enqueue(
+        "sync_history" if blocked_tracker == "trakt" else "simkl_sync_history",
+        {}, username="disconnected",
+    )
+    ready_id = queue.enqueue("sync_ratings", {"movies": []}, username="connected")
+    disconnected = MagicMock()
+    disconnected.is_authenticated.return_value = False
+    connected = MagicMock(spec=TraktClient)
+    connected.is_authenticated.return_value = True
+    connected.sync_ratings = AsyncMock(return_value={"status": 201})
+    users = MagicMock()
+    users.get_client.side_effect = lambda user: disconnected if user == "disconnected" else connected
+
+    result = await process_queue(connected, queue, user_mgr=users, max_items=1)
+
+    assert result == {"processed": 1, "succeeded": 1, "failed": 0}
+    connected.sync_ratings.assert_awaited_once()
+    assert queue.get_item(ready_id)["status"] == "completed"
+    assert queue.get_item(blocked_id)["status"] == "pending"
+    assert queue.get_item(blocked_id)["retry_count"] == 0
 
 
 def test_schema_v1_queue_migrates_claim_timestamp_to_v2(tmp_path):

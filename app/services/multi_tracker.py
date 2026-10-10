@@ -543,6 +543,7 @@ class MultiTrackerManager:
             "errors": {},
             "retryable_trackers": [],
             "tracker_error_codes": {},
+            "retry_payloads": {},
         }
 
         watched_at_ts = watched_at or datetime.now(timezone.utc).isoformat()
@@ -589,12 +590,14 @@ class MultiTrackerManager:
                     if normalized.retryable:
                         results["retryable_trackers"].append("trakt")
                         results["tracker_error_codes"]["trakt"] = normalized.status_code
+                        results["retry_payloads"]["trakt"] = history_payload
                 else:
                     results["synced_trackers"].append("trakt")
             except Exception as e:
                 results["errors"]["trakt"] = str(e)
                 if normalize_result({"error": str(e)}).retryable:
                     results["retryable_trackers"].append("trakt")
+                    results["retry_payloads"]["trakt"] = history_payload
                 asyncio.create_task(notifier.send_failure_alert(media, "Trakt", str(e), user=media.username))
 
         # 2. Simkl Sync History

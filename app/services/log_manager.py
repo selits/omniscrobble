@@ -13,6 +13,17 @@ _WEBHOOK_HEADER_RE = re.compile(r"(x-webhook-secret:\s*)[^\s,;]+", flags=re.IGNO
 _BEARER_TOKEN_RE = re.compile(r"(Bearer\s+)[a-zA-Z0-9_\-\.]+", flags=re.IGNORECASE)
 
 
+def _sanitize_line(line: str) -> str:
+    if not line:
+        return ""
+    sanitized = _QUERY_TOKEN_RE.sub(r"\1●●●●●●●●", line)
+    sanitized = _WEBHOOK_HEADER_RE.sub(r"\1●●●●●●●●", sanitized)
+    sanitized = _BEARER_TOKEN_RE.sub(r"\1●●●●●●●●", sanitized)
+    if Config.WEBHOOK_SECRET and Config.WEBHOOK_SECRET in sanitized:
+        sanitized = sanitized.replace(Config.WEBHOOK_SECRET, "●●●●●●●●")
+    return sanitized
+
+
 class RingBufferLogHandler(logging.Handler):
     """Logging handler that retains the latest N log records in an in-memory ring buffer."""
 
@@ -38,13 +49,15 @@ class SecretRedactionFilter(logging.Filter):
     """Redact credentials before access records reach either journald or the UI."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        message = _QUERY_TOKEN_RE.sub(r"\1●●●●●●●●", message)
-        message = _WEBHOOK_HEADER_RE.sub(r"\1●●●●●●●●", message)
-        message = _BEARER_TOKEN_RE.sub(r"\1●●●●●●●●", message)
-        if Config.WEBHOOK_SECRET and Config.WEBHOOK_SECRET in message:
-            message = message.replace(Config.WEBHOOK_SECRET, "●●●●●●●●")
-        record.msg = message
+        # AccessFormatter unpacks these five values itself. Keep their types and
+        # positions intact instead of replacing them with a formatted message.
+        if record.name == "uvicorn.access" and isinstance(record.args, tuple) and len(record.args) == 5:
+            record.args = tuple(
+                _sanitize_line(value) if isinstance(value, str) else value
+                for value in record.args
+            )
+            return True
+        record.msg = _sanitize_line(record.getMessage())
         record.args = ()
         return True
 
@@ -65,18 +78,7 @@ class LogManager:
 
     def sanitize_line(self, line: str) -> str:
         """Mask secrets, tokens, and authorization headers from a log line."""
-        if not line:
-            return ""
-        # Mask query tokens: ?token=... or &token=...
-        sanitized = _QUERY_TOKEN_RE.sub(r"\1●●●●●●●●", line)
-        # Mask webhook secret headers: x-webhook-secret: ...
-        sanitized = _WEBHOOK_HEADER_RE.sub(r"\1●●●●●●●●", sanitized)
-        # Mask Bearer tokens: Bearer ...
-        sanitized = _BEARER_TOKEN_RE.sub(r"\1●●●●●●●●", sanitized)
-        # Mask configured secret if present and non-empty
-        if Config.WEBHOOK_SECRET and Config.WEBHOOK_SECRET in sanitized:
-            sanitized = sanitized.replace(Config.WEBHOOK_SECRET, "●●●●●●●●")
-        return sanitized
+        return _sanitize_line(line)
 
     async def get_logs(self, lines: int = 150, source: str = "auto") -> dict[str, Any]:
         """Fetch sanitized logs from journalctl (if available) or fallback to in-memory buffer."""

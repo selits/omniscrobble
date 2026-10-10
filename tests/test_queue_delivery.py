@@ -167,7 +167,7 @@ def test_queue_delivery_updates_originating_event(monkeypatch):
     monkeypatch.setattr("app.main.save_recent_events", lambda: None)
     monkeypatch.setattr("app.main.activity_delivery_mgr.save_events", lambda: None)
     monkeypatch.setattr("app.main.save_scrobble_stats", lambda: None)
-    monkeypatch.setattr("app.main.queue_mgr.get_event_queue_state", lambda _event_id, tracker=None: "success")
+    monkeypatch.setattr("app.main.queue_mgr.get_event_queue_state", lambda _event_id, tracker=None, exclude_ids=None: "success")
     media = ParsedMedia(event="media.scrobble", username="queue-test", media_type="movie", title="Queue Link Test", progress=100)
     recent_events.clear()
     try:

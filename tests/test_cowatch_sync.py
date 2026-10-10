@@ -5,6 +5,65 @@ from tests.helpers import _ensure_servers_enabled_for_tests  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("_ensure_servers_enabled_for_tests")
 
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_cowatch_fallback_queue_is_linked_and_recoverable(tmp_path, monkeypatch):
+    import app.main as main
+    from app.services.queue_manager import QueueManager, process_queue
+
+    queue = QueueManager(tmp_path / "household.db")
+    event = {"event_id": "household-event", "tracker_delivery": {"trakt": "success"}}
+    monkeypatch.setattr(main, "queue_mgr", queue)
+    monkeypatch.setattr(main.activity_delivery_mgr, "queue", queue)
+    monkeypatch.setattr(main.activity_delivery_mgr, "events", [event])
+    monkeypatch.setattr(main.activity_delivery_mgr, "save_events", MagicMock())
+    monkeypatch.setattr(main.notifier, "_profile_subscribed", lambda *args: False)
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "test-secret")
+    trakt = MagicMock()
+    trakt.is_authenticated.return_value = True
+    trakt.sync_history = AsyncMock(side_effect=[
+        {"not_found": {"episodes": [{"ids": {"tvdb": "unknown-episode"}}]}},
+        ValueError("Invalid JSON response"),
+        {"status": 503, "error": "HTTP 503"},
+        {"added": {"episodes": 1}},
+    ])
+    monkeypatch.setattr(main.user_mgr, "get_client", lambda user: trakt)
+    monkeypatch.setattr(main.user_mgr, "get_tracker_client", lambda user, tracker: None)
+    media = ParsedMedia(event="media.scrobble", username="viewer", media_type="episode",
+                        title="Episode 2", show_title="Example Show", season=1, episode=2,
+                        ids={"tvdb": "unknown-episode"}, progress=100)
+    await main.execute_cowatch_sync_for_event(media, "mark_watched", ["partner"], "household-event", ["trakt"])
+    item = queue.get_item(1)
+    assert item["event_id"] == "household-event"
+    assert item["username"] == "partner"
+    assert item["payload"] == trakt.sync_history.await_args_list[1].args[0]
+    assert "shows" in item["payload"]
+    assert event["tracker_delivery"]["trakt"] == "success"
+    assert event["cowatch_status"]["status"] == "queued"
+
+    await process_queue(trakt, queue, user_mgr=main.user_mgr, on_result=main.record_queue_delivery)
+    assert queue.get_item(1)["status"] == "failed"
+    assert event["cowatch_status"]["status"] == "failed"
+    detail = next(d for d in event["tracker_delivery_details"].values() if d.get("queue_item_id") == 1)
+    assert detail["state"] == "failed" and detail["category"] == "transient"
+    assert event["tracker_delivery"]["trakt"] == "success"
+
+    # Another destination's failure must survive successful Trakt recovery.
+    main.activity_delivery_mgr.update_cowatch_destination("household-event", "partner:simkl", "failed")
+    async with make_async_test_client(main.app) as client:
+        client.cookies.set("admin_token", "test-secret")
+        response = await client.post("/api/events/household-event/retry", json={
+            "queue_item_id": 1, "confirm_duplicate_history": True,
+        })
+    assert response.status_code == 200
+    await process_queue(trakt, queue, user_mgr=main.user_mgr, on_result=main.record_queue_delivery)
+    assert queue.get_item(1)["status"] == "completed"
+    assert trakt.sync_history.await_args_list[-1].args[0] == item["payload"]
+    assert event["cowatch_status"]["status"] == "partial"
+    assert event["tracker_delivery"]["trakt"] == "success"
+    main.activity_delivery_mgr.update_cowatch_destination("household-event", "partner:simkl", "success")
+    assert event["cowatch_status"]["synced"] is True
+
 @pytest.mark.asyncio(loop_scope="module")
 async def test_cowatch_trackers_endpoints():
     """Verify /api/cowatch/trackers status and demo endpoints."""

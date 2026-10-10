@@ -4,6 +4,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from uvicorn.logging import AccessFormatter
 
 from app.config import Config
 from app.services import log_manager as log_manager_module
@@ -58,3 +59,23 @@ def test_uvicorn_access_log_filter_redacts_webhook_query_token(monkeypatch: pyte
     assert SecretRedactionFilter().filter(record)
     assert "private-secret" not in record.getMessage()
     assert "token=●●●●●●●●" in record.getMessage()
+
+
+@pytest.mark.parametrize("path", ["/health", "/webhook?token=private-secret&source=plex"])
+def test_redacted_access_record_remains_compatible_with_uvicorn(monkeypatch, path):
+    monkeypatch.setattr(Config, "WEBHOOK_SECRET", "private-secret")
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1234", "POST", path, "1.1", 200), None,
+    )
+    formatter = AccessFormatter(
+        '%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False,
+    )
+    assert SecretRedactionFilter().filter(record)
+    rendered = formatter.format(record)
+    assert "POST " in rendered and "200 OK" in rendered
+    assert "private-secret" not in rendered
+    assert "private-secret" not in record.getMessage()
+    if "token=" in path:
+        assert "token=●●●●●●●●&source=plex" in rendered
