@@ -413,11 +413,20 @@
                     })
                 });
                 if (res.ok) {
-                    btn.innerHTML = isStart ? '▶️ Started!' : '✓ Watched!';
-                    btn.style.background = isStart ? 'var(--accent-color)' : 'var(--status-playing)';
+                    const data = await res.json();
+                    const state = isStart ? 'success' : (data.status || 'success');
+                    const successful = state === 'success';
+                    const queued = state === 'queued';
+                    btn.innerHTML = isStart ? '▶️ Started!' : (successful ? '✓ Watched!' : (queued ? '↻ Queued' : 'See Activity'));
+                    btn.style.background = isStart || successful ? 'var(--status-playing)' : (queued ? '#d97706' : 'var(--status-error)');
+                    if (!successful && !queued) btn.disabled = true;
+                    if (queued) btn.disabled = true;
                     fetchEvents();
                     fetchPlayback();
-                    setTimeout(() => closeScrobbleModal(), 1200);
+                    if (successful || queued) setTimeout(() => closeScrobbleModal(), 1800);
+                    else alert(state === 'partial'
+                        ? 'Some trackers did not confirm delivery. Check Activity for destination details before retrying.'
+                        : 'The tracker did not confirm this watch. Check Activity for the error and safe retry options.');
                 } else {
                     const err = await res.json();
                     btn.innerHTML = 'Error';
@@ -577,21 +586,32 @@
                     })
                 });
                 if (res.ok) {
+                    const data = await res.json();
+                    const state = isStart ? 'success' : (data.status || 'success');
+                    const successful = state === 'success';
+                    const queued = state === 'queued';
                     if (btn) {
-                        btn.textContent = isStart ? '▶️ Started!' : '✓ Watched!';
-                        btn.style.background = isStart ? 'var(--accent-color)' : 'var(--status-playing)';
+                        btn.textContent = isStart ? '▶️ Started!' : (successful ? '✓ Watched!' : (queued ? '↻ Queued' : 'See Activity'));
+                        btn.style.background = isStart || successful ? 'var(--status-playing)' : (queued ? 'var(--status-warning)' : 'var(--status-error)');
+                        if (!successful) btn.disabled = true;
                     }
                     if (msgBox) {
                         msgBox.style.display = 'block';
-                        msgBox.style.background = 'var(--status-success-bg)';
-                        msgBox.style.color = 'var(--status-success-text)';
+                        msgBox.style.background = successful ? 'var(--status-success-bg)' : (queued ? '#78350f' : 'var(--status-error-bg)');
+                        msgBox.style.color = successful ? 'var(--status-success-text)' : (queued ? '#ffedd5' : 'var(--status-error-text)');
                         msgBox.textContent = isStart
                             ? `▶️ Playback started for "${media.title}". Visible in Active Sessions!`
-                            : `✓ Successfully marked "${media.title}" as watched across selected trackers!`;
+                            : (successful
+                                ? `✓ Successfully marked "${media.title}" as watched across selected trackers!`
+                                : (queued
+                                    ? `↻ Tracker rate limited this watch. It was saved for automatic retry.`
+                                    : (state === 'partial'
+                                        ? `Some trackers did not confirm "${media.title}". Check Activity for destination details before retrying.`
+                                        : `The tracker did not confirm "${media.title}". Check Activity for the error and safe retry options.`)));
                     }
                     fetchEvents();
                     fetchPlayback();
-                    setTimeout(() => closeScrobbleModal(), 1400);
+                    if (successful || queued) setTimeout(() => closeScrobbleModal(), 1800);
                 } else {
                     const err = await res.json();
                     if (btn) {
@@ -2839,7 +2859,7 @@
                 openUnlockModal();
                 return;
             }
-            const duplicateRisk = ['sync_history', 'scrobble_stop'].includes(String(eventType || ''));
+            const duplicateRisk = ['sync_history', 'scrobble_stop', 'simkl_sync_history'].includes(String(eventType || ''));
             if (duplicateRisk && !confirm('This retry could create duplicate watch history if the tracker accepted the original request before the connection failed. Retry anyway?')) return;
             if (button) button.disabled = true;
             try {
@@ -3724,11 +3744,19 @@
         function copyLogsToClipboard() {
             const btn = document.getElementById('copy-logs-btn');
             const text = allRawLogs.join('\n');
-            if (!navigator.clipboard) {
-                alert('Clipboard API not available');
-                return;
-            }
-            navigator.clipboard.writeText(text).then(() => {
+            const legacyCopy = () => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                const copied = document.execCommand('copy');
+                textarea.remove();
+                return copied;
+            };
+            const showCopied = () => {
                 if (!btn) return;
                 const orig = btn.innerHTML;
                 btn.innerHTML = '✓ Copied!';
@@ -3737,9 +3765,16 @@
                     btn.innerHTML = orig;
                     btn.style.background = 'var(--accent-color)';
                 }, 2000);
-            }).catch(err => {
-                alert('Failed to copy: ' + err);
-            });
+            };
+            const fallbackOrFail = () => {
+                if (legacyCopy()) showCopied();
+                else alert('Unable to copy logs. Select and copy them manually.');
+            };
+            if (!navigator.clipboard || !navigator.clipboard.writeText) {
+                fallbackOrFail();
+                return;
+            }
+            navigator.clipboard.writeText(text).then(showCopied).catch(fallbackOrFail);
         }
 
 // ---- webhook_tests.js ----
@@ -6674,7 +6709,26 @@ SIMKL_ENABLED=true</pre>
             if (action === 'webhook') return openWebhookDebuggerModal();
             openSettingsModal('servers');
         }
-        async function refreshRecoveryChecks() {
+        function recoveryFindingAction(finding) {
+            if (['threshold_out_of_range', 'invalid_threshold', 'negative_min_duration', 'invalid_min_duration'].includes(finding.code)) {
+                return {tab: 'rules', label: 'Open scrobble rules'};
+            }
+            if (['invalid_digest_day', 'invalid_digest_hour', 'incomplete_notification', 'digest_without_channel'].includes(finding.code)) {
+                return {tab: 'notifications', label: 'Open notification settings'};
+            }
+            if (['incomplete_arr_connection', 'arr_automation_unconfigured'].includes(finding.code)) {
+                return {tab: 'automation', section: 'arr', label: 'Open acquisition settings'};
+            }
+            if (['configured_tracker_disabled', 'tracker_not_authenticated'].includes(finding.code)) {
+                const section = /^[a-z0-9_-]+$/.test(finding.setting || '') ? finding.setting : null;
+                return {tab: 'trackers', section, label: 'Open tracker settings'};
+            }
+            if (finding.code === 'invalid_scrobble_mode') {
+                return {instruction: 'Set SCROBBLE_MODE in the environment to scrobble or watched_only, then restart.'};
+            }
+            return null;
+        }
+        async function refreshRecoveryChecks(testResultNotice = null) {
             const list = document.getElementById('recovery-checks-list');
             const updated = document.getElementById('recovery-checks-updated');
             if (!list || !updated) return;
@@ -6687,6 +6741,7 @@ SIMKL_ENABLED=true</pre>
                 (data.checks || []).forEach((check) => {
                     const item = document.createElement('article');
                     item.className = `recovery-check recovery-check-${check.status}`;
+                    item.dataset.checkId = check.id;
                     const heading = document.createElement('div');
                     heading.className = 'recovery-check-heading';
                     const title = document.createElement('strong');
@@ -6712,12 +6767,45 @@ SIMKL_ENABLED=true</pre>
                         findingsList.className = 'recovery-capability-list';
                         check.findings.forEach((finding) => {
                             const row = document.createElement('li');
-                            row.textContent = `${finding.severity.toUpperCase()}: ${finding.message}`;
+                            row.className = 'recovery-finding-row';
+                            const message = document.createElement('span');
+                            message.textContent = `${finding.severity.toUpperCase()}: ${finding.message}`;
+                            row.append(message);
+                            const recoveryAction = recoveryFindingAction(finding);
+                            if (recoveryAction?.tab) {
+                                const action = document.createElement('button');
+                                action.type = 'button';
+                                action.className = 'btn-sm';
+                                action.textContent = recoveryAction.label;
+                                action.addEventListener('click', () => openSettingsModal(recoveryAction.tab, recoveryAction.section || null));
+                                row.append(action);
+                            } else if (recoveryAction?.instruction) {
+                                const instruction = document.createElement('small');
+                                instruction.className = 'recovery-finding-instruction';
+                                instruction.textContent = recoveryAction.instruction;
+                                row.append(instruction);
+                            }
                             findingsList.append(row);
                         });
                         item.append(heading, summary, findingsList);
                     } else {
                         item.append(heading, summary);
+                    }
+                    if (Array.isArray(check.workers) && check.workers.length) {
+                        const workerList = document.createElement('ul');
+                        workerList.className = 'recovery-capability-list recovery-worker-list';
+                        check.workers.forEach((worker) => {
+                            const row = document.createElement('li');
+                            row.className = 'recovery-worker-row';
+                            const name = document.createElement('span');
+                            name.textContent = worker.name;
+                            const state = document.createElement('span');
+                            state.className = `recovery-worker-state recovery-worker-${worker.status}`;
+                            state.textContent = worker.status.replaceAll('_', ' ');
+                            row.append(name, state);
+                            workerList.append(row);
+                        });
+                        item.append(workerList);
                     }
                     if (check.id === 'compatibility') {
                         const details = document.createElement('small');
@@ -6777,6 +6865,7 @@ SIMKL_ENABLED=true</pre>
                             const button = document.createElement('button');
                             button.type = 'button';
                             button.className = 'btn-sm';
+                            button.dataset.integration = integration;
                             const label = integration.startsWith('notification:') ? integration.split(':')[1] : integration;
                             button.textContent = `Test ${label.charAt(0).toUpperCase()}${label.slice(1)}`;
                             button.addEventListener('click', () => runRecoveryConnectionTest(integration, button));
@@ -6784,13 +6873,23 @@ SIMKL_ENABLED=true</pre>
                         });
                         item.append(tests);
                     }
-                    const action = document.createElement('button');
-                    action.type = 'button';
-                    action.className = 'btn-sm';
-                    action.textContent = check.id === 'compatibility' ? 'Version report' : (check.status === 'healthy' || check.status === 'optional' ? 'Open settings' : 'Review');
-                    action.disabled = check.id === 'compatibility';
-                    action.addEventListener('click', () => openRecoveryAction(check.next_action));
-                    footer.append(action);
+                    const recoveryActionLabels = {
+                        servers: 'Open server settings',
+                        trackers: 'Open tracker settings',
+                        notifications: 'Open notification settings',
+                        queue: 'Open queue',
+                        logs: 'View logs',
+                        webhook: 'Inspect webhooks'
+                    };
+                    const actionLabel = recoveryActionLabels[check.next_action];
+                    if (actionLabel && check.id !== 'configuration') {
+                        const action = document.createElement('button');
+                        action.type = 'button';
+                        action.className = 'btn-sm';
+                        action.textContent = actionLabel;
+                        action.addEventListener('click', () => openRecoveryAction(check.next_action));
+                        footer.append(action);
+                    }
                     const testResult = document.createElement('p');
                     testResult.className = 'recovery-test-result';
                     testResult.setAttribute('aria-live', 'polite');
@@ -6800,6 +6899,17 @@ SIMKL_ENABLED=true</pre>
                 });
                 list.dataset.loaded = 'true';
                 updated.textContent = `Last checked ${new Date(data.checked_at).toLocaleString()}. Checks do not contact external services.`;
+                if (testResultNotice) {
+                    const targetCheck = Array.from(list.querySelectorAll('.recovery-check')).find((checkElement) =>
+                        Array.from(checkElement.querySelectorAll('.recovery-check-tests button'))
+                            .some((testButton) => testButton.dataset.integration === testResultNotice.integration)
+                    );
+                    const result = targetCheck?.querySelector('.recovery-test-result');
+                    if (result) {
+                        result.className = `recovery-test-result recovery-test-${testResultNotice.status}`;
+                        result.textContent = `${testResultNotice.integration}: ${testResultNotice.message} Checked ${new Date(testResultNotice.checked_at).toLocaleString()}.`;
+                    }
+                }
             } catch (error) {
                 list.replaceChildren(Object.assign(document.createElement('p'), {textContent: error.message || 'Could not load recovery checks.'}));
                 updated.textContent = 'Recovery checks unavailable.';
@@ -6818,10 +6928,12 @@ SIMKL_ENABLED=true</pre>
                 });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.detail || 'Connection test failed.');
-                if (result) {
-                    result.className = `recovery-test-result recovery-test-${data.status}`;
-                    result.textContent = `${integration}: ${data.message} Checked ${new Date(data.checked_at).toLocaleString()}.`;
-                }
+                await refreshRecoveryChecks({
+                    integration,
+                    status: data.status,
+                    message: data.message,
+                    checked_at: data.checked_at
+                });
             } catch (error) {
                 if (result) {
                     result.className = 'recovery-test-result recovery-test-failed';

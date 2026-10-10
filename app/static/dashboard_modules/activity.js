@@ -191,7 +191,7 @@
                 openUnlockModal();
                 return;
             }
-            const duplicateRisk = ['sync_history', 'scrobble_stop'].includes(String(eventType || ''));
+            const duplicateRisk = ['sync_history', 'scrobble_stop', 'simkl_sync_history'].includes(String(eventType || ''));
             if (duplicateRisk && !confirm('This retry could create duplicate watch history if the tracker accepted the original request before the connection failed. Retry anyway?')) return;
             if (button) button.disabled = true;
             try {

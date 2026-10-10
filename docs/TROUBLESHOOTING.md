@@ -129,8 +129,10 @@ curl http://localhost:8080/health
 - **systemd (Linux Host)**:
 
   ```bash
-  journalctl --user -u omniscrobble -f
+  journalctl --user -u omniscrobble.service -f
   ```
+
+  The dashboard log viewer prefers the app's in-memory application records so sync diagnostics remain visible even when journald contains only HTTP access lines.
 
 - **Docker Compose**:
 

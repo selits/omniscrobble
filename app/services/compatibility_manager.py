@@ -20,7 +20,7 @@ class CompatibilityManager:
         "watch_lists": {"current": 1, "source": "app/services/watch_list_manager.py"},
         "automation_rules": {"current": 1, "source": "app/services/automation_rules.py"},
         "dashboard_accounts": {"current": 1, "source": "app/services/dashboard_auth_manager.py"},
-        "offline_queue": {"current": 1, "source": "app/services/queue_manager.py"},
+        "offline_queue": {"current": 2, "source": "app/services/queue_manager.py"},
     }
     INTEGRATION_RULES = {
         "sonarr": {

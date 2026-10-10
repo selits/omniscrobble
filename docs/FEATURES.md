@@ -196,6 +196,14 @@ stateDiagram-v2
 - **Automatic Buffering**: If Trakt or Simkl return transient 5xx server errors or 429 rate limit responses, events are immediately enqueued into an ACID-compliant SQLite database.
 - **Intelligent Classification**: Differentiates between recoverable transient errors (HTTP 500/502/503/504, 429, timeouts) and permanent errors (HTTP 400/404), discarding malformed requests to prevent queue poisoning.
 - **Exponential Backoff Worker**: A background worker drains pending queue items as soon as connectivity recovers, honoring upstream `Retry-After` headers.
+- **Concurrent Worker Safety**: Queue items are atomically claimed with a five-minute lease so a background worker and an administrator-triggered retry do not dispatch the same item at once. Expired claims are recovered after a worker stops.
+- **Retry Safety**: Trakt and Simkl history writes that may have reached the tracker are held for item-level retry and explicit duplicate-history confirmation. Definite HTTP 429 rate-limit responses remain eligible for automatic retry. Other queued operations use the existing automatic transient retry policy.
+
+| Queued operation | Ambiguous timeout or server error | Definite HTTP 429 |
+| --- | --- | --- |
+| `sync_history`, `scrobble_stop`, `simkl_sync_history` | Mark failed and require explicit confirmation before retry, since the tracker may have accepted the write. | Keep eligible for automatic retry. |
+| Other supported queue operations | Follow the existing automatic transient retry policy. | Keep eligible for automatic retry. |
+
 - **Automated Retention & Pruning (`POST /api/queue/prune`)**: To prevent unbounded SQLite disk growth over years of operation, the background worker automatically prunes successfully completed and expired offline queue records older than 90 days during its daily maintenance sweep. Administrators can also trigger on-demand queue pruning via the REST API.
 
 ### 1-Click System Backup & Restore
@@ -573,7 +581,7 @@ Admin users can open **Details** on an activity row to inspect its stable operat
 
 Admin users can open the **System** workspace to review a read-only snapshot of tracker authentication, enabled media server listeners, webhook secret configuration, recent captured webhook processing errors, queue counts, notification channel configuration, and required worker state. The snapshot includes the multi-tracker capability registry and explicitly notes that provider OAuth scopes are not introspected.
 
-The checklist does not contact external services when it loads. Admins can explicitly test tracker connectivity, a media server, or an *Arr integration, or send a test notification to a configured channel. Results include a status and check time but omit hostnames, account identifiers, and credentials. The webhook check reports bounded authentication-rejection counts by endpoint for the last 24 hours without retaining request payloads, tokens, or client IPs. Webhook Inspector opens from the check to review captured payload processing outcomes.
+The checklist does not contact external services when it loads. Admins can explicitly test tracker connectivity, a media server, or an *Arr integration, or send a test notification to a configured channel. After a test, the checklist refreshes its recorded reachability and version details while keeping the test result visible. Configuration findings link to the relevant Settings Hub tab, with tracker and acquisition findings opening their specific section. Findings that require an environment change explain the variable and restart step. When `WEBHOOK_SECRET` is missing, the webhook check gives setup instructions without opening the inspector; when configured, it opens Webhook Inspector to review captured payload processing outcomes. Other recovery buttons name their destination, such as the offline queue or logs; compatibility details are shown directly without a nonfunctional action button. Worker health lists each required and optional worker by name and status, and unsupported data or queue formats are marked as errors. Results include a status and check time but omit hostnames, account identifiers, and credentials. The webhook check reports bounded authentication-rejection counts by endpoint for the last 24 hours without retaining request payloads, tokens, or client IPs.
 
 ---
 

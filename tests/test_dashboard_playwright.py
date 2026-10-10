@@ -201,6 +201,8 @@ async def test_mobile_activity_fields_do_not_overlap_and_controls_have_consisten
         const fields = [...row.querySelectorAll('td[data-label]')]
             .filter(cell => ['Type', 'User', 'Action', 'Status'].includes(cell.dataset.label))
             .map(cell => ({cell: rect(cell), content: rect(cell.querySelector('.activity-type, .activity-user-content, .activity-action, .activity-status-group'))}));
+        const typeStyle = getComputedStyle(row.querySelector('.activity-type'));
+        const actionStyle = getComputedStyle(row.querySelector('.activity-action'));
         const fieldCells = [...row.querySelectorAll('td[data-label]')].map(rect).sort((a, b) => a.y - b.y);
         const actionButtons = [...document.querySelectorAll('.activity-actions > .btn-sm')].map(button => {
             const box = button.getBoundingClientRect();
@@ -208,10 +210,16 @@ async def test_mobile_activity_fields_do_not_overlap_and_controls_have_consisten
         });
         const filterButtonHeights = [...document.querySelectorAll('.activity-filter-chip')]
             .map(button => Math.round(button.getBoundingClientRect().height));
-        return {row: rect(row), fields, fieldCells, actionButtons, filterButtonHeights};
+        return {row: rect(row), fields, fieldCells, actionButtons, filterButtonHeights,
+            typeStyle: {background: typeStyle.backgroundColor, border: typeStyle.borderTopWidth, padding: typeStyle.padding},
+            actionStyle: {background: actionStyle.backgroundColor, border: actionStyle.borderTopWidth, padding: actionStyle.padding}};
     }""")
 
     assert measurements["row"]["width"] <= width
+    for style in (measurements["typeStyle"], measurements["actionStyle"]):
+        assert style["background"] == "rgba(0, 0, 0, 0)"
+        assert style["border"] == "0px"
+        assert style["padding"] == "0px"
     for field in measurements["fields"]:
         assert field["cell"]["width"] >= measurements["row"]["width"] - 28
         assert field["content"]["x"] >= field["cell"]["x"] + 60
@@ -223,6 +231,81 @@ async def test_mobile_activity_fields_do_not_overlap_and_controls_have_consisten
         assert len({button["width"] for button in measurements["actionButtons"]}) == 1
         assert measurements["filterButtonHeights"] and min(measurements["filterButtonHeights"]) >= 40
         assert len(set(measurements["filterButtonHeights"])) == 1
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_logs_copy_uses_legacy_fallback_when_clipboard_api_is_unavailable(dashboard_page: Page) -> None:
+    page = dashboard_page
+    await page.evaluate("""() => {
+        Object.defineProperty(navigator, 'clipboard', {configurable: true, value: undefined});
+        window.copyFallbackText = '';
+        document.execCommand = command => {
+            if (command === 'copy') window.copyFallbackText = document.activeElement.value;
+            return command === 'copy';
+        };
+    }""")
+    await page.evaluate("openLogsModal()")
+    await page.locator("#copy-logs-btn").wait_for(state="visible")
+    await page.wait_for_function("document.querySelector('#logs-count-label')?.textContent !== 'Loading...' ")
+
+    await page.locator("#copy-logs-btn").click()
+
+    assert await page.locator("#copy-logs-btn").inner_text() == "✓ Copied!"
+    assert await page.evaluate("window.copyFallbackText.length > 0")
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_playback_state_label_keeps_text_background_transparent(dashboard_page: Page) -> None:
+    page = dashboard_page
+    styles = await page.evaluate("""() => {
+        return ['paused', 'finished'].map(state => {
+            const card = document.createElement('div');
+            card.className = `playback-card playback-state-${state}`;
+            const label = document.createElement('span');
+            label.className = 'playback-state-label';
+            label.textContent = state === 'finished' ? 'Recently Finished' : 'Paused';
+            const indicator = document.createElement('span');
+            indicator.className = 'pulse-indicator';
+            card.append(label, indicator);
+            document.body.appendChild(card);
+            return {
+                state,
+                text: getComputedStyle(label).color,
+                background: getComputedStyle(label).backgroundColor,
+                indicatorBackground: getComputedStyle(indicator).backgroundColor
+            };
+        });
+    }""")
+
+    for state in styles:
+        assert state["background"] == "rgba(0, 0, 0, 0)"
+        assert state["text"] != "rgba(0, 0, 0, 0)"
+        assert state["indicatorBackground"] != "rgba(0, 0, 0, 0)"
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_quick_mark_modal_scrolls_to_bottom_on_mobile(dashboard_page: Page) -> None:
+    """Keep the direct-entry fields reachable inside a phone-sized modal."""
+    page = dashboard_page
+    await page.set_viewport_size({"width": 390, "height": 600})
+    await page.evaluate("document.querySelector('#scrobble-modal').style.display = 'flex'")
+    await page.evaluate("switchScrobbleTab('direct')")
+    await page.evaluate("document.querySelector('#direct-type-select').value = 'movie'; toggleDirectMediaFields('movie')")
+    dialog = page.locator("#scrobble-modal .modal-dialog")
+    bounds = await dialog.bounding_box()
+    assert bounds is not None
+    assert bounds["y"] >= 0
+    assert bounds["y"] + bounds["height"] <= 600
+    scroll_metrics = await dialog.evaluate("element => ({scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, directDisplay: getComputedStyle(document.querySelector('#scrobble-view-direct')).display})")
+    assert scroll_metrics["scrollHeight"] > scroll_metrics["clientHeight"], scroll_metrics
+
+    last_field = page.locator("#direct-id-input")
+    await dialog.evaluate("element => element.scrollTo(0, element.scrollHeight)")
+    field_bounds = await last_field.bounding_box()
+    dialog_bounds = await dialog.bounding_box()
+    assert field_bounds and dialog_bounds
+    assert field_bounds["y"] + field_bounds["height"] <= dialog_bounds["y"] + dialog_bounds["height"]
+    assert await dialog.evaluate("element => element.scrollTop > 0")
 
 
 @pytest.mark.asyncio(loop_scope="function")
@@ -564,18 +647,26 @@ async def test_guided_diagnostics_renders_checks_and_connection_test(admin_dashb
     page = admin_dashboard_page
     recovery_requested = asyncio.Event()
     connection_test_requested = asyncio.Event()
+    recovery_request_count = 0
 
     async def stub_recovery(route: Route) -> None:
+        nonlocal recovery_request_count
+        recovery_request_count += 1
         recovery_requested.set()
         await route.fulfill(status=200, content_type="application/json", body='''{
             "read_only": true,
             "checked_at": "2099-01-01T00:00:00+00:00",
             "checks": [{
                 "id": "configuration", "label": "Configuration", "status": "warning",
-                "summary": "Review configured integrations.", "next_action": "trackers",
+                "summary": "Review configured integrations.", "next_action": "servers",
                 "last_checked": "2099-01-01T00:00:00+00:00", "test_integrations": ["plex"],
-                "findings": [{"severity": "warning", "message": "Plex is configured but disabled."}],
+                "findings": [{"severity": "warning", "code": "incomplete_notification", "setting": "telegram_bot_token", "message": "Telegram requires both a bot token and a chat ID."}],
                 "effective_settings": [{"name": "movie threshold", "value": "90%", "source": "runtime settings"}]
+            }, {
+                "id": "workers", "label": "Background workers", "status": "warning",
+                "summary": "One or more required background workers are not running.",
+                "next_action": "logs", "last_checked": "2099-01-01T00:00:00+00:00",
+                "workers": [{"name": "Queue Worker", "status": "healthy"}, {"name": "Token Monitor", "status": "inactive"}]
             }]
         }''')
 
@@ -591,17 +682,32 @@ async def test_guided_diagnostics_renders_checks_and_connection_test(admin_dashb
     await page.route("**/api/health/recovery/test", stub_connection_test)
     await page.locator("#tab-diagnostics").click()
     await asyncio.wait_for(recovery_requested.wait(), timeout=5)
-    check = page.locator("#recovery-checks-list .recovery-check-warning")
+    check = page.locator("#recovery-checks-list .recovery-check").filter(has_text="Review configured integrations.")
     await check.wait_for(state="visible")
-    assert "Plex is configured but disabled." in await check.inner_text()
+    assert "Telegram requires both a bot token and a chat ID." in await check.inner_text()
+    await check.get_by_role("button", name="Open notification settings").wait_for(state="visible")
     await check.locator("details summary").click()
     assert "movie threshold: 90% (from runtime settings)" in await check.inner_text()
+    workers = page.locator("#recovery-checks-list .recovery-worker-list")
+    assert "Queue Worker" in await workers.inner_text()
+    assert "Token Monitor" in await workers.inner_text()
+    assert "Inactive" in await workers.inner_text()
+    worker_check = page.locator('#recovery-checks-list .recovery-check[data-check-id="workers"]')
+    await worker_check.get_by_role("button", name="View logs").wait_for(state="visible")
 
     await check.get_by_role("button", name="Test Plex").click()
     await asyncio.wait_for(connection_test_requested.wait(), timeout=5)
     result = check.locator(".recovery-test-result")
     await result.get_by_text("plex: Connection succeeded.").wait_for()
     assert await result.get_attribute("class") == "recovery-test-result recovery-test-healthy"
+    assert recovery_request_count == 2
+
+    await check.get_by_role("button", name="Open notification settings").click()
+    await page.locator("#settings-panel-notifications").wait_for(state="visible")
+
+    await page.set_viewport_size({"width": 390, "height": 844})
+    footer = worker_check.locator(".recovery-check-footer")
+    assert await footer.evaluate("element => element.scrollWidth <= element.clientWidth")
 
 
 @pytest.mark.asyncio(loop_scope="function")

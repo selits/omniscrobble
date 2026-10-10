@@ -31,6 +31,7 @@ from app.config import Config
 from app.plex_parser import ParsedMedia
 from app.services.anime_resolver import AnimeResolver
 from app.services.notifier import notifier
+from app.services.result_normalizer import normalize_result
 from app.services.settings_manager import settings_mgr
 
 logger = logging.getLogger("omniscrobble.multi_tracker")
@@ -527,6 +528,7 @@ class MultiTrackerManager:
         media: ParsedMedia,
         trakt_client: TraktClient,
         selected_trackers: Optional[list[str]] = None,
+        watched_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Manually mark media as watched across chosen or all active cloud trackers."""
         use_explicit_targets = selected_trackers is not None
@@ -539,9 +541,12 @@ class MultiTrackerManager:
             "status": "success",
             "synced_trackers": [],
             "errors": {},
+            "retryable_trackers": [],
+            "tracker_error_codes": {},
+            "retry_payloads": {},
         }
 
-        watched_at_ts = datetime.now(timezone.utc).isoformat()
+        watched_at_ts = watched_at or datetime.now(timezone.utc).isoformat()
 
         # 1. Trakt Sync History
         if (
@@ -581,10 +586,18 @@ class MultiTrackerManager:
                 trakt_res = await trakt_client.sync_history(history_payload)
                 if isinstance(trakt_res, dict) and trakt_res.get("error"):
                     results["errors"]["trakt"] = trakt_res["error"]
+                    normalized = normalize_result(trakt_res)
+                    if normalized.retryable:
+                        results["retryable_trackers"].append("trakt")
+                        results["tracker_error_codes"]["trakt"] = normalized.status_code
+                        results["retry_payloads"]["trakt"] = history_payload
                 else:
                     results["synced_trackers"].append("trakt")
             except Exception as e:
                 results["errors"]["trakt"] = str(e)
+                if normalize_result({"error": str(e)}).retryable:
+                    results["retryable_trackers"].append("trakt")
+                    results["retry_payloads"]["trakt"] = history_payload
                 asyncio.create_task(notifier.send_failure_alert(media, "Trakt", str(e), user=media.username))
 
         # 2. Simkl Sync History
@@ -598,10 +611,16 @@ class MultiTrackerManager:
                 simkl_res = await self.simkl_client.sync_history(media, watched_at=watched_at_ts)
                 if isinstance(simkl_res, dict) and simkl_res.get("status") == "error":
                     results["errors"]["simkl"] = simkl_res.get("error", "Simkl sync error")
+                    normalized = normalize_result(simkl_res)
+                    if normalized.retryable:
+                        results["retryable_trackers"].append("simkl")
+                        results["tracker_error_codes"]["simkl"] = normalized.status_code
                 else:
                     results["synced_trackers"].append("simkl")
             except Exception as e:
                 results["errors"]["simkl"] = str(e)
+                if normalize_result({"error": str(e)}).retryable:
+                    results["retryable_trackers"].append("simkl")
                 asyncio.create_task(notifier.send_failure_alert(media, "Simkl", str(e), user=media.username))
 
         # 3. TMDb (Watchlist / History)
