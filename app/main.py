@@ -79,6 +79,11 @@ from app.services.dashboard_renderer import (
     render_tracker_delivery_badges,
     dashboard_renderer,
 )
+from app.routes.recovery import RecoveryConnectionTestRequest, router as recovery_router
+from app.routes.watch_lists import create_router as create_watch_lists_router
+from app.routes.accounts import create_router as create_accounts_router
+from app.routes.reconciliation import create_router as create_reconciliation_router
+from app.routes.integrations import create_router as create_integrations_router
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -2507,8 +2512,7 @@ def _build_configuration_diagnostics(active_trackers: list[str]) -> dict[str, An
     }
 
 
-@app.get("/api/health/recovery")
-async def get_recovery_health(request: Request):
+async def _get_recovery_health(request: Request):
     """Return a read-only, secret-free snapshot of local setup and recovery signals."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
@@ -2620,7 +2624,7 @@ async def get_recovery_health(request: Request):
             "id": "webhook_auth", "label": "Webhook authentication",
             "status": "healthy" if Config.WEBHOOK_SECRET and not webhook_processing_errors and not webhook_auth_rejections["count"] else "warning",
             "summary": (f"Webhook secret is configured. {webhook_auth_rejections['count']} authentication rejections were recorded in the last 24 hours; {webhook_processing_errors} captured payloads had processing errors." if Config.WEBHOOK_SECRET else "Set WEBHOOK_SECRET in the environment and restart to require admin and incoming webhook authentication.") + " Failed-auth telemetry stores only bounded counts by endpoint; it does not retain request data, tokens, or client IPs.",
-            "next_action": "webhook", "last_checked": checked_at,
+            "next_action": "webhook" if Config.WEBHOOK_SECRET else "webhook_setup", "last_checked": checked_at,
             "auth_rejections": webhook_auth_rejections,
         },
         {
@@ -2663,12 +2667,7 @@ async def get_recovery_health(request: Request):
     return {"checked_at": checked_at, "read_only": True, "checks": checks}
 
 
-class RecoveryConnectionTestRequest(BaseModel):
-    integration: str
-
-
-@app.post("/api/health/recovery/test")
-async def test_recovery_connection(payload: RecoveryConnectionTestRequest, request: Request):
+async def _test_recovery_connection(payload: RecoveryConnectionTestRequest, request: Request):
     """Explicitly test one configured integration and return a redacted result."""
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
@@ -4210,7 +4209,6 @@ def _require_watch_list_access(list_id: str, principal, *, edit: bool = False, m
     return role
 
 
-@app.get("/api/watch-lists")
 def get_watch_lists(request: Request):
     principal = _watch_list_actor(request)
     return {**watch_list_mgr.get_all_for(principal.username, is_admin=principal.role == "admin"),
@@ -4223,7 +4221,6 @@ def get_watch_lists(request: Request):
             "cowatch_available": bool(Config.CO_WATCH_USER)}
 
 
-@app.get("/api/watch-lists/anime-search")
 async def search_watch_list_anime(title: str, request: Request, year: Optional[int] = None):
     _watch_list_actor(request)
     clean_title = title.strip()
@@ -4238,20 +4235,17 @@ async def search_watch_list_anime(title: str, request: Request, year: Optional[i
                        "poster_url": match.get("cover_image")}}
 
 
-@app.post("/api/watch-lists")
 def create_watch_list(payload: WatchListCreateRequest, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     return _watch_list_operation(lambda: watch_list_mgr.create_list(payload.name, owner=principal.username))
 
 
-@app.patch("/api/watch-lists/{list_id}")
 def rename_watch_list(list_id: str, payload: WatchListCreateRequest, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, manage=True)
     return _watch_list_operation(lambda: watch_list_mgr.rename_list(list_id, payload.name))
 
 
-@app.delete("/api/watch-lists/{list_id}")
 def delete_watch_list(list_id: str, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, manage=True)
@@ -4259,7 +4253,6 @@ def delete_watch_list(list_id: str, request: Request):
     return {"status": "ok"}
 
 
-@app.post("/api/watch-lists/{list_id}/items")
 async def add_watch_list_item(list_id: str, payload: WatchListItemRequest, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, edit=True)
@@ -4273,14 +4266,12 @@ async def add_watch_list_item(list_id: str, payload: WatchListItemRequest, reque
     return item
 
 
-@app.patch("/api/watch-lists/{list_id}/items/order")
 def reorder_watch_list_items(list_id: str, payload: WatchListOrderRequest, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, edit=True)
     return _watch_list_operation(lambda: watch_list_mgr.reorder(list_id, payload.item_ids))
 
 
-@app.delete("/api/watch-lists/{list_id}/items/{item_id}")
 def delete_watch_list_item(list_id: str, item_id: str, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, edit=True)
@@ -4288,7 +4279,6 @@ def delete_watch_list_item(list_id: str, item_id: str, request: Request):
     return {"status": "ok"}
 
 
-@app.patch("/api/watch-lists/{list_id}/items/{item_id}")
 def update_watch_list_item(list_id: str, item_id: str, payload: WatchListItemUpdateRequest, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, edit=True)
@@ -4303,7 +4293,6 @@ class WatchListAutomationRequest(BaseModel):
     action: Literal["manual", "request", "acquire"]
 
 
-@app.put("/api/watch-lists/{list_id}/access")
 def set_watch_list_access(list_id: str, payload: WatchListAccessRequest, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, manage=True)
@@ -4314,7 +4303,6 @@ def set_watch_list_access(list_id: str, payload: WatchListAccessRequest, request
     return _watch_list_operation(lambda: watch_list_mgr.set_members(list_id, payload.members))
 
 
-@app.put("/api/watch-lists/{list_id}/automation")
 def set_watch_list_automation(list_id: str, payload: WatchListAutomationRequest, request: Request):
     principal = _watch_list_actor(request, mutate=True)
     _require_watch_list_access(list_id, principal, manage=True)
@@ -4396,7 +4384,6 @@ def _id_matches(item_id: Any, library_id: Any) -> bool:
     return bool(item_id is not None and library_id is not None and str(item_id).strip().casefold() == str(library_id).strip().casefold())
 
 
-@app.post("/api/watch-lists/{list_id}/availability")
 async def refresh_watch_list_availability(list_id: str, request: Request):
     """Refresh per-item status from configured Sonarr, Radarr, and Overseerr services."""
     principal = _watch_list_actor(request, mutate=True)
@@ -4511,7 +4498,6 @@ async def refresh_watch_list_availability(list_id: str, request: Request):
             "availability": {item["id"]: item.get("availability") for item in saved["items"]}}
 
 
-@app.post("/api/watch-lists/{list_id}/items/{item_id}/request")
 async def request_watch_list_item(list_id: str, item_id: str, request: Request):
     """Submit one selected movie/show to the configured Overseerr/Jellyseerr instance."""
     if not is_admin_request(request):
@@ -4545,21 +4531,18 @@ async def request_watch_list_item(list_id: str, item_id: str, request: Request):
             "approval_flow": "managed_by_request_service"}
 
 
-@app.post("/api/watch-lists/import/preview")
 def preview_watch_list_import(payload: WatchListImportRequest, request: Request):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     return _watch_list_operation(lambda: watch_list_mgr.preview_import(payload.data, payload.replace))
 
 
-@app.post("/api/watch-lists/import")
 def import_watch_lists(payload: WatchListImportRequest, request: Request):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
     return _watch_list_operation(lambda: watch_list_mgr.apply_import(payload.data, payload.replace))
 
 
-@app.get("/api/watch-lists/export")
 def export_watch_lists(request: Request, format: str = "json"):
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
@@ -4922,7 +4905,6 @@ class MediaServerTestConnectionRequest(BaseModel):
 PlexTestConnectionRequest = MediaServerTestConnectionRequest
 
 
-@app.get("/api/sync/settings")
 async def get_sync_settings(request: Request):
     """Return persistent two-way reconciliation settings."""
     is_demo = request.query_params.get("demo") == "true"
@@ -4954,7 +4936,6 @@ async def get_sync_settings(request: Request):
     return settings_mgr.get_reconciliation_settings(mask_token=True)
 
 
-@app.post("/api/sync/settings")
 async def save_sync_settings(payload: ReconcileSettingsRequest, request: Request):
     """Save persistent two-way reconciliation settings and reconfigure in-memory worker."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5002,7 +4983,6 @@ async def save_sync_settings(payload: ReconcileSettingsRequest, request: Request
     return {"status": "success", "settings": updated}
 
 
-@app.post("/api/sync/test-connection")
 async def test_sync_connection(payload: MediaServerTestConnectionRequest, request: Request):
     """Test connectivity to media server (Plex, Jellyfin, Emby) with provided or active credentials."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5057,14 +5037,12 @@ async def test_sync_connection(payload: MediaServerTestConnectionRequest, reques
     return res
 
 
-@app.get("/api/sync/status")
 async def get_sync_status(request: Request, server: Optional[str] = None):
     """Return status of two-way sync and media server direct connection."""
     is_demo = request.query_params.get("demo") == "true"
     return await reverse_sync_mgr.get_status(demo=is_demo, server=server)
 
 
-@app.get("/api/sync/diff")
 async def get_sync_diff(
     request: Request,
     force: bool = False,
@@ -5114,7 +5092,6 @@ async def get_sync_diff(
 _reconciliation_previews: dict[str, dict[str, Any]] = {}
 
 
-@app.post("/api/sync/reconcile/preview")
 async def preview_reconciliation(payload: ReconcileRequest, request: Request):
     """Return and retain the exact reconciliation actions eligible for explicit apply."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5150,7 +5127,6 @@ async def preview_reconciliation(payload: ReconcileRequest, request: Request):
             "expires_in_seconds": 600}
 
 
-@app.post("/api/sync/reconcile")
 async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
     """Execute two-way reconciliation for discrepancies."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5175,13 +5151,11 @@ async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
         return res
 
 
-@app.get("/api/sync/progress")
 async def get_sync_progress(request: Request):
     """Poll reconciliation progress."""
     return reverse_sync_mgr._sync_progress
 
 
-@app.get("/api/sync/background/status")
 async def get_background_sync_status(request: Request):
     """Return current background synchronization state and telemetry."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5190,7 +5164,6 @@ async def get_background_sync_status(request: Request):
     return cloud_sync_mgr.get_status()
 
 
-@app.post("/api/sync/background/run")
 async def trigger_background_sync(request: Request):
     """Manually trigger an automated background cloud reconciliation cycle."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5224,7 +5197,6 @@ class RegisterWebhookRequest(BaseModel):
     model_config = {"extra": "ignore"}
 
 
-@app.post("/api/sync/register-webhook")
 async def register_server_webhook(payload: RegisterWebhookRequest, request: Request):
     """Automatically register Omniscrobble webhook URL with the target media server (Plex, Jellyfin, Emby)."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5277,7 +5249,6 @@ def invalidate_arr_acquisition_config_cache() -> None:
     _arr_acquisition_config_cache.update({"expires_at": 0.0, "data": None})
 
 
-@app.get("/api/arr/lookup")
 async def lookup_arr_media(request: Request, type: str, term: str):
     """Search Sonarr/Radarr catalog and mark items already in the local library."""
     if request.query_params.get("demo") == "true":
@@ -5314,7 +5285,6 @@ async def lookup_arr_media(request: Request, type: str, term: str):
     return {"results": results, "configured": True}
 
 
-@app.get("/api/arr/config")
 async def get_arr_acquisition_config(request: Request):
     """Return the configured root folders and quality profiles for each Arr service."""
     if request.query_params.get("demo") == "true":
@@ -5341,7 +5311,6 @@ async def get_arr_acquisition_config(request: Request):
     return config
 
 
-@app.post("/api/arr/add")
 async def add_arr_media(payload: ArrAddRequest, request: Request):
     """Add a selected catalog item to Sonarr or Radarr with optional show co-watch enrollment."""
     if request.query_params.get("demo") == "true":
@@ -5383,7 +5352,6 @@ async def add_arr_media(payload: ArrAddRequest, request: Request):
             "item_id": (result.get("data") or {}).get("id")}
 
 
-@app.post("/api/arr/test-connection")
 async def test_arr_connection(payload: ArrTestConnectionRequest, request: Request):
     """Test connectivity to Sonarr, Radarr, or Overseerr/Jellyseerr with provided or active credentials."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5435,14 +5403,12 @@ async def test_arr_connection(payload: ArrTestConnectionRequest, request: Reques
         raise HTTPException(status_code=400, detail=f"Invalid app '{payload.app}'")
 
 
-@app.get("/api/arr/status")
 async def get_arr_status(request: Request):
     """Return status of Sonarr, Radarr, and Trakt Watchlist automation bridge."""
     is_demo = request.query_params.get("demo") == "true"
     return await arr_bridge.get_status(demo=is_demo)
 
 
-@app.post("/api/arr/sync")
 async def trigger_arr_sync(request: Request):
     """Trigger a synchronization of the Trakt Watchlist to Sonarr & Radarr."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5453,7 +5419,6 @@ async def trigger_arr_sync(request: Request):
     return await arr_bridge.sync_watchlist()
 
 
-@app.get("/api/ecosystem")
 async def get_ecosystem_status(request: Request):
     is_demo = request.query_params.get("demo") == "true"
     return await arr_bridge.get_ecosystem_status(
@@ -5473,14 +5438,12 @@ class CrossSyncExecuteRequest(BaseModel):
     conflict_policy: Literal["manual", "trakt", "simkl", "tmdb", "newest"] = "manual"
 
 
-@app.get("/api/cross-sync/status")
 async def get_cross_sync_status(request: Request):
     """Return status for Trakt–Simkl reconciliation and Trakt/TMDb ratings."""
     is_demo = request.query_params.get("demo") == "true"
     return await cross_tracker_sync.get_status(demo=is_demo)
 
 
-@app.get("/api/cross-sync/diff")
 async def get_cross_sync_diff(request: Request, force: bool = False):
     """Scan and return cross-tracker discrepancies between Trakt and Simkl."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5493,7 +5456,6 @@ async def get_cross_sync_diff(request: Request, force: bool = False):
     return {"status": "ok", "diff": diff, "count": len(diff)}
 
 
-@app.post("/api/cross-sync/scan")
 async def scan_cross_sync_discrepancies(request: Request):
     """Trigger an on-demand scan of discrepancies between Trakt and Simkl."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5506,7 +5468,6 @@ async def scan_cross_sync_discrepancies(request: Request):
     return {"status": "ok", "diff": diff, "count": len(diff)}
 
 
-@app.post("/api/cross-sync/execute")
 async def execute_cross_sync(payload: CrossSyncExecuteRequest, request: Request):
     """Execute cross-tracker reconciliation for selected items or all in a direction."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5520,13 +5481,11 @@ async def execute_cross_sync(payload: CrossSyncExecuteRequest, request: Request)
         return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, conflict_policy=payload.conflict_policy)
 
 
-@app.get("/api/cross-sync/progress")
 async def get_cross_sync_progress(request: Request):
     """Poll live cross-tracker sync progress."""
     return cross_tracker_sync._sync_progress
 
 
-@app.get("/api/cross-sync/provenance")
 async def get_cross_sync_provenance(request: Request, limit: int = 100):
     """Return recent admin-only rating conflict decisions that were applied."""
     if request.query_params.get("demo") == "true":
@@ -5703,7 +5662,6 @@ def require_local_account_admin(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Admin access is required to manage dashboard accounts.")
 
 
-@app.post("/api/account/login")
 def dashboard_account_login(payload: DashboardAccountLoginRequest, request: Request, response: Response):
     if not Config.WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Local accounts require WEBHOOK_SECRET to be configured.")
@@ -5717,7 +5675,6 @@ def dashboard_account_login(payload: DashboardAccountLoginRequest, request: Requ
     return {"status": "ok", "username": session.principal.username, "role": session.principal.role, "csrf_token": session.csrf_token}
 
 
-@app.post("/api/account/logout")
 def dashboard_account_logout(request: Request, response: Response):
     session_token = request.cookies.get("dashboard_session", "")
     principal = dashboard_auth_mgr.resolve_session(session_token)
@@ -5732,7 +5689,6 @@ def dashboard_account_logout(request: Request, response: Response):
     return {"status": "ok"}
 
 
-@app.get("/api/account/me")
 def dashboard_account_me(request: Request):
     principal = get_dashboard_principal(request)
     if not principal:
@@ -5740,13 +5696,11 @@ def dashboard_account_me(request: Request):
     return {"username": principal.username, "role": principal.role, "source": principal.source}
 
 
-@app.get("/api/admin/accounts")
 def list_dashboard_accounts(request: Request):
     require_local_account_admin(request)
     return {"accounts": dashboard_auth_mgr.list_accounts()}
 
 
-@app.post("/api/admin/accounts")
 def create_dashboard_account(payload: DashboardAccountCreateRequest, request: Request):
     require_local_account_admin(request)
     actor = get_dashboard_principal(request)
@@ -5759,7 +5713,6 @@ def create_dashboard_account(payload: DashboardAccountCreateRequest, request: Re
     return {"status": "created", "account": account}
 
 
-@app.patch("/api/admin/accounts/{username}")
 def update_dashboard_account(username: str, payload: DashboardAccountUpdateRequest, request: Request):
     require_local_account_admin(request)
     actor = get_dashboard_principal(request)
@@ -5774,7 +5727,6 @@ def update_dashboard_account(username: str, payload: DashboardAccountUpdateReque
     return {"status": "updated", "account": account}
 
 
-@app.delete("/api/admin/accounts/{username}")
 def delete_dashboard_account(username: str, request: Request):
     require_local_account_admin(request)
     actor = get_dashboard_principal(request)
@@ -5785,7 +5737,6 @@ def delete_dashboard_account(username: str, request: Request):
     return {"status": "deleted"}
 
 
-@app.post("/api/admin/unlock")
 def admin_unlock(payload: AdminUnlockRequest, request: Request, response: Response):
     if not Config.WEBHOOK_SECRET:
         return {"status": "ok", "message": "Admin authentication not required"}
@@ -5821,7 +5772,6 @@ def admin_unlock(payload: AdminUnlockRequest, request: Request, response: Respon
     return {"status": "ok", "message": "Admin mode unlocked", "csrf_token": csrf_token}
 
 
-@app.post("/api/admin/lock")
 def admin_lock(request: Request, response: Response):
     dashboard_auth_mgr.revoke_session(request.cookies.get("dashboard_session", ""))
     response.delete_cookie(key="admin_token")
@@ -5835,7 +5785,6 @@ class DevicePollRequest(BaseModel):
     user: Optional[str] = None
 
 
-@app.post("/api/auth/start")
 async def auth_start(request: Request, user: Optional[str] = None):
     query_user = profile_for_request(request, request.query_params.get("user") or user)
     require_dashboard_permission(request, "manage_personal_trackers", query_user)
@@ -5848,7 +5797,6 @@ async def auth_start(request: Request, user: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/auth/poll")
 async def auth_poll(payload: DevicePollRequest, request: Request):
     target_user = profile_for_request(request, payload.user)
     require_dashboard_permission(request, "manage_personal_trackers", target_user)
@@ -5869,7 +5817,6 @@ async def auth_poll(payload: DevicePollRequest, request: Request):
         return {"status": "error", "message": str(e)}
 
 
-@app.get("/api/trakt/status")
 async def get_trakt_status(request: Request, user: Optional[str] = None):
     """Return current connection and authentication status for Trakt."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5903,7 +5850,6 @@ async def get_trakt_status(request: Request, user: Optional[str] = None):
     }
 
 
-@app.post("/api/trakt/disconnect")
 async def disconnect_trakt(request: Request, user: Optional[str] = None):
     """Disconnect Trakt account and delete saved tokens."""
     query_user = profile_for_request(request, request.query_params.get("user") or user)
@@ -5922,7 +5868,6 @@ class SimklPollRequest(BaseModel):
     user: Optional[str] = None
 
 
-@app.get("/api/simkl/status")
 async def get_simkl_status(request: Request):
     """Return current connection and authentication status for Simkl."""
     is_demo = request.query_params.get("demo") == "true"
@@ -5946,7 +5891,6 @@ async def get_simkl_status(request: Request):
     return status
 
 
-@app.post("/api/simkl/pin")
 async def get_simkl_pin(request: Request):
     """Obtain a new Device PIN / user_code to authorize Simkl via browser."""
     target_user = profile_for_request(request, request.query_params.get("user"))
@@ -5967,7 +5911,6 @@ async def get_simkl_pin(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/simkl/poll")
 async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
     """Poll Simkl to check if the user authorized the device PIN."""
     target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
@@ -5982,7 +5925,6 @@ async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
         return {"result": "error", "message": str(e)}
 
 
-@app.post("/api/simkl/disconnect")
 async def disconnect_simkl(request: Request):
     """Disconnect Simkl account and delete saved tokens."""
     target_user = profile_for_request(request, request.query_params.get("user"))
@@ -5994,7 +5936,6 @@ async def disconnect_simkl(request: Request):
     return {"status": "ok", "message": "Simkl disconnected"}
 
 
-@app.get("/auth/simkl", response_class=HTMLResponse)
 async def auth_simkl_page(request: Request):
     """Render dedicated Simkl authorization page."""
     if not is_admin_request(request):
@@ -6008,7 +5949,6 @@ class TokenSubmitRequest(BaseModel):
 
 
 # --- AniList Anime Tracker Endpoints ---
-@app.get("/api/anilist/status")
 async def get_anilist_status(request: Request):
     """Return current connection and authentication status for AniList."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6025,7 +5965,6 @@ async def get_anilist_status(request: Request):
     return status
 
 
-@app.post("/api/anilist/token")
 async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
     """Save an AniList personal access token and test connectivity."""
     target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
@@ -6049,7 +5988,6 @@ async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
         raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided AniList token"))
 
 
-@app.post("/api/anilist/disconnect")
 async def disconnect_anilist(request: Request):
     """Disconnect AniList account and delete stored tokens."""
     target_user = profile_for_request(request, request.query_params.get("user"))
@@ -6061,7 +5999,6 @@ async def disconnect_anilist(request: Request):
     return {"status": "ok", "message": "AniList disconnected"}
 
 
-@app.get("/auth/anilist", response_class=HTMLResponse)
 async def auth_anilist_page(request: Request):
     """Render dedicated AniList authorization page."""
     if not is_admin_request(request):
@@ -6082,7 +6019,6 @@ async def auth_anilist_page(request: Request):
 
 
 # --- MyAnimeList (MAL) Anime Tracker Endpoints ---
-@app.get("/api/mal/status")
 async def get_mal_status(request: Request):
     """Return current connection and authentication status for MyAnimeList."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6099,7 +6035,6 @@ async def get_mal_status(request: Request):
     return status
 
 
-@app.post("/api/mal/token")
 async def save_mal_token(payload: TokenSubmitRequest, request: Request):
     """Save a MyAnimeList access token and test connectivity."""
     target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
@@ -6123,7 +6058,6 @@ async def save_mal_token(payload: TokenSubmitRequest, request: Request):
         raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided MyAnimeList token"))
 
 
-@app.post("/api/mal/disconnect")
 async def disconnect_mal(request: Request):
     """Disconnect MyAnimeList account and delete stored tokens."""
     target_user = profile_for_request(request, request.query_params.get("user"))
@@ -6135,7 +6069,6 @@ async def disconnect_mal(request: Request):
     return {"status": "ok", "message": "MyAnimeList disconnected"}
 
 
-@app.get("/auth/mal", response_class=HTMLResponse)
 async def auth_mal_page(request: Request):
     """Render dedicated MyAnimeList authorization page."""
     if not is_admin_request(request):
@@ -6156,7 +6089,6 @@ async def auth_mal_page(request: Request):
 
 
 # --- Anime Inspection Diagnostic Endpoint ---
-@app.get("/api/anime/resolve")
 async def resolve_anime_api(request: Request, title: str, year: Optional[int] = None):
     """Diagnostic endpoint to test anime heuristics and AniList/MAL metadata matching."""
     test_media = ParsedMedia(
@@ -6180,7 +6112,6 @@ async def resolve_anime_api(request: Request, title: str, year: Optional[int] = 
 
 
 # --- Multi-Tracker Hub & Cloud Tracker Diagnostic Endpoints ---
-@app.get("/api/trackers/status")
 async def get_multi_trackers_status(request: Request):
     """Return categorized diagnostics and connectivity status across all 9 supported trackers."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6199,7 +6130,6 @@ async def get_multi_trackers_status(request: Request):
     return status
 
 
-@app.get("/api/tmdb/status")
 async def get_tmdb_status(request: Request):
     """Return current connection and authentication status for TMDb."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6210,7 +6140,6 @@ async def get_tmdb_status(request: Request):
     return status
 
 
-@app.get("/api/kitsu/status")
 async def get_kitsu_status(request: Request):
     """Return current connection and authentication status for Kitsu."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6228,7 +6157,6 @@ async def get_kitsu_status(request: Request):
     return status
 
 
-@app.get("/api/letterboxd/status")
 async def get_letterboxd_status(request: Request):
     """Return current status and diary telemetry for Letterboxd."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6247,7 +6175,6 @@ async def get_letterboxd_status(request: Request):
     return status
 
 
-@app.get("/api/serializd/status")
 async def get_serializd_status(request: Request):
     """Return current connection and authentication status for Serializd."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6265,7 +6192,6 @@ async def get_serializd_status(request: Request):
     return status
 
 
-@app.get("/api/mdblist/status")
 async def get_mdblist_status(request: Request):
     """Return current status and configuration for MDBList."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6281,7 +6207,6 @@ async def get_mdblist_status(request: Request):
     return status
 
 
-@app.get("/api/relay/status")
 async def get_relay_status(request: Request):
     """Return connection instructions and compatibility status for SeriesGuide & Showly cloud relay."""
     base_url = str(request.base_url).rstrip("/")
@@ -6312,7 +6237,6 @@ async def get_relay_status(request: Request):
     }
 
 
-@app.get("/api/letterboxd/export")
 async def export_letterboxd_csv(request: Request):
     """Generate and download RFC-4180 CSV export for 1-click import into Letterboxd."""
     if not is_admin_request(request):
@@ -6326,7 +6250,6 @@ async def export_letterboxd_csv(request: Request):
     )
 
 
-@app.get("/api/letterboxd/diary")
 async def get_letterboxd_diary(request: Request):
     """Return logged Letterboxd diary entries."""
     is_demo = request.query_params.get("demo") == "true"
@@ -6340,7 +6263,6 @@ async def get_letterboxd_diary(request: Request):
     return letterboxd.get_diary_entries()
 
 
-@app.get("/api/mdblist/ratings")
 async def get_mdblist_ratings(
     request: Request,
     imdb_id: Optional[str] = None,
@@ -7207,6 +7129,17 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             max_age=86400 * 30,
         )
     return response
+
+
+# Recovery HTTP routes live in app.routes.recovery. Their implementations remain
+# here while they share the application's orchestration dependencies.
+app.state.recovery_health_handler = _get_recovery_health
+app.state.recovery_connection_test_handler = _test_recovery_connection
+app.include_router(recovery_router)
+app.include_router(create_watch_lists_router(globals()))
+app.include_router(create_accounts_router(globals()))
+app.include_router(create_reconciliation_router(globals()))
+app.include_router(create_integrations_router(globals()))
 
 
 if __name__ == '__main__':

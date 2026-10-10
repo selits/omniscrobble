@@ -182,6 +182,8 @@ omniscrobble/
 
 ## 🗺️ Roadmap & Horizons
 
+The proposed reliability and maintainability sequence—including recovery UX, gradual modularization, safer retries, and a gated P2P evaluation—is documented in [**Reliability and Maintainability Plan**](./docs/ROADMAP_RELIABILITY.md).
+
 - [x] **Universal Media Server Ingestion & Auto-Registration**: Multi-server webhooks and 1-click webhook auto-registration for Plex, Jellyfin, and Emby.
 - [x] **Multi-Tracker Synchronization**: Simultaneous dispatch across Trakt, Simkl, AniList, MyAnimeList, TMDb, Letterboxd, Kitsu, Serializd, and MDBList.
 - [x] **Bi-Directional Library Reconciliation**: Discrepancy diffing and played/rating sync across Plex, Jellyfin, Emby, Trakt, and Simkl.

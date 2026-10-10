@@ -790,7 +790,8 @@
         .setup-checklist li.is-complete .setup-step-state { background: color-mix(in srgb, var(--status-success, #22c55e) 20%, var(--bg-surface)); color: var(--status-success, #22c55e); }
         .setup-checklist li.is-complete strong { color: var(--text-muted); }
         .recovery-checklist { margin-bottom: 14px; padding: 16px; }
-        .recovery-checklist-heading, .recovery-check-heading, .recovery-check-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+        .recovery-checklist-heading, .recovery-check-heading, .recovery-check-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+        .recovery-checklist .btn-sm { min-height: 36px; }
         .recovery-checklist-heading h3 { margin: 0; }
         .recovery-checklist-heading p, .recovery-checks-updated { margin: 5px 0 0; color: var(--text-muted); font-size: 12px; }
         .recovery-checks-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 14px; }
@@ -799,10 +800,17 @@
         .recovery-check-status { flex: 0 0 auto; color: var(--text-muted); font-size: 11px; text-transform: capitalize; }
         .recovery-check-healthy .recovery-check-status { color: var(--status-success, #22c55e); }
         .recovery-check-action_required .recovery-check-status, .recovery-check-warning .recovery-check-status { color: var(--status-warning, #f59e0b); }
+        .recovery-check-unsupported .recovery-check-status { color: var(--status-error, #ef4444); }
         .recovery-check p { margin: 8px 0 12px; color: var(--text-muted); font-size: 12px; }
         .recovery-check-footer small { color: var(--text-muted); font-size: 10px; }
         .recovery-check-tests { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
         .recovery-capability-list { display: grid; gap: 4px; margin: 0 0 10px; padding-left: 18px; color: var(--text-muted); font-size: 11px; }
+        .recovery-finding-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+        .recovery-finding-instruction { color: var(--text-muted); }
+        .recovery-worker-row { display: flex; justify-content: space-between; gap: 8px; }
+        .recovery-worker-state { text-transform: capitalize; }
+        .recovery-worker-healthy { color: var(--status-success, #22c55e); }
+        .recovery-worker-inactive { color: var(--status-warning, #f59e0b); }
         .recovery-check .recovery-test-result { margin-bottom: 0; }
         .recovery-test-connected { color: var(--status-success, #22c55e) !important; }
         .recovery-test-failed { color: var(--status-error, #ef4444) !important; }

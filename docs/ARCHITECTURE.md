@@ -61,8 +61,30 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ### 1. Ingestion & Routing Layer
 
 - **`app/main.py`**: The core FastAPI application. Handles route registration, application lifespan (startup/shutdown of HTTP clients and background workers), authenticated admin endpoints, SSR dashboard rendering, and webhook ingestion.
+- **`app/routes/recovery.py`**: Owns the admin recovery snapshot and explicit integration connection-test routes. It delegates application orchestration to handlers registered on `app.state`.
+- **`app/routes/watch_lists.py`**: Owns route declarations for personal and shared watch-list APIs. It registers the existing typed handlers from `app/main.py`, preserving their request models, authorization, and business-logic dependencies during this incremental extraction.
+- **`app/routes/accounts.py`**: Owns dashboard account session and admin account route declarations while retaining the typed handlers and policy checks in `app/main.py`.
+- **`app/routes/reconciliation.py`**: Owns media-server and cross-tracker reconciliation route declarations. Queue, sync, and permission behavior remains in the typed `app/main.py` handlers.
+- **`app/routes/integrations.py`**: Owns tracker account/status and *Arr integration route declarations, with existing typed handlers retained in `app/main.py`.
 - **Fast-Bypass Architecture**: Webhook endpoints (`/webhook`, `/webhook/jellyfin`, `/webhook/emby`) immediately drop incoming requests if the corresponding media server listener is disabled in `SettingsManager`, saving CPU and memory.
 - **Standalone Player Direct REST Bridge (`POST /api/scrobble`)**: Ingests direct playback and scrobble payloads (`play`, `pause`, `stop`, `scrobble`) from standalone media players (Infuse, Kodi, VLC, Stremio) with full multi-tracker dispatch and loop suppression without requiring a dedicated media server.
+
+### Route ownership map
+
+| Route family | Current owner | Responsibility |
+| --- | --- | --- |
+| Recovery diagnostics and explicit connection tests | `app/routes/recovery.py` (HTTP boundary), `app/main.py` (orchestration) | Read-only recovery status and admin-triggered integration checks. |
+| Personal and shared watch lists | `app/routes/watch_lists.py` (route declarations), `app/main.py` (typed handlers and orchestration) | CRUD, sharing, import/export, availability, and acquisition actions. |
+| Dashboard account sessions and admin accounts | `app/routes/accounts.py` (route declarations), `app/main.py` (typed handlers and policy) | Login, logout, identity, account management, and admin lock controls. |
+| Tracker and acquisition integrations | `app/routes/integrations.py` (route declarations), `app/main.py` (typed handlers and orchestration) | Tracker authorization/status, exports, anime resolution, and Sonarr/Radarr/Overseerr operations. |
+| Server and cross-tracker reconciliation | `app/routes/reconciliation.py` (route declarations), `app/main.py` (typed handlers and orchestration) | Configuration, diff, preview, execution, background sync, and provenance. |
+| Webhooks and direct scrobbling | `app/main.py` | Media-server/player ingestion and dispatch. |
+| Dashboard, activity, and administration | `app/main.py` | Server-rendered dashboard and authenticated operational APIs. |
+| Household and co-watch | `app/main.py` | Household access and shared playback controls. |
+| Activity, settings, queue, backup, automation, and notifications | `app/main.py` | Operational controls and application data workflows. |
+| Static assets and health/metrics | `app/main.py` | Browser assets and process-level probes/metrics. |
+
+The map records current ownership, not a target architecture. Phase 2 moves cohesive route families incrementally while preserving paths, methods, authorization, and response contracts.
 
 ### 2. Normalization & Parsing Layer
 
@@ -138,6 +160,13 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 ```text
 omniscrobble/
 ├── app/
+│   ├── routes/                     # Focused HTTP route modules
+│   │   ├── accounts.py             # Dashboard account and admin account route declarations
+│   │   ├── integrations.py         # Tracker and media acquisition route declarations
+│   │   ├── __init__.py             # Route package
+│   │   ├── reconciliation.py      # Server and cross-tracker reconciliation route declarations
+│   │   ├── recovery.py             # Recovery diagnostics and integration test routes
+│   │   └── watch_lists.py          # Personal and shared watch-list route declarations
 │   ├── static/                      # Dashboard stylesheet and static assets
 │   │   ├── dashboard.css            # Responsive dashboard layout, themes, and component styles
 │   │   ├── dashboard-theme.css      # Theme palettes, accent colors, and density settings

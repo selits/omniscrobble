@@ -564,18 +564,26 @@ async def test_guided_diagnostics_renders_checks_and_connection_test(admin_dashb
     page = admin_dashboard_page
     recovery_requested = asyncio.Event()
     connection_test_requested = asyncio.Event()
+    recovery_request_count = 0
 
     async def stub_recovery(route: Route) -> None:
+        nonlocal recovery_request_count
+        recovery_request_count += 1
         recovery_requested.set()
         await route.fulfill(status=200, content_type="application/json", body='''{
             "read_only": true,
             "checked_at": "2099-01-01T00:00:00+00:00",
             "checks": [{
                 "id": "configuration", "label": "Configuration", "status": "warning",
-                "summary": "Review configured integrations.", "next_action": "trackers",
+                "summary": "Review configured integrations.", "next_action": "servers",
                 "last_checked": "2099-01-01T00:00:00+00:00", "test_integrations": ["plex"],
-                "findings": [{"severity": "warning", "message": "Plex is configured but disabled."}],
+                "findings": [{"severity": "warning", "code": "incomplete_notification", "setting": "telegram_bot_token", "message": "Telegram requires both a bot token and a chat ID."}],
                 "effective_settings": [{"name": "movie threshold", "value": "90%", "source": "runtime settings"}]
+            }, {
+                "id": "workers", "label": "Background workers", "status": "warning",
+                "summary": "One or more required background workers are not running.",
+                "next_action": "logs", "last_checked": "2099-01-01T00:00:00+00:00",
+                "workers": [{"name": "Queue Worker", "status": "healthy"}, {"name": "Token Monitor", "status": "inactive"}]
             }]
         }''')
 
@@ -591,17 +599,32 @@ async def test_guided_diagnostics_renders_checks_and_connection_test(admin_dashb
     await page.route("**/api/health/recovery/test", stub_connection_test)
     await page.locator("#tab-diagnostics").click()
     await asyncio.wait_for(recovery_requested.wait(), timeout=5)
-    check = page.locator("#recovery-checks-list .recovery-check-warning")
+    check = page.locator("#recovery-checks-list .recovery-check").filter(has_text="Review configured integrations.")
     await check.wait_for(state="visible")
-    assert "Plex is configured but disabled." in await check.inner_text()
+    assert "Telegram requires both a bot token and a chat ID." in await check.inner_text()
+    await check.get_by_role("button", name="Open notification settings").wait_for(state="visible")
     await check.locator("details summary").click()
     assert "movie threshold: 90% (from runtime settings)" in await check.inner_text()
+    workers = page.locator("#recovery-checks-list .recovery-worker-list")
+    assert "Queue Worker" in await workers.inner_text()
+    assert "Token Monitor" in await workers.inner_text()
+    assert "Inactive" in await workers.inner_text()
+    worker_check = page.locator('#recovery-checks-list .recovery-check[data-check-id="workers"]')
+    await worker_check.get_by_role("button", name="View logs").wait_for(state="visible")
 
     await check.get_by_role("button", name="Test Plex").click()
     await asyncio.wait_for(connection_test_requested.wait(), timeout=5)
     result = check.locator(".recovery-test-result")
     await result.get_by_text("plex: Connection succeeded.").wait_for()
     assert await result.get_attribute("class") == "recovery-test-result recovery-test-healthy"
+    assert recovery_request_count == 2
+
+    await check.get_by_role("button", name="Open notification settings").click()
+    await page.locator("#settings-panel-notifications").wait_for(state="visible")
+
+    await page.set_viewport_size({"width": 390, "height": 844})
+    footer = worker_check.locator(".recovery-check-footer")
+    assert await footer.evaluate("element => element.scrollWidth <= element.clientWidth")
 
 
 @pytest.mark.asyncio(loop_scope="function")
