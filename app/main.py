@@ -372,7 +372,7 @@ async def queue_worker_loop():
 
             if not queue_mgr._future_schema_version and queue_mgr.get_pending_count() > 0:
                 logger.info("Background queue worker draining pending offline items...")
-                await process_queue(trakt, queue_mgr, user_mgr=user_mgr, on_result=record_queue_delivery)
+                await process_queue(trakt, queue_mgr, user_mgr=user_mgr, on_result=record_queue_delivery, simkl_client=simkl)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -944,6 +944,9 @@ def _tracker_delivery_from_result(result: dict[str, Any], action: str) -> dict[s
         aliases = {"myanimelist": "mal"}
         delivery.update({aliases.get(str(tracker).lower(), str(tracker).lower()): "success" for tracker in synced})
         delivery.update({aliases.get(str(tracker).lower(), str(tracker).lower()): "failed" for tracker in errors})
+        queued = result.get("queued_trackers")
+        if isinstance(queued, list):
+            delivery.update({aliases.get(str(tracker).lower(), str(tracker).lower()): "queued" for tracker in queued})
         return delivery
     aliases = {"myanimelist": "mal"}
     reported_trackers = result.get("trackers", [])
@@ -1047,6 +1050,8 @@ def _delivery_category(state: str, result: Any = None) -> str:
     if state == "skipped":
         reason = _delivery_reason(state, result).lower()
         return "unsupported" if any(term in reason for term in ("unsupported", "does not support", "not applicable", "not configured", "disabled")) else "intentional_skip"
+    if state == "failed" and "uncertain" in _delivery_reason(state, result).lower():
+        return "transient"
 
     return normalize_result(result).category
 
@@ -1087,7 +1092,8 @@ def record_queue_delivery(
     attempt: int,
 ) -> None:
     """Attach a queue retry result and aggregate queue state to its source event."""
-    destination = f"Trakt · {event_type.replace('_', ' ')} · queue {queue_item_id}"
+    tracker = "simkl" if event_type.startswith("simkl_") else "trakt"
+    destination = f"{tracker.title()} · {event_type.removeprefix('simkl_').replace('_', ' ')} · queue {queue_item_id}"
     safe_reason = log_mgr.sanitize_line(reason.strip())[:240] if reason else _delivery_reason(state)
     category = _delivery_category(state, {"error": safe_reason} if reason else None)
     now = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -1119,8 +1125,8 @@ def record_queue_delivery(
         save_recent_events()
         break
 
-    overall_state = queue_mgr.get_event_queue_state(event_id)
-    update_event_tracker_delivery(event_id, {"trakt": overall_state})
+    overall_state = queue_mgr.get_event_queue_state(event_id, tracker=tracker)
+    update_event_tracker_delivery(event_id, {tracker: overall_state})
 
 
 def update_event_cowatch_status(event_id: str, status: str) -> None:
@@ -3437,7 +3443,7 @@ async def trigger_queue_retry(request: Request):
         return {"status": "ok", "result": {}, "pending_count": 0}
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    res = await process_queue(trakt, queue_mgr, user_mgr=user_mgr, on_result=record_queue_delivery)
+    res = await process_queue(trakt, queue_mgr, user_mgr=user_mgr, on_result=record_queue_delivery, simkl_client=simkl)
     return {"status": "ok", "result": res, "pending_count": queue_mgr.get_pending_count()}
 
 
@@ -3995,6 +4001,7 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
         return {"status": "success", "action": "start", "result": dispatch_res, "cowatch_synced": cowatch_synced}
 
     else:
+        watched_at = datetime.datetime.now(timezone.utc).isoformat()
         media_obj = ParsedMedia(
             event="manual.scrobble",
             username=admin_user,
@@ -4016,6 +4023,18 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
             media=media_obj,
             trakt_client=trakt,
             selected_trackers=payload.trackers,
+            watched_at=watched_at,
+        )
+
+        retryable_trackers = set(dispatch_res.get("retryable_trackers") or [])
+        error_codes = dispatch_res.get("tracker_error_codes") or {}
+        queued_trackers = list(dispatch_res.get("queued_trackers") or [])
+        for tracker in retryable_trackers:
+            if error_codes.get(tracker) == 429 and tracker not in queued_trackers:
+                queued_trackers.append(tracker)
+        dispatch_res["queued_trackers"] = queued_trackers
+        dispatch_res["status"] = _aggregate_delivery_status(
+            _tracker_delivery_from_result(dispatch_res, "manual_scrobble")
         )
 
         record_watch_stat(media_obj)
@@ -4050,7 +4069,38 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
                 logger.error(f"Error dual-scrobbling manual watch for co-watch partner @{partner_user}: {e}")
 
         cowatch_status = {"synced": cowatch_synced, "target": partner_user} if cowatch_synced else None
-        log_event(media_obj, "manual_scrobble", dispatch_res, cowatch_status=cowatch_status)
+        event_id = log_event(media_obj, "manual_scrobble", dispatch_res, cowatch_status=cowatch_status)
+
+        for tracker in retryable_trackers:
+            if tracker == "trakt":
+                event_type = "sync_history"
+                queue_payload = media_obj.to_trakt_history_payload(watched_at=watched_at)
+            elif tracker == "simkl":
+                event_type = "simkl_sync_history"
+                queue_payload = {"media": media_obj.model_dump(mode="json"), "watched_at": watched_at}
+            else:
+                continue
+
+            rate_limited = error_codes.get(tracker) == 429
+            reason = str((dispatch_res.get("errors") or {}).get(tracker) or "Temporary tracker failure")
+            queue_status = "pending" if rate_limited else "failed"
+            if not rate_limited:
+                reason = "Outcome uncertain after manual delivery; retry may duplicate watch history."
+            queue_item_id = queue_mgr.enqueue(
+                event_type,
+                queue_payload,
+                error=reason,
+                event_id=event_id,
+                status=queue_status,
+            )
+            record_queue_delivery(
+                event_id,
+                event_type,
+                queue_item_id,
+                "queued" if rate_limited else "failed",
+                "Rate limited; saved for automatic retry." if rate_limited else reason,
+                1,
+            )
 
         synced_list = dispatch_res.get("synced_trackers", ["trakt"])
         asyncio.create_task(
@@ -4061,7 +4111,13 @@ async def manual_scrobble(payload: ManualScrobbleRequest, request: Request):
                 trackers=synced_list,
             )
         )
-        return {"status": "success", "action": "watched", "result": dispatch_res, "cowatch_synced": cowatch_synced}
+        return {
+            "status": dispatch_res.get("status", "success"),
+            "action": "watched",
+            "result": dispatch_res,
+            "cowatch_synced": cowatch_synced,
+            "event_id": event_id,
+        }
 
 
 @app.post("/api/history/remove")

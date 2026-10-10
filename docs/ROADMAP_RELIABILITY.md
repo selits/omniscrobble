@@ -135,5 +135,15 @@ Phases 1–3 are the near-term reliability and maintainability work. Phase 4 is 
 
 ## Follow-up discussion
 
+The screenshots were from a previous release. The fixes below are implemented in the current branch, which is based on v3.3.0 and includes earlier mobile activity layout work.
+
 - **App size and maintainability:** Review which parts of the app have grown hardest to understand or change, identify practical boundaries for reducing that complexity, and agree on a staged approach that fits alongside feature work.
-- **Bugs to discuss:** Collect the bugs the user wants to review, reproduce each one, and prioritize fixes by impact and frequency. Details will be added after that discussion.
+- **Fixed — Quick-Mark modal on mobile:** The modal now scrolls internally when its content exceeds the phone viewport, keeping lower fields reachable.
+- **Fixed — activity type/action presentation:** Type and action values now use plain read-only text styling instead of filled, input-like badges.
+- **Fixed — manual scrobble recovery and feedback:** Transient Trakt and Simkl history failures are retained for recovery. Ambiguous history outcomes require confirmation before retry, rate limits retry automatically, and the modal reports failed or partial delivery instead of claiming success.
+
+### Initial code review notes
+
+- The prior-release modal issue came from a height-limited dialog without internal overflow scrolling.
+- The prior-release activity values used filled backgrounds and rounded corners, which made static values resemble form controls.
+- Manual scrobble previously recorded transient tracker errors without queueing them and returned top-level `success` regardless of tracker delivery. Recovery now preserves tracker identity and activity linkage, and the UI exposes the actual outcome.

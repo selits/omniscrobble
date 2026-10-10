@@ -58,6 +58,71 @@ async def test_uncertain_history_write_requires_confirmation_after_transient_fai
     assert queue.retry_failed_item(item_id, "event-2", confirm_duplicate_history=True) == "queued"
 
 
+@pytest.mark.asyncio
+async def test_manual_simkl_history_retry_uses_simkl_and_preserves_confirmation_gate(tmp_path):
+    queue = QueueManager(tmp_path / "simkl_history.db")
+    item_id = queue.enqueue(
+        "simkl_sync_history",
+        {
+            "media": {
+                "event": "manual.scrobble",
+                "username": "admin",
+                "media_type": "movie",
+                "title": "Example Movie",
+                "progress": 100.0,
+                "ids": {"imdb": "tt1234567"},
+            },
+            "watched_at": "2026-10-09T12:00:00+00:00",
+        },
+        error="Outcome uncertain after manual delivery; retry may duplicate watch history.",
+        event_id="event-simkl",
+        status="failed",
+    )
+    assert queue.retry_failed_item(item_id, "event-simkl") == "confirmation_required"
+    assert queue.retry_all_failed() == 0
+    assert queue.retry_failed_item(item_id, "event-simkl", confirm_duplicate_history=True) == "queued"
+
+    simkl = MagicMock()
+    simkl.is_enabled.return_value = True
+    simkl.is_authenticated.return_value = True
+    simkl.sync_history = AsyncMock(return_value={"status": "success"})
+    updates = []
+    result = await process_queue(
+        MagicMock(spec=TraktClient),
+        queue,
+        simkl_client=simkl,
+        on_result=lambda *args: updates.append(args),
+    )
+
+    assert result == {"processed": 1, "succeeded": 1, "failed": 0}
+    simkl.sync_history.assert_awaited_once()
+    media_arg = simkl.sync_history.await_args.args[0]
+    assert media_arg.title == "Example Movie"
+    assert simkl.sync_history.await_args.kwargs["watched_at"] == "2026-10-09T12:00:00+00:00"
+    assert updates[0][0:4] == ("event-simkl", "simkl_sync_history", item_id, "success")
+    assert queue.get_event_queue_state("event-simkl", tracker="simkl") == "success"
+
+
+@pytest.mark.asyncio
+async def test_manual_simkl_rate_limit_stays_queued_for_automatic_retry(tmp_path):
+    queue = QueueManager(tmp_path / "simkl_rate_limit.db")
+    item_id = queue.enqueue(
+        "simkl_sync_history",
+        {"media": {"event": "manual.scrobble", "username": "admin", "media_type": "movie", "title": "Example"}},
+        event_id="event-rate-limit",
+    )
+    simkl = MagicMock()
+    simkl.is_enabled.return_value = True
+    simkl.is_authenticated.return_value = True
+    simkl.sync_history = AsyncMock(return_value={"status": "error", "code": 429, "error": "rate_limited"})
+
+    result = await process_queue(MagicMock(spec=TraktClient), queue, simkl_client=simkl)
+
+    assert result["failed"] == 1
+    assert queue.get_item(item_id)["status"] == "pending"
+    assert queue.get_pending_count() == 1
+
+
 def test_stale_history_claim_is_failed_for_manual_recovery(tmp_path):
     queue = QueueManager(tmp_path / "stale_history.db")
     item_id = queue.enqueue("scrobble_stop", {"movie": {"title": "Example"}}, event_id="event-3")

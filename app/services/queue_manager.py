@@ -8,16 +8,18 @@ from typing import Any, Optional
 try:
     from app.config import Config
     from app.clients.trakt_client import TraktClient
+    from app.plex_parser import ParsedMedia
     from app.services.result_normalizer import normalize_result
 except ImportError:
     from config import Config
     from trakt_client import TraktClient
+    from plex_parser import ParsedMedia
     from services.result_normalizer import normalize_result
 
 logger = logging.getLogger("queue_manager")
 QUEUE_SCHEMA_VERSION = 2
 QUEUE_CLAIM_LEASE_SECONDS = 300
-DUPLICATE_SENSITIVE_EVENT_TYPES = {"sync_history", "scrobble_stop"}
+DUPLICATE_SENSITIVE_EVENT_TYPES = {"sync_history", "scrobble_stop", "simkl_sync_history"}
 
 
 class QueueManager:
@@ -111,17 +113,20 @@ class QueueManager:
         error: str = "",
         username: str = "default",
         event_id: Optional[str] = None,
+        status: str = "pending",
     ) -> int:
         """Insert a failed event into the offline retry queue."""
+        if status not in {"pending", "failed"}:
+            raise ValueError("Queue entries may only be enqueued as pending or failed.")
         payload_str = json.dumps(payload)
         now = int(time.time())
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO queued_events (username, event_type, payload, created_at, retry_count, last_error, status, event_id)
-                VALUES (?, ?, ?, ?, 0, ?, 'pending', ?)
+                VALUES (?, ?, ?, ?, 0, ?, ?, ?)
                 """,
-                (username or "default", event_type, payload_str, now, error, event_id),
+                (username or "default", event_type, payload_str, now, error, status, event_id),
             )
             conn.commit()
             item_id = cursor.lastrowid or 0
@@ -139,11 +144,17 @@ class QueueManager:
             )
             conn.commit()
 
-    def get_event_queue_state(self, event_id: str) -> str:
+    def get_event_queue_state(self, event_id: str, tracker: Optional[str] = None) -> str:
         """Summarize linked queue items for one source activity event."""
+        if tracker == "simkl":
+            event_filter = "AND event_type = 'simkl_sync_history'"
+        elif tracker == "trakt":
+            event_filter = "AND event_type != 'simkl_sync_history'"
+        else:
+            event_filter = ""
         with self._get_connection() as conn:
             rows = conn.execute(
-                "SELECT status FROM queued_events WHERE event_id = ?",
+                f"SELECT status FROM queued_events WHERE event_id = ? {event_filter}",
                 (event_id,),
             ).fetchall()
         if not rows:
@@ -178,7 +189,7 @@ class QueueManager:
             if row["status"] != "failed":
                 return "not_failed"
             event_type = str(row["event_type"])
-            if event_type not in {"sync_collection", "sync_ratings", "sync_watchlist", "sync_history", "scrobble_stop"}:
+            if event_type not in {"sync_collection", "sync_ratings", "sync_watchlist", "sync_history", "scrobble_stop", "simkl_sync_history"}:
                 return "unsupported"
             last_error = str(row["last_error"] or "").lower()
             if any(term in last_error for term in ("unauthorized", "forbidden", "invalid token", "not authenticated", "http 400", "http 401", "http 403", "http 404")):
@@ -395,7 +406,7 @@ class QueueManager:
             cursor = conn.execute(
                 """
                 UPDATE queued_events SET status = 'pending', retry_count = 0, claimed_at = NULL
-                WHERE status = 'failed' AND event_type NOT IN ('sync_history', 'scrobble_stop')
+                WHERE status = 'failed' AND event_type NOT IN ('sync_history', 'scrobble_stop', 'simkl_sync_history')
                 """
             )
             conn.commit()
@@ -408,8 +419,9 @@ async def process_queue(
     max_items: int = 20,
     user_mgr: Optional[Any] = None,
     on_result: Optional[Any] = None,
+    simkl_client: Optional[Any] = None,
 ) -> dict[str, int]:
-    """Drain pending items from the offline queue and dispatch to Trakt."""
+    """Drain pending items from the offline queue and dispatch to their tracker."""
     succeeded = 0
     failed = 0
     processed = 0
@@ -432,19 +444,30 @@ async def process_queue(
                 except Exception as callback_error:
                     logger.warning("Could not attach queue result to activity event %s: %s", item.get("event_id"), callback_error)
 
-        client = user_mgr.get_client(username) if user_mgr else trakt_client
+        client = user_mgr.get_client(username) if user_mgr and event_type != "simkl_sync_history" else trakt_client
 
         # Keep user-specific work pending until that profile is connected.
         # Otherwise an unauthenticated response can be mistaken for success
         # and permanently discard Co-Watch history.
-        if user_mgr and not client.is_authenticated():
+        if event_type == "simkl_sync_history" and (
+            simkl_client is None
+            or not simkl_client.is_enabled()
+            or not simkl_client.is_authenticated()
+        ):
+            logger.info("Queued Simkl event %s is waiting for Simkl authentication.", item_id)
+            queue_mgr.release_claim(item_id)
+            continue
+        if event_type != "simkl_sync_history" and user_mgr and not client.is_authenticated():
             logger.info(f"Queued event {item_id} ({event_type}) is waiting for Trakt authentication for @{username}.")
             queue_mgr.release_claim(item_id)
             continue
 
         try:
             res: dict[str, Any] = {}
-            if event_type == "scrobble_stop":
+            if event_type == "simkl_sync_history":
+                media = ParsedMedia.model_validate(payload.get("media") or {})
+                res = await simkl_client.sync_history(media, watched_at=payload.get("watched_at"))
+            elif event_type == "scrobble_stop":
                 res = await client.scrobble_stop(payload)
             elif event_type == "sync_history":
                 res = await client.sync_history(payload)

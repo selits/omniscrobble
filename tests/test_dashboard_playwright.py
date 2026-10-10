@@ -201,6 +201,8 @@ async def test_mobile_activity_fields_do_not_overlap_and_controls_have_consisten
         const fields = [...row.querySelectorAll('td[data-label]')]
             .filter(cell => ['Type', 'User', 'Action', 'Status'].includes(cell.dataset.label))
             .map(cell => ({cell: rect(cell), content: rect(cell.querySelector('.activity-type, .activity-user-content, .activity-action, .activity-status-group'))}));
+        const typeStyle = getComputedStyle(row.querySelector('.activity-type'));
+        const actionStyle = getComputedStyle(row.querySelector('.activity-action'));
         const fieldCells = [...row.querySelectorAll('td[data-label]')].map(rect).sort((a, b) => a.y - b.y);
         const actionButtons = [...document.querySelectorAll('.activity-actions > .btn-sm')].map(button => {
             const box = button.getBoundingClientRect();
@@ -208,10 +210,16 @@ async def test_mobile_activity_fields_do_not_overlap_and_controls_have_consisten
         });
         const filterButtonHeights = [...document.querySelectorAll('.activity-filter-chip')]
             .map(button => Math.round(button.getBoundingClientRect().height));
-        return {row: rect(row), fields, fieldCells, actionButtons, filterButtonHeights};
+        return {row: rect(row), fields, fieldCells, actionButtons, filterButtonHeights,
+            typeStyle: {background: typeStyle.backgroundColor, border: typeStyle.borderTopWidth, padding: typeStyle.padding},
+            actionStyle: {background: actionStyle.backgroundColor, border: actionStyle.borderTopWidth, padding: actionStyle.padding}};
     }""")
 
     assert measurements["row"]["width"] <= width
+    for style in (measurements["typeStyle"], measurements["actionStyle"]):
+        assert style["background"] == "rgba(0, 0, 0, 0)"
+        assert style["border"] == "0px"
+        assert style["padding"] == "0px"
     for field in measurements["fields"]:
         assert field["cell"]["width"] >= measurements["row"]["width"] - 28
         assert field["content"]["x"] >= field["cell"]["x"] + 60
@@ -223,6 +231,31 @@ async def test_mobile_activity_fields_do_not_overlap_and_controls_have_consisten
         assert len({button["width"] for button in measurements["actionButtons"]}) == 1
         assert measurements["filterButtonHeights"] and min(measurements["filterButtonHeights"]) >= 40
         assert len(set(measurements["filterButtonHeights"])) == 1
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_quick_mark_modal_scrolls_to_bottom_on_mobile(dashboard_page: Page) -> None:
+    """Keep the direct-entry fields reachable inside a phone-sized modal."""
+    page = dashboard_page
+    await page.set_viewport_size({"width": 390, "height": 600})
+    await page.evaluate("document.querySelector('#scrobble-modal').style.display = 'flex'")
+    await page.evaluate("switchScrobbleTab('direct')")
+    await page.evaluate("document.querySelector('#direct-type-select').value = 'movie'; toggleDirectMediaFields('movie')")
+    dialog = page.locator("#scrobble-modal .modal-dialog")
+    bounds = await dialog.bounding_box()
+    assert bounds is not None
+    assert bounds["y"] >= 0
+    assert bounds["y"] + bounds["height"] <= 600
+    scroll_metrics = await dialog.evaluate("element => ({scrollHeight: element.scrollHeight, clientHeight: element.clientHeight, directDisplay: getComputedStyle(document.querySelector('#scrobble-view-direct')).display})")
+    assert scroll_metrics["scrollHeight"] > scroll_metrics["clientHeight"], scroll_metrics
+
+    last_field = page.locator("#direct-id-input")
+    await dialog.evaluate("element => element.scrollTo(0, element.scrollHeight)")
+    field_bounds = await last_field.bounding_box()
+    dialog_bounds = await dialog.bounding_box()
+    assert field_bounds and dialog_bounds
+    assert field_bounds["y"] + field_bounds["height"] <= dialog_bounds["y"] + dialog_bounds["height"]
+    assert await dialog.evaluate("element => element.scrollTop > 0")
 
 
 @pytest.mark.asyncio(loop_scope="function")

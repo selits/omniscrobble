@@ -379,11 +379,20 @@
                     })
                 });
                 if (res.ok) {
-                    btn.innerHTML = isStart ? '▶️ Started!' : '✓ Watched!';
-                    btn.style.background = isStart ? 'var(--accent-color)' : 'var(--status-playing)';
+                    const data = await res.json();
+                    const state = isStart ? 'success' : (data.status || 'success');
+                    const successful = state === 'success';
+                    const queued = state === 'queued';
+                    btn.innerHTML = isStart ? '▶️ Started!' : (successful ? '✓ Watched!' : (queued ? '↻ Queued' : 'See Activity'));
+                    btn.style.background = isStart || successful ? 'var(--status-playing)' : (queued ? '#d97706' : 'var(--status-error)');
+                    if (!successful && !queued) btn.disabled = true;
+                    if (queued) btn.disabled = true;
                     fetchEvents();
                     fetchPlayback();
-                    setTimeout(() => closeScrobbleModal(), 1200);
+                    if (successful || queued) setTimeout(() => closeScrobbleModal(), 1800);
+                    else alert(state === 'partial'
+                        ? 'Some trackers did not confirm delivery. Check Activity for destination details before retrying.'
+                        : 'The tracker did not confirm this watch. Check Activity for the error and safe retry options.');
                 } else {
                     const err = await res.json();
                     btn.innerHTML = 'Error';
@@ -543,21 +552,32 @@
                     })
                 });
                 if (res.ok) {
+                    const data = await res.json();
+                    const state = isStart ? 'success' : (data.status || 'success');
+                    const successful = state === 'success';
+                    const queued = state === 'queued';
                     if (btn) {
-                        btn.textContent = isStart ? '▶️ Started!' : '✓ Watched!';
-                        btn.style.background = isStart ? 'var(--accent-color)' : 'var(--status-playing)';
+                        btn.textContent = isStart ? '▶️ Started!' : (successful ? '✓ Watched!' : (queued ? '↻ Queued' : 'See Activity'));
+                        btn.style.background = isStart || successful ? 'var(--status-playing)' : (queued ? 'var(--status-warning)' : 'var(--status-error)');
+                        if (!successful) btn.disabled = true;
                     }
                     if (msgBox) {
                         msgBox.style.display = 'block';
-                        msgBox.style.background = 'var(--status-success-bg)';
-                        msgBox.style.color = 'var(--status-success-text)';
+                        msgBox.style.background = successful ? 'var(--status-success-bg)' : (queued ? '#78350f' : 'var(--status-error-bg)');
+                        msgBox.style.color = successful ? 'var(--status-success-text)' : (queued ? '#ffedd5' : 'var(--status-error-text)');
                         msgBox.textContent = isStart
                             ? `▶️ Playback started for "${media.title}". Visible in Active Sessions!`
-                            : `✓ Successfully marked "${media.title}" as watched across selected trackers!`;
+                            : (successful
+                                ? `✓ Successfully marked "${media.title}" as watched across selected trackers!`
+                                : (queued
+                                    ? `↻ Tracker rate limited this watch. It was saved for automatic retry.`
+                                    : (state === 'partial'
+                                        ? `Some trackers did not confirm "${media.title}". Check Activity for destination details before retrying.`
+                                        : `The tracker did not confirm "${media.title}". Check Activity for the error and safe retry options.`)));
                     }
                     fetchEvents();
                     fetchPlayback();
-                    setTimeout(() => closeScrobbleModal(), 1400);
+                    if (successful || queued) setTimeout(() => closeScrobbleModal(), 1800);
                 } else {
                     const err = await res.json();
                     if (btn) {
