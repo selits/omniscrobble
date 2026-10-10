@@ -408,7 +408,7 @@ async def test_replay_dispatch_security_gate():
             assert res_admin_dispatch.json()["status"] == "dispatched"
             assert mock_pme.await_count == 1
 
-def test_analytics_privacy_masking_and_calendar_filtering():
+def test_analytics_privacy_masking_and_calendar_filtering(tmp_path):
     """Verify non-admin privacy masking for devices/partner and dynamic year calendar filtering."""
     from app.services.analytics_manager import AnalyticsManager
 
@@ -437,11 +437,11 @@ def test_analytics_privacy_masking_and_calendar_filtering():
         },
     ]
 
-    with patch("os.path.exists", return_value=True), \
-         patch("builtins.open", mock_open(read_data=json.dumps(events_data))), \
-         patch.object(Config, "CO_WATCH_USER", "jane_doe"):
+    events_file = tmp_path / "events.json"
+    events_file.write_text(json.dumps(events_data), encoding="utf-8")
 
-        am = AnalyticsManager()
+    with patch.object(Config, "CO_WATCH_USER", "jane_doe"):
+        am = AnalyticsManager(events_file=events_file, stats_file=tmp_path / "stats.json")
 
         # Calendar year 2025: should only include Better Call Saul
         sum_2025 = am.get_summary(period="all", year=2025, is_admin=True)
