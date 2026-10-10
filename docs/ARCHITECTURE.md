@@ -64,8 +64,9 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 - **`app/routes/recovery.py`**: Owns the admin recovery snapshot and explicit integration connection-test routes. It delegates application orchestration to handlers registered on `app.state`.
 - **`app/routes/watch_lists.py`**: Owns route declarations for personal and shared watch-list APIs. `app/main.py` supplies the typed handlers through an explicit callable map, preserving request models, authorization, and business logic while removing implicit global lookup for this route family.
 - **`app/routes/accounts.py`**: Owns dashboard account session and local-account management handlers with explicit policy, configuration, logger, and authentication-manager dependencies. The legacy admin unlock/lock handlers remain in `app/main.py` while sharing its rate-limit state.
-- **`app/routes/reconciliation.py`**: Owns media-server and cross-tracker reconciliation route declarations. Its current factory resolves the existing typed handlers from `app/main.py`; queue, sync, and permission behavior remains in those handlers.
-- **`app/routes/integrations.py`**: Owns tracker account/status and *Arr integration route declarations. Its current factory resolves the existing typed handlers from `app/main.py`; handler implementations remain centralized for now.
+- **`app/routes/acquisition.py`**: Owns Sonarr/Radarr/Overseerr acquisition handlers and route declarations. Application configuration, bridge, clients, access checks, and logging are injected explicitly; request and response behavior stays at the existing API paths.
+- **`app/routes/reconciliation.py`**: Owns media-server and cross-tracker reconciliation route declarations plus injected settings, connection-test, preview, execution, background-sync, cross-tracker, and media-server webhook registration handlers.
+- **`app/routes/integrations.py`**: Owns personal tracker authorization/status and cloud tracker diagnostics/export handlers, plus route declarations. Application clients, permissions, demo data, templates, and masking are injected explicitly; anime inspection and remaining cross-cutting callbacks are supplied through a validated handler map.
 - **Fast-Bypass Architecture**: Webhook endpoints (`/webhook`, `/webhook/jellyfin`, `/webhook/emby`) immediately drop incoming requests if the corresponding media server listener is disabled in `SettingsManager`, saving CPU and memory.
 - **Standalone Player Direct REST Bridge (`POST /api/scrobble`)**: Ingests direct playback and scrobble payloads (`play`, `pause`, `stop`, `scrobble`) from standalone media players (Infuse, Kodi, VLC, Stremio) with full multi-tracker dispatch and loop suppression without requiring a dedicated media server.
 
@@ -76,8 +77,9 @@ Omniscrobble operates as an asynchronous, decoupled media event bus and synchron
 | Recovery diagnostics and explicit connection tests | `app/routes/recovery.py` (HTTP boundary), `app/main.py` (orchestration) | Read-only recovery status and admin-triggered integration checks. |
 | Personal and shared watch lists | `app/routes/watch_lists.py` (route declarations and explicit handler binding), `app/main.py` (typed handlers and orchestration) | CRUD, sharing, import/export, availability, and acquisition actions. The watch-list router validates its required handler bindings when the application is built. |
 | Dashboard account sessions and local accounts | `app/routes/accounts.py` (typed handlers and route declarations), `app/main.py` (dependency binding and admin unlock/lock handlers) | Login, logout, identity, account management, and admin lock controls. |
-| Tracker and acquisition integrations | `app/routes/integrations.py` (route declarations), `app/main.py` (typed handlers and orchestration) | Tracker authorization/status, exports, anime resolution, and Sonarr/Radarr/Overseerr operations. |
-| Server and cross-tracker reconciliation | `app/routes/reconciliation.py` (route declarations), `app/main.py` (typed handlers and orchestration) | Configuration, diff, preview, execution, background sync, and provenance. |
+| Tracker integrations | `app/routes/integrations.py` (typed account/diagnostic handlers and route declarations), `app/main.py` (dependency binding and recovery compatibility wrappers) | Tracker authorization/status, exports, anime resolution, and cloud tracker diagnostics. |
+| Content Bridge acquisition | `app/routes/acquisition.py` (typed handlers and route declarations), `app/main.py` (dependency binding) | Sonarr/Radarr lookup and acquisition, Overseerr connection checks, Trakt Watchlist automation status, and ecosystem status. |
+| Server and cross-tracker reconciliation | `app/routes/reconciliation.py` (route declarations and injected media-server/cross-tracker handlers), `app/main.py` (dependency binding) | Configuration, diff, preview, execution, background sync, webhook registration, and provenance. |
 | Webhooks and direct scrobbling | `app/main.py` | Media-server/player ingestion and dispatch. |
 | Dashboard, activity, and administration | `app/main.py`; activity outcomes in `app/services/activity_delivery.py` | Server-rendered dashboard, authenticated operational APIs, and persisted destination status. |
 | Household and co-watch | `app/main.py` | Household access and shared playback controls. |
@@ -162,9 +164,10 @@ omniscrobble/
 ├── app/
 │   ├── routes/                     # Focused HTTP route modules
 │   │   ├── accounts.py             # Dashboard account and admin account route declarations
-│   │   ├── integrations.py         # Tracker and media acquisition route declarations
+│   │   ├── acquisition.py          # Sonarr/Radarr acquisition behavior and route declarations
+│   │   ├── integrations.py         # Tracker authorization, diagnostics, and route bindings
 │   │   ├── __init__.py             # Route package
-│   │   ├── reconciliation.py      # Server and cross-tracker reconciliation route declarations
+│   │   ├── reconciliation.py      # Reconciliation routes and settings/workflow handlers
 │   │   ├── recovery.py             # Recovery diagnostics and integration test routes
 │   │   └── watch_lists.py          # Personal and shared watch-list route declarations
 │   ├── static/                      # Dashboard stylesheet and static assets

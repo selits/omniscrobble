@@ -6,6 +6,9 @@ from app.routes.watch_lists import create_router as create_watch_lists_router
 
 from app.config import Config
 from app.main import app
+from app.routes.acquisition import create_router as create_acquisition_router
+from app.routes.reconciliation import create_router as create_reconciliation_router
+from app.routes.integrations import create_router as create_integrations_router
 
 
 def test_route_modules_preserve_representative_paths_and_methods():
@@ -28,6 +31,21 @@ def test_route_modules_preserve_representative_paths_and_methods():
 def test_watch_list_router_requires_explicit_handler_bindings():
     with pytest.raises(ValueError, match="Missing watch-list route handlers: add_watch_list_item"):
         create_watch_lists_router({"get_watch_lists": lambda: None})
+
+
+def test_acquisition_router_requires_explicit_handler_bindings():
+    with pytest.raises(ValueError, match="Missing acquisition route handler: lookup_arr_media"):
+        create_acquisition_router({"lookup_media": lambda: None})
+
+
+def test_reconciliation_router_requires_explicit_handler_bindings():
+    with pytest.raises(ValueError, match="Missing reconciliation route handlers: execute_cross_sync"):
+        create_reconciliation_router({"get_sync_settings": lambda: None})
+
+
+def test_integrations_router_requires_explicit_handler_bindings():
+    with pytest.raises(ValueError, match="Missing integration route handlers: auth_anilist_page"):
+        create_integrations_router({"auth_start": lambda: None})
 
 
 @pytest.mark.asyncio

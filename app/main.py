@@ -83,8 +83,21 @@ from app.services.dashboard_renderer import (
 from app.routes.recovery import RecoveryConnectionTestRequest, router as recovery_router
 from app.routes.watch_lists import create_router as create_watch_lists_router
 from app.routes.accounts import DashboardAccountHandlers, create_router as create_accounts_router
-from app.routes.reconciliation import create_router as create_reconciliation_router
-from app.routes.integrations import create_router as create_integrations_router
+from app.routes.reconciliation import (
+    CrossSyncExecuteRequest, CrossTrackerSyncHandlers,
+    MediaServerTestConnectionRequest, PlexTestConnectionRequest, RegisterWebhookRequest,
+    ReconcileRequest, ReconcileSettingsRequest,
+    ReconciliationSettingsHandlers, ReconciliationWorkflowHandlers, MediaServerWebhookHandlers,
+    create_router as create_reconciliation_router,
+)
+from app.routes.acquisition import (
+    AcquisitionHandlers, ArrAddRequest, ArrTestConnectionRequest,
+    create_router as create_acquisition_router,
+)
+from app.routes.integrations import (
+    DevicePollRequest, SimklPollRequest, TokenSubmitRequest, TrackerAccountHandlers,
+    TrackerDiagnosticsHandlers, create_router as create_integrations_router,
+)
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -2140,6 +2153,11 @@ async def radarr_webhook(request: Request):
 
 
 trakt_user_profile: Optional[dict[str, Any]] = None
+
+
+def invalidate_trakt_user_profile() -> None:
+    global trakt_user_profile
+    trakt_user_profile = None
 
 
 async def get_cached_trakt_profile() -> Optional[dict[str, Any]]:
@@ -4718,184 +4736,16 @@ def toggle_household_rule(rule_id: str, request: Request):
     return {"status": "ok", "enabled": new_state}
 
 
-class ReconcileRequest(BaseModel):
-    item_ids: Optional[list[str]] = None
-    direction: str = "all"  # "all", "trakt_to_plex", "plex_to_trakt", "trakt_to_server", "server_to_trakt"
-    server: Optional[str] = None
-    preview_id: Optional[str] = None
-
-
-class ReconcileSettingsRequest(BaseModel):
-    enabled: Optional[bool] = None
-    server_type: Optional[str] = None
-    plex_url: Optional[str] = None
-    plex_token: Optional[str] = None
-    jellyfin_url: Optional[str] = None
-    jellyfin_token: Optional[str] = None
-    jellyfin_user_id: Optional[str] = None
-    emby_url: Optional[str] = None
-    emby_token: Optional[str] = None
-    emby_user_id: Optional[str] = None
-    interval_minutes: Optional[int] = None
-    sync_on_startup: Optional[bool] = None
-    sync_ratings: Optional[bool] = None
-    direction_default: Optional[str] = None
-    clear_token: Optional[bool] = False
-    clear_plex_token: Optional[bool] = False
-    clear_jellyfin_token: Optional[bool] = False
-    clear_emby_token: Optional[bool] = False
-
-    model_config = {"extra": "ignore"}
-
-
-class MediaServerTestConnectionRequest(BaseModel):
-    server: Optional[str] = "plex"
-    url: Optional[str] = None
-    token: Optional[str] = None
-    user_id: Optional[str] = None
-    plex_url: Optional[str] = None
-    plex_token: Optional[str] = None
-    jellyfin_url: Optional[str] = None
-    jellyfin_token: Optional[str] = None
-    emby_url: Optional[str] = None
-    emby_token: Optional[str] = None
-
-    model_config = {"extra": "ignore"}
-
-
-PlexTestConnectionRequest = MediaServerTestConnectionRequest
-
-
 async def get_sync_settings(request: Request):
-    """Return persistent two-way reconciliation settings."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return {
-            "enabled": True,
-            "server_type": "plex",
-            "plex_url": "http://<your-server-ip-or-domain>:32400",
-            "plex_token": "••••••••abcd",
-            "jellyfin_url": "http://<your-server-ip-or-domain>:8096",
-            "jellyfin_token": "••••••••efgh",
-            "jellyfin_user_id": "",
-            "emby_url": "http://<your-server-ip-or-domain>:8096",
-            "emby_token": "••••••••ijkl",
-            "emby_user_id": "",
-            "masked_token": "••••••••abcd",
-            "is_token_set": True,
-            "has_token": True,
-            "has_plex_token": True,
-            "has_jellyfin_token": True,
-            "has_emby_token": True,
-            "interval_minutes": 60,
-            "sync_on_startup": False,
-            "sync_ratings": True,
-            "direction_default": "all",
-        }
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return settings_mgr.get_reconciliation_settings(mask_token=True)
+    return await reconciliation_settings_handlers.get_settings(request)
 
 
 async def save_sync_settings(payload: ReconcileSettingsRequest, request: Request):
-    """Save persistent two-way reconciliation settings and reconfigure in-memory worker."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return {
-            "status": "success",
-            "settings": {
-                "enabled": True if payload.enabled is None else payload.enabled,
-                "server_type": payload.server_type or "plex",
-                "plex_url": payload.plex_url or "http://<your-server-ip-or-domain>:32400",
-                "plex_token": "••••••••abcd",
-                "jellyfin_url": payload.jellyfin_url or "http://<your-server-ip-or-domain>:8096",
-                "jellyfin_token": "••••••••efgh",
-                "emby_url": payload.emby_url or "http://<your-server-ip-or-domain>:8096",
-                "emby_token": "••••••••ijkl",
-                "masked_token": "••••••••abcd",
-                "is_token_set": True,
-                "has_token": True,
-                "interval_minutes": payload.interval_minutes if payload.interval_minutes is not None else 60,
-                "sync_on_startup": bool(payload.sync_on_startup),
-                "sync_ratings": True if payload.sync_ratings is None else payload.sync_ratings,
-                "direction_default": payload.direction_default or "all",
-            },
-        }
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-
-    data = payload.model_dump(exclude_unset=True)
-    updated = settings_mgr.update_reconciliation_settings(data)
-
-    raw_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
-    reverse_sync_mgr.update_config(
-        server=raw_recon.get("server_type"),
-        plex_url=raw_recon.get("plex_url"),
-        plex_token=raw_recon.get("plex_token"),
-        jellyfin_url=raw_recon.get("jellyfin_url"),
-        jellyfin_token=raw_recon.get("jellyfin_token"),
-        jellyfin_user_id=raw_recon.get("jellyfin_user_id"),
-        emby_url=raw_recon.get("emby_url"),
-        emby_token=raw_recon.get("emby_token"),
-        emby_user_id=raw_recon.get("emby_user_id"),
-    )
-    reverse_sync_config_updated.set()
-
-    return {"status": "success", "settings": updated}
+    return await reconciliation_settings_handlers.save_settings(payload, request)
 
 
 async def test_sync_connection(payload: MediaServerTestConnectionRequest, request: Request):
-    """Test connectivity to media server (Plex, Jellyfin, Emby) with provided or active credentials."""
-    is_demo = request.query_params.get("demo") == "true"
-    srv = (payload.server or "plex").lower().strip()
-    if is_demo:
-        if srv == "jellyfin":
-            return {"status": "connected", "server_name": "Demo Jellyfin Server", "version": "10.9.11"}
-        elif srv == "emby":
-            return {"status": "connected", "server_name": "Demo Emby Server", "version": "4.8.8"}
-        return {
-            "status": "connected",
-            "machine_identifier": "demo-plex-server",
-            "version": "1.40.2.8395",
-        }
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-
-    raw_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
-    if srv == "jellyfin":
-        url_candidate = payload.url or payload.jellyfin_url or ""
-        target_url = url_candidate.strip() if url_candidate else raw_recon.get("jellyfin_url", "")
-        if target_url and not target_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
-        token_candidate = payload.token or payload.jellyfin_token or ""
-        target_token = token_candidate.strip() if token_candidate else ""
-        if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
-            target_token = raw_recon.get("jellyfin_token", "")
-        target_user = payload.user_id or raw_recon.get("jellyfin_user_id", "")
-        res = await reverse_sync_mgr.test_connection(server="jellyfin", url=target_url, token=target_token, user_id=target_user)
-    elif srv == "emby":
-        url_candidate = payload.url or payload.emby_url or ""
-        target_url = url_candidate.strip() if url_candidate else raw_recon.get("emby_url", "")
-        if target_url and not target_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
-        token_candidate = payload.token or payload.emby_token or ""
-        target_token = token_candidate.strip() if token_candidate else ""
-        if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
-            target_token = raw_recon.get("emby_token", "")
-        target_user = payload.user_id or raw_recon.get("emby_user_id", "")
-        res = await reverse_sync_mgr.test_connection(server="emby", url=target_url, token=target_token, user_id=target_user)
-    else:
-        url_candidate = payload.url or payload.plex_url or ""
-        target_url = url_candidate.strip() if url_candidate else raw_recon.get("plex_url", "")
-        if target_url and not target_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
-        token_candidate = payload.token or payload.plex_token or ""
-        target_token = token_candidate.strip() if token_candidate else ""
-        if not target_token or target_token.startswith("••••") or target_token.startswith("●●●●"):
-            target_token = raw_recon.get("plex_token", "")
-        res = await reverse_sync_mgr.test_connection(server="plex", url=target_url, token=target_token)
-
-    return res
+    return await reconciliation_settings_handlers.test_connection(payload, request)
 
 
 async def get_sync_status(request: Request, server: Optional[str] = None):
@@ -4950,410 +4800,84 @@ async def get_sync_diff(
     return {"status": "ok", "diff": diff, "count": total_cnt}
 
 
-_reconciliation_previews: dict[str, dict[str, Any]] = {}
-
-
 async def preview_reconciliation(payload: ReconcileRequest, request: Request):
-    """Return and retain the exact reconciliation actions eligible for explicit apply."""
-    is_demo = request.query_params.get("demo") == "true"
-    if not is_demo and not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    diff = await reverse_sync_mgr.scan_discrepancies(force=True, demo=is_demo, server=payload.server)
-    selected = set(payload.item_ids or [])
-    proposed = [item for item in diff if not selected or item.get("id") in selected]
-    if payload.direction in ("trakt_to_plex", "trakt_to_server"):
-        proposed = [item for item in proposed if item.get("action_recommended", "").startswith(("mark_", "sync_rating_to_"))]
-    elif payload.direction in ("plex_to_trakt", "server_to_trakt"):
-        proposed = [item for item in proposed if item.get("action_recommended") in ("sync_to_trakt", "sync_rating_to_trakt")]
-    warnings = []
-    for item in proposed:
-        ids = item.get("ids") or {}
-        stable_ids = any(str(ids.get(key) or "").strip() for key in ("imdb", "tmdb", "tvdb"))
-        item["match_confidence"] = "high" if stable_ids else "title-based"
-        if not stable_ids:
-            warnings.append({"id": item.get("id"), "title": item.get("title"), "reason": "No IMDb, TMDB, or TVDB ID; match relies on title and year/episode details."})
-    now = time.monotonic()
-    for key, entry in list(_reconciliation_previews.items()):
-        if now - entry["created"] > 600:
-            _reconciliation_previews.pop(key, None)
-    preview_id = secrets.token_urlsafe(24)
-    _reconciliation_previews[preview_id] = {"created": now, "items": proposed, "demo": is_demo}
-    action_counts: dict[str, int] = {}
-    for item in proposed:
-        action = item.get("action_recommended", "unknown")
-        action_counts[action] = action_counts.get(action, 0) + 1
-    return {"preview_id": preview_id, "server": payload.server, "direction": payload.direction,
-            "total": len(proposed), "actions": action_counts, "items": proposed, "warnings": warnings,
-            "unresolved": [], "created_at": datetime.datetime.now(timezone.utc).isoformat(),
-            "expires_in_seconds": 600}
+    return await reconciliation_workflow_handlers.preview(payload, request)
 
 
 async def trigger_reconciliation(payload: ReconcileRequest, request: Request):
-    """Execute two-way reconciliation for discrepancies."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return await reverse_sync_mgr.execute_reconciliation(demo=True, server=payload.server)
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    preview = None
-    if payload.preview_id:
-        preview = _reconciliation_previews.pop(payload.preview_id, None)
-        if not preview or time.monotonic() - preview["created"] > 600:
-            raise HTTPException(status_code=409, detail="Reconciliation preview expired or was already applied. Run a new preview.")
-    if cloud_sync_mgr.sync_mutex.locked():
-        raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
-    async with cloud_sync_mgr.sync_mutex:
-        res = await reverse_sync_mgr.execute_reconciliation(
-            item_ids=payload.item_ids,
-            direction=payload.direction,
-            server=payload.server,
-            preview_items=preview["items"] if preview else None,
-        )
-        return res
+    return await reconciliation_workflow_handlers.execute(payload, request)
 
 
 async def get_sync_progress(request: Request):
-    """Poll reconciliation progress."""
-    return reverse_sync_mgr._sync_progress
+    return await reconciliation_workflow_handlers.get_progress(request)
 
 
 async def get_background_sync_status(request: Request):
-    """Return current background synchronization state and telemetry."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_background_sync_status()
-    return cloud_sync_mgr.get_status()
+    return await reconciliation_workflow_handlers.get_background_status(request)
 
 
 async def trigger_background_sync(request: Request):
-    """Manually trigger an automated background cloud reconciliation cycle."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return {
-            "status": "success",
-            "message": "Demo background cloud reconciliation completed successfully.",
-            "last_run_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "items_reconciled": 3,
-        }
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    if cloud_sync_mgr.sync_mutex.locked():
-        raise HTTPException(status_code=409, detail="A cloud synchronization or reconciliation is already in progress")
-    result = await cloud_sync_mgr.run_sync_cycle(
-        trigger="manual",
-        letterboxd_client=letterboxd,
-        reverse_sync_mgr=reverse_sync_mgr,
-        cross_tracker_sync=cross_tracker_sync,
-        arr_bridge=arr_bridge,
-    )
-    if isinstance(result, dict) and result.get("status") == "conflict":
-        raise HTTPException(status_code=409, detail=result.get("message"))
-    return result
-
-
-class RegisterWebhookRequest(BaseModel):
-    server: str = "plex"
-    webhook_url: Optional[str] = None
-
-    model_config = {"extra": "ignore"}
+    return await reconciliation_workflow_handlers.trigger_background_sync(request)
 
 
 async def register_server_webhook(payload: RegisterWebhookRequest, request: Request):
-    """Automatically register Omniscrobble webhook URL with the target media server (Plex, Jellyfin, Emby)."""
-    is_demo = request.query_params.get("demo") == "true"
-    srv = (payload.server or "plex").lower().strip()
-    if is_demo:
-        demo_url = payload.webhook_url or f"https://omniscrobble.demo.internal/webhook{'/' + srv if srv != 'plex' else ''}"
-        return {
-            "status": "success",
-            "success": True,
-            "server": srv,
-            "url": demo_url,
-            "message": f"Demo Mode: Successfully registered webhook on {srv.capitalize()}!",
-        }
-
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-
-    res = await reverse_sync_mgr.register_webhook(server=srv, webhook_url=payload.webhook_url)
-    if not res.get("success", False):
-        raise HTTPException(status_code=400, detail=res.get("error", "Failed to register webhook"))
-    return res
-
-
-class ArrTestConnectionRequest(BaseModel):
-    app: Optional[str] = "sonarr"
-    url: Optional[str] = None
-    api_key: Optional[str] = None
-
-    model_config = {"extra": "ignore"}
-
-
-class ArrAddRequest(BaseModel):
-    type: str
-    item_data: dict[str, Any]
-    root_folder_path: Optional[str] = None
-    quality_profile_id: Optional[int] = None
-    monitored: bool = True
-    monitor_option: str = "all"
-    search_now: bool = True
-    enable_cowatch: bool = False
-
-    model_config = {"extra": "ignore"}
-
-
-_arr_acquisition_config_cache: dict[str, Any] = {"expires_at": 0.0, "data": None}
-
-
-def invalidate_arr_acquisition_config_cache() -> None:
-    """Discard cached service folders and profiles after Arr settings change."""
-    _arr_acquisition_config_cache.update({"expires_at": 0.0, "data": None})
+    return await media_server_webhook_handlers.register(payload, request)
 
 
 async def lookup_arr_media(request: Request, type: str, term: str):
-    """Search Sonarr/Radarr catalog and mark items already in the local library."""
-    if request.query_params.get("demo") == "true":
-        return {"results": []}
-    _watch_list_actor(request)
-    kind = type.strip().lower()
-    search = term.strip()[:120]
-    if kind not in {"series", "movie"}:
-        raise HTTPException(status_code=400, detail="type must be 'series' or 'movie'")
-    if not search:
-        return {"results": []}
-    client = arr_bridge.sonarr if kind == "series" else arr_bridge.radarr
-    if not client.is_configured:
-        return {"results": [], "configured": False}
-    candidates = await arr_bridge.lookup_media(kind, search)
-    results = []
-    for item in candidates[:20]:
-        title = str(item.get("title") or "").strip()
-        if not title:
-            continue
-        if kind == "series":
-            exists = await arr_bridge.sonarr.has_series(tvdb_id=item.get("tvdbId"), imdb_id=item.get("imdbId"), title=title)
-            external_id = item.get("tvdbId")
-            network = item.get("network") or ""
-        else:
-            exists = await arr_bridge.radarr.has_movie(tmdb_id=item.get("tmdbId"), imdb_id=item.get("imdbId"), title=title)
-            external_id = item.get("tmdbId")
-            network = item.get("studio") or ""
-        images = item.get("images") or []
-        poster = next((img.get("remoteUrl") or img.get("url") for img in images if img.get("coverType") == "poster"), None)
-        results.append({"title": title, "year": item.get("year"), "overview": item.get("overview", ""),
-                        "network": network, "poster_url": poster, "in_library": exists,
-                        "payload": item, "external_id": external_id})
-    return {"results": results, "configured": True}
+    return await acquisition_handlers.lookup_media(request, type, term)
 
 
 async def get_arr_acquisition_config(request: Request):
-    """Return the configured root folders and quality profiles for each Arr service."""
-    if request.query_params.get("demo") == "true":
-        return {"sonarr": {"configured": True, "root_folders": [], "quality_profiles": []},
-                "radarr": {"configured": True, "root_folders": [], "quality_profiles": []}}
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    cached = _arr_acquisition_config_cache.get("data")
-    if cached is not None and time.monotonic() < _arr_acquisition_config_cache["expires_at"]:
-        return cached
-    arr_settings = settings_mgr.get_arr_settings(mask=False)
-    async def details(client, root_default, profile_default):
-        if not client.is_configured:
-            return {"configured": False, "root_folders": [], "quality_profiles": [], "default_root": root_default, "default_profile": profile_default}
-        folders, profiles = await asyncio.gather(client.get_root_folders(), client.get_quality_profiles())
-        return {"configured": True, "root_folders": folders, "quality_profiles": profiles,
-                "default_root": root_default, "default_profile": profile_default}
-    config = {
-        "sonarr": await details(arr_bridge.sonarr, arr_settings.get("sonarr_root_folder"), arr_settings.get("sonarr_quality_profile_id")),
-        "radarr": await details(arr_bridge.radarr, arr_settings.get("radarr_root_folder"), arr_settings.get("radarr_quality_profile_id")),
-        "co_watch_user": Config.CO_WATCH_USER or None,
-    }
-    _arr_acquisition_config_cache.update({"expires_at": time.monotonic() + 300.0, "data": config})
-    return config
+    return await acquisition_handlers.get_config(request)
 
 
 async def add_arr_media(payload: ArrAddRequest, request: Request):
-    """Add a selected catalog item to Sonarr or Radarr with optional show co-watch enrollment."""
-    if request.query_params.get("demo") == "true":
-        return {"status": "ok", "success": True, "cowatch_enrolled": False}
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    csrf_cookie = request.cookies.get("csrf_token", "")
-    csrf_header = request.headers.get("x-csrf-token", "")
-    if not csrf_cookie or not csrf_header or not secrets.compare_digest(csrf_cookie, csrf_header):
-        raise HTTPException(status_code=403, detail="CSRF token missing or invalid")
-    kind = payload.type.strip().lower()
-    if kind not in {"series", "movie"}:
-        raise HTTPException(status_code=400, detail="type must be 'series' or 'movie'")
-    if kind == "series" and payload.enable_cowatch and not Config.CO_WATCH_USER:
-        raise HTTPException(status_code=400, detail="Co-Watch enrollment requires a configured partner account")
-    item = payload.item_data
-    title = str(item.get("title") or "").strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="Selected item is missing a title")
-    result = await arr_bridge.acquire_media(
-        kind,
-        item,
-        root_folder_path=payload.root_folder_path,
-        quality_profile_id=payload.quality_profile_id,
-        monitored=payload.monitored,
-        search_now=payload.search_now,
-        monitor_option=payload.monitor_option,
-    )
-    if not result.get("success"):
-        logger.warning("Interactive *Arr addition failed for %s item (service=%s)", kind, "Sonarr" if kind == "series" else "Radarr")
-        raise HTTPException(status_code=400, detail="The item could not be added. Check the *Arr service connection and configuration.")
-    enrolled = False
-    if kind == "series" and payload.enable_cowatch:
-        cowatch_mgr.add_show(title)
-        enrolled = True
-    logger.info("Interactive media acquisition completed (type=%s, service=%s, co-watch=%s)", kind, "Sonarr" if kind == "series" else "Radarr", enrolled)
-    return {"status": "ok", "success": True, "title": title,
-            "service": "Sonarr" if kind == "series" else "Radarr", "cowatch_enrolled": enrolled,
-            "item_id": (result.get("data") or {}).get("id")}
+    return await acquisition_handlers.add_media(payload, request)
 
 
 async def test_arr_connection(payload: ArrTestConnectionRequest, request: Request):
-    """Test connectivity to Sonarr, Radarr, or Overseerr/Jellyseerr with provided or active credentials."""
-    is_demo = request.query_params.get("demo") == "true"
-    app_type = (payload.app or "sonarr").lower().strip()
-    if is_demo:
-        ver = "4.0.9" if app_type == "sonarr" else ("5.9.1" if app_type == "radarr" else "1.33.2")
-        return {"status": "connected", "app": app_type, "version": ver}
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-
-    arr_cfg = settings_mgr.get_arr_settings(mask=False)
-    if app_type == "sonarr":
-        target_url = (payload.url or "").strip() or arr_cfg.get("sonarr_url", "")
-        if target_url and not target_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
-        target_key = (payload.api_key or "").strip()
-        if not target_key or settings_mgr._is_masked(target_key):
-            target_key = arr_cfg.get("sonarr_api_key", "")
-        temp_client = SonarrClient(base_url=target_url, api_key=target_key)
-        try:
-            return await temp_client.check_connection()
-        finally:
-            await temp_client.close()
-    elif app_type == "radarr":
-        target_url = (payload.url or "").strip() or arr_cfg.get("radarr_url", "")
-        if target_url and not target_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
-        target_key = (payload.api_key or "").strip()
-        if not target_key or settings_mgr._is_masked(target_key):
-            target_key = arr_cfg.get("radarr_api_key", "")
-        temp_client = RadarrClient(base_url=target_url, api_key=target_key)
-        try:
-            return await temp_client.check_connection()
-        finally:
-            await temp_client.close()
-    elif app_type in ("overseerr", "jellyseerr"):
-        target_url = (payload.url or "").strip() or arr_cfg.get("overseerr_url", "")
-        if target_url and not target_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="Server URL must start with http:// or https://")
-        target_key = (payload.api_key or "").strip()
-        if not target_key or settings_mgr._is_masked(target_key):
-            target_key = arr_cfg.get("overseerr_api_key", "")
-        temp_client = OverseerrClient(base_url=target_url, api_key=target_key)
-        try:
-            return await temp_client.check_connection()
-        finally:
-            await temp_client.close()
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid app '{payload.app}'")
+    return await acquisition_handlers.test_connection(payload, request)
 
 
 async def get_arr_status(request: Request):
-    """Return status of Sonarr, Radarr, and Trakt Watchlist automation bridge."""
-    is_demo = request.query_params.get("demo") == "true"
-    return await arr_bridge.get_status(demo=is_demo)
+    return await acquisition_handlers.get_status(request)
 
 
 async def trigger_arr_sync(request: Request):
-    """Trigger a synchronization of the Trakt Watchlist to Sonarr & Radarr."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return await arr_bridge.sync_watchlist(demo=True)
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return await arr_bridge.sync_watchlist()
+    return await acquisition_handlers.trigger_sync(request)
 
 
 async def get_ecosystem_status(request: Request):
-    is_demo = request.query_params.get("demo") == "true"
-    return await arr_bridge.get_ecosystem_status(
-        demo=is_demo,
-        plex_client=reverse_sync_mgr.plex,
-        jellyfin_client=reverse_sync_mgr.jellyfin,
-        emby_client=reverse_sync_mgr.emby,
-        simkl_client=simkl,
-        anilist_client=anilist,
-        mal_client=mal,
-    )
+    return await acquisition_handlers.get_ecosystem_status(request)
 
 
-class CrossSyncExecuteRequest(BaseModel):
-    item_ids: Optional[list[str]] = None
-    direction: str = "both"  # Also accepts either direction of TMDb rating actions.
-    conflict_policy: Literal["manual", "trakt", "simkl", "tmdb", "newest"] = "manual"
+def invalidate_arr_acquisition_config_cache() -> None:
+    acquisition_handlers.invalidate_config_cache()
 
 
 async def get_cross_sync_status(request: Request):
-    """Return status for Trakt–Simkl reconciliation and Trakt/TMDb ratings."""
-    is_demo = request.query_params.get("demo") == "true"
-    return await cross_tracker_sync.get_status(demo=is_demo)
+    return await cross_tracker_sync_handlers.get_status(request)
 
 
 async def get_cross_sync_diff(request: Request, force: bool = False):
-    """Scan and return cross-tracker discrepancies between Trakt and Simkl."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        demo_diff = demo_mgr.get_demo_cross_tracker_diff()
-        return {"status": "ok", "diff": demo_diff, "count": len(demo_diff)}
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    diff = await cross_tracker_sync.scan_discrepancies(force=force)
-    return {"status": "ok", "diff": diff, "count": len(diff)}
+    return await cross_tracker_sync_handlers.get_diff(request, force=force)
 
 
 async def scan_cross_sync_discrepancies(request: Request):
-    """Trigger an on-demand scan of discrepancies between Trakt and Simkl."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        demo_diff = demo_mgr.get_demo_cross_tracker_diff()
-        return {"status": "ok", "diff": demo_diff, "count": len(demo_diff)}
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    diff = await cross_tracker_sync.scan_discrepancies(force=True)
-    return {"status": "ok", "diff": diff, "count": len(diff)}
+    return await cross_tracker_sync_handlers.scan(request)
 
 
 async def execute_cross_sync(payload: CrossSyncExecuteRequest, request: Request):
-    """Execute cross-tracker reconciliation for selected items or all in a direction."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, conflict_policy=payload.conflict_policy, demo=True)
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    if cloud_sync_mgr.sync_mutex.locked():
-        raise HTTPException(status_code=409, detail="A cloud or reconciliation sync is already in progress")
-    async with cloud_sync_mgr.sync_mutex:
-        return await cross_tracker_sync.execute_sync(item_ids=payload.item_ids, direction=payload.direction, conflict_policy=payload.conflict_policy)
+    return await cross_tracker_sync_handlers.execute(payload, request)
 
 
 async def get_cross_sync_progress(request: Request):
-    """Poll live cross-tracker sync progress."""
-    return cross_tracker_sync._sync_progress
+    return await cross_tracker_sync_handlers.get_progress(request)
 
 
 async def get_cross_sync_provenance(request: Request, limit: int = 100):
-    """Return recent admin-only rating conflict decisions that were applied."""
-    if request.query_params.get("demo") == "true":
-        return {"records": []}
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required")
-    return {"records": cross_tracker_sync.get_provenance(limit)}
+    return await cross_tracker_sync_handlers.get_provenance(request, limit=limit)
 
 
 class TestWebhookRequest(BaseModel):
@@ -5542,518 +5066,119 @@ def admin_lock(request: Request, response: Response):
     return {"status": "ok", "message": "Admin mode locked"}
 
 
-class DevicePollRequest(BaseModel):
-    device_code: str
-    user: Optional[str] = None
-
-
 async def auth_start(request: Request, user: Optional[str] = None):
-    query_user = profile_for_request(request, request.query_params.get("user") or user)
-    require_dashboard_permission(request, "manage_personal_trackers", query_user)
-    target_client = user_mgr.get_client(query_user)
-    try:
-        data = await target_client.generate_device_code()
-        return data
-    except Exception as e:
-        logger.error(f"Failed to generate device code: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return await tracker_account_handlers.auth_start(request, user)
 
 
 async def auth_poll(payload: DevicePollRequest, request: Request):
-    target_user = profile_for_request(request, payload.user)
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    if not payload.device_code or not str(payload.device_code).strip() or payload.device_code == "undefined":
-        return {"status": "error", "message": "Missing device_code"}
-    global trakt_user_profile
-    target_client = user_mgr.get_client(target_user)
-    try:
-        res = await target_client.poll_for_token(payload.device_code)
-        if "access_token" in res:
-            if not target_user or target_user == "default":
-                trakt_user_profile = None  # Invalidate cached profile on default login
-            return {"status": "success", "user": target_user or "default"}
-        elif res.get("status") in ("pending", "slow_down"):
-            return res
-        return {"status": "pending"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    return await tracker_account_handlers.auth_poll(payload, request)
 
 
 async def get_trakt_status(request: Request, user: Optional[str] = None):
-    """Return current connection and authentication status for Trakt."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return {
-            "enabled": True,
-            "configured": True,
-            "authenticated": True,
-            "user": "demo_viewer",
-        }
-    query_user = profile_for_request(request, request.query_params.get("user") or user)
-    if not get_dashboard_principal(request) and not query_user:
-        target_client = user_mgr.get_client(None)
-        return {"enabled": target_client.is_enabled(), "configured": bool(target_client.effective_client_id), "authenticated": target_client.is_authenticated()}
-    require_dashboard_permission(request, "manage_personal_trackers", query_user)
-    target_client = user_mgr.get_client(query_user)
-    auth = target_client.is_authenticated()
-    username = None
-    if auth:
-        if not query_user or query_user == "default":
-            prof = await get_cached_trakt_profile()
-            username = prof.get("username") if prof else None
-        else:
-            username = query_user
-    return {
-        "enabled": target_client.is_enabled(),
-        "configured": bool(target_client.effective_client_id),
-        "authenticated": auth,
-        "user": username,
-        "token_info": target_client.get_token_info(),
-    }
+    return await tracker_account_handlers.get_trakt_status(request, user)
 
 
 async def disconnect_trakt(request: Request, user: Optional[str] = None):
-    """Disconnect Trakt account and delete saved tokens."""
-    query_user = profile_for_request(request, request.query_params.get("user") or user)
-    require_dashboard_permission(request, "manage_personal_trackers", query_user)
-    target_client = user_mgr.get_client(query_user)
-    target_client.delete_tokens()
-    global trakt_user_profile
-    if not query_user or query_user == "default":
-        trakt_user_profile = None
-    return {"status": "ok", "message": "Trakt disconnected"}
-
-
-class SimklPollRequest(BaseModel):
-    user_code: str
-    device_code: Optional[str] = None
-    user: Optional[str] = None
+    return await tracker_account_handlers.disconnect_trakt(request, user)
 
 
 async def get_simkl_status(request: Request):
-    """Return current connection and authentication status for Simkl."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return {
-            "enabled": True,
-            "configured": True,
-            "authenticated": True,
-            "user": "demo_viewer",
-            "account_id": 123456,
-            "timezone": "America/New_York",
-        }
-    target_user = profile_for_request(request, request.query_params.get("user"))
-    if not get_dashboard_principal(request) and not target_user:
-        return {"enabled": simkl.is_enabled(), "configured": bool(simkl.effective_client_id), "authenticated": simkl.is_authenticated()}
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
-    status = await target_client.check_connection()
-    status["enabled"] = target_client.is_enabled()
-    status["configured"] = bool(target_client.effective_client_id)
-    return status
+    return await tracker_account_handlers.get_simkl_status(request)
 
 
 async def get_simkl_pin(request: Request):
-    """Obtain a new Device PIN / user_code to authorize Simkl via browser."""
-    target_user = profile_for_request(request, request.query_params.get("user"))
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
-    try:
-        data = await target_client.get_device_pin()
-        if isinstance(data, dict) and "error" in data:
-            error_msg = data.get("error", "Failed to obtain Simkl PIN")
-            if data.get("detail"):
-                error_msg = f"{error_msg}: {data['detail']}"
-            raise HTTPException(status_code=400, detail=error_msg)
-        return data
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to generate Simkl device PIN: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return await tracker_account_handlers.get_simkl_pin(request)
 
 
 async def poll_simkl_pin(payload: SimklPollRequest, request: Request):
-    """Poll Simkl to check if the user authorized the device PIN."""
-    target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    if not payload.user_code or not str(payload.user_code).strip() or payload.user_code == "undefined":
-        return {"status": "error", "result": "error", "message": "Missing user_code"}
-    target_client = user_mgr.get_tracker_client(target_user, "simkl") if target_user else simkl
-    try:
-        res = await target_client.poll_device_pin(payload.user_code, device_code=payload.device_code)
-        return res
-    except Exception as e:
-        return {"result": "error", "message": str(e)}
+    return await tracker_account_handlers.poll_simkl_pin(payload, request)
 
 
 async def disconnect_simkl(request: Request):
-    """Disconnect Simkl account and delete saved tokens."""
-    target_user = profile_for_request(request, request.query_params.get("user"))
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    if target_user:
-        user_mgr.disconnect_user_tracker(target_user, "simkl")
-        return {"status": "ok", "message": f"Simkl disconnected for {target_user}"}
-    simkl.delete_tokens()
-    return {"status": "ok", "message": "Simkl disconnected"}
+    return await tracker_account_handlers.disconnect_simkl(request)
 
 
 async def auth_simkl_page(request: Request):
-    """Render dedicated Simkl authorization page."""
-    if not is_admin_request(request):
-        return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
-    return HTMLResponse(content=AUTH_SIMKL_HTML)
+    return await tracker_account_handlers.auth_simkl_page(request)
 
 
-class TokenSubmitRequest(BaseModel):
-    token: str
-    user: Optional[str] = None
-
-
-# --- AniList Anime Tracker Endpoints ---
 async def get_anilist_status(request: Request):
-    """Return current connection and authentication status for AniList."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_anilist_status()
-    target_user = profile_for_request(request, request.query_params.get("user"))
-    if not get_dashboard_principal(request) and not target_user:
-        return {"enabled": anilist.is_enabled(), "configured": bool(getattr(Config, "ANILIST_CLIENT_ID", "") or anilist.is_authenticated()), "authenticated": anilist.is_authenticated()}
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
-    status = await target_client.check_connection()
-    status["enabled"] = target_client.is_enabled()
-    status["configured"] = bool(getattr(Config, "ANILIST_CLIENT_ID", "") or target_client.is_authenticated())
-    return status
+    return await tracker_account_handlers.get_anilist_status(request)
 
 
 async def save_anilist_token(payload: TokenSubmitRequest, request: Request):
-    """Save an AniList personal access token and test connectivity."""
-    target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    token_str = payload.token.strip()
-    if not token_str:
-        raise HTTPException(status_code=400, detail="Token cannot be empty")
-    target_client = user_mgr.get_tracker_client(target_user, "anilist") if target_user else anilist
-    target_client.access_token = token_str
-    conn = await target_client.check_connection()
-    if conn.get("status") == "connected":
-        target_client.save_tokens({
-            "access_token": token_str,
-            "user_name": conn.get("user"),
-            "user_avatar": conn.get("avatar"),
-            "user_id": conn.get("id"),
-        })
-        return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
-    else:
-        target_client.load_tokens()
-        raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided AniList token"))
+    return await tracker_account_handlers.save_anilist_token(payload, request)
 
 
 async def disconnect_anilist(request: Request):
-    """Disconnect AniList account and delete stored tokens."""
-    target_user = profile_for_request(request, request.query_params.get("user"))
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    if target_user:
-        user_mgr.disconnect_user_tracker(target_user, "anilist")
-        return {"status": "ok", "message": f"AniList disconnected for {target_user}"}
-    anilist.delete_tokens()
-    return {"status": "ok", "message": "AniList disconnected"}
+    return await tracker_account_handlers.disconnect_anilist(request)
 
 
 async def auth_anilist_page(request: Request):
-    """Render dedicated AniList authorization page."""
-    if not is_admin_request(request):
-        return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
-
-    html = AUTH_ANILIST_HTML.replace("{{PAGE_TITLE}}", "Connect AniList &bull; Omniscrobble")
-    html = html.replace("{{H1_TEXT}}", "AniList Anime Tracker")
-    html = html.replace(
-        "{{P_DESC}}",
-        "Link your AniList account to enable real-time anime scrobbling and ratings sync via the official GraphQL API.",
-    )
-    banner = ""
-    if anilist.is_authenticated():
-        uname = anilist.user_name or "Linked User"
-        banner = f'<div class="banner">✓ Currently linked to AniList as <strong>@{uname}</strong>. Entering a new token will update credentials.</div>'
-    html = html.replace("{{ALREADY_CONNECTED_BANNER}}", banner)
-    return HTMLResponse(content=html)
+    return await tracker_account_handlers.auth_anilist_page(request)
 
 
-# --- MyAnimeList (MAL) Anime Tracker Endpoints ---
 async def get_mal_status(request: Request):
-    """Return current connection and authentication status for MyAnimeList."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_mal_status()
-    target_user = profile_for_request(request, request.query_params.get("user"))
-    if not get_dashboard_principal(request) and not target_user:
-        return {"enabled": mal.is_enabled(), "configured": bool(mal.effective_client_id or mal.is_authenticated()), "authenticated": mal.is_authenticated()}
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
-    status = await target_client.check_connection()
-    status["enabled"] = target_client.is_enabled()
-    status["configured"] = bool(target_client.effective_client_id or target_client.is_authenticated())
-    return status
+    return await tracker_account_handlers.get_mal_status(request)
 
 
 async def save_mal_token(payload: TokenSubmitRequest, request: Request):
-    """Save a MyAnimeList access token and test connectivity."""
-    target_user = profile_for_request(request, payload.user or request.query_params.get("user"))
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    token_str = payload.token.strip()
-    if not token_str:
-        raise HTTPException(status_code=400, detail="Token cannot be empty")
-    target_client = user_mgr.get_tracker_client(target_user, "mal") if target_user else mal
-    target_client.access_token = token_str
-    conn = await target_client.check_connection()
-    if conn.get("status") == "connected":
-        target_client.save_tokens({
-            "access_token": token_str,
-            "user_name": conn.get("user"),
-            "user_avatar": conn.get("avatar"),
-            "user_id": conn.get("id"),
-        })
-        return {"status": "success", "user": conn.get("user"), "id": conn.get("id")}
-    else:
-        target_client.load_tokens()
-        raise HTTPException(status_code=400, detail=conn.get("error", "Failed to connect with provided MyAnimeList token"))
+    return await tracker_account_handlers.save_mal_token(payload, request)
 
 
 async def disconnect_mal(request: Request):
-    """Disconnect MyAnimeList account and delete stored tokens."""
-    target_user = profile_for_request(request, request.query_params.get("user"))
-    require_dashboard_permission(request, "manage_personal_trackers", target_user)
-    if target_user:
-        user_mgr.disconnect_user_tracker(target_user, "mal")
-        return {"status": "ok", "message": f"MyAnimeList disconnected for {target_user}"}
-    mal.delete_tokens()
-    return {"status": "ok", "message": "MyAnimeList disconnected"}
+    return await tracker_account_handlers.disconnect_mal(request)
 
 
 async def auth_mal_page(request: Request):
-    """Render dedicated MyAnimeList authorization page."""
-    if not is_admin_request(request):
-        return HTMLResponse(content=AUTH_LOCKED_HTML, status_code=401)
-
-    html = AUTH_MAL_HTML.replace("{{PAGE_TITLE}}", "Connect MyAnimeList &bull; Omniscrobble")
-    html = html.replace("{{H1_TEXT}}", "MyAnimeList (MAL) Integration")
-    html = html.replace(
-        "{{P_DESC}}",
-        "Link your MyAnimeList account to scrobble anime episode progress and sync ratings via the MAL v2 API.",
-    )
-    banner = ""
-    if mal.is_authenticated():
-        uname = mal.user_name or "Linked User"
-        banner = f'<div class="banner">✓ Currently linked to MyAnimeList as <strong>@{uname}</strong>. Entering a new token will update credentials.</div>'
-    html = html.replace("{{ALREADY_CONNECTED_BANNER}}", banner)
-    return HTMLResponse(content=html)
+    return await tracker_account_handlers.auth_mal_page(request)
 
 
-# --- Anime Inspection Diagnostic Endpoint ---
 async def resolve_anime_api(request: Request, title: str, year: Optional[int] = None):
-    """Diagnostic endpoint to test anime heuristics and AniList/MAL metadata matching."""
-    test_media = ParsedMedia(
-        raw_payload={},
-        event="media.play",
-        media_type="episode",
-        title=title,
-        show_title=title,
-        year=year,
-        show_year=year,
-        username="admin",
-        progress=0.0,
-    )
-    resolved = await anime_resolver.resolve(test_media)
-    return {
-        "title": title,
-        "year": year,
-        "is_anime": bool(resolved and resolved.get("is_anime")),
-        "resolved": resolved,
-    }
+    return await tracker_diagnostics_handlers.resolve_anime_api(request, title, year)
 
 
-# --- Multi-Tracker Hub & Cloud Tracker Diagnostic Endpoints ---
 async def get_multi_trackers_status(request: Request):
-    """Return categorized diagnostics and connectivity status across all 9 supported trackers."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_trackers_status()
-    status = await multi_tracker.get_status()
-    if not is_admin_request(request):
-        for tracker_info in status.get("trackers", {}).values():
-            if isinstance(tracker_info, dict):
-                if tracker_info.get("user"):
-                    tracker_info["user"] = mask_username(tracker_info["user"])
-                if tracker_info.get("username"):
-                    tracker_info["username"] = mask_username(tracker_info["username"])
-                if tracker_info.get("account_id"):
-                    tracker_info["account_id"] = "******"
-    return status
+    return await tracker_diagnostics_handlers.get_multi_trackers_status(request)
 
 
 async def get_tmdb_status(request: Request):
-    """Return current connection and authentication status for TMDb."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_tmdb_status()
-    status = await tmdb.check_connection()
-    status["enabled"] = settings_mgr.is_tracker_enabled("tmdb")
-    return status
+    return await tracker_diagnostics_handlers.get_tmdb_status(request)
 
 
 async def get_kitsu_status(request: Request):
-    """Return current connection and authentication status for Kitsu."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_kitsu_status()
-    status = await kitsu.check_connection()
-    status["enabled"] = settings_mgr.is_tracker_enabled("kitsu")
-    if not is_admin_request(request):
-        if status.get("user"):
-            status["user"] = mask_username(status["user"])
-        if status.get("username"):
-            status["username"] = mask_username(status["username"])
-        if status.get("message") and kitsu.user_name:
-            status["message"] = f"Connected as @{mask_username(kitsu.user_name)}"
-    return status
+    return await tracker_diagnostics_handlers.get_kitsu_status(request)
 
 
 async def get_letterboxd_status(request: Request):
-    """Return current status and diary telemetry for Letterboxd."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_letterboxd_status()
-    status = await letterboxd.check_connection()
-    status["enabled"] = settings_mgr.is_tracker_enabled("letterboxd")
-    if not is_admin_request(request):
-        if status.get("user"):
-            status["user"] = mask_username(status["user"])
-        if status.get("username"):
-            status["username"] = mask_username(status["username"])
-        if status.get("message") and letterboxd.username:
-            count = status.get("diary_count", 0)
-            status["message"] = f"Diary ready ({count} films logged for @{mask_username(letterboxd.username)})"
-    return status
+    return await tracker_diagnostics_handlers.get_letterboxd_status(request)
 
 
 async def get_serializd_status(request: Request):
-    """Return current connection and authentication status for Serializd."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_serializd_status()
-    status = await serializd.check_connection()
-    status["enabled"] = settings_mgr.is_tracker_enabled("serializd")
-    if not is_admin_request(request):
-        if status.get("user"):
-            status["user"] = mask_username(status["user"])
-        if status.get("username"):
-            status["username"] = mask_username(status["username"])
-        if status.get("message") and serializd.username:
-            status["message"] = f"Connected as @{mask_username(serializd.username)}"
-    return status
+    return await tracker_diagnostics_handlers.get_serializd_status(request)
 
 
 async def get_mdblist_status(request: Request):
-    """Return current status and configuration for MDBList."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return demo_mgr.get_demo_mdblist_status()
-    status = await mdblist.check_connection()
-    status["enabled"] = settings_mgr.is_tracker_enabled("mdblist")
-    if not is_admin_request(request):
-        if status.get("user"):
-            status["user"] = mask_username(status["user"])
-        if status.get("username"):
-            status["username"] = mask_username(status["username"])
-    return status
+    return await tracker_diagnostics_handlers.get_mdblist_status(request)
 
 
 async def get_relay_status(request: Request):
-    """Return connection instructions and compatibility status for SeriesGuide & Showly cloud relay."""
-    base_url = str(request.base_url).rstrip("/")
-    return {
-        "status": "active",
-        "supported_apps": ["SeriesGuide", "Showly"],
-        "description": "Mobile tracking applications connect via direct Trakt cloud synchronization or native webhook relay.",
-        "endpoints": {
-            "trakt_sync": "Automated two-way scrobble via Trakt Cloud OAuth",
-            "generic_webhook": f"{base_url}/webhook",
-        },
-        "apps": [
-            {
-                "name": "SeriesGuide",
-                "platform": "Android",
-                "mode": "Trakt Cloud Sync",
-                "status": "supported",
-                "docs_url": "https://seriesgui.de/",
-            },
-            {
-                "name": "Showly",
-                "platform": "Android",
-                "mode": "Trakt Cloud Sync",
-                "status": "supported",
-                "docs_url": "https://github.com/michaldrabik/Showly-2.0",
-            },
-        ],
-    }
+    return await tracker_diagnostics_handlers.get_relay_status(request)
 
 
 async def export_letterboxd_csv(request: Request):
-    """Generate and download RFC-4180 CSV export for 1-click import into Letterboxd."""
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required to export Letterboxd diary")
-    csv_content = letterboxd.generate_csv_export()
-    filename = f"letterboxd_diary_{datetime.datetime.now().strftime('%Y%m%d')}.csv"
-    return Response(
-        content=csv_content,
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
+    return await tracker_diagnostics_handlers.export_letterboxd_csv(request)
 
 
 async def get_letterboxd_diary(request: Request):
-    """Return logged Letterboxd diary entries."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return [
-            {"title": "Dune: Part Two", "year": 2024, "rating": 9, "watched_date": "2026-10-01", "imdb_id": "tt15239678"},
-            {"title": "Oppenheimer", "year": 2023, "rating": 10, "watched_date": "2026-09-28", "imdb_id": "tt15398776"},
-        ]
-    if not is_admin_request(request):
-        raise HTTPException(status_code=401, detail="Unauthorized: Admin access required to view Letterboxd diary")
-    return letterboxd.get_diary_entries()
+    return await tracker_diagnostics_handlers.get_letterboxd_diary(request)
 
 
-async def get_mdblist_ratings(
-    request: Request,
-    imdb_id: Optional[str] = None,
-    tmdb_id: Optional[int] = None,
-    media_type: str = "movie",
-):
-    """Enrich media with Rotten Tomatoes, Metacritic, Letterboxd, and IMDb scores via MDBList."""
-    is_demo = request.query_params.get("demo") == "true"
-    if is_demo:
-        return {
-            "title": "Dune: Part Two",
-            "year": 2024,
-            "score": 88,
-            "ratings": [
-                {"source": "imdb", "value": 8.6, "score": 86},
-                {"source": "metacritic", "value": 79, "score": 79},
-                {"source": "tomatoes", "value": 92, "score": 92},
-                {"source": "letterboxd", "value": 4.5, "score": 90},
-            ],
-        }
-    if not mdblist.is_configured():
-        raise HTTPException(status_code=400, detail="MDBList API key is not configured.")
-    if not imdb_id and not tmdb_id:
-        raise HTTPException(status_code=400, detail="Either imdb_id or tmdb_id must be provided.")
-    res = await mdblist.get_item_ratings(imdb_id=imdb_id, tmdb_id=tmdb_id, media_type=media_type)
-    if not res or (isinstance(res, dict) and res.get("status") == "error"):
-        err_msg = res.get("error", "Failed to retrieve ratings from MDBList.") if isinstance(res, dict) else "Failed to retrieve ratings from MDBList."
-        raise HTTPException(status_code=502, detail=err_msg)
-    return res
+async def get_mdblist_ratings(request: Request, imdb_id: Optional[str] = None,
+                              tmdb_id: Optional[int] = None, media_type: str = "movie"):
+    return await tracker_diagnostics_handlers.get_mdblist_ratings(
+        request, imdb_id=imdb_id, tmdb_id=tmdb_id, media_type=media_type,
+    )
 
 
 class ReplayWebhookRequest(BaseModel):
@@ -6936,8 +6061,144 @@ app.include_router(create_accounts_router({
     "admin_unlock": admin_unlock,
     "admin_lock": admin_lock,
 }))
-app.include_router(create_reconciliation_router(globals()))
-app.include_router(create_integrations_router(globals()))
+acquisition_handlers = AcquisitionHandlers(
+    config=Config,
+    arr_bridge=arr_bridge,
+    settings_mgr=settings_mgr,
+    cowatch_mgr=cowatch_mgr,
+    is_admin_request=is_admin_request,
+    watch_list_actor=_watch_list_actor,
+    sonarr_client=SonarrClient,
+    radarr_client=RadarrClient,
+    overseerr_client=OverseerrClient,
+    ecosystem_clients={
+        "plex_client": reverse_sync_mgr.plex,
+        "jellyfin_client": reverse_sync_mgr.jellyfin,
+        "emby_client": reverse_sync_mgr.emby,
+        "simkl_client": simkl,
+        "anilist_client": anilist,
+        "mal_client": mal,
+    },
+    logger=logger,
+)
+_arr_acquisition_config_cache = acquisition_handlers._config_cache
+reconciliation_settings_handlers = ReconciliationSettingsHandlers(
+    settings_mgr=settings_mgr,
+    reverse_sync_mgr=reverse_sync_mgr,
+    config_updated=reverse_sync_config_updated,
+    is_admin_request=is_admin_request,
+)
+reconciliation_workflow_handlers = ReconciliationWorkflowHandlers(
+    reverse_sync_mgr=reverse_sync_mgr,
+    cloud_sync_mgr=cloud_sync_mgr,
+    demo_mgr=demo_mgr,
+    is_admin_request=is_admin_request,
+    letterboxd_client=letterboxd,
+    cross_tracker_sync=cross_tracker_sync,
+    arr_bridge=arr_bridge,
+)
+cross_tracker_sync_handlers = CrossTrackerSyncHandlers(
+    cross_tracker_sync=cross_tracker_sync,
+    demo_mgr=demo_mgr,
+    is_admin_request=is_admin_request,
+    sync_mutex=cloud_sync_mgr.sync_mutex,
+)
+media_server_webhook_handlers = MediaServerWebhookHandlers(
+    reverse_sync_mgr=reverse_sync_mgr,
+    is_admin_request=is_admin_request,
+)
+_reconciliation_previews = reconciliation_workflow_handlers.previews
+app.include_router(create_reconciliation_router({
+    "get_sync_settings": reconciliation_settings_handlers.get_settings,
+    "save_sync_settings": reconciliation_settings_handlers.save_settings,
+    "test_sync_connection": reconciliation_settings_handlers.test_connection,
+    "get_sync_status": get_sync_status,
+    "get_sync_diff": get_sync_diff,
+    "preview_reconciliation": reconciliation_workflow_handlers.preview,
+    "trigger_reconciliation": reconciliation_workflow_handlers.execute,
+    "get_sync_progress": reconciliation_workflow_handlers.get_progress,
+    "get_background_sync_status": reconciliation_workflow_handlers.get_background_status,
+    "trigger_background_sync": reconciliation_workflow_handlers.trigger_background_sync,
+    "register_server_webhook": media_server_webhook_handlers.register,
+    "get_cross_sync_status": cross_tracker_sync_handlers.get_status,
+    "get_cross_sync_diff": cross_tracker_sync_handlers.get_diff,
+    "scan_cross_sync_discrepancies": cross_tracker_sync_handlers.scan,
+    "execute_cross_sync": cross_tracker_sync_handlers.execute,
+    "get_cross_sync_progress": cross_tracker_sync_handlers.get_progress,
+    "get_cross_sync_provenance": cross_tracker_sync_handlers.get_provenance,
+}))
+tracker_account_handlers = TrackerAccountHandlers(
+    config=Config,
+    demo_mgr=demo_mgr,
+    user_mgr=user_mgr,
+    simkl=simkl,
+    anilist=anilist,
+    mal=mal,
+    profile_for_request=profile_for_request,
+    require_dashboard_permission=require_dashboard_permission,
+    get_dashboard_principal=get_dashboard_principal,
+    is_admin_request=is_admin_request,
+    get_cached_trakt_profile=get_cached_trakt_profile,
+    invalidate_trakt_profile=invalidate_trakt_user_profile,
+    logger=logger,
+    auth_locked_html=AUTH_LOCKED_HTML,
+    auth_simkl_html=AUTH_SIMKL_HTML,
+    auth_anilist_html=AUTH_ANILIST_HTML,
+    auth_mal_html=AUTH_MAL_HTML,
+)
+tracker_diagnostics_handlers = TrackerDiagnosticsHandlers(
+    demo_mgr=demo_mgr,
+    multi_tracker=multi_tracker,
+    settings_mgr=settings_mgr,
+    is_admin_request=is_admin_request,
+    mask_username=mask_username,
+    anime_resolver=anime_resolver,
+    parsed_media_type=ParsedMedia,
+    tmdb=tmdb,
+    kitsu=kitsu,
+    letterboxd=letterboxd,
+    serializd=serializd,
+    mdblist=mdblist,
+)
+app.include_router(create_integrations_router({
+    "auth_start": tracker_account_handlers.auth_start,
+    "auth_poll": tracker_account_handlers.auth_poll,
+    "get_trakt_status": tracker_account_handlers.get_trakt_status,
+    "disconnect_trakt": tracker_account_handlers.disconnect_trakt,
+    "get_simkl_status": tracker_account_handlers.get_simkl_status,
+    "get_simkl_pin": tracker_account_handlers.get_simkl_pin,
+    "poll_simkl_pin": tracker_account_handlers.poll_simkl_pin,
+    "disconnect_simkl": tracker_account_handlers.disconnect_simkl,
+    "auth_simkl_page": tracker_account_handlers.auth_simkl_page,
+    "get_anilist_status": tracker_account_handlers.get_anilist_status,
+    "save_anilist_token": tracker_account_handlers.save_anilist_token,
+    "disconnect_anilist": tracker_account_handlers.disconnect_anilist,
+    "auth_anilist_page": tracker_account_handlers.auth_anilist_page,
+    "get_mal_status": tracker_account_handlers.get_mal_status,
+    "save_mal_token": tracker_account_handlers.save_mal_token,
+    "disconnect_mal": tracker_account_handlers.disconnect_mal,
+    "auth_mal_page": tracker_account_handlers.auth_mal_page,
+    "resolve_anime_api": tracker_diagnostics_handlers.resolve_anime_api,
+    "get_multi_trackers_status": tracker_diagnostics_handlers.get_multi_trackers_status,
+    "get_tmdb_status": tracker_diagnostics_handlers.get_tmdb_status,
+    "get_kitsu_status": tracker_diagnostics_handlers.get_kitsu_status,
+    "get_letterboxd_status": tracker_diagnostics_handlers.get_letterboxd_status,
+    "get_serializd_status": tracker_diagnostics_handlers.get_serializd_status,
+    "get_mdblist_status": tracker_diagnostics_handlers.get_mdblist_status,
+    "get_relay_status": tracker_diagnostics_handlers.get_relay_status,
+    "export_letterboxd_csv": tracker_diagnostics_handlers.export_letterboxd_csv,
+    "get_letterboxd_diary": tracker_diagnostics_handlers.get_letterboxd_diary,
+    "get_mdblist_ratings": tracker_diagnostics_handlers.get_mdblist_ratings,
+}))
+app.include_router(create_acquisition_router({
+    "lookup_arr_media": acquisition_handlers.lookup_media,
+    "get_arr_acquisition_config": acquisition_handlers.get_config,
+    "add_arr_media": acquisition_handlers.add_media,
+    "test_arr_connection": acquisition_handlers.test_connection,
+    "get_arr_status": acquisition_handlers.get_status,
+    "trigger_arr_sync": acquisition_handlers.trigger_sync,
+    "get_ecosystem_status": acquisition_handlers.get_ecosystem_status,
+}))
 
 
 if __name__ == '__main__':
