@@ -5733,11 +5733,11 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             if not trakt_enabled:
                 paused_label = f"Paused (@{display_username})" if display_username else "Trakt Paused"
                 if is_admin:
-                    status_badge = f'<a href="/auth" class="header-status-badge is-paused">⏸️ {paused_label} &bull; Manage</a>'
+                    status_badge = f'<a href="#settings-section-trakt" onclick="openSettingsModal(\'trackers\', \'trakt\'); return false;" class="header-status-badge is-paused">⏸️ {paused_label} &bull; Manage</a>'
                 else:
                     status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" class="header-status-badge is-locked" title="Click to unlock admin access">⏸️ {paused_label} &bull; 🔒 Locked</a>'
             elif is_admin:
-                status_badge = f'<a href="/auth" class="header-status-badge is-connected">{user_label} &bull; Manage</a>'
+                status_badge = f'<a href="#settings-section-trakt" onclick="openSettingsModal(\'trackers\', \'trakt\'); return false;" class="header-status-badge is-connected">{user_label} &bull; Manage</a>'
             else:
                 status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" class="header-status-badge is-locked" title="Click to unlock admin access">{user_label} &bull; 🔒 Locked</a>'
         else:

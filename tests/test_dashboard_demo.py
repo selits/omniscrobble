@@ -1,9 +1,12 @@
 """Focused tests migrated from the former test_scrobbler monolith."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from tests.helpers import *  # noqa: F403
 from tests.helpers import _ensure_servers_enabled_for_tests  # noqa: F401
+from app.services.settings_manager import settings_mgr
 
 pytestmark = pytest.mark.usefixtures("_ensure_servers_enabled_for_tests")
 
@@ -68,6 +71,24 @@ async def test_dashboard_footer_and_repo_link():
     assert "https://github.com/selits/omniscrobble#readme" in html
     assert "Auto-refresh (30s)" in html
     assert '<input type="checkbox" id="auto-refresh-toggle" onchange="toggleAutoRefresh(this)">' in html
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_connected_trakt_manage_badge_opens_tracker_settings():
+    """The connected account badge opens its management panel rather than OAuth linking."""
+    client = make_async_test_client(app)
+    with patch("app.main.is_admin_request", return_value=True), \
+            patch.object(trakt, "is_authenticated", return_value=True), \
+            patch("app.main.get_cached_trakt_profile", new=AsyncMock(return_value={"username": "selits"})), \
+            patch.object(settings_mgr, "is_tracker_enabled", return_value=True):
+        response = await client.get("/")
+
+    assert response.status_code == 200
+    manage_link = (
+        'href="#settings-section-trakt" '
+        'onclick="openSettingsModal(\'trackers\', \'trakt\'); return false;" '
+        'class="header-status-badge is-connected">Connected as @selits &bull; Manage</a>'
+    )
+    assert manage_link in response.text
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_demo_dashboard_page():
