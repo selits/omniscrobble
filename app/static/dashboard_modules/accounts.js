@@ -34,12 +34,14 @@
 
         function accountRole(value) {
             const label = document.createElement('label'); label.textContent = 'Role';
+            label.className = 'account-field account-role-field';
             const select = document.createElement('select');
             ['member', 'admin'].forEach(role => {
                 const option = document.createElement('option'); option.value = role; option.textContent = role;
                 select.appendChild(option);
             });
             select.value = value; label.appendChild(select);
+            select.className = 'account-role-select';
             return {label, input: select};
         }
 
@@ -93,7 +95,7 @@
                 content.appendChild(hint);
                 for (const account of accounts.accounts) {
                     const form = document.createElement('form');
-                    form.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:end;margin:12px 0;padding:12px;border:1px solid var(--border-color);';
+                    form.className = 'account-form account-edit-form';
                     const title = document.createElement('strong'); title.textContent = account.username;
                     const role = accountRole(account.role);
                     const password = accountInput('password', 'New password (optional)');
@@ -119,7 +121,7 @@
                     content.appendChild(form);
                 }
                 const create = document.createElement('form');
-                create.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:end;margin:16px 0;';
+                create.className = 'account-form account-create-form';
                 const username = accountInput('text', 'New username'); username.input.required = true; username.input.pattern = '[A-Za-z0-9][A-Za-z0-9._-]{2,31}';
                 const password = accountInput('password', 'Password'); password.input.required = true;
                 const role = accountRole('member');
