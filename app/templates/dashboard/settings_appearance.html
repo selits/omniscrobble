@@ -6,11 +6,27 @@
                             <span>🎨</span> Base Color Palette
                         </div>
                         <p class="u-font-size-12px u-color-text-muted u-margin-0-0-12px u-line-height-1-4">
-                            Select a curated dark mode palette. Applied immediately across the entire dashboard and saved to local storage.
+                            Select a palette or follow your browser’s light or dark appearance. Your choice is saved in this browser.
                         </p>
                         <div class="u-display-grid u-grid-template-columns-repeat-auto-fill-minmax-180px-1fr u-gap-10px" id="settings-theme-grid">
                             <!-- Populated by renderThemePickers() -->
                         </div>
+                    </div>
+
+                    <div class="appearance-control-card">
+                        <div class="appearance-control-heading">Text size</div>
+                        <p>Adjust the dashboard’s base text size for easier reading.</p>
+                        <div class="appearance-option-row" role="group" aria-label="Dashboard text size">
+                            <button type="button" class="btn-sm appearance-choice" data-text-size="small" onclick="setTextSize('small')">Small</button>
+                            <button type="button" class="btn-sm appearance-choice" data-text-size="default" onclick="setTextSize('default')">Default</button>
+                            <button type="button" class="btn-sm appearance-choice" data-text-size="large" onclick="setTextSize('large')">Large</button>
+                        </div>
+                    </div>
+
+                    <div class="appearance-control-card">
+                        <div class="appearance-control-heading">Accessibility</div>
+                        <label class="appearance-toggle-row"><span><strong>Reduce motion</strong><small>Limit animation and transition effects.</small></span><input id="appearance-reduce-motion" type="checkbox" onchange="setAppearancePreference('reduce-motion', this.checked)"></label>
+                        <label class="appearance-toggle-row"><span><strong>High contrast</strong><small>Strengthen text contrast, borders, and focus indicators.</small></span><input id="appearance-high-contrast" type="checkbox" onchange="setAppearancePreference('high-contrast', this.checked)"></label>
                     </div>
 
                     <!-- Accent Colors -->
@@ -48,12 +64,15 @@
                     <div class="u-background-bg-subtle u-border-1px-solid-var-border-color u-border-radius-8px u-padding-14px">
                         <div class="u-display-flex u-justify-content-space-between u-align-items-center u-margin-bottom-6px u-flex-wrap-wrap u-gap-8px">
                             <div class="u-font-size-13px u-font-weight-600 u-color-text-heading u-display-flex u-align-items-center u-gap-6px">
-                                <span>👁️</span> Dashboard Card Visibility
+                                <span>👁️</span> Dashboard Card Layout &amp; Visibility
                             </div>
-                            <button type="button" onclick="resetCardVisibility()" class="btn-sm u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-muted u-padding-3px-8px u-font-size-11px u-cursor-pointer">Reset to Default</button>
+                            <div class="appearance-option-row">
+                                <button type="button" onclick="resetCardVisibility()" class="btn-sm u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-muted u-padding-3px-8px u-font-size-11px u-cursor-pointer">Reset visibility</button>
+                                <button type="button" onclick="resetDashboardCardLayout()" class="btn-sm u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-muted u-padding-3px-8px u-font-size-11px u-cursor-pointer">Reset order &amp; pins</button>
+                            </div>
                         </div>
                         <p class="u-font-size-12px u-color-text-muted u-margin-0-0-12px u-line-height-1-4">
-                            Toggle visibility of individual dashboard cards. Useful for hiding unused services (such as Co-Watching or *Arr automation).
+                            Show or hide cards, pin important cards to the top of their workspace, and move cards up or down. Changes stay in this browser.
                         </p>
                         <div class="u-display-grid u-grid-template-columns-repeat-auto-fill-minmax-220px-1fr u-gap-8px" id="settings-card-visibility-grid">
                             <!-- Populated by renderCardVisibilityPickers() -->

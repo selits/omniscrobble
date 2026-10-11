@@ -8,7 +8,7 @@
             operations: ['active-playback-card', 'card-activity'],
             'watch-lists': ['card-watch-lists'],
             trackers: ['card-server-config', 'card-ecosystem', 'card-multi-tracker', 'card-reconciliation'],
-            automation: ['automation-rules-card', 'card-cowatch', 'card-arr-bridge'],
+            automation: ['card-cowatch', 'automation-rules-card', 'card-arr-bridge'],
             analytics: ['card-analytics'],
             diagnostics: ['card-backup']
         };
@@ -442,13 +442,7 @@
             const inspectorDialog = document.querySelector('#webhook-debugger-modal > .modal-dialog');
             if (logsDialog) document.getElementById('diagnostics-pane-logs')?.appendChild(logsDialog);
             if (inspectorDialog) document.getElementById('diagnostics-pane-inspector')?.appendChild(inspectorDialog);
-            Object.entries(workspaceCards).forEach(([workspace, ids]) => {
-                const panel = document.getElementById(`view-${workspace}`);
-                ids.forEach((id) => {
-                    const card = document.getElementById(id);
-                    if (panel && card) panel.appendChild(card);
-                });
-            });
+            applyDashboardCardLayout();
             document.getElementById('workspace-nav')?.addEventListener('keydown', (event) => {
                 if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                 const tabs = Array.from(document.querySelectorAll('.workspace-tab'));

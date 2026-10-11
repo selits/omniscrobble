@@ -105,22 +105,13 @@
                 renderThemePickers();
                 if (typeof updateDensityUI === 'function') updateDensityUI();
                 if (typeof renderCardVisibilityPickers === 'function') renderCardVisibilityPickers();
+                if (typeof updateAppearanceControls === 'function') updateAppearanceControls();
             }
             tabs.forEach(t => {
                 const btn = document.getElementById(`settings-tab-btn-${t}`);
                 const panel = document.getElementById(`settings-panel-${t}`);
                 if (btn) {
-                    if (t === tabName) {
-                        btn.style.background = 'var(--accent-color, var(--accent-color))';
-                        btn.style.color = 'var(--accent-text)';
-                        btn.style.fontWeight = '600';
-                        btn.style.border = 'none';
-                    } else {
-                        btn.style.background = 'var(--bg-surface)';
-                        btn.style.color = 'var(--text-heading)';
-                        btn.style.fontWeight = 'normal';
-                        btn.style.border = '1px solid var(--border-color)';
-                    }
+                    btn.setAttribute('aria-selected', String(t === tabName));
                 }
                 if (panel) {
                     panel.style.display = (t === tabName) ? 'flex' : 'none';
@@ -130,18 +121,7 @@
 
         function filterSettingsTrackers(category, btn) {
             const btns = document.querySelectorAll('.settings-trk-cat-btn');
-            btns.forEach(b => {
-                b.style.background = 'var(--bg-surface)';
-                b.style.borderColor = 'var(--border-color)';
-                b.style.color = 'var(--text-heading)';
-                b.style.fontWeight = 'normal';
-            });
-            if (btn) {
-                btn.style.background = 'var(--accent-color)';
-                btn.style.borderColor = 'var(--accent-color)';
-                btn.style.color = 'var(--accent-text)';
-                btn.style.fontWeight = '600';
-            }
+            btns.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
             const cards = document.querySelectorAll('#settings-panel-trackers div[data-tracker-cat]');
             cards.forEach(card => {
                 if (category === 'all' || card.getAttribute('data-tracker-cat') === category) {
@@ -154,18 +134,7 @@
 
         function filterHubTrackers(category, btn) {
             const btns = document.querySelectorAll('.hub-cat-tab');
-            btns.forEach(b => {
-                b.style.background = 'var(--bg-surface)';
-                b.style.borderColor = 'var(--border-color)';
-                b.style.color = 'var(--text-heading)';
-                b.style.fontWeight = 'normal';
-            });
-            if (btn) {
-                btn.style.background = 'var(--accent-color)';
-                btn.style.borderColor = 'var(--accent-color)';
-                btn.style.color = 'var(--accent-text)';
-                btn.style.fontWeight = '600';
-            }
+            btns.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
             const items = document.querySelectorAll('#hub-trackers-grid .hub-tracker-item');
             items.forEach(item => {
                 if (category === 'all' || item.getAttribute('data-cat') === category) {
@@ -537,6 +506,29 @@
                 if (failCheck && notifs.notify_on_failure !== undefined) failCheck.checked = Boolean(notifs.notify_on_failure);
                 const notificationRoutes = notifs.notification_routes || {};
                 const notificationProfiles = data.notification_profiles || [];
+                const routeContainer = document.getElementById('settings-notification-routes');
+                if (routeContainer && !routeContainer.dataset.rendered) {
+                    const routeEvents = [
+                        ['scrobble', 'Scrobbles', true], ['rate', 'Ratings', true], ['collection', 'Collection', true],
+                        ['arr_add', 'Acquisitions', true], ['playback_start', 'Playback started', true],
+                        ['queue_recovery', 'Queue recovery', true], ['token_expiry', 'Token expiry', false],
+                        ['digest', 'Weekly digest', false], ['failure', 'Sync failures', true]
+                    ];
+                    const channels = ['discord', 'telegram', 'ntfy', 'pushover', 'gotify', 'matrix'];
+                    const channelOptions = channels.map(channel => `<option value="${channel}">${channel[0].toUpperCase()}${channel.slice(1)}</option>`).join('');
+                    routeContainer.innerHTML = routeEvents.map(([event, label, hasProfiles]) => `
+                        <section class="notification-route-card" aria-label="${label} notification route">
+                            <h4>${label}</h4>
+                            <label for="settings-notif-route-${event}-destinations">Channels</label>
+                            <select id="settings-notif-route-${event}-destinations" class="notification-route-destinations" multiple size="3" aria-label="${label} notification channels">${channelOptions}</select>
+                            <label for="settings-notif-route-${event}-severity">Severity</label>
+                            <select id="settings-notif-route-${event}-severity" aria-label="${label} notification severity"><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option></select>
+                            ${hasProfiles ? `<label for="settings-notif-route-${event}-profiles">Profiles <span>(empty means all)</span></label><select id="settings-notif-route-${event}-profiles" class="notification-route-profiles" multiple size="2" aria-label="${label} profile subscriptions"></select>` : ''}
+                            <div class="notification-route-actions"><button type="button" class="btn-sm" onclick="previewNotificationRoute('${event}')">Preview route</button><button type="button" class="btn-sm" onclick="sendNotificationRoutePreview('${event}')">Send sample</button></div>
+                            <span id="settings-notif-route-${event}-preview" class="notification-route-feedback" aria-live="polite"></span><span id="settings-notif-route-${event}-delivery" class="notification-route-feedback" aria-live="polite"></span>
+                        </section>`).join('');
+                    routeContainer.dataset.rendered = 'true';
+                }
                 for (const event of ['scrobble', 'rate', 'collection', 'arr_add', 'playback_start', 'queue_recovery', 'token_expiry', 'digest', 'failure']) {
                     const destinations = document.getElementById(`settings-notif-route-${event}-destinations`);
                     const severity = document.getElementById(`settings-notif-route-${event}-severity`);

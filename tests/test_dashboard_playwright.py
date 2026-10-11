@@ -500,6 +500,94 @@ async def test_settings_footer_stays_within_narrow_mobile_viewport(dashboard_pag
 
 
 @pytest.mark.asyncio(loop_scope="function")
+async def test_notification_routes_render_as_cards_without_template_syntax(dashboard_page: Page) -> None:
+    """Render each notification route in the composed dashboard and keep controls usable."""
+    page = dashboard_page
+    await page.set_viewport_size({"width": 390, "height": 844})
+    await page.locator('button[onclick="openSettingsModal()"]').click()
+    await page.locator("#settings-tab-btn-notifications").click()
+
+    routes = page.locator("#settings-notification-routes .notification-route-card")
+    await routes.first.wait_for(state="visible")
+    assert await routes.count() == 9
+    assert await page.locator("#settings-notification-routes").inner_text() != ""
+    assert "{%" not in await page.locator("#settings-panel-notifications").inner_text()
+    assert await page.locator("#settings-notification-routes .notification-route-profiles").count() == 7
+    assert await page.locator("#settings-notif-route-scrobble-destinations option").count() == 6
+    assert await routes.first.evaluate("element => element.getBoundingClientRect().width > 0")
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_appearance_text_scale_and_card_visibility_persist_in_browser(dashboard_page: Page) -> None:
+    """Apply text scaling without page zoom and persist per-browser visibility toggles."""
+    page = dashboard_page
+    await page.locator('button[onclick="openSettingsModal()"]').click()
+    await page.locator("#settings-tab-btn-appearance").click()
+    heading = page.locator("#card-activity .activity-header h3")
+    await heading.wait_for(state="visible")
+    default_size = await heading.evaluate("element => parseFloat(getComputedStyle(element).fontSize)")
+
+    await page.locator('[data-text-size="large"]').click()
+    large_size = await heading.evaluate("element => parseFloat(getComputedStyle(element).fontSize)")
+    assert large_size > default_size
+    assert await page.evaluate("getComputedStyle(document.body).zoom") == "1"
+    assert await page.evaluate("localStorage.getItem('omniscrobble_text_size')") == "large"
+
+    first_toggle = page.locator("#settings-card-visibility-grid .appearance-visibility-switch input").first
+    card_id = await first_toggle.evaluate(
+        "element => element.getAttribute('onchange').match(/setCardVisibility\\('([^']+)'/)[1]"
+    )
+    await first_toggle.locator("xpath=..").click()
+    assert await first_toggle.is_checked() is False
+    assert card_id in await page.evaluate("localStorage.getItem('omniscrobble_hidden_cards')")
+    await page.reload(wait_until="domcontentloaded")
+    await page.locator("#workspace-nav").wait_for(state="visible")
+    await page.locator('button[onclick="openSettingsModal()"]').click()
+    await page.locator("#settings-tab-btn-appearance").click()
+    reloaded_toggle = page.locator("#settings-card-visibility-grid .appearance-visibility-switch input").first
+    await reloaded_toggle.wait_for(state="visible")
+    assert await reloaded_toggle.is_checked() is False
+    assert await page.locator("html").evaluate("element => element.classList.contains('text-size-large')")
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_webhook_empty_filter_updates_visible_count(dashboard_page: Page) -> None:
+    """Show zero matching events rather than leaving the prior visible count behind."""
+    page = dashboard_page
+    await page.evaluate("""() => {
+        currentDebugWebhooks = [{id: 'example', source: 'plex', status: 'processed', media_title: 'Movie', event: 'media.play'}];
+        renderDebugWebhooksList([]);
+    }""")
+
+    assert await page.locator("#webhook-debugger-visible-count").inner_text() == "0 shown"
+    assert "No webhook events match these filters." in await page.locator("#webhook-debugger-list").inner_text()
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_activity_details_panel_has_clear_gap_below_event_row(dashboard_page: Page) -> None:
+    """Keep the expanded activity details panel visually separate from its event row."""
+    page = dashboard_page
+    await page.evaluate("""() => {
+        const tbody = document.querySelector('#events-tbody');
+        tbody.replaceChildren();
+        const event = document.createElement('tr');
+        event.className = 'activity-row';
+        event.innerHTML = '<td colspan="7">Sample event row</td>';
+        const details = document.createElement('tr');
+        details.className = 'activity-details-row';
+        details.innerHTML = '<td colspan="7"><div class="activity-details-panel">Expanded details</div></td>';
+        tbody.append(event, details);
+    }""")
+
+    spacing = await page.evaluate("""() => {
+        const event = document.querySelector('#events-tbody .activity-row').getBoundingClientRect();
+        const panel = document.querySelector('#events-tbody .activity-details-panel').getBoundingClientRect();
+        return panel.top - event.bottom;
+    }""")
+    assert spacing >= 7, f"expanded details panel is too close to event row: {spacing}px"
+
+
+@pytest.mark.asyncio(loop_scope="function")
 async def test_trakt_auth_page_sends_csrf_header_for_start_and_poll(
     browser: Browser,
 ) -> None:

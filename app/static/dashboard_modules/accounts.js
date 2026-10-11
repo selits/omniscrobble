@@ -48,9 +48,9 @@
             return {label, input: select};
         }
 
-        function accountButton(text, action) {
+        function accountButton(text, action, className = '') {
             const button = document.createElement('button');
-            button.type = 'button'; button.className = 'btn-sm'; button.textContent = text;
+            button.type = 'button'; button.className = `btn-sm ${className}`.trim(); button.textContent = text;
             button.addEventListener('click', async () => {
                 if (button.disabled) return;
                 button.disabled = true;
@@ -102,7 +102,7 @@
                     const title = document.createElement('strong'); title.textContent = account.username;
                     const role = accountRole(account.role);
                     const password = accountInput('password', 'New password (optional)');
-                    const enabledLabel = document.createElement('label'); enabledLabel.textContent = 'Enabled';
+                    const enabledLabel = document.createElement('label'); enabledLabel.textContent = 'Enabled'; enabledLabel.className = 'account-field account-enabled-field';
                     const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.checked = account.enabled; enabledLabel.appendChild(enabled);
                     form.append(title, role.label, password.label, enabledLabel);
                     const save = accountButton('Save', async () => {
@@ -114,12 +114,16 @@
                         if (me.source === 'local_account' && me.username === account.username) { window.location.href = '/login'; return; }
                         await openAccountModal();
                     });
-                    form.append(save, accountButton('Delete', async () => {
+                    const actions = document.createElement('div');
+                    actions.className = 'account-form-actions';
+                    save.classList.add('account-save-button');
+                    actions.append(save, accountButton('Delete', async () => {
                         if (!confirm(`Delete household account ${account.username}?`)) return;
                         await accountRequest(`/api/admin/accounts/${encodeURIComponent(account.username)}`, 'DELETE');
                         if (me.source === 'local_account' && me.username === account.username) { window.location.href = '/login'; return; }
                         await openAccountModal();
-                    }));
+                    }, 'account-delete-button'));
+                    form.append(actions);
                     form.addEventListener('submit', event => { event.preventDefault(); save.click(); });
                     content.appendChild(form);
                 }

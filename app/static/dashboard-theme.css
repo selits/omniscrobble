@@ -28,6 +28,34 @@
             --status-error-text: #fee2e2;
         }
 
+        /* Light palette */
+        html.theme-light {
+            color-scheme: light;
+            --bg-page: #f1f5f9;
+            --bg-surface: #ffffff;
+            --bg-subtle: #f8fafc;
+            --border-color: #cbd5e1;
+            --border-subtle: #dbe3ec;
+            --border-table: #dbe3ec;
+            --text-main: #172033;
+            --text-muted: #475569;
+            --text-heading: #0f172a;
+            --modal-bg: #ffffff;
+        }
+        html.theme-light body { background: var(--bg-page) !important; color: var(--text-main) !important; }
+        html.theme-light .card, html.theme-light .modal-dialog { background: var(--bg-surface) !important; border-color: var(--border-color) !important; }
+        html.theme-light .info-item, html.theme-light .scrobble-item, html.theme-light .cowatch-account-row, html.theme-light th { background: var(--bg-subtle) !important; border-color: var(--border-color) !important; }
+        html.theme-light .header, html.theme-light .activity-header { border-color: var(--border-subtle) !important; }
+        html.theme-light td, html.theme-light tr { border-bottom-color: var(--border-table) !important; }
+        html.theme-light input:not([type="checkbox"]):not([type="radio"]), html.theme-light select, html.theme-light textarea { background-color: var(--bg-surface); color: var(--text-main); border-color: var(--border-color); }
+        html.theme-light .btn-sm, html.theme-light .workspace-tab, html.theme-light .activity-filter-chip { background-color: var(--bg-subtle); color: var(--text-main); border-color: var(--border-color); }
+        html.theme-light .workspace-tab[aria-selected="true"], html.theme-light .activity-filter-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--accent-color) 14%, white); }
+        html.theme-light .activity-search, html.theme-light .activity-details-row td, html.theme-light .automation-rules-result { background: var(--bg-subtle); color: var(--text-main); }
+        html.theme-light .recovery-check, html.theme-light .automation-review-row, html.theme-light .automation-rule-row { background: var(--bg-subtle); }
+        html.theme-light div[style*="background:#0f172a"], html.theme-light div[style*="background: #0f172a"] { background-color: #f8fafc !important; border-color: #cbd5e1 !important; }
+        html.theme-light div[style*="background:#1e293b"], html.theme-light div[style*="background: #1e293b"] { background-color: #ffffff !important; border-color: #cbd5e1 !important; }
+        html.theme-light div[style*="background:#334155"], html.theme-light div[style*="background: #334155"] { background-color: #e2e8f0 !important; border-color: #cbd5e1 !important; color: #172033 !important; }
+
         /* 1. Slate Theme (Default) */
         html.theme-slate {
             --bg-page: #0f172a;
@@ -213,14 +241,29 @@
         html.density-compact body { padding: 18px 14px; }
         html.density-compact .header { margin-bottom: 16px; padding-bottom: 14px; }
         html.density-compact .card { padding: 14px 16px; margin-bottom: 14px; border-radius: 9px; }
-        html.density-compact .card h3 { font-size: 14px; margin-bottom: 8px; }
+        html.density-compact .card h3 { font-size: calc(14px * var(--dashboard-text-scale, 1)); margin-bottom: 8px; }
         html.density-compact .info-grid { gap: 10px; }
         html.density-compact .info-item { padding: 8px 12px; }
-        html.density-compact .info-value { font-size: 14px; margin: 2px 0; }
-        html.density-compact th { padding: 6px 10px; font-size: 11px; }
-        html.density-compact td { padding: 6px 10px; font-size: 11px; }
+        html.density-compact .info-value { font-size: calc(14px * var(--dashboard-text-scale, 1)); margin: 2px 0; }
+        html.density-compact th { padding: 6px 10px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
+        html.density-compact td { padding: 6px 10px; font-size: calc(11px * var(--dashboard-text-scale, 1)); }
         html.density-compact .activity-header { padding: 10px 14px; }
         html.density-compact .cowatch-grid { gap: 12px; }
         html.density-compact .cowatch-account-row { padding: 6px 10px; margin-bottom: 6px; }
         html.density-compact #stream-poster-container { width: 56px; height: 78px; }
         html.density-compact #active-playback-card { margin-bottom: 14px; }
+
+        /* Appearance accessibility preferences */
+        html.text-size-small { --dashboard-text-scale: .92; }
+        html.text-size-large { --dashboard-text-scale: 1.12; }
+        html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+        html.high-contrast {
+            --text-muted: #d1d5db;
+            --border-color: #94a3b8;
+            --border-subtle: #64748b;
+            --border-table: #64748b;
+        }
+        html.high-contrast .card, html.high-contrast .modal-dialog, html.high-contrast input, html.high-contrast select, html.high-contrast textarea, html.high-contrast .btn-sm, html.high-contrast .workspace-tab { border-width: 2px !important; }
+        html.high-contrast a:not(.btn-sm) { text-decoration: underline; text-underline-offset: 2px; }
+        html.high-contrast :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline-width: 3px; outline-offset: 3px; }
+        html.high-contrast .activity-status-badge, html.high-contrast .tracker-delivery-badge, html.high-contrast .eco-status-badge { border-width: 2px; }

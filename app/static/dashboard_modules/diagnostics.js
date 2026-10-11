@@ -1,4 +1,77 @@
         let allRawLogs = [];
+        let allLogEntries = [];
+        let visibleRawLogs = [];
+        let logRefreshTimer = null;
+
+        function parseLogEntry(line) {
+            const levelMatch = line.match(/\[([A-Z]+)\]/);
+            const timestampMatch = line.match(/\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))/);
+            return { line, level: levelMatch ? levelMatch[1] : 'UNKNOWN', timestamp: timestampMatch ? timestampMatch[1] : '' };
+        }
+
+        function setLogAutoRefresh() {
+            if (logRefreshTimer) clearInterval(logRefreshTimer);
+            logRefreshTimer = null;
+            const seconds = Number(document.getElementById('logs-refresh-interval')?.value || 0);
+            if (!seconds || document.getElementById('diagnostics-pane-logs')?.hidden) return;
+            logRefreshTimer = setInterval(fetchLogs, seconds * 1000);
+        }
+
+        function updateLogArchiveEstimate() {
+            const size = Number(document.getElementById('logs-archive-size')?.value || 10);
+            const countInput = document.getElementById('logs-archive-count');
+            const maxCount = Math.max(1, Math.min(50, Math.floor(128 / size) - 1));
+            if (countInput) {
+                countInput.max = String(maxCount);
+                if (Number(countInput.value) > maxCount) countInput.value = String(maxCount);
+            }
+            const count = Number(countInput?.value || 5);
+            const estimate = document.getElementById('logs-archive-cap');
+            if (estimate) estimate.textContent = `Maximum storage: about ${size * (count + 1)} MiB`;
+        }
+
+        async function saveLogArchiveSettings() {
+            if (!isAdmin || isDemo) return;
+            const sizeInput = document.getElementById('logs-archive-size');
+            const countInput = document.getElementById('logs-archive-count');
+            const status = document.getElementById('logs-archive-status');
+            const maxMiB = Number(sizeInput?.value);
+            const backupCount = Number(countInput?.value);
+            const maxCount = Number.isFinite(maxMiB) && maxMiB > 0
+                ? Math.max(1, Math.min(50, Math.floor(128 / maxMiB) - 1))
+                : 1;
+            if (!Number.isInteger(maxMiB) || maxMiB < 1 || maxMiB > 64 || !Number.isInteger(backupCount) || backupCount < 1 || backupCount > maxCount) {
+                if (status) status.textContent = `Choose a file size from 1–64 MiB and no more than ${maxCount} archives at that size.`;
+                return;
+            }
+            if (status) status.textContent = 'Saving…';
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ logs: { max_bytes: maxMiB * 1024 * 1024, backup_count: backupCount } })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Unable to save log archive settings.');
+                const saved = data.settings?.logs || { max_bytes: maxMiB * 1024 * 1024, backup_count: backupCount };
+                if (sizeInput) sizeInput.value = String(Math.round(saved.max_bytes / (1024 * 1024)));
+                if (countInput) countInput.value = String(saved.backup_count);
+                updateLogArchiveEstimate();
+                if (status) status.textContent = 'Saved and applied.';
+                fetchLogs();
+            } catch (error) {
+                if (status) status.textContent = `Save failed: ${error.message}`;
+            }
+        }
+
+        function formatLogTimestamp(line) {
+            const match = line.match(/\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))/);
+            if (!match) return escapeHtml(line);
+            const date = new Date(match[1]);
+            if (Number.isNaN(date.getTime())) return escapeHtml(line);
+            const local = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
+            return `${escapeHtml(line.slice(0, match.index))}<time datetime="${escapeHtml(match[1])}" title="UTC: ${escapeHtml(date.toISOString())}">${escapeHtml(local)}</time>${escapeHtml(line.slice(match.index + match[1].length))}`;
+        }
 
         function openLogsModal() {
             if (!isAdmin && !isDemo) {
@@ -27,11 +100,14 @@
                 if (button) button.setAttribute('aria-selected', String(name === tab));
             });
             if (tab === 'inspector') loadDebugWebhooks();
+            setLogAutoRefresh();
         }
 
         function closeDiagnosticsDrawer() {
             const drawer = document.getElementById('diagnostics-modal');
             if (drawer) drawer.style.display = 'none';
+            if (logRefreshTimer) clearInterval(logRefreshTimer);
+            logRefreshTimer = null;
         }
 
         async function fetchLogs() {
@@ -47,6 +123,16 @@
                         badge.textContent = data.source === 'journalctl' ? 'journalctl --user' : (data.source.includes('demo') ? 'simulated journal' : 'app buffer');
                     }
                     allRawLogs = data.lines || [];
+                    allLogEntries = data.entries || allRawLogs.map(parseLogEntry);
+                    const archivePanel = document.getElementById('logs-archive-settings');
+                    if (archivePanel) archivePanel.hidden = !isAdmin || isDemo;
+                    if (data.archive_settings) {
+                        const sizeInput = document.getElementById('logs-archive-size');
+                        const countInput = document.getElementById('logs-archive-count');
+                        if (sizeInput) sizeInput.value = String(Math.round(data.archive_settings.max_bytes / (1024 * 1024)));
+                        if (countInput) countInput.value = String(data.archive_settings.backup_count);
+                        updateLogArchiveEstimate();
+                    }
                     filterLogs();
                 } else if (res.status === 401) {
                     closeLogsModal();
@@ -70,14 +156,18 @@
             const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
             const level = levelSelect ? levelSelect.value : 'ALL';
 
-            const filtered = allRawLogs.filter(line => {
+            const filteredEntries = allLogEntries.filter(entry => {
+                const line = entry.line || `${entry.timestamp || ''} [${entry.level || 'UNKNOWN'}] ${entry.name || ''}: ${entry.message || ''}`;
                 const lower = line.toLowerCase();
+                const severity = String(entry.level || 'UNKNOWN').toUpperCase();
                 if (query && !lower.includes(query)) return false;
-                if (level === 'ERROR') return lower.includes('[error]') || lower.includes('error:');
-                if (level === 'WARNING') return lower.includes('[warning]') || lower.includes('warning:') || lower.includes('[error]') || lower.includes('error:');
-                if (level === 'INFO') return lower.includes('[info]') || lower.includes('[warning]') || lower.includes('[error]');
+                if (level === 'ERROR') return ['ERROR', 'CRITICAL', 'FATAL'].includes(severity);
+                if (level === 'WARNING') return ['WARNING', 'ERROR', 'CRITICAL', 'FATAL'].includes(severity);
+                if (level === 'INFO') return ['INFO', 'WARNING', 'ERROR', 'CRITICAL', 'FATAL'].includes(severity);
                 return true;
             });
+            const filtered = filteredEntries.map(entry => entry.line || `${entry.timestamp || ''} [${entry.level || 'UNKNOWN'}] ${entry.name || ''}: ${entry.message || ''}`);
+            visibleRawLogs = filtered;
 
             if (countLabel) countLabel.textContent = `${filtered.length} lines`;
 
@@ -86,15 +176,17 @@
                 return;
             }
 
-            terminal.innerHTML = filtered.map(line => {
-                const safe = escapeHtml(line);
-                if (safe.includes('[ERROR]') || safe.includes('ERROR:')) {
+            terminal.innerHTML = filteredEntries.map((entry, index) => {
+                const line = filtered[index];
+                const safe = formatLogTimestamp(line);
+                const severity = String(entry.level || 'UNKNOWN').toUpperCase();
+                if (['ERROR', 'CRITICAL', 'FATAL'].includes(severity)) {
                     return `<div class="u-color-f87171">${safe}</div>`;
                 }
-                if (safe.includes('[WARNING]') || safe.includes('WARNING:')) {
+                if (severity === 'WARNING') {
                     return `<div class="u-color-fbbf24">${safe}</div>`;
                 }
-                if (safe.includes('[INFO]')) {
+                if (severity === 'INFO') {
                     return `<div class="u-color-text-heading"><span class="u-color-accent-color">[INFO]</span>${safe.replace('[INFO]', '')}</div>`;
                 }
                 return `<div>${safe}</div>`;
@@ -107,7 +199,7 @@
 
         function copyLogsToClipboard() {
             const btn = document.getElementById('copy-logs-btn');
-            const text = allRawLogs.join('\n');
+            const text = visibleRawLogs.join('\n');
             const legacyCopy = () => {
                 const textarea = document.createElement('textarea');
                 textarea.value = text;

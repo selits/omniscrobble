@@ -233,12 +233,30 @@
                     </select>
                 </div>
                 <div class="logs-status-group">
+                    <label class="u-font-size-12px u-color-text-muted u-display-flex u-align-items-center u-gap-6px">
+                        Refresh <select id="logs-refresh-interval" onchange="setLogAutoRefresh()" class="u-background-bg-subtle u-border-1px-solid-334155 u-border-radius-6px u-padding-4px-6px u-color-text-main u-font-size-11px"><option value="0">Off</option><option value="10">10 sec</option><option value="30">30 sec</option><option value="60">1 min</option></select>
+                    </label>
                     <label class="u-font-size-12px u-color-text-muted u-cursor-pointer u-display-flex u-align-items-center u-gap-6px">
                         <input type="checkbox" id="logs-tail-checkbox" checked> Auto-scroll bottom
                     </label>
                     <span id="logs-count-label" class="u-font-size-12px u-color-text-muted">0 lines</span>
                 </div>
             </div>
+            <details id="logs-archive-settings" class="logs-archive-settings" hidden>
+                <summary>Log archive settings</summary>
+                <div class="logs-archive-controls">
+                    <label>Maximum file size (MiB)
+                        <input id="logs-archive-size" type="number" min="1" max="64" step="1" value="10" oninput="updateLogArchiveEstimate()">
+                    </label>
+                    <label>Rotated archives to keep
+                        <input id="logs-archive-count" type="number" min="1" max="50" step="1" value="5" oninput="updateLogArchiveEstimate()">
+                    </label>
+                    <span id="logs-archive-cap" class="u-font-size-12px u-color-text-muted" aria-live="polite">Maximum storage: about 60 MiB</span>
+                    <button type="button" class="btn-sm u-background-accent-color u-color-fff u-font-weight-600" onclick="saveLogArchiveSettings()">Save archive settings</button>
+                    <span id="logs-archive-status" class="u-font-size-12px u-color-text-muted" role="status"></span>
+                </div>
+                <p class="u-font-size-11px u-color-text-muted u-margin-6px-0-0">Changes apply immediately. Log files are stored in the private data/logs directory.</p>
+            </details>
             <div id="logs-terminal" class="u-flex-1 u-background-bg-subtle u-border-1px-solid-1e293b u-border-radius-8px u-padding-14px u-overflow-y-auto u-font-family-ui-monospace-sfmono-regular-menlo-monaco-consolas-liberation-mono-monospace u-font-size-12px u-line-height-1-6 u-color-text-heading u-white-space-pre-wrap u-word-break-break-all u-min-height-300px">
                 Loading logs...
             </div>
@@ -768,8 +786,19 @@
                 </div>
             </div>
             <p class="u-color-text-muted u-font-size-13px u-margin-0-0-14px u-line-height-1-4">
-                Inspect recent incoming raw webhook requests from Plex, Jellyfin, Emby, and standalone players. Tokens are automatically redacted for privacy. Click <strong>Replay</strong> to test or edit any payload.
+                Inspect recent incoming requests from Plex, Jellyfin, Emby, and standalone players. Tokens are redacted. Use <strong>Test Payload</strong> to open an event in the simulator.
             </p>
+            <div class="debugger-toolbar" aria-label="Webhook event filters">
+                <input id="webhook-debugger-search" type="search" placeholder="Search title or event" oninput="filterDebugWebhooks()" aria-label="Search webhook events">
+                <select id="webhook-debugger-source" onchange="filterDebugWebhooks()" aria-label="Filter by source">
+                    <option value="">All sources</option><option value="plex">Plex</option><option value="jellyfin">Jellyfin</option><option value="emby">Emby</option><option value="standalone">Standalone</option>
+                </select>
+                <select id="webhook-debugger-status" onchange="filterDebugWebhooks()" aria-label="Filter by status">
+                    <option value="">All statuses</option><option value="processed">Processed</option><option value="received">Received</option><option value="ignored">Ignored</option><option value="error">Error</option>
+                </select>
+                <button type="button" class="btn-sm" onclick="copyVisibleWebhookPayloads()">Copy visible payloads</button>
+                <span id="webhook-debugger-visible-count" class="u-font-size-11px u-color-text-muted" aria-live="polite"></span>
+            </div>
             <div id="webhook-debugger-list" class="u-overflow-y-auto u-flex-1 u-max-height-60vh u-padding-right-4px">
                 <div class="u-color-text-muted u-font-size-12px u-font-style-italic u-padding-12px-0">Loading webhook history...</div>
             </div>
@@ -924,7 +953,7 @@
                 <button onclick="closeThemeModal()" class="u-background-none u-border-none u-color-text-muted u-font-size-20px u-cursor-pointer">&times;</button>
             </div>
             <p class="u-color-text-muted u-font-size-13px u-margin-0-0-16px u-line-height-1-4">
-                Personalize your Omniscrobble workspace. Select from 8 curated dark palettes and custom accent colors.
+                Personalize your workspace with color palettes, text size, and accessibility options.
             </p>
 
             <div class="custom-scroll u-max-height-65vh u-overflow-y-auto u-padding-right-4px u-display-flex u-flex-direction-column u-gap-16px">

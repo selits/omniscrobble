@@ -1,5 +1,11 @@
         let currentDebugWebhooks = [];
 
+        function formatLocalTimestamp(value) {
+            const date = new Date(value);
+            if (!value || Number.isNaN(date.getTime())) return value || 'Time unavailable';
+            return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
+        }
+
         function openWebhookDebuggerModal() {
             if (!isAdmin && !isDemo) { openUnlockModal(); return; }
             openDiagnosticsDrawer('inspector');
@@ -21,7 +27,7 @@
                     const data = await res.json();
                     currentDebugWebhooks = data.webhooks || [];
                     if (countBadge) countBadge.innerText = `${currentDebugWebhooks.length} events`;
-                    renderDebugWebhooksList(currentDebugWebhooks);
+                    filterDebugWebhooks();
                 } else {
                     listEl.innerHTML = '<div class="u-color-f87171 u-font-size-12px u-padding-8px-0">Failed to load webhook history.</div>';
                 }
@@ -48,10 +54,17 @@
             const listEl = document.getElementById('webhook-debugger-list');
             if (!listEl) return;
             if (!webhooks.length) {
-                listEl.innerHTML = '<div class="u-color-text-muted u-font-size-12px u-font-style-italic u-padding-12px-0">No incoming webhooks recorded yet. Incoming media server and standalone scrobbles will appear here automatically.</div>';
+                const visibleCount = document.getElementById('webhook-debugger-visible-count');
+                if (visibleCount) visibleCount.textContent = '0 shown';
+                const message = currentDebugWebhooks.length
+                    ? 'No webhook events match these filters.'
+                    : 'No incoming webhooks recorded yet. Incoming media server and standalone scrobbles will appear here automatically.';
+                listEl.innerHTML = `<div class="u-color-text-muted u-font-size-12px u-font-style-italic u-padding-12px-0">${message}</div>`;
                 return;
             }
 
+            const visibleCount = document.getElementById('webhook-debugger-visible-count');
+            if (visibleCount) visibleCount.textContent = `${webhooks.length} shown`;
             listEl.innerHTML = webhooks.map((wh, idx) => {
                 const wid = encodeURIComponentForInlineJs(wh.id || `wh_${idx}`);
                 const sourceName = String(wh.source || 'webhook').toLowerCase();
@@ -59,7 +72,9 @@
                 const src = escapeHtml(sourceName.toUpperCase());
                 const event = escapeHtml(wh.event || 'media.event');
                 const title = escapeHtml(wh.media_title || 'Media Event');
-                const ts = escapeHtml(wh.timestamp || '');
+                const rawTimestamp = wh.iso_timestamp || wh.timestamp || '';
+                const ts = escapeHtml(formatLocalTimestamp(rawTimestamp));
+                const utcTimestamp = escapeHtml(rawTimestamp);
                 const status = escapeHtml(wh.status || 'received');
                 const reason = escapeHtml(wh.reason || '');
                 const payloadJson = escapeHtml(JSON.stringify(wh.payload || {}, null, 2));
@@ -75,20 +90,20 @@
 
                 return `
                 <div class="debug-webhook-card u-background-bg-page u-border-1px-solid-var-border-color u-border-radius-8px u-padding-10px-12px u-margin-bottom-8px">
-                    <div class="u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-8px u-margin-bottom-6px">
-                        <div class="u-display-flex u-align-items-center u-gap-8px u-flex-wrap-wrap">
+                    <div class="debug-webhook-heading">
+                        <div class="debug-webhook-metadata">
                             <span class="webhook-source-badge webhook-source-${srcKey}">${src}</span>
                             <strong class="u-color-text-main u-font-size-13px">${title}</strong>
                             ${statusBadge}
                             <span class="u-font-size-11px u-color-text-muted">${event}</span>
                         </div>
-                        <div class="u-display-flex u-gap-6px u-align-items-center">
-                            <span class="u-font-size-10px u-color-text-muted u-margin-right-4px">${ts}</span>
-                            <button onclick="togglePayloadViewer(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-heading u-cursor-pointer">
+                        <div class="debug-webhook-actions">
+                            <time class="u-font-size-10px u-color-text-muted" datetime="${utcTimestamp}" title="UTC: ${utcTimestamp}">${ts}</time>
+                            <button type="button" onclick="togglePayloadViewer(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-heading u-cursor-pointer">
                                 View Payload
                             </button>
-                            <button onclick="replayPayloadFromDebugger(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-accent-color u-color-accent-text u-border-none u-cursor-pointer u-font-weight-600">
-                                🔁 Replay
+                            <button type="button" onclick="replayPayloadFromDebugger(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-accent-color u-color-accent-text u-border-none u-cursor-pointer u-font-weight-600">
+                                Test Payload
                             </button>
                         </div>
                     </div>
@@ -98,6 +113,35 @@
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        function filterDebugWebhooks() {
+            const query = (document.getElementById('webhook-debugger-search')?.value || '').trim().toLowerCase();
+            const source = document.getElementById('webhook-debugger-source')?.value || '';
+            const status = document.getElementById('webhook-debugger-status')?.value || '';
+            const filtered = currentDebugWebhooks.filter((wh) => {
+                const text = `${wh.media_title || ''} ${wh.event || ''} ${wh.reason || ''}`.toLowerCase();
+                return (!query || text.includes(query)) && (!source || String(wh.source || '').toLowerCase() === source) && (!status || String(wh.status || 'received').toLowerCase() === status);
+            });
+            renderDebugWebhooksList(filtered);
+        }
+
+        async function copyVisibleWebhookPayloads() {
+            const query = (document.getElementById('webhook-debugger-search')?.value || '').trim().toLowerCase();
+            const source = document.getElementById('webhook-debugger-source')?.value || '';
+            const status = document.getElementById('webhook-debugger-status')?.value || '';
+            const items = currentDebugWebhooks.filter((wh) => {
+                const text = `${wh.media_title || ''} ${wh.event || ''} ${wh.reason || ''}`.toLowerCase();
+                return (!query || text.includes(query)) && (!source || String(wh.source || '').toLowerCase() === source) && (!status || String(wh.status || 'received').toLowerCase() === status);
+            });
+            try {
+                await navigator.clipboard.writeText(items.map((wh) => JSON.stringify(wh.payload || {}, null, 2)).join('\n\n'));
+                const count = document.getElementById('webhook-debugger-visible-count');
+                if (count) count.textContent = `${items.length} payloads copied`;
+            } catch (_) {
+                const count = document.getElementById('webhook-debugger-visible-count');
+                if (count) count.textContent = 'Clipboard unavailable';
+            }
         }
 
         function togglePayloadViewer(wid) {

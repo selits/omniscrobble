@@ -128,6 +128,8 @@
         // Multi-Theme Palette Engine & Accents (Phase 1)
         // -------------------------------------------------------------
         const THEMES = [
+            { id: 'system', name: 'System', desc: 'Match your browser appearance', icon: '🌓', bg: 'linear-gradient(135deg, #ffffff 50%, #0f172a 50%)', card: 'var(--bg-surface)', border: 'var(--border-color)' },
+            { id: 'light', name: 'Light', desc: 'Bright neutral palette', icon: '☀️', bg: '#f8fafc', card: '#ffffff', border: '#cbd5e1' },
             { id: 'slate', name: 'Slate', desc: 'Oceanic Slate (Default)', icon: '🌊', bg: '#0f172a', card: 'var(--bg-surface)', border: 'var(--border-color)' },
             { id: 'oled', name: 'OLED', desc: 'True Black (#000000)', icon: '⬛', bg: '#000000', card: '#09090b', border: '#27272a' },
             { id: 'nord', name: 'Nord', desc: 'Arctic Frost & Polar Night', icon: '❄️', bg: '#242933', card: '#2e3440', border: '#4c566a' },
@@ -161,14 +163,17 @@
         function setTheme(themeId) {
             const root = document.documentElement;
             THEMES.forEach(t => root.classList.remove('theme-' + t.id));
-            if (themeId && themeId !== 'slate') {
-                root.classList.add('theme-' + themeId);
-            }
-            if (themeId === 'oled') {
-                root.classList.add('theme-oled');
-            }
-            localStorage.setItem('omniscrobble_theme', themeId);
+            const selectedTheme = THEMES.some(theme => theme.id === themeId) ? themeId : 'slate';
+            root.classList.remove('theme-light');
+            if (selectedTheme === 'light' || (selectedTheme === 'system' && window.matchMedia?.('(prefers-color-scheme: light)').matches)) root.classList.add('theme-light');
+            else if (selectedTheme !== 'slate' && selectedTheme !== 'system') root.classList.add('theme-' + selectedTheme);
+            localStorage.setItem('omniscrobble_theme', selectedTheme);
             updateThemeUI();
+        }
+
+        function syncSystemTheme(event) {
+            if (getCurrentTheme() !== 'system') return;
+            document.documentElement.classList.toggle('theme-light', Boolean(event?.matches ?? window.matchMedia?.('(prefers-color-scheme: light)').matches));
         }
 
         function setAccent(accentId) {
@@ -227,7 +232,7 @@
                 container.innerHTML = THEMES.map(t => {
                     const isSelected = t.id === currentTheme;
                     return `
-                        <div onclick="setTheme('${t.id}')" class="theme-preview-card${isSelected ? ' is-selected' : ''}" style="--theme-card:${t.card};--theme-border:${isSelected ? 'var(--accent-color)' : t.border};--theme-swatch:${t.bg};">
+                            <div onclick="setTheme('${t.id}')" class="theme-preview-card${isSelected ? ' is-selected' : ''}" style="--theme-card:${t.card};--theme-border:${t.border};--theme-swatch:${t.bg};">
                             <div class="theme-preview-swatch">
                                 ${t.icon}
                             </div>
@@ -281,6 +286,39 @@
             updateDensityUI();
         }
 
+        function setTextSize(size) {
+            const selected = ['small', 'default', 'large'].includes(size) ? size : 'default';
+            document.documentElement.classList.remove('text-size-small', 'text-size-large');
+            if (selected !== 'default') document.documentElement.classList.add(`text-size-${selected}`);
+            localStorage.setItem('omniscrobble_text_size', selected);
+            updateAppearanceControls();
+        }
+
+        function setAppearancePreference(preference, enabled) {
+            const config = {
+                'reduce-motion': {className: 'reduce-motion', storageKey: 'omniscrobble_reduce_motion', controlId: 'appearance-reduce-motion'},
+                'high-contrast': {className: 'high-contrast', storageKey: 'omniscrobble_high_contrast', controlId: 'appearance-high-contrast'}
+            }[preference];
+            if (!config) return;
+            document.documentElement.classList.toggle(config.className, Boolean(enabled));
+            localStorage.setItem(config.storageKey, String(Boolean(enabled)));
+            const control = document.getElementById(config.controlId);
+            if (control) control.checked = Boolean(enabled);
+        }
+
+        function updateAppearanceControls() {
+            const textSize = ['small', 'large'].find(size => document.documentElement.classList.contains(`text-size-${size}`)) || 'default';
+            document.querySelectorAll('[data-text-size]').forEach(button => {
+                const selected = button.dataset.textSize === textSize;
+                button.setAttribute('aria-pressed', String(selected));
+                button.classList.toggle('is-selected', selected);
+            });
+            const reduceMotion = document.getElementById('appearance-reduce-motion');
+            const highContrast = document.getElementById('appearance-high-contrast');
+            if (reduceMotion) reduceMotion.checked = document.documentElement.classList.contains('reduce-motion');
+            if (highContrast) highContrast.checked = document.documentElement.classList.contains('high-contrast');
+        }
+
         function updateDensityUI() {
             const mode = getDensity();
             const btnComf = document.getElementById('density-btn-comfortable');
@@ -311,16 +349,83 @@
 
         // Dashboard Card Visibility Controls
         const DASHBOARD_CARDS = [
-            { id: 'active-playback-card', label: 'Active Playback Stream', desc: 'Live sessions, progress bar, ambient backdrop' },
-            { id: 'card-server-config', label: 'Server & Account Status', desc: 'Trakt account pairing, endpoints, sync controls' },
-            { id: 'card-ecosystem', label: 'Multi-Server Ecosystem', desc: 'Plex, Jellyfin, and Emby ingest status cards' },
-            { id: 'card-multi-tracker', label: 'Multi-Tracker Cloud Hub', desc: 'Simkl, AniList, and MyAnimeList sync status' },
-            { id: 'card-cowatch', label: 'Watch Together (Multi-User)', desc: 'Partner scrobble status, co-watch shows & rules' },
-            { id: 'card-reconciliation', label: 'Two-Way Library Reconciliation', desc: 'Scan & sync discrepancies across libraries' },
-            { id: 'card-arr-bridge', label: 'Automation & Content Bridge', desc: 'Sonarr & Radarr instant webhook monitoring' },
-            { id: 'card-backup', label: 'System Operations & Backup', desc: 'Snapshot creation, state restore, and maintenance' },
-            { id: 'card-activity', label: 'Live Activity History', desc: 'Real-time telemetry event stream and search' }
+            { id: 'active-playback-card', workspace: 'operations', label: 'Active Playback Stream', desc: 'Live sessions, progress bar, ambient backdrop' },
+            { id: 'card-activity', workspace: 'operations', label: 'Live Activity History', desc: 'Real-time telemetry event stream and search' },
+            { id: 'card-watch-lists', workspace: 'watch-lists', label: 'Shared Watch Lists', desc: 'Household lists and collection tools' },
+            { id: 'card-server-config', workspace: 'trackers', label: 'Server & Account Status', desc: 'Account pairing, endpoints, and sync controls' },
+            { id: 'card-ecosystem', workspace: 'trackers', label: 'Multi-Server Ecosystem', desc: 'Plex, Jellyfin, and Emby ingest status' },
+            { id: 'card-multi-tracker', workspace: 'trackers', label: 'Multi-Tracker Cloud Hub', desc: 'Supported tracker connections and sync status' },
+            { id: 'card-reconciliation', workspace: 'trackers', label: 'Two-Way Library Reconciliation', desc: 'Scan and sync discrepancies across libraries' },
+            { id: 'card-cowatch', workspace: 'automation', label: 'Watch Together & Household', desc: 'Partner scrobbling, co-watch, and routing' },
+            { id: 'automation-rules-card', workspace: 'automation', label: 'Event Automation Rules', desc: 'Rule editor, review queue, and event previews' },
+            { id: 'card-arr-bridge', workspace: 'automation', label: 'Automation & Content Bridge', desc: 'Sonarr and Radarr webhook monitoring' },
+            { id: 'card-analytics', workspace: 'analytics', label: 'Analytics', desc: 'Playback trends and viewing summaries' },
+            { id: 'card-backup', workspace: 'diagnostics', label: 'System Operations & Backup', desc: 'Snapshots, restore, and maintenance' }
         ];
+
+        function dashboardCardPreference(key, fallback) {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+                if (Array.isArray(fallback)) return Array.isArray(parsed) ? parsed : fallback;
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
+            } catch (e) { return fallback; }
+        }
+
+        function orderedDashboardCards(workspace, ids) {
+            const storedOrder = dashboardCardPreference('omniscrobble_card_order', {});
+            const stored = Array.isArray(storedOrder[workspace]) ? storedOrder[workspace] : [];
+            const order = [...stored.filter(id => ids.includes(id)), ...ids.filter(id => !stored.includes(id))];
+            const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []);
+            return order.filter(id => pinned.includes(id)).concat(order.filter(id => !pinned.includes(id)));
+        }
+
+        function applyDashboardCardLayout() {
+            Object.entries(workspaceCards).forEach(([workspace, ids]) => {
+                const panel = document.getElementById(`view-${workspace}`);
+                if (!panel) return;
+                orderedDashboardCards(workspace, ids).forEach(id => {
+                    const card = document.getElementById(id);
+                    if (card) panel.appendChild(card);
+                });
+            });
+        }
+
+        function moveDashboardCard(cardId, direction) {
+            const workspace = Object.keys(workspaceCards).find(name => workspaceCards[name].includes(cardId));
+            if (!workspace) return;
+            const orderPrefs = dashboardCardPreference('omniscrobble_card_order', {});
+            const ids = workspaceCards[workspace];
+            const storedOrder = Array.isArray(orderPrefs[workspace]) ? orderPrefs[workspace].filter(id => ids.includes(id)) : [];
+            const order = [...storedOrder, ...ids.filter(id => !storedOrder.includes(id))];
+            const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []);
+            const group = order.filter(id => pinned.includes(id) === pinned.includes(cardId));
+            const index = group.indexOf(cardId);
+            const next = index + direction;
+            if (index < 0 || next < 0 || next >= group.length) return;
+            const swap = group[next];
+            const a = order.indexOf(cardId); const b = order.indexOf(swap);
+            [order[a], order[b]] = [order[b], order[a]];
+            orderPrefs[workspace] = order;
+            localStorage.setItem('omniscrobble_card_order', JSON.stringify(orderPrefs));
+            applyDashboardCardLayout();
+            renderCardVisibilityPickers();
+        }
+
+        function setDashboardCardPinned(cardId, pinnedState) {
+            const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []).filter(id => DASHBOARD_CARDS.some(card => card.id === id));
+            const next = pinned.filter(id => id !== cardId);
+            if (pinnedState) next.push(cardId);
+            localStorage.setItem('omniscrobble_pinned_cards', JSON.stringify(next));
+            applyDashboardCardLayout();
+            renderCardVisibilityPickers();
+        }
+
+        function resetDashboardCardLayout() {
+            localStorage.removeItem('omniscrobble_card_order');
+            localStorage.removeItem('omniscrobble_pinned_cards');
+            applyDashboardCardLayout();
+            renderCardVisibilityPickers();
+        }
 
         function getHiddenCards() {
             try {
@@ -371,10 +476,20 @@
             if (!container) return;
             const hidden = getHiddenCards();
 
-            container.innerHTML = DASHBOARD_CARDS.map(card => {
+            const cards = DASHBOARD_CARDS.slice().sort((a, b) => {
+                if (a.workspace !== b.workspace) return DASHBOARD_CARDS.indexOf(a) - DASHBOARD_CARDS.indexOf(b);
+                const ordered = orderedDashboardCards(a.workspace, workspaceCards[a.workspace] || []);
+                return ordered.indexOf(a.id) - ordered.indexOf(b.id);
+            });
+            container.innerHTML = cards.map(card => {
                 const isVisible = !hidden.includes(card.id);
+                const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []).includes(card.id);
+                const ids = workspaceCards[card.workspace] || [];
+                const ordered = orderedDashboardCards(card.workspace, ids);
+                const sameGroup = ordered.filter(id => dashboardCardPreference('omniscrobble_pinned_cards', []).includes(id) === pinned);
+                const index = sameGroup.indexOf(card.id);
                 return `
-                    <div class="u-background-bg-surface u-border-1px-solid-var-border-color u-border-radius-8px u-padding-10px-14px u-display-flex u-align-items-center u-justify-content-space-between u-gap-12px">
+                    <div class="appearance-card-row">
                         <div class="u-min-width-0 u-flex-1">
                             <div class="u-font-size-13px u-font-weight-600 u-color-text-main u-white-space-nowrap u-overflow-hidden u-text-overflow-ellipsis">
                                 ${card.label}
@@ -383,8 +498,13 @@
                                 ${card.desc}
                             </div>
                         </div>
-                        <label class="u-position-relative u-display-inline-block u-width-38px u-height-22px u-flex-shrink-0 u-cursor-pointer">
-                            <input type="checkbox" ${isVisible ? 'checked' : ''} onchange="setCardVisibility('${card.id}', this.checked)" class="u-opacity-0 u-width-0-c40a0e u-height-0">
+                        <div class="appearance-card-actions">
+                            <button type="button" class="btn-sm appearance-pin-button${pinned ? ' is-selected' : ''}" aria-pressed="${pinned}" title="${pinned ? 'Unpin card' : 'Pin card to top of workspace'}" onclick="setDashboardCardPinned('${card.id}', ${!pinned})">${pinned ? '📌 Pinned' : 'Pin'}</button>
+                            <button type="button" class="btn-sm appearance-move-button" aria-label="Move ${card.label} up" title="Move up" onclick="moveDashboardCard('${card.id}', -1)" ${index <= 0 ? 'disabled' : ''}>↑</button>
+                            <button type="button" class="btn-sm appearance-move-button" aria-label="Move ${card.label} down" title="Move down" onclick="moveDashboardCard('${card.id}', 1)" ${index === sameGroup.length - 1 ? 'disabled' : ''}>↓</button>
+                        </div>
+                        <label class="appearance-visibility-switch">
+                            <input type="checkbox" aria-label="Show ${card.label} card" ${isVisible ? 'checked' : ''} onchange="setCardVisibility('${card.id}', this.checked)">
                             <span class="card-visibility-track" data-visible="${isVisible}">
                                 <span class="card-visibility-thumb"></span>
                             </span>
@@ -467,7 +587,12 @@
             updateThemeUI();
             updateDensityUI();
             applyCardVisibility();
+            applyDashboardCardLayout();
+            updateAppearanceControls();
+            syncSystemTheme();
         }
+
+        window.matchMedia?.('(prefers-color-scheme: light)')?.addEventListener?.('change', syncSystemTheme);
 
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initAppearance);

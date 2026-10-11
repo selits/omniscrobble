@@ -731,9 +731,9 @@
             return {label, input: select};
         }
 
-        function accountButton(text, action) {
+        function accountButton(text, action, className = '') {
             const button = document.createElement('button');
-            button.type = 'button'; button.className = 'btn-sm'; button.textContent = text;
+            button.type = 'button'; button.className = `btn-sm ${className}`.trim(); button.textContent = text;
             button.addEventListener('click', async () => {
                 if (button.disabled) return;
                 button.disabled = true;
@@ -785,7 +785,7 @@
                     const title = document.createElement('strong'); title.textContent = account.username;
                     const role = accountRole(account.role);
                     const password = accountInput('password', 'New password (optional)');
-                    const enabledLabel = document.createElement('label'); enabledLabel.textContent = 'Enabled';
+                    const enabledLabel = document.createElement('label'); enabledLabel.textContent = 'Enabled'; enabledLabel.className = 'account-field account-enabled-field';
                     const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.checked = account.enabled; enabledLabel.appendChild(enabled);
                     form.append(title, role.label, password.label, enabledLabel);
                     const save = accountButton('Save', async () => {
@@ -797,12 +797,16 @@
                         if (me.source === 'local_account' && me.username === account.username) { window.location.href = '/login'; return; }
                         await openAccountModal();
                     });
-                    form.append(save, accountButton('Delete', async () => {
+                    const actions = document.createElement('div');
+                    actions.className = 'account-form-actions';
+                    save.classList.add('account-save-button');
+                    actions.append(save, accountButton('Delete', async () => {
                         if (!confirm(`Delete household account ${account.username}?`)) return;
                         await accountRequest(`/api/admin/accounts/${encodeURIComponent(account.username)}`, 'DELETE');
                         if (me.source === 'local_account' && me.username === account.username) { window.location.href = '/login'; return; }
                         await openAccountModal();
-                    }));
+                    }, 'account-delete-button'));
+                    form.append(actions);
                     form.addEventListener('submit', event => { event.preventDefault(); save.click(); });
                     content.appendChild(form);
                 }
@@ -942,22 +946,13 @@
                 renderThemePickers();
                 if (typeof updateDensityUI === 'function') updateDensityUI();
                 if (typeof renderCardVisibilityPickers === 'function') renderCardVisibilityPickers();
+                if (typeof updateAppearanceControls === 'function') updateAppearanceControls();
             }
             tabs.forEach(t => {
                 const btn = document.getElementById(`settings-tab-btn-${t}`);
                 const panel = document.getElementById(`settings-panel-${t}`);
                 if (btn) {
-                    if (t === tabName) {
-                        btn.style.background = 'var(--accent-color, var(--accent-color))';
-                        btn.style.color = 'var(--accent-text)';
-                        btn.style.fontWeight = '600';
-                        btn.style.border = 'none';
-                    } else {
-                        btn.style.background = 'var(--bg-surface)';
-                        btn.style.color = 'var(--text-heading)';
-                        btn.style.fontWeight = 'normal';
-                        btn.style.border = '1px solid var(--border-color)';
-                    }
+                    btn.setAttribute('aria-selected', String(t === tabName));
                 }
                 if (panel) {
                     panel.style.display = (t === tabName) ? 'flex' : 'none';
@@ -967,18 +962,7 @@
 
         function filterSettingsTrackers(category, btn) {
             const btns = document.querySelectorAll('.settings-trk-cat-btn');
-            btns.forEach(b => {
-                b.style.background = 'var(--bg-surface)';
-                b.style.borderColor = 'var(--border-color)';
-                b.style.color = 'var(--text-heading)';
-                b.style.fontWeight = 'normal';
-            });
-            if (btn) {
-                btn.style.background = 'var(--accent-color)';
-                btn.style.borderColor = 'var(--accent-color)';
-                btn.style.color = 'var(--accent-text)';
-                btn.style.fontWeight = '600';
-            }
+            btns.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
             const cards = document.querySelectorAll('#settings-panel-trackers div[data-tracker-cat]');
             cards.forEach(card => {
                 if (category === 'all' || card.getAttribute('data-tracker-cat') === category) {
@@ -991,18 +975,7 @@
 
         function filterHubTrackers(category, btn) {
             const btns = document.querySelectorAll('.hub-cat-tab');
-            btns.forEach(b => {
-                b.style.background = 'var(--bg-surface)';
-                b.style.borderColor = 'var(--border-color)';
-                b.style.color = 'var(--text-heading)';
-                b.style.fontWeight = 'normal';
-            });
-            if (btn) {
-                btn.style.background = 'var(--accent-color)';
-                btn.style.borderColor = 'var(--accent-color)';
-                btn.style.color = 'var(--accent-text)';
-                btn.style.fontWeight = '600';
-            }
+            btns.forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
             const items = document.querySelectorAll('#hub-trackers-grid .hub-tracker-item');
             items.forEach(item => {
                 if (category === 'all' || item.getAttribute('data-cat') === category) {
@@ -1374,6 +1347,29 @@
                 if (failCheck && notifs.notify_on_failure !== undefined) failCheck.checked = Boolean(notifs.notify_on_failure);
                 const notificationRoutes = notifs.notification_routes || {};
                 const notificationProfiles = data.notification_profiles || [];
+                const routeContainer = document.getElementById('settings-notification-routes');
+                if (routeContainer && !routeContainer.dataset.rendered) {
+                    const routeEvents = [
+                        ['scrobble', 'Scrobbles', true], ['rate', 'Ratings', true], ['collection', 'Collection', true],
+                        ['arr_add', 'Acquisitions', true], ['playback_start', 'Playback started', true],
+                        ['queue_recovery', 'Queue recovery', true], ['token_expiry', 'Token expiry', false],
+                        ['digest', 'Weekly digest', false], ['failure', 'Sync failures', true]
+                    ];
+                    const channels = ['discord', 'telegram', 'ntfy', 'pushover', 'gotify', 'matrix'];
+                    const channelOptions = channels.map(channel => `<option value="${channel}">${channel[0].toUpperCase()}${channel.slice(1)}</option>`).join('');
+                    routeContainer.innerHTML = routeEvents.map(([event, label, hasProfiles]) => `
+                        <section class="notification-route-card" aria-label="${label} notification route">
+                            <h4>${label}</h4>
+                            <label for="settings-notif-route-${event}-destinations">Channels</label>
+                            <select id="settings-notif-route-${event}-destinations" class="notification-route-destinations" multiple size="3" aria-label="${label} notification channels">${channelOptions}</select>
+                            <label for="settings-notif-route-${event}-severity">Severity</label>
+                            <select id="settings-notif-route-${event}-severity" aria-label="${label} notification severity"><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option></select>
+                            ${hasProfiles ? `<label for="settings-notif-route-${event}-profiles">Profiles <span>(empty means all)</span></label><select id="settings-notif-route-${event}-profiles" class="notification-route-profiles" multiple size="2" aria-label="${label} profile subscriptions"></select>` : ''}
+                            <div class="notification-route-actions"><button type="button" class="btn-sm" onclick="previewNotificationRoute('${event}')">Preview route</button><button type="button" class="btn-sm" onclick="sendNotificationRoutePreview('${event}')">Send sample</button></div>
+                            <span id="settings-notif-route-${event}-preview" class="notification-route-feedback" aria-live="polite"></span><span id="settings-notif-route-${event}-delivery" class="notification-route-feedback" aria-live="polite"></span>
+                        </section>`).join('');
+                    routeContainer.dataset.rendered = 'true';
+                }
                 for (const event of ['scrobble', 'rate', 'collection', 'arr_add', 'playback_start', 'queue_recovery', 'token_expiry', 'digest', 'failure']) {
                     const destinations = document.getElementById(`settings-notif-route-${event}-destinations`);
                     const severity = document.getElementById(`settings-notif-route-${event}-severity`);
@@ -3651,6 +3647,79 @@
 
 // ---- diagnostics.js ----
         let allRawLogs = [];
+        let allLogEntries = [];
+        let visibleRawLogs = [];
+        let logRefreshTimer = null;
+
+        function parseLogEntry(line) {
+            const levelMatch = line.match(/\[([A-Z]+)\]/);
+            const timestampMatch = line.match(/\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))/);
+            return { line, level: levelMatch ? levelMatch[1] : 'UNKNOWN', timestamp: timestampMatch ? timestampMatch[1] : '' };
+        }
+
+        function setLogAutoRefresh() {
+            if (logRefreshTimer) clearInterval(logRefreshTimer);
+            logRefreshTimer = null;
+            const seconds = Number(document.getElementById('logs-refresh-interval')?.value || 0);
+            if (!seconds || document.getElementById('diagnostics-pane-logs')?.hidden) return;
+            logRefreshTimer = setInterval(fetchLogs, seconds * 1000);
+        }
+
+        function updateLogArchiveEstimate() {
+            const size = Number(document.getElementById('logs-archive-size')?.value || 10);
+            const countInput = document.getElementById('logs-archive-count');
+            const maxCount = Math.max(1, Math.min(50, Math.floor(128 / size) - 1));
+            if (countInput) {
+                countInput.max = String(maxCount);
+                if (Number(countInput.value) > maxCount) countInput.value = String(maxCount);
+            }
+            const count = Number(countInput?.value || 5);
+            const estimate = document.getElementById('logs-archive-cap');
+            if (estimate) estimate.textContent = `Maximum storage: about ${size * (count + 1)} MiB`;
+        }
+
+        async function saveLogArchiveSettings() {
+            if (!isAdmin || isDemo) return;
+            const sizeInput = document.getElementById('logs-archive-size');
+            const countInput = document.getElementById('logs-archive-count');
+            const status = document.getElementById('logs-archive-status');
+            const maxMiB = Number(sizeInput?.value);
+            const backupCount = Number(countInput?.value);
+            const maxCount = Number.isFinite(maxMiB) && maxMiB > 0
+                ? Math.max(1, Math.min(50, Math.floor(128 / maxMiB) - 1))
+                : 1;
+            if (!Number.isInteger(maxMiB) || maxMiB < 1 || maxMiB > 64 || !Number.isInteger(backupCount) || backupCount < 1 || backupCount > maxCount) {
+                if (status) status.textContent = `Choose a file size from 1–64 MiB and no more than ${maxCount} archives at that size.`;
+                return;
+            }
+            if (status) status.textContent = 'Saving…';
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ logs: { max_bytes: maxMiB * 1024 * 1024, backup_count: backupCount } })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Unable to save log archive settings.');
+                const saved = data.settings?.logs || { max_bytes: maxMiB * 1024 * 1024, backup_count: backupCount };
+                if (sizeInput) sizeInput.value = String(Math.round(saved.max_bytes / (1024 * 1024)));
+                if (countInput) countInput.value = String(saved.backup_count);
+                updateLogArchiveEstimate();
+                if (status) status.textContent = 'Saved and applied.';
+                fetchLogs();
+            } catch (error) {
+                if (status) status.textContent = `Save failed: ${error.message}`;
+            }
+        }
+
+        function formatLogTimestamp(line) {
+            const match = line.match(/\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))/);
+            if (!match) return escapeHtml(line);
+            const date = new Date(match[1]);
+            if (Number.isNaN(date.getTime())) return escapeHtml(line);
+            const local = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
+            return `${escapeHtml(line.slice(0, match.index))}<time datetime="${escapeHtml(match[1])}" title="UTC: ${escapeHtml(date.toISOString())}">${escapeHtml(local)}</time>${escapeHtml(line.slice(match.index + match[1].length))}`;
+        }
 
         function openLogsModal() {
             if (!isAdmin && !isDemo) {
@@ -3679,11 +3748,14 @@
                 if (button) button.setAttribute('aria-selected', String(name === tab));
             });
             if (tab === 'inspector') loadDebugWebhooks();
+            setLogAutoRefresh();
         }
 
         function closeDiagnosticsDrawer() {
             const drawer = document.getElementById('diagnostics-modal');
             if (drawer) drawer.style.display = 'none';
+            if (logRefreshTimer) clearInterval(logRefreshTimer);
+            logRefreshTimer = null;
         }
 
         async function fetchLogs() {
@@ -3699,6 +3771,16 @@
                         badge.textContent = data.source === 'journalctl' ? 'journalctl --user' : (data.source.includes('demo') ? 'simulated journal' : 'app buffer');
                     }
                     allRawLogs = data.lines || [];
+                    allLogEntries = data.entries || allRawLogs.map(parseLogEntry);
+                    const archivePanel = document.getElementById('logs-archive-settings');
+                    if (archivePanel) archivePanel.hidden = !isAdmin || isDemo;
+                    if (data.archive_settings) {
+                        const sizeInput = document.getElementById('logs-archive-size');
+                        const countInput = document.getElementById('logs-archive-count');
+                        if (sizeInput) sizeInput.value = String(Math.round(data.archive_settings.max_bytes / (1024 * 1024)));
+                        if (countInput) countInput.value = String(data.archive_settings.backup_count);
+                        updateLogArchiveEstimate();
+                    }
                     filterLogs();
                 } else if (res.status === 401) {
                     closeLogsModal();
@@ -3722,14 +3804,18 @@
             const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
             const level = levelSelect ? levelSelect.value : 'ALL';
 
-            const filtered = allRawLogs.filter(line => {
+            const filteredEntries = allLogEntries.filter(entry => {
+                const line = entry.line || `${entry.timestamp || ''} [${entry.level || 'UNKNOWN'}] ${entry.name || ''}: ${entry.message || ''}`;
                 const lower = line.toLowerCase();
+                const severity = String(entry.level || 'UNKNOWN').toUpperCase();
                 if (query && !lower.includes(query)) return false;
-                if (level === 'ERROR') return lower.includes('[error]') || lower.includes('error:');
-                if (level === 'WARNING') return lower.includes('[warning]') || lower.includes('warning:') || lower.includes('[error]') || lower.includes('error:');
-                if (level === 'INFO') return lower.includes('[info]') || lower.includes('[warning]') || lower.includes('[error]');
+                if (level === 'ERROR') return ['ERROR', 'CRITICAL', 'FATAL'].includes(severity);
+                if (level === 'WARNING') return ['WARNING', 'ERROR', 'CRITICAL', 'FATAL'].includes(severity);
+                if (level === 'INFO') return ['INFO', 'WARNING', 'ERROR', 'CRITICAL', 'FATAL'].includes(severity);
                 return true;
             });
+            const filtered = filteredEntries.map(entry => entry.line || `${entry.timestamp || ''} [${entry.level || 'UNKNOWN'}] ${entry.name || ''}: ${entry.message || ''}`);
+            visibleRawLogs = filtered;
 
             if (countLabel) countLabel.textContent = `${filtered.length} lines`;
 
@@ -3738,15 +3824,17 @@
                 return;
             }
 
-            terminal.innerHTML = filtered.map(line => {
-                const safe = escapeHtml(line);
-                if (safe.includes('[ERROR]') || safe.includes('ERROR:')) {
+            terminal.innerHTML = filteredEntries.map((entry, index) => {
+                const line = filtered[index];
+                const safe = formatLogTimestamp(line);
+                const severity = String(entry.level || 'UNKNOWN').toUpperCase();
+                if (['ERROR', 'CRITICAL', 'FATAL'].includes(severity)) {
                     return `<div class="u-color-f87171">${safe}</div>`;
                 }
-                if (safe.includes('[WARNING]') || safe.includes('WARNING:')) {
+                if (severity === 'WARNING') {
                     return `<div class="u-color-fbbf24">${safe}</div>`;
                 }
-                if (safe.includes('[INFO]')) {
+                if (severity === 'INFO') {
                     return `<div class="u-color-text-heading"><span class="u-color-accent-color">[INFO]</span>${safe.replace('[INFO]', '')}</div>`;
                 }
                 return `<div>${safe}</div>`;
@@ -3759,7 +3847,7 @@
 
         function copyLogsToClipboard() {
             const btn = document.getElementById('copy-logs-btn');
-            const text = allRawLogs.join('\n');
+            const text = visibleRawLogs.join('\n');
             const legacyCopy = () => {
                 const textarea = document.createElement('textarea');
                 textarea.value = text;
@@ -3924,6 +4012,8 @@
         // Multi-Theme Palette Engine & Accents (Phase 1)
         // -------------------------------------------------------------
         const THEMES = [
+            { id: 'system', name: 'System', desc: 'Match your browser appearance', icon: '🌓', bg: 'linear-gradient(135deg, #ffffff 50%, #0f172a 50%)', card: 'var(--bg-surface)', border: 'var(--border-color)' },
+            { id: 'light', name: 'Light', desc: 'Bright neutral palette', icon: '☀️', bg: '#f8fafc', card: '#ffffff', border: '#cbd5e1' },
             { id: 'slate', name: 'Slate', desc: 'Oceanic Slate (Default)', icon: '🌊', bg: '#0f172a', card: 'var(--bg-surface)', border: 'var(--border-color)' },
             { id: 'oled', name: 'OLED', desc: 'True Black (#000000)', icon: '⬛', bg: '#000000', card: '#09090b', border: '#27272a' },
             { id: 'nord', name: 'Nord', desc: 'Arctic Frost & Polar Night', icon: '❄️', bg: '#242933', card: '#2e3440', border: '#4c566a' },
@@ -3957,14 +4047,17 @@
         function setTheme(themeId) {
             const root = document.documentElement;
             THEMES.forEach(t => root.classList.remove('theme-' + t.id));
-            if (themeId && themeId !== 'slate') {
-                root.classList.add('theme-' + themeId);
-            }
-            if (themeId === 'oled') {
-                root.classList.add('theme-oled');
-            }
-            localStorage.setItem('omniscrobble_theme', themeId);
+            const selectedTheme = THEMES.some(theme => theme.id === themeId) ? themeId : 'slate';
+            root.classList.remove('theme-light');
+            if (selectedTheme === 'light' || (selectedTheme === 'system' && window.matchMedia?.('(prefers-color-scheme: light)').matches)) root.classList.add('theme-light');
+            else if (selectedTheme !== 'slate' && selectedTheme !== 'system') root.classList.add('theme-' + selectedTheme);
+            localStorage.setItem('omniscrobble_theme', selectedTheme);
             updateThemeUI();
+        }
+
+        function syncSystemTheme(event) {
+            if (getCurrentTheme() !== 'system') return;
+            document.documentElement.classList.toggle('theme-light', Boolean(event?.matches ?? window.matchMedia?.('(prefers-color-scheme: light)').matches));
         }
 
         function setAccent(accentId) {
@@ -4023,7 +4116,7 @@
                 container.innerHTML = THEMES.map(t => {
                     const isSelected = t.id === currentTheme;
                     return `
-                        <div onclick="setTheme('${t.id}')" class="theme-preview-card${isSelected ? ' is-selected' : ''}" style="--theme-card:${t.card};--theme-border:${isSelected ? 'var(--accent-color)' : t.border};--theme-swatch:${t.bg};">
+                            <div onclick="setTheme('${t.id}')" class="theme-preview-card${isSelected ? ' is-selected' : ''}" style="--theme-card:${t.card};--theme-border:${t.border};--theme-swatch:${t.bg};">
                             <div class="theme-preview-swatch">
                                 ${t.icon}
                             </div>
@@ -4077,6 +4170,39 @@
             updateDensityUI();
         }
 
+        function setTextSize(size) {
+            const selected = ['small', 'default', 'large'].includes(size) ? size : 'default';
+            document.documentElement.classList.remove('text-size-small', 'text-size-large');
+            if (selected !== 'default') document.documentElement.classList.add(`text-size-${selected}`);
+            localStorage.setItem('omniscrobble_text_size', selected);
+            updateAppearanceControls();
+        }
+
+        function setAppearancePreference(preference, enabled) {
+            const config = {
+                'reduce-motion': {className: 'reduce-motion', storageKey: 'omniscrobble_reduce_motion', controlId: 'appearance-reduce-motion'},
+                'high-contrast': {className: 'high-contrast', storageKey: 'omniscrobble_high_contrast', controlId: 'appearance-high-contrast'}
+            }[preference];
+            if (!config) return;
+            document.documentElement.classList.toggle(config.className, Boolean(enabled));
+            localStorage.setItem(config.storageKey, String(Boolean(enabled)));
+            const control = document.getElementById(config.controlId);
+            if (control) control.checked = Boolean(enabled);
+        }
+
+        function updateAppearanceControls() {
+            const textSize = ['small', 'large'].find(size => document.documentElement.classList.contains(`text-size-${size}`)) || 'default';
+            document.querySelectorAll('[data-text-size]').forEach(button => {
+                const selected = button.dataset.textSize === textSize;
+                button.setAttribute('aria-pressed', String(selected));
+                button.classList.toggle('is-selected', selected);
+            });
+            const reduceMotion = document.getElementById('appearance-reduce-motion');
+            const highContrast = document.getElementById('appearance-high-contrast');
+            if (reduceMotion) reduceMotion.checked = document.documentElement.classList.contains('reduce-motion');
+            if (highContrast) highContrast.checked = document.documentElement.classList.contains('high-contrast');
+        }
+
         function updateDensityUI() {
             const mode = getDensity();
             const btnComf = document.getElementById('density-btn-comfortable');
@@ -4107,16 +4233,83 @@
 
         // Dashboard Card Visibility Controls
         const DASHBOARD_CARDS = [
-            { id: 'active-playback-card', label: 'Active Playback Stream', desc: 'Live sessions, progress bar, ambient backdrop' },
-            { id: 'card-server-config', label: 'Server & Account Status', desc: 'Trakt account pairing, endpoints, sync controls' },
-            { id: 'card-ecosystem', label: 'Multi-Server Ecosystem', desc: 'Plex, Jellyfin, and Emby ingest status cards' },
-            { id: 'card-multi-tracker', label: 'Multi-Tracker Cloud Hub', desc: 'Simkl, AniList, and MyAnimeList sync status' },
-            { id: 'card-cowatch', label: 'Watch Together (Multi-User)', desc: 'Partner scrobble status, co-watch shows & rules' },
-            { id: 'card-reconciliation', label: 'Two-Way Library Reconciliation', desc: 'Scan & sync discrepancies across libraries' },
-            { id: 'card-arr-bridge', label: 'Automation & Content Bridge', desc: 'Sonarr & Radarr instant webhook monitoring' },
-            { id: 'card-backup', label: 'System Operations & Backup', desc: 'Snapshot creation, state restore, and maintenance' },
-            { id: 'card-activity', label: 'Live Activity History', desc: 'Real-time telemetry event stream and search' }
+            { id: 'active-playback-card', workspace: 'operations', label: 'Active Playback Stream', desc: 'Live sessions, progress bar, ambient backdrop' },
+            { id: 'card-activity', workspace: 'operations', label: 'Live Activity History', desc: 'Real-time telemetry event stream and search' },
+            { id: 'card-watch-lists', workspace: 'watch-lists', label: 'Shared Watch Lists', desc: 'Household lists and collection tools' },
+            { id: 'card-server-config', workspace: 'trackers', label: 'Server & Account Status', desc: 'Account pairing, endpoints, and sync controls' },
+            { id: 'card-ecosystem', workspace: 'trackers', label: 'Multi-Server Ecosystem', desc: 'Plex, Jellyfin, and Emby ingest status' },
+            { id: 'card-multi-tracker', workspace: 'trackers', label: 'Multi-Tracker Cloud Hub', desc: 'Supported tracker connections and sync status' },
+            { id: 'card-reconciliation', workspace: 'trackers', label: 'Two-Way Library Reconciliation', desc: 'Scan and sync discrepancies across libraries' },
+            { id: 'card-cowatch', workspace: 'automation', label: 'Watch Together & Household', desc: 'Partner scrobbling, co-watch, and routing' },
+            { id: 'automation-rules-card', workspace: 'automation', label: 'Event Automation Rules', desc: 'Rule editor, review queue, and event previews' },
+            { id: 'card-arr-bridge', workspace: 'automation', label: 'Automation & Content Bridge', desc: 'Sonarr and Radarr webhook monitoring' },
+            { id: 'card-analytics', workspace: 'analytics', label: 'Analytics', desc: 'Playback trends and viewing summaries' },
+            { id: 'card-backup', workspace: 'diagnostics', label: 'System Operations & Backup', desc: 'Snapshots, restore, and maintenance' }
         ];
+
+        function dashboardCardPreference(key, fallback) {
+            try {
+                const parsed = JSON.parse(localStorage.getItem(key) || 'null');
+                if (Array.isArray(fallback)) return Array.isArray(parsed) ? parsed : fallback;
+                return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback;
+            } catch (e) { return fallback; }
+        }
+
+        function orderedDashboardCards(workspace, ids) {
+            const storedOrder = dashboardCardPreference('omniscrobble_card_order', {});
+            const stored = Array.isArray(storedOrder[workspace]) ? storedOrder[workspace] : [];
+            const order = [...stored.filter(id => ids.includes(id)), ...ids.filter(id => !stored.includes(id))];
+            const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []);
+            return order.filter(id => pinned.includes(id)).concat(order.filter(id => !pinned.includes(id)));
+        }
+
+        function applyDashboardCardLayout() {
+            Object.entries(workspaceCards).forEach(([workspace, ids]) => {
+                const panel = document.getElementById(`view-${workspace}`);
+                if (!panel) return;
+                orderedDashboardCards(workspace, ids).forEach(id => {
+                    const card = document.getElementById(id);
+                    if (card) panel.appendChild(card);
+                });
+            });
+        }
+
+        function moveDashboardCard(cardId, direction) {
+            const workspace = Object.keys(workspaceCards).find(name => workspaceCards[name].includes(cardId));
+            if (!workspace) return;
+            const orderPrefs = dashboardCardPreference('omniscrobble_card_order', {});
+            const ids = workspaceCards[workspace];
+            const storedOrder = Array.isArray(orderPrefs[workspace]) ? orderPrefs[workspace].filter(id => ids.includes(id)) : [];
+            const order = [...storedOrder, ...ids.filter(id => !storedOrder.includes(id))];
+            const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []);
+            const group = order.filter(id => pinned.includes(id) === pinned.includes(cardId));
+            const index = group.indexOf(cardId);
+            const next = index + direction;
+            if (index < 0 || next < 0 || next >= group.length) return;
+            const swap = group[next];
+            const a = order.indexOf(cardId); const b = order.indexOf(swap);
+            [order[a], order[b]] = [order[b], order[a]];
+            orderPrefs[workspace] = order;
+            localStorage.setItem('omniscrobble_card_order', JSON.stringify(orderPrefs));
+            applyDashboardCardLayout();
+            renderCardVisibilityPickers();
+        }
+
+        function setDashboardCardPinned(cardId, pinnedState) {
+            const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []).filter(id => DASHBOARD_CARDS.some(card => card.id === id));
+            const next = pinned.filter(id => id !== cardId);
+            if (pinnedState) next.push(cardId);
+            localStorage.setItem('omniscrobble_pinned_cards', JSON.stringify(next));
+            applyDashboardCardLayout();
+            renderCardVisibilityPickers();
+        }
+
+        function resetDashboardCardLayout() {
+            localStorage.removeItem('omniscrobble_card_order');
+            localStorage.removeItem('omniscrobble_pinned_cards');
+            applyDashboardCardLayout();
+            renderCardVisibilityPickers();
+        }
 
         function getHiddenCards() {
             try {
@@ -4167,10 +4360,20 @@
             if (!container) return;
             const hidden = getHiddenCards();
 
-            container.innerHTML = DASHBOARD_CARDS.map(card => {
+            const cards = DASHBOARD_CARDS.slice().sort((a, b) => {
+                if (a.workspace !== b.workspace) return DASHBOARD_CARDS.indexOf(a) - DASHBOARD_CARDS.indexOf(b);
+                const ordered = orderedDashboardCards(a.workspace, workspaceCards[a.workspace] || []);
+                return ordered.indexOf(a.id) - ordered.indexOf(b.id);
+            });
+            container.innerHTML = cards.map(card => {
                 const isVisible = !hidden.includes(card.id);
+                const pinned = dashboardCardPreference('omniscrobble_pinned_cards', []).includes(card.id);
+                const ids = workspaceCards[card.workspace] || [];
+                const ordered = orderedDashboardCards(card.workspace, ids);
+                const sameGroup = ordered.filter(id => dashboardCardPreference('omniscrobble_pinned_cards', []).includes(id) === pinned);
+                const index = sameGroup.indexOf(card.id);
                 return `
-                    <div class="u-background-bg-surface u-border-1px-solid-var-border-color u-border-radius-8px u-padding-10px-14px u-display-flex u-align-items-center u-justify-content-space-between u-gap-12px">
+                    <div class="appearance-card-row">
                         <div class="u-min-width-0 u-flex-1">
                             <div class="u-font-size-13px u-font-weight-600 u-color-text-main u-white-space-nowrap u-overflow-hidden u-text-overflow-ellipsis">
                                 ${card.label}
@@ -4179,8 +4382,13 @@
                                 ${card.desc}
                             </div>
                         </div>
-                        <label class="u-position-relative u-display-inline-block u-width-38px u-height-22px u-flex-shrink-0 u-cursor-pointer">
-                            <input type="checkbox" ${isVisible ? 'checked' : ''} onchange="setCardVisibility('${card.id}', this.checked)" class="u-opacity-0 u-width-0-c40a0e u-height-0">
+                        <div class="appearance-card-actions">
+                            <button type="button" class="btn-sm appearance-pin-button${pinned ? ' is-selected' : ''}" aria-pressed="${pinned}" title="${pinned ? 'Unpin card' : 'Pin card to top of workspace'}" onclick="setDashboardCardPinned('${card.id}', ${!pinned})">${pinned ? '📌 Pinned' : 'Pin'}</button>
+                            <button type="button" class="btn-sm appearance-move-button" aria-label="Move ${card.label} up" title="Move up" onclick="moveDashboardCard('${card.id}', -1)" ${index <= 0 ? 'disabled' : ''}>↑</button>
+                            <button type="button" class="btn-sm appearance-move-button" aria-label="Move ${card.label} down" title="Move down" onclick="moveDashboardCard('${card.id}', 1)" ${index === sameGroup.length - 1 ? 'disabled' : ''}>↓</button>
+                        </div>
+                        <label class="appearance-visibility-switch">
+                            <input type="checkbox" aria-label="Show ${card.label} card" ${isVisible ? 'checked' : ''} onchange="setCardVisibility('${card.id}', this.checked)">
                             <span class="card-visibility-track" data-visible="${isVisible}">
                                 <span class="card-visibility-thumb"></span>
                             </span>
@@ -4263,7 +4471,12 @@
             updateThemeUI();
             updateDensityUI();
             applyCardVisibility();
+            applyDashboardCardLayout();
+            updateAppearanceControls();
+            syncSystemTheme();
         }
+
+        window.matchMedia?.('(prefers-color-scheme: light)')?.addEventListener?.('change', syncSystemTheme);
 
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', initAppearance);
@@ -5848,6 +6061,12 @@ SIMKL_ENABLED=true</pre>
 // ---- webhook_inspector.js ----
         let currentDebugWebhooks = [];
 
+        function formatLocalTimestamp(value) {
+            const date = new Date(value);
+            if (!value || Number.isNaN(date.getTime())) return value || 'Time unavailable';
+            return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(date);
+        }
+
         function openWebhookDebuggerModal() {
             if (!isAdmin && !isDemo) { openUnlockModal(); return; }
             openDiagnosticsDrawer('inspector');
@@ -5869,7 +6088,7 @@ SIMKL_ENABLED=true</pre>
                     const data = await res.json();
                     currentDebugWebhooks = data.webhooks || [];
                     if (countBadge) countBadge.innerText = `${currentDebugWebhooks.length} events`;
-                    renderDebugWebhooksList(currentDebugWebhooks);
+                    filterDebugWebhooks();
                 } else {
                     listEl.innerHTML = '<div class="u-color-f87171 u-font-size-12px u-padding-8px-0">Failed to load webhook history.</div>';
                 }
@@ -5896,10 +6115,17 @@ SIMKL_ENABLED=true</pre>
             const listEl = document.getElementById('webhook-debugger-list');
             if (!listEl) return;
             if (!webhooks.length) {
-                listEl.innerHTML = '<div class="u-color-text-muted u-font-size-12px u-font-style-italic u-padding-12px-0">No incoming webhooks recorded yet. Incoming media server and standalone scrobbles will appear here automatically.</div>';
+                const visibleCount = document.getElementById('webhook-debugger-visible-count');
+                if (visibleCount) visibleCount.textContent = '0 shown';
+                const message = currentDebugWebhooks.length
+                    ? 'No webhook events match these filters.'
+                    : 'No incoming webhooks recorded yet. Incoming media server and standalone scrobbles will appear here automatically.';
+                listEl.innerHTML = `<div class="u-color-text-muted u-font-size-12px u-font-style-italic u-padding-12px-0">${message}</div>`;
                 return;
             }
 
+            const visibleCount = document.getElementById('webhook-debugger-visible-count');
+            if (visibleCount) visibleCount.textContent = `${webhooks.length} shown`;
             listEl.innerHTML = webhooks.map((wh, idx) => {
                 const wid = encodeURIComponentForInlineJs(wh.id || `wh_${idx}`);
                 const sourceName = String(wh.source || 'webhook').toLowerCase();
@@ -5907,7 +6133,9 @@ SIMKL_ENABLED=true</pre>
                 const src = escapeHtml(sourceName.toUpperCase());
                 const event = escapeHtml(wh.event || 'media.event');
                 const title = escapeHtml(wh.media_title || 'Media Event');
-                const ts = escapeHtml(wh.timestamp || '');
+                const rawTimestamp = wh.iso_timestamp || wh.timestamp || '';
+                const ts = escapeHtml(formatLocalTimestamp(rawTimestamp));
+                const utcTimestamp = escapeHtml(rawTimestamp);
                 const status = escapeHtml(wh.status || 'received');
                 const reason = escapeHtml(wh.reason || '');
                 const payloadJson = escapeHtml(JSON.stringify(wh.payload || {}, null, 2));
@@ -5923,20 +6151,20 @@ SIMKL_ENABLED=true</pre>
 
                 return `
                 <div class="debug-webhook-card u-background-bg-page u-border-1px-solid-var-border-color u-border-radius-8px u-padding-10px-12px u-margin-bottom-8px">
-                    <div class="u-display-flex u-justify-content-space-between u-align-items-center u-flex-wrap-wrap u-gap-8px u-margin-bottom-6px">
-                        <div class="u-display-flex u-align-items-center u-gap-8px u-flex-wrap-wrap">
+                    <div class="debug-webhook-heading">
+                        <div class="debug-webhook-metadata">
                             <span class="webhook-source-badge webhook-source-${srcKey}">${src}</span>
                             <strong class="u-color-text-main u-font-size-13px">${title}</strong>
                             ${statusBadge}
                             <span class="u-font-size-11px u-color-text-muted">${event}</span>
                         </div>
-                        <div class="u-display-flex u-gap-6px u-align-items-center">
-                            <span class="u-font-size-10px u-color-text-muted u-margin-right-4px">${ts}</span>
-                            <button onclick="togglePayloadViewer(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-heading u-cursor-pointer">
+                        <div class="debug-webhook-actions">
+                            <time class="u-font-size-10px u-color-text-muted" datetime="${utcTimestamp}" title="UTC: ${utcTimestamp}">${ts}</time>
+                            <button type="button" onclick="togglePayloadViewer(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-bg-surface u-border-1px-solid-var-border-color u-color-text-heading u-cursor-pointer">
                                 View Payload
                             </button>
-                            <button onclick="replayPayloadFromDebugger(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-accent-color u-color-accent-text u-border-none u-cursor-pointer u-font-weight-600">
-                                🔁 Replay
+                            <button type="button" onclick="replayPayloadFromDebugger(decodeURIComponent('${wid}'))" class="btn-sm u-padding-2px-8px u-font-size-11px u-background-accent-color u-color-accent-text u-border-none u-cursor-pointer u-font-weight-600">
+                                Test Payload
                             </button>
                         </div>
                     </div>
@@ -5946,6 +6174,35 @@ SIMKL_ENABLED=true</pre>
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        function filterDebugWebhooks() {
+            const query = (document.getElementById('webhook-debugger-search')?.value || '').trim().toLowerCase();
+            const source = document.getElementById('webhook-debugger-source')?.value || '';
+            const status = document.getElementById('webhook-debugger-status')?.value || '';
+            const filtered = currentDebugWebhooks.filter((wh) => {
+                const text = `${wh.media_title || ''} ${wh.event || ''} ${wh.reason || ''}`.toLowerCase();
+                return (!query || text.includes(query)) && (!source || String(wh.source || '').toLowerCase() === source) && (!status || String(wh.status || 'received').toLowerCase() === status);
+            });
+            renderDebugWebhooksList(filtered);
+        }
+
+        async function copyVisibleWebhookPayloads() {
+            const query = (document.getElementById('webhook-debugger-search')?.value || '').trim().toLowerCase();
+            const source = document.getElementById('webhook-debugger-source')?.value || '';
+            const status = document.getElementById('webhook-debugger-status')?.value || '';
+            const items = currentDebugWebhooks.filter((wh) => {
+                const text = `${wh.media_title || ''} ${wh.event || ''} ${wh.reason || ''}`.toLowerCase();
+                return (!query || text.includes(query)) && (!source || String(wh.source || '').toLowerCase() === source) && (!status || String(wh.status || 'received').toLowerCase() === status);
+            });
+            try {
+                await navigator.clipboard.writeText(items.map((wh) => JSON.stringify(wh.payload || {}, null, 2)).join('\n\n'));
+                const count = document.getElementById('webhook-debugger-visible-count');
+                if (count) count.textContent = `${items.length} payloads copied`;
+            } catch (_) {
+                const count = document.getElementById('webhook-debugger-visible-count');
+                if (count) count.textContent = 'Clipboard unavailable';
+            }
         }
 
         function togglePayloadViewer(wid) {
@@ -6696,7 +6953,7 @@ SIMKL_ENABLED=true</pre>
             operations: ['active-playback-card', 'card-activity'],
             'watch-lists': ['card-watch-lists'],
             trackers: ['card-server-config', 'card-ecosystem', 'card-multi-tracker', 'card-reconciliation'],
-            automation: ['automation-rules-card', 'card-cowatch', 'card-arr-bridge'],
+            automation: ['card-cowatch', 'automation-rules-card', 'card-arr-bridge'],
             analytics: ['card-analytics'],
             diagnostics: ['card-backup']
         };
@@ -7130,13 +7387,7 @@ SIMKL_ENABLED=true</pre>
             const inspectorDialog = document.querySelector('#webhook-debugger-modal > .modal-dialog');
             if (logsDialog) document.getElementById('diagnostics-pane-logs')?.appendChild(logsDialog);
             if (inspectorDialog) document.getElementById('diagnostics-pane-inspector')?.appendChild(inspectorDialog);
-            Object.entries(workspaceCards).forEach(([workspace, ids]) => {
-                const panel = document.getElementById(`view-${workspace}`);
-                ids.forEach((id) => {
-                    const card = document.getElementById(id);
-                    if (panel && card) panel.appendChild(card);
-                });
-            });
+            applyDashboardCardLayout();
             document.getElementById('workspace-nav')?.addEventListener('keydown', (event) => {
                 if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                 const tabs = Array.from(document.querySelectorAll('.workspace-tab'));
