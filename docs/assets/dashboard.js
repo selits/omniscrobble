@@ -692,7 +692,10 @@
                 options.body = JSON.stringify(payload);
             }
             const response = await fetch(url, options);
-            const data = await response.json();
+            const responseText = await response.text();
+            let data = {};
+            try { data = responseText ? JSON.parse(responseText) : {}; }
+            catch (_) { throw new Error(`The server returned an unreadable response (${response.status}).`); }
             if (!response.ok) throw new Error(data.detail || 'Account operation failed.');
             return data;
         }
@@ -710,7 +713,7 @@
             const input = document.createElement('input');
             input.type = type; input.value = value;
             input.style.cssText = 'display:block;max-width:100%;box-sizing:border-box;';
-            if (type === 'password') { input.minLength = 12; input.autocomplete = 'new-password'; }
+            if (type === 'password') { input.minLength = 8; input.autocomplete = 'new-password'; }
             label.appendChild(input);
             return {label, input};
         }
@@ -735,7 +738,7 @@
                 if (button.disabled) return;
                 button.disabled = true;
                 const status = document.getElementById('account-modal-status');
-                try { await action(); }
+                try { status.textContent = `${button.textContent}…`; await action(); }
                 catch (error) { status.textContent = error.message; }
                 finally { button.disabled = false; }
             });
@@ -774,7 +777,7 @@
                 if (me.role !== 'admin') return;
                 const accounts = await accountRequest('/api/admin/accounts');
                 const hint = document.createElement('p');
-                hint.textContent = 'Use the media-server profile username for each member. Passwords must contain at least 12 characters. Changing a password, role, or account access revokes that account’s sessions.';
+                hint.textContent = 'Use the media-server profile username for each member. Passwords must contain at least 8 characters. Changing a password, role, or account access revokes that account’s sessions.';
                 content.appendChild(hint);
                 for (const account of accounts.accounts) {
                     const form = document.createElement('form');
@@ -809,7 +812,18 @@
                 const password = accountInput('password', 'Password'); password.input.required = true;
                 const role = accountRole('member');
                 const add = accountButton('Create account', async () => {
-                    if (!create.reportValidity()) return;
+                    if (!username.input.checkValidity()) {
+                        status.textContent = 'Enter a username of 3–32 characters, starting with a letter or number. Use only letters, numbers, dots, underscores, or hyphens.';
+                        username.input.reportValidity();
+                        username.input.focus();
+                        return;
+                    }
+                    if (!password.input.value || password.input.value.length < 8) {
+                        status.textContent = 'Password must contain at least 8 characters.';
+                        password.input.reportValidity();
+                        password.input.focus();
+                        return;
+                    }
                     await accountRequest('/api/admin/accounts', 'POST', {username: username.input.value, password: password.input.value, role: role.input.value});
                     password.input.value = '';
                     await openAccountModal();

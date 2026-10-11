@@ -23,6 +23,20 @@ def test_account_storage_and_password_authentication(tmp_path):
     assert not manager.session_has_csrf(session.session_token, "wrong csrf")
 
 
+def test_account_password_minimum_is_eight_characters(tmp_path):
+    manager = DashboardAuthManager(tmp_path / "accounts.json")
+    account = manager.create_account("EightChars", "12345678", "member")
+
+    assert account["username"] == "eightchars"
+    with pytest.raises(ValueError, match="at least 8 characters"):
+        manager.create_account("TooShort", "1234567", "member")
+
+    with pytest.raises(ValueError, match="at least 8 characters"):
+        manager.update_account("eightchars", password="1234567")
+    manager.update_account("eightchars", password="abcdefgh")
+    assert manager.authenticate("eightchars", "abcdefgh") is not None
+
+
 def test_failed_account_persistence_rolls_back_in_memory_mutation(tmp_path, monkeypatch):
     import app.services.dashboard_auth_manager as auth_module
 

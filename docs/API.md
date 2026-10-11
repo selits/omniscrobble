@@ -60,7 +60,7 @@ Local household accounts are enabled only when `WEBHOOK_SECRET` is configured. C
 | **`/api/account/logout`** | `POST` | Household Account | **Sign Out**: Revokes the current local session and clears its cookies. |
 | **`/api/account/me`** | `GET` | Household Account or Admin | **Current Identity**: Returns username, role, and authentication source; never returns password data. |
 | **`/api/admin/accounts`** | `GET` | Admin | **List Household Accounts**: Returns usernames, roles, enabled state, and creation time without password hashes. |
-| **`/api/admin/accounts`** | `POST` | Admin | **Create Household Account**: Creates an admin or member account with a password of at least 12 characters. |
+| **`/api/admin/accounts`** | `POST` | Admin | **Create Household Account**: Creates an admin or member account with a password of at least 8 characters. |
 | **`/api/admin/accounts/{username}`** | `PATCH` | Admin | **Update Household Account**: Changes role, enabled state, or password; revokes existing sessions. |
 | **`/api/admin/accounts/{username}`** | `DELETE` | Admin | **Delete Household Account**: Removes an account and revokes existing sessions. |
 | **`/api/automation/rules`** | `GET` | Admin | **List Event Rules**: Returns ordered rules, the default allow behavior, and precedence policy. |

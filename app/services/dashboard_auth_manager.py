@@ -118,8 +118,8 @@ class DashboardAuthManager:
         name = self.normalize_username(username)
         if role not in ROLE_PERMISSIONS:
             raise ValueError("Role must be admin or member.")
-        if len(password) < 12:
-            raise ValueError("Password must be at least 12 characters.")
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters.")
         with self._lock:
             if name in self._accounts:
                 raise ValueError("An account with that username already exists.")
@@ -216,8 +216,8 @@ class DashboardAuthManager:
                     raise ValueError("Role must be admin or member.")
                 account["role"] = role
             if password is not None:
-                if len(password) < 12:
-                    raise ValueError("Password must be at least 12 characters.")
+                if len(password) < 8:
+                    raise ValueError("Password must be at least 8 characters.")
                 account["password_hash"] = self._password_record(password)
             if enabled is not None:
                 account["enabled"] = bool(enabled)
