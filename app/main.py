@@ -14,7 +14,7 @@ import time
 import urllib.parse
 import zipfile
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from typing import Any, Literal, Optional
 
 from fastapi import FastAPI, Form, HTTPException, Request, Response
@@ -69,6 +69,10 @@ from app.services.reverse_sync_manager import reverse_sync_mgr
 from app.services.arr_bridge import arr_bridge
 from app.services.cross_tracker_sync import CrossTrackerSyncManager
 from app.services.settings_manager import settings_mgr
+log_mgr.reconfigure_archive(**{
+    "max_bytes": settings_mgr.get_log_archive_settings()["max_bytes"],
+    "backup_count": settings_mgr.get_log_archive_settings()["backup_count"],
+})
 from app.services.compatibility_manager import CompatibilityManager
 from app.services.cloud_sync_manager import cloud_sync_mgr
 from app.services.webhook_debugger import webhook_debugger
@@ -768,7 +772,7 @@ async def lifespan(app: FastAPI):
     await notifier.close()
 
 
-APP_VERSION = "3.4.0"
+APP_VERSION = "3.5.0"
 REPO_URL = "https://github.com/selits/omniscrobble"
 
 app = FastAPI(title="Omniscrobble", version=APP_VERSION, lifespan=lifespan)
@@ -2804,7 +2808,17 @@ BACKUP_CATEGORIES = {
     "household data": lambda name: name in {"data/cowatch_shows.json", "data/cowatch_devices.json", "data/dashboard_accounts.json", "data/dashboard_accounts_audit.json"},
     "diary data": lambda name: name == "data/letterboxd_diary.json",
     "reconciliation history": lambda name: name == "data/cross_sync_provenance.json",
+    "log archives": lambda name: _is_log_archive_path(name),
 }
+
+
+def _is_log_archive_path(name: str) -> bool:
+    """Accept only the active Omniscrobble log and numeric RotatingFileHandler archives."""
+    prefix = "data/logs/omniscrobble.log."
+    if name == "data/logs/omniscrobble.log":
+        return True
+    suffix = name[len(prefix):] if name.startswith(prefix) else ""
+    return bool(suffix) and suffix.isdigit()
 
 
 def _decode_backup_archive(contents: bytes, passphrase: str = "") -> tuple[dict[str, bytes], dict[str, Any] | None, list[str]]:
@@ -2894,8 +2908,16 @@ def _build_backup_restore_preview(files: dict[str, bytes], manifest: dict[str, A
         "data/watch_lists.json", "data/cowatch_shows.json", "data/cowatch_devices.json",
         "data/letterboxd_diary.json", "data/automation_rules.json",
         "data/cross_sync_provenance.json",
+        "data/logs/omniscrobble.log",
     )
     existing.update(name for name in known_targets if (Config.BASE_DIR / name).exists())
+    log_directory = Config.BASE_DIR / "data" / "logs"
+    if log_directory.is_dir() and not log_directory.is_symlink():
+        existing.update(
+            path.relative_to(Config.BASE_DIR).as_posix()
+            for path in log_directory.glob("omniscrobble.log.*")
+            if path.is_file() and not path.is_symlink() and _is_log_archive_path(path.relative_to(Config.BASE_DIR).as_posix())
+        )
 
     categories = {}
     for label, matches in BACKUP_CATEGORIES.items():
@@ -2976,21 +2998,35 @@ async def export_backup(request: Request, passphrase: Optional[str] = None):
         provenance_file = Config.BASE_DIR / "data" / "cross_sync_provenance.json"
         if provenance_file.exists():
             zf.write(provenance_file, arcname="data/cross_sync_provenance.json")
-        zf.writestr("manifest.json", json.dumps({
+        log_directory = Config.BASE_DIR / "data" / "logs"
+        if log_directory.is_dir() and not log_directory.is_symlink():
+            with log_mgr.archive_handler.lock:
+                for path in sorted(log_directory.glob("omniscrobble.log*")):
+                    archive_name = path.relative_to(Config.BASE_DIR).as_posix()
+                    if path.is_file() and not path.is_symlink() and _is_log_archive_path(archive_name):
+                        zf.write(path, arcname=archive_name)
+        manifest = json.dumps({
             "format_version": BACKUP_FORMAT_VERSION,
             "app_version": APP_VERSION,
             "created_at": datetime.datetime.now(timezone.utc).isoformat(),
             "files": sorted(zf.namelist()),
-        }, indent=2))
+        }, indent=2)
+        if sum(info.file_size for info in zf.filelist) + len(manifest.encode("utf-8")) > MAX_BACKUP_UNCOMPRESSED_BYTES:
+            raise HTTPException(status_code=413, detail="Backup exceeds the maximum expanded size.")
+        zf.writestr("manifest.json", manifest)
 
     buffer.seek(0)
     zip_bytes = buffer.getvalue()
+    if len(zip_bytes) > MAX_BACKUP_ARCHIVE_BYTES:
+        raise HTTPException(status_code=413, detail="Backup exceeds the maximum download size.")
     key = passphrase or request.headers.get("x-backup-passphrase") or getattr(Config, "CONFIG_ENCRYPTION_KEY", "")
 
     if key:
         from app.services.crypto_manager import encrypt_bytes
         encrypted_dict = encrypt_bytes(zip_bytes, key)
         encrypted_json = json.dumps(encrypted_dict, indent=2).encode("utf-8")
+        if len(encrypted_json) > MAX_BACKUP_ARCHIVE_BYTES:
+            raise HTTPException(status_code=413, detail="Encrypted backup exceeds the maximum download size.")
         filename = f"omniscrobble-backup-encrypted-{datetime.date.today().isoformat()}.json"
         return Response(
             content=encrypted_json,
@@ -3098,14 +3134,31 @@ async def import_backup(request: Request):
             raise HTTPException(status_code=400, detail="Restore target resolves outside the application data directory.")
         target_paths[name] = target_path
 
+    restored_logs = [name for name in files if _is_log_archive_path(name)]
+    log_directory = base_path / "data" / "logs"
+    if restored_logs:
+        if log_directory.is_symlink() or any((base_path / name).is_symlink() for name in restored_logs):
+            raise HTTPException(status_code=400, detail="Log archive restore targets must not be symbolic links.")
     restored_files = []
     try:
-        for name, payload in files.items():
-            target_path = target_paths[name]
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(target_path, "wb") as target:
-                target.write(payload)
-            restored_files.append(name)
+        with log_mgr.archive_handler.lock if restored_logs else nullcontext():
+            if restored_logs and log_mgr.archive_handler.stream:
+                log_mgr.archive_handler.flush()
+                log_mgr.archive_handler.stream.close()
+                log_mgr.archive_handler.stream = None
+            for name, payload in files.items():
+                target_path = target_paths[name]
+                is_log_archive = _is_log_archive_path(name)
+                target_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700 if is_log_archive else 0o755)
+                if is_log_archive:
+                    os.chmod(target_path.parent, 0o700)
+                    descriptor = os.open(target_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with os.fdopen(descriptor, "wb") as target:
+                        target.write(payload)
+                else:
+                    with open(target_path, "wb") as target:
+                        target.write(payload)
+                restored_files.append(name)
 
         # Reload clients and caches
         for c in list(user_mgr._clients.values()):
@@ -3117,6 +3170,8 @@ async def import_backup(request: Request):
         cowatch_mgr._load_shows()
         cowatch_mgr._load_devices()
         settings_mgr._load_settings()
+        log_archive_settings = settings_mgr.get_log_archive_settings()
+        log_mgr.reconfigure_archive(**log_archive_settings)
         automation_rules_mgr._load()
         dashboard_auth_mgr.reload_accounts()
         if "data/queue.db" in files:
@@ -3340,7 +3395,9 @@ async def get_system_logs(
         }
     if not is_admin_request(request):
         raise HTTPException(status_code=401, detail="Unauthorized: Admin access required to view logs")
-    return await log_mgr.get_logs(lines=lines, source=source)
+    result = await log_mgr.get_logs(lines=lines, source=source)
+    result["archive_settings"] = log_mgr.get_archive_settings()
+    return result
 
 
 class ManualScrobbleRequest(BaseModel):
@@ -3389,6 +3446,7 @@ class SettingsUpdateRequest(BaseModel):
     arr: Optional[dict[str, Any]] = None
     rules: Optional[dict[str, Any]] = None
     notifications: Optional[dict[str, Any]] = None
+    logs: Optional[dict[str, int]] = None
     multi_server_mirroring: Optional[bool] = None
 
     model_config = {"extra": "ignore"}
@@ -3462,6 +3520,16 @@ def update_settings_endpoint(payload: SettingsUpdateRequest, request: Request):
         if "mal" in payload.credentials:
             mal_creds = settings_mgr.get_tracker_credentials("mal", mask=False)
             mal.update_credentials(client_id=mal_creds.get("client_id"), client_secret=mal_creds.get("client_secret"))
+
+    if payload.logs is not None:
+        try:
+            archive = settings_mgr.get_log_archive_settings()
+            log_mgr.reconfigure_archive(
+                max_bytes=archive["max_bytes"],
+                backup_count=archive["backup_count"],
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     if payload.reconciliation:
         raw_recon = settings_mgr.get_reconciliation_settings(mask_token=False)
@@ -5665,18 +5733,18 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             if not trakt_enabled:
                 paused_label = f"Paused (@{display_username})" if display_username else "Trakt Paused"
                 if is_admin:
-                    status_badge = f'<a href="/auth" style="background:#334155;border:1px solid #64748b;color:#cbd5e1;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">⏸️ {paused_label} &bull; Manage</a>'
+                    status_badge = f'<a href="/auth" class="header-status-badge is-paused">⏸️ {paused_label} &bull; Manage</a>'
                 else:
-                    status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#1e293b;border:1px solid #475569;color:#94a3b8;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">⏸️ {paused_label} &bull; 🔒 Locked</a>'
+                    status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" class="header-status-badge is-locked" title="Click to unlock admin access">⏸️ {paused_label} &bull; 🔒 Locked</a>'
             elif is_admin:
-                status_badge = f'<a href="/auth" style="background:#047857;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;">{user_label} &bull; Manage</a>'
+                status_badge = f'<a href="/auth" class="header-status-badge is-connected">{user_label} &bull; Manage</a>'
             else:
-                status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#065f46;color:#a7f3d0;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">{user_label} &bull; 🔒 Locked</a>'
+                status_badge = f'<a href="javascript:void(0)" onclick="openUnlockModal()" class="header-status-badge is-locked" title="Click to unlock admin access">{user_label} &bull; 🔒 Locked</a>'
         else:
             if is_admin:
-                status_badge = '<a href="/auth" style="background:#ef4444;color:#fff;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;">Not Connected &bull; Link Trakt &rarr;</a>'
+                status_badge = '<a href="/auth" class="header-status-badge is-disconnected">Not Connected &bull; Link Trakt &rarr;</a>'
             else:
-                status_badge = '<a href="javascript:void(0)" onclick="openUnlockModal()" style="background:#991b1b;color:#fecaca;padding:6px 14px;border-radius:9999px;font-size:12px;font-weight:600;text-decoration:none;" title="Click to unlock admin access">Not Connected &bull; 🔒 Unlock &rarr;</a>'
+                status_badge = '<a href="javascript:void(0)" onclick="openUnlockModal()" class="header-status-badge is-locked" title="Click to unlock admin access">Not Connected &bull; 🔒 Unlock &rarr;</a>'
 
         # Admin header controls
         if Config.WEBHOOK_SECRET:
@@ -5717,9 +5785,7 @@ async def render_dashboard_response(request: Request, response: Response, is_dem
             masked_webhook_url = full_webhook_url
 
     settings_header_btn = (
-        '<button onclick="openSettingsModal()" class="btn-sm" '
-        'style="background:#1e293b;border:1px solid #475569;color:#f8fafc;padding:6px 12px;font-size:12px;cursor:pointer;'
-        'display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-weight:600;" '
+        '<button onclick="openSettingsModal()" class="btn-sm settings-hub-header-button" '
         'title="Configure Media Servers, Trackers, and Automation"><span>⚙️</span><span>Settings Hub</span></button>'
     )
 

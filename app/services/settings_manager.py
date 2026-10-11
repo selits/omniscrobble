@@ -37,6 +37,10 @@ class SettingsManager:
             if data_dir is not None
             else getattr(config, "DATA_DIR", getattr(config, "BASE_DIR", Path(".")) / "data")
         )
+        log_archive_defaults = self.config.normalize_log_archive_settings(
+            getattr(self.config, "LOG_ARCHIVE_MAX_BYTES", 10_485_760),
+            getattr(self.config, "LOG_ARCHIVE_BACKUP_COUNT", 5),
+        )
         self._settings: dict[str, Any] = {
             "schema_version": self.SCHEMA_VERSION,
             "servers": self._detect_default_servers(),
@@ -56,6 +60,7 @@ class SettingsManager:
             "arr": self._detect_default_arr(),
             "rules": self._detect_default_rules(),
             "notifications": {},
+            "logs": log_archive_defaults,
             "multi_server_mirroring": bool(getattr(self.config, "MULTI_SERVER_MIRRORING", False)),
         }
         self._custom_notifications: dict[str, Any] = {}
@@ -328,6 +333,23 @@ class SettingsManager:
                                 if nv is not None:
                                     self._custom_notifications[nk] = nv
                             self._settings["notifications"] = dict(self._custom_notifications)
+
+                        logs_data = data.get("logs", {})
+                        if isinstance(logs_data, dict):
+                            if "max_bytes" in logs_data:
+                                try:
+                                    self._settings["logs"]["max_bytes"] = max(1_048_576, min(67_108_864, int(logs_data["max_bytes"])))
+                                except (TypeError, ValueError):
+                                    pass
+                            if "backup_count" in logs_data:
+                                try:
+                                    self._settings["logs"]["backup_count"] = max(1, min(50, int(logs_data["backup_count"])))
+                                except (TypeError, ValueError):
+                                    pass
+                            self._settings["logs"] = self.config.normalize_log_archive_settings(
+                                self._settings["logs"]["max_bytes"],
+                                self._settings["logs"]["backup_count"],
+                            )
 
                         if "multi_server_mirroring" in data:
                             self._settings["multi_server_mirroring"] = bool(data["multi_server_mirroring"])
@@ -897,8 +919,19 @@ class SettingsManager:
             "arr": self.get_arr_settings(mask=mask_token),
             "rules": self.get_rules_settings(),
             "notifications": self.get_notifications(mask=mask_token),
+            "logs": self.get_log_archive_settings(),
             "multi_server_mirroring": self.is_multi_server_mirroring_enabled(),
         }
+
+    def get_log_archive_settings(self) -> dict[str, int]:
+        """Return the active bounded log archive policy."""
+        with self._lock:
+            defaults = self.config.normalize_log_archive_settings(
+                getattr(self.config, "LOG_ARCHIVE_MAX_BYTES", 10_485_760),
+                getattr(self.config, "LOG_ARCHIVE_BACKUP_COUNT", 5),
+            )
+            self._settings.setdefault("logs", defaults)
+            return dict(self._settings["logs"])
 
     @persisted_mutation(("_settings", "_custom_notifications"), RuntimeError)
     def update_all_settings(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -930,6 +963,23 @@ class SettingsManager:
 
         if "notifications" in data and isinstance(data["notifications"], dict):
             self.update_notifications(data["notifications"])
+
+        logs = data.get("logs")
+        if isinstance(logs, dict):
+            log_settings = self._settings.setdefault("logs", self.get_log_archive_settings())
+            if "max_bytes" in logs:
+                try:
+                    log_settings["max_bytes"] = max(1_048_576, min(67_108_864, int(logs["max_bytes"])))
+                except (ValueError, TypeError):
+                    raise ValueError("Log archive size must be an integer number of bytes.")
+            if "backup_count" in logs:
+                try:
+                    log_settings["backup_count"] = max(1, min(50, int(logs["backup_count"])))
+                except (ValueError, TypeError):
+                    raise ValueError("Log archive count must be an integer.")
+            self._settings["logs"] = self.config.normalize_log_archive_settings(
+                log_settings["max_bytes"], log_settings["backup_count"]
+            )
 
         if "multi_server_mirroring" in data:
             self._settings["multi_server_mirroring"] = bool(data["multi_server_mirroring"])

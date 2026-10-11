@@ -311,6 +311,8 @@ scrape_configs:
 ### Real-Time Terminal Log Viewer
 
 - Access live service logs directly from the dashboard modal (`GET /api/logs`).
+- Sanitized application logs are also archived in `data/logs/` with size-based rotation and configurable bounded retention; the default is one active 10 MiB file plus five archives. Downloadable backup snapshots include the active log and retained archives.
+- Admins can change the maximum file size and archive count directly from the Live Logs viewer; changes apply immediately and persist with runtime settings.
 - Backed by `journalctl` on systemd deployments and an in-memory ring buffer on Docker.
 - **Automated Secret Redaction**: All query tokens (`?token=...`), Bearer headers, and media server API keys are scrubbed before reaching the browser.
 - **Interactive Controls**: Filter by log severity (`INFO`, `WARNING`, `ERROR`), search by keyword, and auto-scroll live log streams.
@@ -321,7 +323,7 @@ scrape_configs:
 
 ## 8. Multi-Theme Palette Engine & Accents
 
-Omniscrobble includes a comprehensive, client-side appearance engine featuring 8 curated dark palettes and 9 accent colors.
+Omniscrobble includes a client-side appearance engine featuring 8 curated dark palettes, a light palette, system appearance matching, and 9 accent colors. Text size, reduced motion, high contrast, display density, card visibility, card ordering, and pinned cards are also available in the Settings Hub. These choices are saved per browser in `localStorage`.
 
 ### Curated Dark Palettes
 
@@ -383,7 +385,10 @@ Customize the dashboard to display only the features you actively use:
 
 - **Individual Card Visibility**: Turn off cards you do not need (such as *Arr Content Bridge if you don't run Sonarr/Radarr, Watch Together if viewing solo, or Two-Way Reconciliation if you only perform real-time scrobbling).
 - **Instant Toggles**: Manage card visibility in the Settings Hub Appearance tab with live preview.
-- **1-Click Reset**: Restore default card layout instantly with the **Reset to Default** button.
+- **Workspace Layout**: Move cards within each workspace, pin cards to the top, and reset ordering or pins independently from visibility.
+- **Accessibility**: Choose a smaller or larger interface scale, reduce animation, and increase contrast for borders, text, and focus indicators.
+- **System Palette**: Follow the browser’s light or dark color preference automatically, or select the Light palette directly.
+- **Independent Resets**: Reset visibility separately from card ordering and pins.
 - **Pre-Render Style Injection**: Disabled cards are suppressed before first paint via an inline `<style id="fouc-card-style">` element, preventing layout shift on page load.
 
 ---

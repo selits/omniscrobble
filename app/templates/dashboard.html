@@ -20,6 +20,9 @@
         (function() {
             try {
                 var theme = localStorage.getItem('omniscrobble_theme') || 'slate';
+                if (theme === 'system') {
+                    theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'slate';
+                }
                 if (theme && theme !== 'slate') {
                     document.documentElement.classList.add('theme-' + theme);
                 }
@@ -34,6 +37,10 @@
                 if (density === 'compact') {
                     document.documentElement.classList.add('density-compact');
                 }
+                var textSize = localStorage.getItem('omniscrobble_text_size') || 'default';
+                if (textSize !== 'default') document.documentElement.classList.add('text-size-' + textSize);
+                if (localStorage.getItem('omniscrobble_reduce_motion') === 'true') document.documentElement.classList.add('reduce-motion');
+                if (localStorage.getItem('omniscrobble_high_contrast') === 'true') document.documentElement.classList.add('high-contrast');
                 var hiddenCards = JSON.parse(localStorage.getItem('omniscrobble_hidden_cards') || '[]');
                 if (hiddenCards && hiddenCards.length) {
                     var s = document.createElement('style');

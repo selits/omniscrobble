@@ -103,7 +103,7 @@ class WebhookDebugger:
         media_title: Optional[str] = None,
     ) -> dict[str, Any]:
         """Record an incoming raw webhook event into the ring buffer."""
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone.utc)
         clean_payload = sanitize_payload(payload)
         clean_headers = sanitize_headers(headers)
         entry_id = f"wh_{uuid.uuid4().hex[:8]}"
@@ -120,8 +120,8 @@ class WebhookDebugger:
 
         entry = {
             "id": entry_id,
-            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
             "iso_timestamp": now.isoformat(),
+            "timestamp": now.isoformat(),
             "source": source.lower(),
             "endpoint": endpoint,
             "headers": clean_headers,

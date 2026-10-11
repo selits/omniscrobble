@@ -51,7 +51,7 @@
             <section class="workspace-panel" id="view-trackers" role="tabpanel" tabindex="0" aria-labelledby="tab-trackers" hidden><div class="workspace-intro"><h2>Trackers &amp; Media Servers</h2><p>Connections, delivery destinations, and library reconciliation.</p></div></section>
             <section class="workspace-panel" id="view-automation" role="tabpanel" tabindex="0" aria-labelledby="tab-automation" hidden><div class="workspace-intro"><h2>Automation</h2><p>Event rules and household routing controls.</p></div>
                 <section class="card" id="automation-rules-card" aria-labelledby="automation-rules-title">
-                    <div class="cowatch-card-heading"><div><h3 id="automation-rules-title" class="u-margin-0">Event automation rules</h3><p class="cowatch-card-description">Rules run after the existing duration, library, and path filters. Lower priority numbers run first; the first match decides.</p></div><button type="button" class="btn-sm" onclick="loadAutomationRules(true)">Refresh</button></div>
+                    <div class="cowatch-card-heading"><div><h3 id="automation-rules-title" class="u-margin-0">Event Automation Rules</h3><p class="cowatch-card-description">Rules run after the existing duration, library, and path filters. Lower priority numbers run first; the first match decides.</p></div><button type="button" class="btn-sm" onclick="loadAutomationRules(true)">Refresh</button></div>
                     <div id="automation-rules-admin" hidden>
                         <div class="automation-rule-form">
                             <label>Name<input id="automation-rule-name" maxlength="80" placeholder="Example: Quiet hours" /></label>
@@ -78,7 +78,7 @@
                         <div class="automation-rule-form u-margin-top-12px">
                             <label>Server<input id="automation-sample-server" value="plex" /></label><label>Library<input id="automation-sample-library" placeholder="Movies" /></label><label>Media type<select id="automation-sample-media-type"><option value="movie">Movie</option><option value="episode">Episode</option><option value="show">Show</option></select></label><label>Device<input id="automation-sample-device" placeholder="Living Room TV" /></label><label>User<input id="automation-sample-user" placeholder="casey" /></label>
                         </div>
-                        <div class="u-display-flex u-flex-wrap-wrap u-gap-8px u-margin-top-12px"><button type="button" class="btn-sm" onclick="evaluateAutomationSample(false)">Evaluate saved rules</button><button type="button" class="btn-sm" onclick="evaluateAutomationSample(true)">Preview unsaved rules</button></div>
+                        <div class="automation-preview-actions"><button type="button" class="btn-sm" onclick="evaluateAutomationSample(false)">Evaluate saved rules</button><button type="button" class="btn-sm" onclick="evaluateAutomationSample(true)">Preview unsaved rules</button></div>
                         <pre id="automation-rules-preview-result" class="automation-rules-result" aria-live="polite">Choose a sample event to see the matched rule and precedence explanation.</pre>
                     </details>
                 </section>

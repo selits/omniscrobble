@@ -155,7 +155,7 @@ class DemoManager:
             },
         ]
     def get_demo_events(self) -> list[dict[str, Any]]:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone.utc)
         fmt = "%Y-%m-%d %H:%M:%S"
 
         def _time_ago(minutes: int) -> str:
@@ -958,7 +958,7 @@ class DemoManager:
         }
 
     def get_demo_background_sync_status(self) -> dict[str, Any]:
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now()
         return {
             "last_run_timestamp": (now - datetime.timedelta(hours=2)).isoformat(),
             "last_run_status": "success",
@@ -991,12 +991,12 @@ class DemoManager:
         }
 
     def get_demo_webhook_debug_history(self) -> list[dict[str, Any]]:
-        now = datetime.datetime.now()
+        now = datetime.datetime.now(datetime.timezone.utc)
         return [
             {
                 "id": "wh_demo001",
-                "timestamp": (now - datetime.timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M:%S"),
                 "iso_timestamp": (now - datetime.timedelta(minutes=3)).isoformat(),
+                "timestamp": (now - datetime.timedelta(minutes=3)).isoformat(),
                 "source": "plex",
                 "endpoint": "/webhook",
                 "headers": {"host": "omniscrobble.local:8080", "user-agent": "PlexMediaServer/1.40.2"},
@@ -1021,8 +1021,8 @@ class DemoManager:
             },
             {
                 "id": "wh_demo002",
-                "timestamp": (now - datetime.timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S"),
                 "iso_timestamp": (now - datetime.timedelta(minutes=45)).isoformat(),
+                "timestamp": (now - datetime.timedelta(minutes=45)).isoformat(),
                 "source": "jellyfin",
                 "endpoint": "/webhook/jellyfin",
                 "headers": {"host": "omniscrobble.local:8080", "user-agent": "Jellyfin-Webhook/10.9"},

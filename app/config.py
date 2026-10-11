@@ -10,6 +10,18 @@ load_dotenv(BASE_DIR / ".env")
 class Config:
     BASE_DIR: Path = BASE_DIR
     BACKUP_RETENTION_COUNT: int = max(1, min(50, int(os.getenv("BACKUP_RETENTION_COUNT", "5"))))
+    LOG_ARCHIVE_MAX_TOTAL_BYTES: int = 128 * 1024 * 1024
+    LOG_ARCHIVE_MAX_FILE_BYTES: int = 64 * 1024 * 1024
+    LOG_ARCHIVE_MAX_BYTES: int = max(1_048_576, min(67_108_864, int(os.getenv("LOG_ARCHIVE_MAX_BYTES", "10485760"))))
+    LOG_ARCHIVE_BACKUP_COUNT: int = max(1, min(50, int(os.getenv("LOG_ARCHIVE_BACKUP_COUNT", "5"))))
+
+    @classmethod
+    def normalize_log_archive_settings(cls, max_bytes: int, backup_count: int) -> dict[str, int]:
+        """Clamp log archive settings and keep their estimated total under 128 MiB."""
+        size = max(1_048_576, min(cls.LOG_ARCHIVE_MAX_FILE_BYTES, int(max_bytes)))
+        count = max(1, min(50, int(backup_count)))
+        allowed_count = max(1, min(50, cls.LOG_ARCHIVE_MAX_TOTAL_BYTES // size - 1))
+        return {"max_bytes": size, "backup_count": min(count, allowed_count)}
     TRAKT_CLIENT_ID: str = os.getenv("TRAKT_CLIENT_ID", "")
     TRAKT_CLIENT_SECRET: str = os.getenv("TRAKT_CLIENT_SECRET", "")
     TRAKT_API_URL: str = os.getenv("TRAKT_API_URL", "https://api.trakt.tv").rstrip("/")
