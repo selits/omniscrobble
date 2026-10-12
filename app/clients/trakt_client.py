@@ -337,6 +337,10 @@ class TraktClient:
         """POST /scrobble/pause - Notify Trakt playback paused."""
         url = f"{self.api_url}/scrobble/pause"
         payload = self._prepare_scrobble_payload(media_payload, progress)
+        # Trakt rejects pause events below 1% progress. Plex can emit a
+        # transient 0% pause while switching between playback items.
+        if float(payload.get("progress", 0.0) or 0.0) < 1.0:
+            return {"status": "skipped", "reason": "Trakt requires at least 1.0% progress to pause"}
         return await self._post_authenticated(url, payload)
 
     async def scrobble_stop(self, media_payload: Any, progress: Optional[float] = None) -> dict[str, Any]:

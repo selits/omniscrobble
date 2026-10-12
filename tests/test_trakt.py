@@ -33,6 +33,20 @@ def test_tv_show_year_extraction():
     history_data = parsed.to_trakt_history_payload()
     assert history_data["shows"][0]["year"] == 2005
 
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_trakt_pause_skips_progress_below_one_percent():
+    client = TraktClient(Config)
+    with patch.object(client, "_post_authenticated", new_callable=AsyncMock) as mock_post:
+        skipped = await client.scrobble_pause({"movie": {"title": "Test"}, "progress": 0.0})
+        assert skipped["status"] == "skipped"
+        mock_post.assert_not_awaited()
+
+        mock_post.return_value = {"action": "pause"}
+        result = await client.scrobble_pause({"movie": {"title": "Test"}, "progress": 1.0})
+        assert result == {"action": "pause"}
+        mock_post.assert_awaited_once()
+
 @pytest.mark.asyncio(loop_scope="module")
 async def test_trakt_client_401_retry(tmp_path):
     class FakeConfig:
